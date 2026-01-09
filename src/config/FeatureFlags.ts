@@ -67,6 +67,20 @@ export class FeatureFlags {
      * Env var: KAIRO_PILLAR_DECOMPOSITION_ENABLED
      */
     static PILLAR_DECOMPOSITION_ENABLED = 'pillar_decomposition_enabled';
+
+    /**
+     * Enables default dryRun for writer flow when sessionId is present.
+     * Default: false
+     * Env var: KAIRO_WRITERS_FLOW_DEFAULT_DRYRUN
+     */
+    static WRITERS_FLOW_DEFAULT_DRYRUN = 'writers_flow_default_dryrun';
+
+    /**
+     * Enables session-based reviewOptions defaults.
+     * Default: false
+     * Env var: KAIRO_WRITERS_FLOW_REVIEW_DEFAULTS
+     */
+    static WRITERS_FLOW_REVIEW_DEFAULTS = 'writers_flow_review_defaults';
     
     static initialize(): void {
         this.canaryUsers = this.parseCanaryUsers(process.env.KAIRO_CANARY_USERS);
@@ -79,6 +93,8 @@ export class FeatureFlags {
         this.applyEnvFlag(this.MODULAR_HANDLERS_ENABLED, process.env.KAIRO_MODULAR_HANDLERS_ENABLED);
         this.applyEnvFlag(this.UNIFIED_EXTRACTION_ENABLED, process.env.KAIRO_UNIFIED_EXTRACTION_ENABLED);
         this.applyEnvFlag(this.PILLAR_DECOMPOSITION_ENABLED, process.env.KAIRO_PILLAR_DECOMPOSITION_ENABLED);
+        this.applyEnvFlag(this.WRITERS_FLOW_DEFAULT_DRYRUN, process.env.KAIRO_WRITERS_FLOW_DEFAULT_DRYRUN);
+        this.applyEnvFlag(this.WRITERS_FLOW_REVIEW_DEFAULTS, process.env.KAIRO_WRITERS_FLOW_REVIEW_DEFAULTS);
 
         const modularPercent = process.env.KAIRO_MODULAR_ROLLOUT_PERCENT;
         if (!process.env.KAIRO_MODULAR_HANDLERS_ENABLED && modularPercent === undefined) {

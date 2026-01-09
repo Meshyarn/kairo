@@ -5,6 +5,7 @@ import { OrchestrationContext } from '../OrchestrationContext.js';
 import { ParsedIntent } from '../IntentRouter.js';
 import { metrics } from '../../utils/MetricsCollector.js';
 import { type TemplateType, type TemplateContext } from '../../generation/SimpleTemplateGenerator.js';
+import { FeatureFlags } from '../../config/FeatureFlags.js';
 
 import {
     smartWriteCode,
@@ -18,7 +19,7 @@ import {
 } from "../guardrails/IntegrityGuardrails.js";
 import type { DependencyGraph } from "../../ast/DependencyGraph.js";
 import type { IndexStateManager } from "../../indexing/IndexStateManager.js";
-import type { DraftPack } from "../../types/flow-artifacts.js";
+import type { DraftPack, StylePack, WorkflowMeta } from "../../types/flow-artifacts.js";
 import { DraftPackBuilder } from "../../generation/draft-pack-builder.js";
 import { ReviewReportBuilder } from "../../generation/review-report-builder.js";
 import type { FlowArtifactManager } from "../flow-artifact-manager.js";
@@ -44,17 +45,19 @@ export class WritePillar {
       const quickGenerate = Boolean((constraints as any).quickGenerate);
       const smartWrite = Boolean((constraints as any).smartWrite);
       const styleReference = (constraints as any).styleReference as string[] | undefined;
-      const dryRun = Boolean((constraints as any).dryRun);
-      const draftOptions = (constraints as any).draftOptions as { skeletonOnly?: boolean } | undefined;
-      const reviewOptions = (constraints as any).reviewOptions ?? {};
       const rawSessionId = typeof (constraints as any).sessionId === "string" ? (constraints as any).sessionId : undefined;
+      const dryRun = this.resolveDryRun(constraints, rawSessionId);
+      const draftOptions = (constraints as any).draftOptions as { skeletonOnly?: boolean } | undefined;
+      const reviewOptions = this.resolveReviewOptions((constraints as any).reviewOptions, Boolean(rawSessionId));
       const draftId = typeof (constraints as any).draftId === "string" ? (constraints as any).draftId : undefined;
       const refinement = typeof (constraints as any).refinement === "string" ? (constraints as any).refinement : undefined;
       const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
       const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, originalIntent);
-      const sessionStylePack = resolvedSessionId && artifactManager
-        ? artifactManager.getLatestStylePack(resolvedSessionId)
-        : undefined;
+      const stylePackOverride = this.resolveStylePack((constraints as any).stylePack, artifactManager);
+      const sessionStylePack = stylePackOverride
+        ?? (resolvedSessionId && artifactManager
+          ? artifactManager.getLatestStylePack(resolvedSessionId)
+          : undefined);
       const draftArtifact = draftId ? artifactManager?.get(draftId) : undefined;
       const draftPack = draftArtifact?.type === "draft" ? (draftArtifact as any).pack : undefined;
       const draftContent = draftPack?.phantomFiles?.[0]?.content as string | undefined;
@@ -143,6 +146,12 @@ export class WritePillar {
           content,
           existingContent
         });
+        draftPack.workflowMeta = this.buildWorkflowMeta({
+          sessionId: resolvedSessionId,
+          dryRun,
+          stylePack: sessionStylePack,
+          artifactManager
+        });
 
         const preApplyReview = (reviewOptions?.preApply ?? true)
           ? await new ReviewReportBuilder(
@@ -210,7 +219,18 @@ export class WritePillar {
           
           if (generated) {
             content = generated.code;
-            return await this.writeGeneratedCode(resolvedPath, content, originalIntent, context, generated.templateType, generated.imports, constraints, resolvedSessionId);
+            return await this.writeGeneratedCode(
+              resolvedPath,
+              content,
+              originalIntent,
+              context,
+              generated.templateType,
+              generated.imports,
+              constraints,
+              resolvedSessionId,
+              reviewOptions,
+              sessionStylePack
+            );
           }
         } catch (error: any) {
           stopSmartWrite();
@@ -588,6 +608,87 @@ export class WritePillar {
     return targetPath;
   }
 
+  private resolveDryRun(constraints: any, sessionId?: string): boolean {
+    const raw = constraints?.dryRun;
+    if (typeof raw === "boolean") return raw;
+    if (sessionId && FeatureFlags.isEnabled(FeatureFlags.WRITERS_FLOW_DEFAULT_DRYRUN)) {
+      return true;
+    }
+    return false;
+  }
+
+  private resolveReviewOptions(raw: any, hasSession: boolean): any {
+    const reviewOptions = raw ?? {};
+    if (!FeatureFlags.isEnabled(FeatureFlags.WRITERS_FLOW_REVIEW_DEFAULTS)) {
+      return reviewOptions;
+    }
+    const defaults = hasSession
+      ? { preApply: true, postApply: false, strictness: "balanced", blockOn: ["syntax", "guardrails", "vibe"] }
+      : { preApply: true, postApply: false, strictness: "permissive", blockOn: ["syntax"] };
+    const hasBlockOn = Array.isArray(reviewOptions?.blockOn);
+    return {
+      ...defaults,
+      ...reviewOptions,
+      blockOn: hasBlockOn ? reviewOptions.blockOn : defaults.blockOn
+    };
+  }
+
+  private resolveStylePack(input: any, artifactManager?: FlowArtifactManager): StylePack | undefined {
+    if (!input) return undefined;
+    if (typeof input === "string") {
+      const artifact = artifactManager?.get(input);
+      if (artifact?.type === "style" && "pack" in artifact) {
+        return artifact.pack as StylePack;
+      }
+      return undefined;
+    }
+    if (input && typeof input === "object") {
+      if ("profile" in input && "createdAt" in input) {
+        return input as StylePack;
+      }
+      if (input?.type === "style" && input?.pack) {
+        return input.pack as StylePack;
+      }
+    }
+    return undefined;
+  }
+
+  private buildWorkflowMeta(args: {
+    sessionId?: string;
+    dryRun: boolean;
+    stylePack?: StylePack;
+    artifactManager?: FlowArtifactManager;
+  }): WorkflowMeta {
+    const sessionArtifacts = args.sessionId && args.artifactManager
+      ? args.artifactManager.getBySession(args.sessionId)
+      : [];
+    const hasResearch = sessionArtifacts.some((artifact) => artifact.type === "research");
+    const hasAnalysis = sessionArtifacts.some((artifact) => artifact.type === "analysis");
+    const hasStylePack = Boolean(args.stylePack);
+    const dryRunUsed = args.dryRun;
+    const confidence: WorkflowMeta["confidence"] =
+      hasResearch && hasAnalysis && hasStylePack && dryRunUsed
+        ? "high"
+        : (hasStylePack || hasAnalysis || dryRunUsed)
+          ? "medium"
+          : "low";
+    const reasons: string[] = [];
+    if (!hasResearch) reasons.push("missing_research");
+    if (!hasAnalysis) reasons.push("missing_analysis");
+    if (!hasStylePack) reasons.push("missing_style_pack");
+    if (!dryRunUsed) reasons.push("dry_run_disabled");
+    return {
+      confidence,
+      reasons,
+      workflowStatus: {
+        hasResearch,
+        hasAnalysis,
+        hasStylePack,
+        dryRunUsed
+      }
+    };
+  }
+
   private looksLikePath(value: string): boolean {
     return /[\\/]/.test(value) || /\.[a-z0-9]+$/i.test(value);
   }
@@ -771,7 +872,9 @@ export class WritePillar {
     templateType: TemplateType,
     imports?: string[],
     constraints?: any,
-    sessionId?: string
+    sessionId?: string,
+    reviewOptions?: any,
+    stylePack?: StylePack
   ): Promise<any> {
     try {
       let finalContent = content;
@@ -823,10 +926,10 @@ export class WritePillar {
         oldContent: existingContent,
         guardrailResult,
         constraints,
-        reviewOptions: constraints?.reviewOptions ?? {},
-        stylePack: sessionId
+        reviewOptions: reviewOptions ?? this.resolveReviewOptions(constraints?.reviewOptions, Boolean(sessionId)),
+        stylePack: stylePack ?? (sessionId
           ? this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager")?.getLatestStylePack(sessionId)
-          : undefined
+          : undefined)
       });
       if (reviewBlock.blocked) {
         return {

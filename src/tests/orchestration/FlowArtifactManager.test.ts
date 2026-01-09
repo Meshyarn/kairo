@@ -23,6 +23,10 @@ describe("FlowArtifactManager", () => {
 
             const filePath = await manager.persist("rp_test", manager.get("rp_test") as any);
             expect(filePath).toContain("rp_test.json");
+            const indexPath = path.join(tempDir, "index.json");
+            const indexRaw = await fs.readFile(indexPath, "utf-8");
+            const index = JSON.parse(indexRaw);
+            expect(index.artifacts.rp_test.type).toBe("research");
 
             manager.discard("rp_test");
             const restored = await manager.importFromPath(filePath);
@@ -50,6 +54,8 @@ describe("FlowArtifactManager", () => {
 
             const session = manager.getSession(sessionId as string);
             expect(session?.artifacts.style).toBe("style_test");
+            const summary = manager.getSessionSummary(sessionId as string);
+            expect(summary?.summary.counts.style).toBe(1);
 
             manager.discard("style_test");
             const afterDiscard = manager.getSession(sessionId as string);

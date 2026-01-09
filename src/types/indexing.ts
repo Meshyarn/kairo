@@ -1,4 +1,4 @@
-export type EmbeddingProvider = "local" | "disabled";
+export type EmbeddingProvider = "local" | "remote" | "disabled";
 
 export interface EmbeddingVector {
     provider: EmbeddingProvider;
@@ -20,6 +20,7 @@ export interface EmbeddingConfig {
     local?: {
         model?: string;
         dims?: number;
+        quantized?: boolean;
     };
 }
 

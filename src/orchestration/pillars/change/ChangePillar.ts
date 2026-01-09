@@ -14,6 +14,8 @@ import { UnifiedContextGraph } from '../../context/UnifiedContextGraph.js';
 import { NodeFileSystem } from '../../../platform/FileSystem.js';
 import type { DependencyGraph } from '../../../ast/DependencyGraph.js';
 import type { IndexStateManager } from '../../../indexing/IndexStateManager.js';
+import { FeatureFlags } from '../../../config/FeatureFlags.js';
+import type { StylePack, WorkflowMeta } from '../../../types/flow-artifacts.js';
 
 import { 
     toImpactReport, 
@@ -73,16 +75,18 @@ export class ChangePillar {
       const { dryRun = true, includeImpact = false, includeSymbolImpact = false } = constraints;
       const integrityOptions = IntegrityEngine.resolveOptions(constraints.integrity, "change");
       const ucg = context.getState<UnifiedContextGraph>('ucg');
-      const reviewOptions = constraints.reviewOptions ?? {};
+      const reviewOptions = this.resolveReviewOptions(constraints.reviewOptions, Boolean(constraints.sessionId));
       const rawSessionId = typeof constraints.sessionId === "string" ? constraints.sessionId : undefined;
       const draftId = typeof (constraints as any).draftId === "string" ? (constraints as any).draftId : undefined;
       const refinement = typeof (constraints as any).refinement === "string" ? (constraints as any).refinement : undefined;
       const refinedIntent = refinement ? `${originalIntent}\nRefinement: ${refinement}` : originalIntent;
       const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
       const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, originalIntent);
-      const sessionStylePack = resolvedSessionId && artifactManager
-        ? artifactManager.getLatestStylePack(resolvedSessionId)
-        : undefined;
+      const stylePackOverride = this.resolveStylePack((constraints as any).stylePack, artifactManager);
+      const sessionStylePack = stylePackOverride
+        ?? (resolvedSessionId && artifactManager
+          ? artifactManager.getLatestStylePack(resolvedSessionId)
+          : undefined);
 
       const rawEdits = Array.isArray(constraints.edits) ? constraints.edits : [];
       const targetFiles = this.resolveTargetFiles(constraints, targets);
@@ -467,6 +471,12 @@ export class ChangePillar {
           oldContent: originalContent,
           newContent: nextContent
         });
+        draftPack.workflowMeta = this.buildWorkflowMeta({
+          sessionId: resolvedSessionId,
+          dryRun,
+          stylePack: sessionStylePack,
+          artifactManager
+        });
       }
 
       if (!preApplyReviewComputed && (reviewOptions?.preApply ?? dryRun) && targetPath) {
@@ -635,6 +645,78 @@ export class ChangePillar {
 
   private shouldUseBatch(constraints: any, targetFiles: string[], editPaths: string[]): boolean {
     return Boolean(constraints?.batchMode) || targetFiles.length > 1 || editPaths.length > 1;
+  }
+
+  private resolveReviewOptions(raw: any, hasSession: boolean): any {
+    const reviewOptions = raw ?? {};
+    if (!FeatureFlags.isEnabled(FeatureFlags.WRITERS_FLOW_REVIEW_DEFAULTS)) {
+      return reviewOptions;
+    }
+    const defaults = hasSession
+      ? { preApply: true, postApply: false, strictness: "balanced", blockOn: ["syntax", "guardrails", "vibe"] }
+      : { preApply: true, postApply: false, strictness: "permissive", blockOn: ["syntax"] };
+    const hasBlockOn = Array.isArray(reviewOptions?.blockOn);
+    return {
+      ...defaults,
+      ...reviewOptions,
+      blockOn: hasBlockOn ? reviewOptions.blockOn : defaults.blockOn
+    };
+  }
+
+  private resolveStylePack(input: any, artifactManager?: FlowArtifactManager): StylePack | undefined {
+    if (!input) return undefined;
+    if (typeof input === "string") {
+      const artifact = artifactManager?.get(input);
+      if (artifact?.type === "style" && "pack" in artifact) {
+        return artifact.pack as StylePack;
+      }
+      return undefined;
+    }
+    if (input && typeof input === "object") {
+      if ("profile" in input && "createdAt" in input) {
+        return input as StylePack;
+      }
+      if (input?.type === "style" && input?.pack) {
+        return input.pack as StylePack;
+      }
+    }
+    return undefined;
+  }
+
+  private buildWorkflowMeta(args: {
+    sessionId?: string;
+    dryRun: boolean;
+    stylePack?: StylePack;
+    artifactManager?: FlowArtifactManager;
+  }): WorkflowMeta {
+    const sessionArtifacts = args.sessionId && args.artifactManager
+      ? args.artifactManager.getBySession(args.sessionId)
+      : [];
+    const hasResearch = sessionArtifacts.some((artifact) => artifact.type === "research");
+    const hasAnalysis = sessionArtifacts.some((artifact) => artifact.type === "analysis");
+    const hasStylePack = Boolean(args.stylePack);
+    const dryRunUsed = args.dryRun;
+    const confidence: WorkflowMeta["confidence"] =
+      hasResearch && hasAnalysis && hasStylePack && dryRunUsed
+        ? "high"
+        : (hasStylePack || hasAnalysis || dryRunUsed)
+          ? "medium"
+          : "low";
+    const reasons: string[] = [];
+    if (!hasResearch) reasons.push("missing_research");
+    if (!hasAnalysis) reasons.push("missing_analysis");
+    if (!hasStylePack) reasons.push("missing_style_pack");
+    if (!dryRunUsed) reasons.push("dry_run_disabled");
+    return {
+      confidence,
+      reasons,
+      workflowStatus: {
+        hasResearch,
+        hasAnalysis,
+        hasStylePack,
+        dryRunUsed
+      }
+    };
   }
 
   private extractTargetFromEdits(edits: any[]): string | undefined {

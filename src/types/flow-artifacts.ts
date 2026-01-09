@@ -208,8 +208,22 @@ export interface DraftPack {
     impactAnalysis?: ImpactAnalysis;
     preflightCheck: PreflightCheck;
     stylePack?: StylePack;
+    workflowMeta?: WorkflowMeta;
     createdAt: number;
     status: "pending" | "approved" | "rejected" | "applied";
+}
+
+export type WorkflowConfidence = "high" | "medium" | "low";
+
+export interface WorkflowMeta {
+    confidence: WorkflowConfidence;
+    reasons: string[];
+    workflowStatus: {
+        hasResearch: boolean;
+        hasAnalysis: boolean;
+        hasStylePack: boolean;
+        dryRunUsed: boolean;
+    };
 }
 
 export type Verdict = "pass" | "warn" | "block";
