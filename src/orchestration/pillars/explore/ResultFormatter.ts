@@ -34,6 +34,7 @@ export type ExploreResponse = {
         suggestedAction?: string;
     }>;
     indexSnapshot?: IndexSnapshot;
+    sessionId?: string;
 };
 
 const DEFAULT_MAX_CHARS = 8000;

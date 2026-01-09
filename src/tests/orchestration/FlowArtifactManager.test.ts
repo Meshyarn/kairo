@@ -31,4 +31,30 @@ describe("FlowArtifactManager", () => {
             await fs.rm(tempDir, { recursive: true, force: true });
         }
     });
+
+    it("creates and updates sessions when artifacts are stored", async () => {
+        const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "kairo-artifacts-"));
+        try {
+            const manager = new FlowArtifactManager({ persistPath: tempDir, autoPersist: true });
+            const sessionId = manager.resolveSessionId("new", "Session intent");
+            expect(sessionId).toBeDefined();
+
+            manager.store({
+                id: "style_test",
+                type: "style",
+                createdAt: Date.now(),
+                pack: { id: "style_test", profile: { codeStyle: { indent: "spaces", indentSize: 2, quotes: "single", semicolons: true, lineEndings: "lf" }, patterns: { imports: [], naming: [], fileOrg: { fileNamePattern: "", directoryPattern: "" } }, confidence: "low" }, scope: "**/*", createdAt: Date.now() },
+                sessionId,
+                metadata: { intent: "Session intent" }
+            } as any);
+
+            const session = manager.getSession(sessionId as string);
+            expect(session?.artifacts.style).toBe("style_test");
+
+            const sessionPath = await manager.persistSession(session as any);
+            expect(sessionPath).toContain("sessions");
+        } finally {
+            await fs.rm(tempDir, { recursive: true, force: true });
+        }
+    });
 });

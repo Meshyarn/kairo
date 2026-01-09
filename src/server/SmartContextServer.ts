@@ -849,6 +849,7 @@ export class SmartContextServer {
                                 dependencies: { type: 'boolean' }
                             }
                         },
+                        sessionId: { type: 'string' },
                         vibe: {
                             type: 'object',
                             properties: {
@@ -893,6 +894,7 @@ export class SmartContextServer {
                                 logs: { type: 'boolean' }
                             }
                         },
+                        sessionId: { type: 'string' },
                         research: {
                             type: 'object',
                             properties: {
@@ -945,6 +947,7 @@ export class SmartContextServer {
                         target: { type: 'string' },
                         targetFiles: { type: 'array', items: { type: 'string' } },
                         edits: { type: 'array', items: { type: 'object' } },
+                        sessionId: { type: 'string' },
                         draftOptions: {
                             type: 'object',
                             properties: {
@@ -988,6 +991,7 @@ export class SmartContextServer {
                         template: { type: 'string' },
                         content: { type: 'string' },
                         dryRun: { type: 'boolean' },
+                        sessionId: { type: 'string' },
                         draftOptions: {
                             type: 'object',
                             properties: {

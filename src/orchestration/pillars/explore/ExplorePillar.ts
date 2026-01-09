@@ -75,6 +75,7 @@ export class ExplorePillar {
             topN?: number;
             format?: "ascii" | "mermaid" | "both";
         } | undefined;
+        const rawSessionId = typeof constraints.sessionId === "string" ? constraints.sessionId : undefined;
         const researchRequested = !!research && research?.sketch !== false;
         const limits = (constraints.limits ?? {}) as {
             maxResults?: number;
@@ -172,15 +173,19 @@ export class ExplorePillar {
             }))
             : undefined;
 
+        const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
+        const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, intent.originalIntent ?? query ?? "explore");
+
         const response: ExploreResponse = {
             success: true,
             status: "ok",
             query,
-            data: { docs: [], code: [] }
+            data: { docs: [], code: [] },
+            sessionId: resolvedSessionId
         };
 
         if (researchRequested) {
-            response.researchPack = await this.buildResearchPack(research).catch(() => undefined);
+            response.researchPack = await this.buildResearchPack(research, resolvedSessionId, intent.originalIntent).catch(() => undefined);
             if (!response.researchPack) {
                 response.insights = response.insights || [];
                 response.insights.push({
@@ -513,11 +518,15 @@ export class ExplorePillar {
         }
     }
 
-    private async buildResearchPack(research?: {
+    private async buildResearchPack(
+        research?: {
         sketch?: boolean;
         topN?: number;
         format?: "ascii" | "mermaid" | "both";
-    }): Promise<ResearchPack | undefined> {
+        },
+        sessionId?: string,
+        intent?: string
+    ): Promise<ResearchPack | undefined> {
         if (research?.sketch === false) {
             return undefined;
         }
@@ -559,7 +568,9 @@ export class ExplorePillar {
                 type: "research",
                 createdAt: pack.createdAt,
                 expiresAt: pack.expiresAt,
-                pack
+                pack,
+                sessionId,
+                metadata: intent ? { intent } : undefined
             });
         }
         if (cacheKey) {

@@ -71,6 +71,7 @@ export interface IntentConstraints {
   allowSensitive?: boolean;
   allowBinary?: boolean;
   allowGlobs?: boolean;
+  sessionId?: string;
   integrity?: IntegrityOptions;
   // ADR-042-006: Layer 3 AI-Enhanced Features
   smartMatch?: boolean;        // Phase 1: Enable embedding-based symbol search

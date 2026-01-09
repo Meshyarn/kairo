@@ -362,3 +362,27 @@ export interface ArtifactManagerStatus {
     newestAt: number;
     cacheUtilization: number;
 }
+
+export type FlowSessionStatus = "active" | "completed" | "abandoned";
+
+export interface FlowSessionOutcome {
+    filesCreated: string[];
+    filesModified: string[];
+    finalReviewId?: ReviewReportId;
+}
+
+export interface FlowSession {
+    id: string;
+    startedAt: number;
+    intent: string;
+    status: FlowSessionStatus;
+    artifacts: {
+        research?: ResearchPackId;
+        analysis?: AnalysisPackId;
+        style?: StylePackId;
+        drafts: DraftPackId[];
+        reviews: ReviewReportId[];
+    };
+    updatedAt?: number;
+    outcome?: FlowSessionOutcome;
+}

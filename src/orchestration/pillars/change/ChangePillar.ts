@@ -74,6 +74,9 @@ export class ChangePillar {
       const integrityOptions = IntegrityEngine.resolveOptions(constraints.integrity, "change");
       const ucg = context.getState<UnifiedContextGraph>('ucg');
       const reviewOptions = constraints.reviewOptions ?? {};
+      const rawSessionId = typeof constraints.sessionId === "string" ? constraints.sessionId : undefined;
+      const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
+      const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, originalIntent);
 
       const rawEdits = Array.isArray(constraints.edits) ? constraints.edits : [];
       const targetFiles = this.resolveTargetFiles(constraints, targets);
@@ -439,14 +442,15 @@ export class ChangePillar {
           constraints
         });
       }
-      const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
       if (artifactManager) {
         if (draftPack) {
           artifactManager.store({
             id: draftPack.id,
             type: "draft",
             createdAt: draftPack.createdAt,
-            pack: draftPack
+            pack: draftPack,
+            sessionId: resolvedSessionId,
+            metadata: { intent: originalIntent }
           });
         }
         if (preApplyReview) {
@@ -454,7 +458,10 @@ export class ChangePillar {
             id: preApplyReview.id,
             type: "review",
             createdAt: preApplyReview.reviewedAt,
-            report: preApplyReview
+            report: preApplyReview,
+            sessionId: resolvedSessionId,
+            parentId: draftPack?.id,
+            metadata: { intent: originalIntent }
           });
         }
         if (postReview) {
@@ -462,7 +469,10 @@ export class ChangePillar {
             id: postReview.id,
             type: "review",
             createdAt: postReview.reviewedAt,
-            report: postReview
+            report: postReview,
+            sessionId: resolvedSessionId,
+            parentId: draftPack?.id,
+            metadata: { intent: originalIntent }
           });
         }
       }
@@ -518,6 +528,7 @@ export class ChangePillar {
         autoCorrected,
         autoCorrectionAttempts: autoCorrectionAttempts.length > 0 ? autoCorrectionAttempts : undefined,
         guidance: failureGuidance ?? successGuidance,
+        sessionId: resolvedSessionId,
         relatedDocs,
         integrity: integrityReport,
         degraded: !finalResult.success && autoCorrectionAttempts.length === 0,

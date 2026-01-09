@@ -20,6 +20,7 @@ export function buildUnderstandResponse(args: {
   indexSnapshot?: any;
   stylePack?: any;
   analysisPack?: any;
+  sessionId?: string;
 }): any {
   const {
     subject,
@@ -42,7 +43,8 @@ export function buildUnderstandResponse(args: {
     allowGraphs,
     indexSnapshot,
     stylePack,
-    analysisPack
+    analysisPack,
+    sessionId
   } = args;
 
   const status = includeCalls && !symbolName
@@ -99,6 +101,7 @@ export function buildUnderstandResponse(args: {
     stylePack,
     analysisPack,
     indexSnapshot,
+    sessionId,
     guidance: {
       message: guidanceMessage,
       suggestedActions: [

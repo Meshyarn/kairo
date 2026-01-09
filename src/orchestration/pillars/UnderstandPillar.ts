@@ -42,6 +42,7 @@ export class UnderstandPillar {
     const wantsVibe = vibe?.extract === true;
     const analysis = constraints.analysis as { clusters?: boolean; maxClusters?: number; maxFilesPerCluster?: number } | undefined;
     const wantsAnalysis = analysis?.clusters === true;
+    const rawSessionId = typeof constraints.sessionId === "string" ? constraints.sessionId : undefined;
     const includeDependencies = include.dependencies === true || include.pageRank === true;
     const includeCalls = include.callGraph === true;
     const explicitPath = this.extractPath(subject) ?? (typeof originalIntent === 'string' ? this.extractPath(originalIntent) : null);
@@ -227,6 +228,9 @@ export class UnderstandPillar {
       : undefined;
     const indexStateManager = this.registry.getMetadata<IndexStateManager>("indexStateManager");
     const indexSnapshot = indexStateManager ? await indexStateManager.getSnapshot().catch(() => undefined) : undefined;
+    const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
+    const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, subject);
+
     const analysisPack = wantsAnalysis
       ? this.buildAnalysisPack({
           goal: subject,
@@ -240,13 +244,14 @@ export class UnderstandPillar {
       : undefined;
 
     if (analysisPack) {
-      const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
       if (artifactManager) {
         artifactManager.store({
           id: analysisPack.id,
           type: "analysis",
           createdAt: analysisPack.createdAt,
-          pack: analysisPack
+          pack: analysisPack,
+          sessionId: resolvedSessionId,
+          metadata: { intent: subject }
         });
       }
     }
@@ -271,8 +276,9 @@ export class UnderstandPillar {
       budget,
       allowGraphs,
       indexSnapshot,
-      stylePack: wantsVibe ? await this.buildStylePack(filePath, vibe, indexSnapshot) : undefined,
-      analysisPack
+      stylePack: wantsVibe ? await this.buildStylePack(filePath, vibe, indexSnapshot, resolvedSessionId, subject) : undefined,
+      analysisPack,
+      sessionId: resolvedSessionId
     });
 
   }
@@ -280,7 +286,9 @@ export class UnderstandPillar {
   private async buildStylePack(
     filePath: string,
     vibe: { scope?: string; includeNorms?: boolean } | undefined,
-    indexSnapshot?: { epoch?: number; dirtyFileCount?: number }
+    indexSnapshot?: { epoch?: number; dirtyFileCount?: number },
+    sessionId?: string,
+    intent?: string
   ): Promise<StylePack | undefined> {
     const cacheKey = this.getStyleCacheKey(vibe, indexSnapshot);
     if (cacheKey) {
@@ -301,7 +309,9 @@ export class UnderstandPillar {
         type: "style",
         createdAt: pack.createdAt,
         expiresAt: pack.expiresAt,
-        pack
+        pack,
+        sessionId,
+        metadata: intent ? { intent } : undefined
       });
     }
     if (cacheKey) {

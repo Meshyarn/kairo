@@ -47,9 +47,14 @@ export class WritePillar {
       const dryRun = Boolean((constraints as any).dryRun);
       const draftOptions = (constraints as any).draftOptions as { skeletonOnly?: boolean } | undefined;
       const reviewOptions = (constraints as any).reviewOptions ?? {};
+      const rawSessionId = typeof (constraints as any).sessionId === "string" ? (constraints as any).sessionId : undefined;
+      const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
+      const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, originalIntent);
+      const attachSession = <T extends Record<string, any>>(payload: T): T & { sessionId?: string } =>
+        resolvedSessionId ? { ...payload, sessionId: resolvedSessionId } : payload;
 
       if (!targetPath) {
-        return {
+        return attachSession({
           success: false,
           status: 'failure',
           createdFiles: [],
@@ -58,7 +63,7 @@ export class WritePillar {
             message: 'Missing targetPath. Provide a file path to create.',
             suggestedActions: []
           }
-        };
+        });
       }
 
       const resolvedPath = await this.resolveTargetPath(targetPath);
@@ -141,25 +146,29 @@ export class WritePillar {
               constraints
             })
           : undefined;
-        const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
         if (artifactManager) {
           artifactManager.store({
             id: draftPack.id,
             type: "draft",
             createdAt: draftPack.createdAt,
-            pack: draftPack
+            pack: draftPack,
+            sessionId: resolvedSessionId,
+            metadata: { intent: originalIntent }
           });
           if (preApplyReview) {
             artifactManager.store({
               id: preApplyReview.id,
               type: "review",
               createdAt: preApplyReview.reviewedAt,
-              report: preApplyReview
+              report: preApplyReview,
+              sessionId: resolvedSessionId,
+              parentId: draftPack.id,
+              metadata: { intent: originalIntent }
             });
           }
         }
 
-        return {
+        return attachSession({
           success: true,
           status: 'draft',
           draftPack,
@@ -168,7 +177,7 @@ export class WritePillar {
             message: 'DraftPack generated. Review skeleton and phantom diff before applying.',
             suggestedActions: []
           }
-        };
+        });
       }
 
       if (smartWrite && !hasExplicitContent) {
@@ -187,7 +196,7 @@ export class WritePillar {
           
           if (generated) {
             content = generated.code;
-            return await this.writeGeneratedCode(resolvedPath, content, originalIntent, context, generated.templateType, generated.imports, constraints);
+            return await this.writeGeneratedCode(resolvedPath, content, originalIntent, context, generated.templateType, generated.imports, constraints, resolvedSessionId);
           }
         } catch (error: any) {
           stopSmartWrite();
@@ -202,7 +211,7 @@ export class WritePillar {
           stopGenerate();
           if (generated) {
             content = generated.code;
-            return await this.writeGeneratedCode(resolvedPath, content, originalIntent, context, generated.templateType, undefined, constraints);
+            return await this.writeGeneratedCode(resolvedPath, content, originalIntent, context, generated.templateType, undefined, constraints, resolvedSessionId);
           }
         } catch (error: any) {
           stopGenerate();
@@ -238,7 +247,7 @@ export class WritePillar {
           );
           if (guardrailResult?.status === 'block') {
             stopSafePatch();
-            return {
+            return attachSession({
               success: false,
               status: 'blocked',
               createdFiles: [],
@@ -256,7 +265,7 @@ export class WritePillar {
               guidance: {
                 message: guardrailResult.violations?.[0]?.message ?? 'Write blocked by integrity guardrails.'
               }
-            };
+            });
           }
 
           const edit = {
@@ -274,7 +283,7 @@ export class WritePillar {
 
           stopSafePatch();
 
-          return {
+          return attachSession({
             success: result.success ?? true,
             status: result.success === false ? 'failure' : 'success',
             createdFiles: result.success ? [{ path: resolvedPath, description: `Written (safe mode) from intent: ${originalIntent}` }] : [],
@@ -293,10 +302,10 @@ export class WritePillar {
               message: result.success ? 'File written with undo support.' : `Write failed: ${result.message || 'Unknown error'}`,
               suggestedActions: result.success ? [{ pillar: 'read', action: 'view_full', target: resolvedPath }] : []
             }
-          };
+          });
         } catch (error: any) {
           stopSafePatch();
-          return {
+          return attachSession({
             success: false,
             status: 'failure',
             createdFiles: [],
@@ -304,7 +313,7 @@ export class WritePillar {
             rollbackAvailable: false,
             writeMode: 'safe',
             guidance: { message: `Safe write failed: ${error.message}`, suggestedActions: [] }
-          };
+          });
         }
       }
 
@@ -323,7 +332,7 @@ export class WritePillar {
           constraints
         );
         if (guardrailResult?.status === 'block') {
-          return {
+          return attachSession({
             success: false,
             status: 'blocked',
             createdFiles: [],
@@ -341,7 +350,7 @@ export class WritePillar {
             guidance: {
               message: guardrailResult.violations?.[0]?.message ?? 'Write blocked by integrity guardrails.'
             }
-          };
+          });
         }
 
         try {
@@ -354,7 +363,7 @@ export class WritePillar {
           });
         }
 
-        return {
+        return attachSession({
           success: true,
           status: 'success',
           createdFiles: [{ path: resolvedPath, description: `Written from intent: ${originalIntent}` }],
@@ -373,7 +382,7 @@ export class WritePillar {
             message: 'File written (fast mode, no undo).',
             suggestedActions: [{ pillar: 'read', action: 'view_full', target: resolvedPath }]
           }
-        };
+        });
       }
 
       let existingContent: string | null = null;
@@ -403,7 +412,7 @@ export class WritePillar {
       }
 
       if (content === '' && existingContent === null) {
-        return {
+        return attachSession({
           success: true,
           status: 'success',
           createdFiles: [{ path: resolvedPath, description: `Created from intent: ${originalIntent}` }],
@@ -412,7 +421,7 @@ export class WritePillar {
             message: 'Empty file created.',
             suggestedActions: [{ pillar: 'read', action: 'view_full', target: resolvedPath }]
           }
-        };
+        });
       }
 
       const edit = existingContent === null
@@ -427,7 +436,7 @@ export class WritePillar {
         constraints
       );
       if (guardrailResult?.status === 'block') {
-        return {
+        return attachSession({
           success: false,
           status: 'blocked',
           createdFiles: [],
@@ -445,7 +454,7 @@ export class WritePillar {
           guidance: {
             message: guardrailResult.violations?.[0]?.message ?? 'Write blocked by integrity guardrails.'
           }
-        };
+        });
       }
 
       const editResult = await this.runTool(context, 'edit_transaction', {
@@ -454,7 +463,7 @@ export class WritePillar {
         dryRun: false
       });
 
-      return {
+      return attachSession({
         success: editResult.success ?? true,
         status: editResult.success === false ? 'failure' : 'success',
         createdFiles: [{ path: resolvedPath, description: `Written from intent: ${originalIntent}` }],
@@ -471,7 +480,7 @@ export class WritePillar {
           message: editResult.success ? 'File written.' : 'File write failed.',
           suggestedActions: editResult.success ? [{ pillar: 'read', action: 'view_full', target: resolvedPath }] : []
         }
-      };
+      });
     } finally {
       stopTotal();
     }
@@ -627,7 +636,8 @@ export class WritePillar {
     context: OrchestrationContext,
     templateType: TemplateType,
     imports?: string[],
-    constraints?: any
+    constraints?: any,
+    sessionId?: string
   ): Promise<any> {
     try {
       let finalContent = content;
@@ -667,6 +677,7 @@ export class WritePillar {
           blockedReason: guardrailResult.blockedReason ?? 'architectural_violation',
           violations: guardrailResult.violations,
           warnings: guardrailResult.warnings,
+          sessionId,
           guidance: {
             message: guardrailResult.violations?.[0]?.message ?? 'Write blocked by integrity guardrails.'
           }
@@ -690,13 +701,14 @@ export class WritePillar {
         blockedReason: guardrailResult?.blockedReason,
         violations: guardrailResult?.violations,
         warnings: guardrailResult?.warnings,
+        sessionId,
         guidance: {
           message: result.success ? `Generated ${templateType} with project style. Use 'manage undo' to rollback.` : `Generation failed: ${result.message || 'Unknown error'}`,
           suggestedActions: result.success ? [{ pillar: 'read', action: 'view_full', target: filePath }] : []
         }
       };
     } catch (error: any) {
-      return { success: false, status: 'failure', createdFiles: [], transactionId: '', rollbackAvailable: false, writeMode: 'quickGenerate', guidance: { message: `Quick generate failed: ${error.message}`, suggestedActions: [] } };
+      return { success: false, status: 'failure', createdFiles: [], transactionId: '', rollbackAvailable: false, writeMode: 'quickGenerate', sessionId, guidance: { message: `Quick generate failed: ${error.message}`, suggestedActions: [] } };
     }
   }
 }
