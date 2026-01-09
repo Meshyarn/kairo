@@ -72,6 +72,7 @@ import { IntentRouter } from "../orchestration/IntentRouter.js";
 import { WorkflowPlanner } from "../orchestration/WorkflowPlanner.js";
 import { InternalToolRegistry } from "../orchestration/InternalToolRegistry.js";
 import { CachingStrategy } from "../orchestration/CachingStrategy.js";
+import { FlowArtifactManager } from "../orchestration/flow-artifact-manager.js";
 
 // Handler Imports
 import { SearchHandlers } from "../handlers/SearchHandlers.js";
@@ -88,6 +89,7 @@ export class SmartContextServer {
     private server: Server;
     private rootPath: string;
     private fileSystem: NodeFileSystem;
+    private flowArtifactManager: FlowArtifactManager;
     private orchestrationEngine: OrchestrationEngine;
     private internalRegistry: InternalToolRegistry;
     private incrementalIndexer?: IncrementalIndexer;
@@ -294,6 +296,7 @@ export class SmartContextServer {
 
         // Orchestration Layer
         this.internalRegistry = new InternalToolRegistry();
+        this.flowArtifactManager = new FlowArtifactManager();
         this.orchestrationEngine = new OrchestrationEngine(
             new IntentRouter(),
             new WorkflowPlanner(),
@@ -306,6 +309,7 @@ export class SmartContextServer {
         this.internalRegistry.setMetadata('searchEngine', this.searchEngine);
         this.internalRegistry.setMetadata('indexStateManager', this.indexStateManager);
         this.internalRegistry.setMetadata('dependencyGraph', this.dependencyGraph);
+        this.internalRegistry.setMetadata('flowArtifactManager', this.flowArtifactManager);
         
         this.setupHandlers();
         this.initializeModularHandlers();
@@ -346,6 +350,7 @@ export class SmartContextServer {
             documentIndexer: this.documentIndexer,
             indexDatabase: this.indexDatabase,
             historyEngine: this.historyEngine,
+            flowArtifactManager: this.flowArtifactManager,
             isTestEnv: () => this.isTestEnv()
         });
         this.searchHandlers = new SearchHandlers(handlerContext);
@@ -1012,10 +1017,33 @@ export class SmartContextServer {
                     properties: {
                         command: {
                             type: 'string',
-                            enum: ['status', 'undo', 'redo', 'reindex', 'rebuild', 'history', 'test']
+                            enum: [
+                                'status',
+                                'undo',
+                                'redo',
+                                'reindex',
+                                'rebuild',
+                                'history',
+                                'test',
+                                'artifacts',
+                                'artifact',
+                                'discard',
+                                'prune',
+                                'export',
+                                'import'
+                            ]
                         },
                         scope: { type: 'string', enum: ['file', 'transaction', 'project'] },
-                        target: { type: 'string' }
+                        target: { type: 'string' },
+                        artifactOptions: {
+                            type: 'object',
+                            properties: {
+                                type: { type: 'string' },
+                                sessionId: { type: 'string' },
+                                limit: { type: 'number' },
+                                includeExpired: { type: 'boolean' }
+                            }
+                        }
                     },
                     required: ['command']
                 }

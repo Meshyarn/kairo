@@ -83,6 +83,12 @@ export interface IntentConstraints {
     strictness?: "strict" | "balanced" | "permissive";
     blockOn?: Array<"syntax" | "semantic" | "guardrails" | "vibe">;
   };
+  artifactOptions?: {
+    type?: string;
+    sessionId?: string;
+    limit?: number;
+    includeExpired?: boolean;
+  };
 }
 
 

@@ -41,6 +41,7 @@ import {
 } from "../../guardrails/IntegrityGuardrails.js";
 import { DraftPackBuilder } from "../../../generation/draft-pack-builder.js";
 import { ReviewReportBuilder } from "../../../generation/review-report-builder.js";
+import type { FlowArtifactManager } from "../../flow-artifact-manager.js";
 import {
     executeBatchChange,
     executeV2BatchChange
@@ -437,6 +438,33 @@ export class ChangePillar {
           oldContent: reviewOriginalContent,
           constraints
         });
+      }
+      const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
+      if (artifactManager) {
+        if (draftPack) {
+          artifactManager.store({
+            id: draftPack.id,
+            type: "draft",
+            createdAt: draftPack.createdAt,
+            pack: draftPack
+          });
+        }
+        if (preApplyReview) {
+          artifactManager.store({
+            id: preApplyReview.id,
+            type: "review",
+            createdAt: preApplyReview.reviewedAt,
+            report: preApplyReview
+          });
+        }
+        if (postReview) {
+          artifactManager.store({
+            id: postReview.id,
+            type: "review",
+            createdAt: postReview.reviewedAt,
+            report: postReview
+          });
+        }
       }
 
       let relatedDocs: Array<any> | undefined;

@@ -12,6 +12,7 @@ import type { IndexStateManager } from "../../../indexing/IndexStateManager.js";
 import type { DependencyGraph } from "../../../ast/DependencyGraph.js";
 import { ProjectSketchBuilder } from "../../../generation/project-sketch-builder.js";
 import type { ResearchPack } from "../../../types/flow-artifacts.js";
+import type { FlowArtifactManager } from "../../flow-artifact-manager.js";
 
 import { 
     ExploreItem, 
@@ -551,6 +552,16 @@ export class ExplorePillar {
             createdAt: now,
             expiresAt: now + DEFAULT_RESEARCH_TTL_MS
         };
+        const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
+        if (artifactManager) {
+            artifactManager.store({
+                id: pack.id,
+                type: "research",
+                createdAt: pack.createdAt,
+                expiresAt: pack.expiresAt,
+                pack
+            });
+        }
         if (cacheKey) {
             ExplorePillar.researchCache.set(cacheKey, pack);
         }

@@ -10,6 +10,7 @@ import { UnifiedContextGraph } from '../context/UnifiedContextGraph.js';
 import type { IndexStateManager } from '../../indexing/IndexStateManager.js';
 import type { StylePack } from '../../types/flow-artifacts.js';
 import { VibeProfileBuilder } from '../../generation/vibe-profile-builder.js';
+import type { FlowArtifactManager } from '../flow-artifact-manager.js';
 import { extractSymbol, fetchCallGraph } from './understand/CallGraphAnalysis.js';
 import {
   categorizeDocLinks,
@@ -265,6 +266,16 @@ export class UnderstandPillar {
       scopeGlob: vibe?.scope
     });
     const pack = await builder.build(filePath);
+    const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
+    if (artifactManager) {
+      artifactManager.store({
+        id: pack.id,
+        type: "style",
+        createdAt: pack.createdAt,
+        expiresAt: pack.expiresAt,
+        pack
+      });
+    }
     if (cacheKey) {
       UnderstandPillar.styleCache.set(cacheKey, pack);
     }

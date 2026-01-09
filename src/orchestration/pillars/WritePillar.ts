@@ -21,6 +21,7 @@ import type { IndexStateManager } from "../../indexing/IndexStateManager.js";
 import type { DraftPack } from "../../types/flow-artifacts.js";
 import { DraftPackBuilder } from "../../generation/draft-pack-builder.js";
 import { ReviewReportBuilder } from "../../generation/review-report-builder.js";
+import type { FlowArtifactManager } from "../flow-artifact-manager.js";
 
 export class WritePillar {
   constructor(private readonly registry: InternalToolRegistry) {}
@@ -140,6 +141,23 @@ export class WritePillar {
               constraints
             })
           : undefined;
+        const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
+        if (artifactManager) {
+          artifactManager.store({
+            id: draftPack.id,
+            type: "draft",
+            createdAt: draftPack.createdAt,
+            pack: draftPack
+          });
+          if (preApplyReview) {
+            artifactManager.store({
+              id: preApplyReview.id,
+              type: "review",
+              createdAt: preApplyReview.reviewedAt,
+              report: preApplyReview
+            });
+          }
+        }
 
         return {
           success: true,

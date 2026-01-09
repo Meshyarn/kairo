@@ -38,6 +38,18 @@ export class ManagePillar {
         return this.wrapResponse(await execute('history'));
       case 'test':
         return this.wrapResponse(await execute('test'));
+      case 'artifacts':
+        return this.wrapResponse(await execute('artifacts'));
+      case 'artifact':
+        return this.wrapResponse(await execute('artifact'));
+      case 'discard':
+        return this.wrapResponse(await execute('discard'));
+      case 'prune':
+        return this.wrapResponse(await execute('prune'));
+      case 'export':
+        return this.wrapResponse(await execute('export'));
+      case 'import':
+        return this.wrapResponse(await execute('import'));
       default:
         // Check intent directly if action mapping is imprecise
         if (intent.originalIntent.includes('undo')) return this.wrapResponse(await execute('undo'));
@@ -50,6 +62,9 @@ export class ManagePillar {
         }
         if (intent.originalIntent.includes('test')) {
           return this.wrapResponse(await execute('test'));
+        }
+        if (intent.originalIntent.includes('artifact')) {
+          return this.wrapResponse(await execute('artifacts'));
         }
         return this.wrapResponse(await execute('status'));
     }
@@ -65,5 +80,4 @@ export class ManagePillar {
     };
   }
 }
-
 

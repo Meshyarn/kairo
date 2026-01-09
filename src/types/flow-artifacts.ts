@@ -48,6 +48,24 @@ export interface ResearchPack {
     expiresAt?: number;
 }
 
+export type AnalysisPackId = string;
+
+export interface AnalysisCluster {
+    id: string;
+    label: string;
+    files: Array<{ path: string; score?: number; role?: string }>;
+    boundaries?: { incoming: string[]; outgoing: string[] };
+    rationale: string[];
+}
+
+export interface AnalysisPack {
+    id: AnalysisPackId;
+    goal: string;
+    clusters: AnalysisCluster[];
+    createdAt: number;
+    degraded?: boolean;
+}
+
 export type StylePackId = string;
 
 export interface CodeStyle {
@@ -289,4 +307,58 @@ export interface ReviewReport {
     suggestedActions: SuggestedAction[];
     reviewedAt: number;
     reviewedFiles: string[];
+}
+
+export type ArtifactType = "research" | "analysis" | "style" | "draft" | "review";
+export type ArtifactId = ResearchPackId | AnalysisPackId | StylePackId | DraftPackId | ReviewReportId;
+
+export interface FlowArtifactBase {
+    id: ArtifactId;
+    type: ArtifactType;
+    createdAt: number;
+    expiresAt?: number;
+    sessionId?: string;
+    parentId?: string;
+    metadata?: Record<string, any>;
+}
+
+export interface ResearchArtifact extends FlowArtifactBase {
+    type: "research";
+    pack: ResearchPack;
+}
+
+export interface AnalysisArtifact extends FlowArtifactBase {
+    type: "analysis";
+    pack: AnalysisPack;
+}
+
+export interface StyleArtifact extends FlowArtifactBase {
+    type: "style";
+    pack: StylePack;
+}
+
+export interface DraftArtifact extends FlowArtifactBase {
+    type: "draft";
+    pack: DraftPack;
+}
+
+export interface ReviewArtifact extends FlowArtifactBase {
+    type: "review";
+    report: ReviewReport;
+    targetDraftId?: DraftPackId;
+}
+
+export type FlowArtifact =
+    | ResearchArtifact
+    | AnalysisArtifact
+    | StyleArtifact
+    | DraftArtifact
+    | ReviewArtifact;
+
+export interface ArtifactManagerStatus {
+    totalCount: number;
+    byType: Record<ArtifactType, number>;
+    oldestAt: number;
+    newestAt: number;
+    cacheUtilization: number;
 }

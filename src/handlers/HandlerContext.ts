@@ -25,6 +25,7 @@ import type { IncrementalIndexer } from "../indexing/IncrementalIndexer.js";
 import type { HistoryEngine } from "../engine/History.js";
 import type { NodeFileSystem } from "../platform/FileSystem.js";
 import type { RepoRegistry } from "../config/RepoRegistry.js";
+import type { FlowArtifactManager } from "../orchestration/flow-artifact-manager.js";
 
 export interface HandlerContext {
     rootPath: string;
@@ -55,6 +56,7 @@ export interface HandlerContext {
     documentIndexer?: DocumentIndexer;
     indexDatabase: IndexDatabase;
     historyEngine: HistoryEngine;
+    flowArtifactManager: FlowArtifactManager;
     isTestEnv: () => boolean;
     metadata?: Record<string, unknown>;
 }
