@@ -872,6 +872,14 @@ export class SmartContextServer {
                                 logs: { type: 'boolean' }
                             }
                         },
+                        research: {
+                            type: 'object',
+                            properties: {
+                                sketch: { type: 'boolean' },
+                                topN: { type: 'number' },
+                                format: { type: 'string', enum: ['ascii', 'mermaid', 'both'] }
+                            }
+                        },
                         section: {
                             type: 'object',
                             properties: {
