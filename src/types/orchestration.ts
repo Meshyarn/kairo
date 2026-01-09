@@ -69,6 +69,8 @@ export type ManageProjectCommand =
     | "status"
     | "metrics"
     | "reindex"
+    | "sessions"
+    | "session"
     | "artifacts"
     | "artifact"
     | "discard"

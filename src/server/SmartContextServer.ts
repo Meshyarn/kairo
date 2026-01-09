@@ -1037,6 +1037,8 @@ export class SmartContextServer {
                                 'rebuild',
                                 'history',
                                 'test',
+                                'sessions',
+                                'session',
                                 'artifacts',
                                 'artifact',
                                 'discard',
@@ -1047,6 +1049,7 @@ export class SmartContextServer {
                         },
                         scope: { type: 'string', enum: ['file', 'transaction', 'project'] },
                         target: { type: 'string' },
+                        limit: { type: 'number' },
                         artifactOptions: {
                             type: 'object',
                             properties: {

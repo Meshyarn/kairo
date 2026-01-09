@@ -32,14 +32,15 @@ export class FlowArtifactManager {
     }
 
     store<T extends FlowArtifact>(artifact: T): ArtifactId {
-        this.cache.set(artifact.id, artifact);
-        if (artifact.sessionId) {
-            this.attachToSession(artifact.sessionId, artifact, artifact.metadata?.intent as string | undefined);
+        const stored = { ...artifact };
+        this.cache.set(stored.id, stored);
+        if (stored.sessionId) {
+            this.attachToSession(stored.sessionId, stored, stored.metadata?.intent as string | undefined);
         }
         if (this.options.autoPersist) {
-            void this.persist(artifact.id, artifact);
+            void this.persist(stored.id, stored);
         }
-        return artifact.id;
+        return stored.id;
     }
 
     get<T extends FlowArtifact>(id: ArtifactId): T | undefined {
@@ -98,8 +99,12 @@ export class FlowArtifactManager {
     }
 
     discard(id: ArtifactId): boolean {
+        const artifact = this.cache.get(id);
         const existed = this.cache.has(id);
         this.cache.delete(id);
+        if (artifact?.sessionId) {
+            this.detachFromSession(artifact.sessionId, artifact);
+        }
         void this.removePersisted(id);
         return existed;
     }
@@ -132,7 +137,7 @@ export class FlowArtifactManager {
             const filePath = await this.resolvePersistPath(id);
             const raw = await fs.readFile(filePath, "utf-8");
             const artifact = JSON.parse(raw) as FlowArtifact;
-            this.cache.set(artifact.id, artifact);
+            this.store(artifact);
             return artifact;
         } catch {
             return undefined;
@@ -143,7 +148,7 @@ export class FlowArtifactManager {
         try {
             const raw = await fs.readFile(filePath, "utf-8");
             const artifact = JSON.parse(raw) as FlowArtifact;
-            this.cache.set(artifact.id, artifact);
+            this.store(artifact);
             return artifact;
         } catch {
             return undefined;
@@ -152,13 +157,23 @@ export class FlowArtifactManager {
 
     async restoreAll(): Promise<number> {
         try {
-            const entries = await fs.readdir(this.persistPath);
+            const entries = await fs.readdir(this.persistPath, { withFileTypes: true });
             let restored = 0;
             for (const entry of entries) {
-                if (!entry.endsWith(".json")) continue;
-                const full = path.join(this.persistPath, entry);
-                const artifact = await this.importFromPath(full);
-                if (artifact) restored += 1;
+                if (entry.isFile()) {
+                    if (!entry.name.endsWith(".json")) continue;
+                    const full = path.join(this.persistPath, entry.name);
+                    const artifact = await this.importFromPath(full);
+                    if (artifact) restored += 1;
+                    continue;
+                }
+                if (!entry.isDirectory()) continue;
+                const fullDir = path.join(this.persistPath, entry.name);
+                if (entry.name === "sessions") {
+                    await this.restoreSessionsFromDir(fullDir);
+                    continue;
+                }
+                restored += await this.restoreArtifactsFromDir(fullDir);
             }
             return restored;
         } catch {
@@ -219,6 +234,35 @@ export class FlowArtifactManager {
         return candidate;
     }
 
+    private async restoreArtifactsFromDir(dir: string): Promise<number> {
+        try {
+            const entries = await fs.readdir(dir);
+            let restored = 0;
+            for (const entry of entries) {
+                if (!entry.endsWith(".json")) continue;
+                const full = path.join(dir, entry);
+                const artifact = await this.importFromPath(full);
+                if (artifact) restored += 1;
+            }
+            return restored;
+        } catch {
+            return 0;
+        }
+    }
+
+    private async restoreSessionsFromDir(dir: string): Promise<void> {
+        try {
+            const entries = await fs.readdir(dir);
+            for (const entry of entries) {
+                if (!entry.endsWith(".json")) continue;
+                const sessionId = entry.replace(/\.json$/, "");
+                await this.restoreSession(sessionId);
+            }
+        } catch {
+            // ignore
+        }
+    }
+
     private countByType(artifacts: FlowArtifact[]): Record<ArtifactType, number> {
         return artifacts.reduce((acc, artifact) => {
             acc[artifact.type] = (acc[artifact.type] ?? 0) + 1;
@@ -257,10 +301,14 @@ export class FlowArtifactManager {
                 session.artifacts.style = artifact.pack.id;
                 break;
             case "draft":
-                session.artifacts.drafts.push(artifact.pack.id);
+                if (!session.artifacts.drafts.includes(artifact.pack.id)) {
+                    session.artifacts.drafts.push(artifact.pack.id);
+                }
                 break;
             case "review":
-                session.artifacts.reviews.push(artifact.report.id);
+                if (!session.artifacts.reviews.includes(artifact.report.id)) {
+                    session.artifacts.reviews.push(artifact.report.id);
+                }
                 break;
             default:
                 break;
@@ -274,5 +322,42 @@ export class FlowArtifactManager {
     private generateSessionId(): string {
         const suffix = Math.random().toString(36).slice(2, 8);
         return `session_${Date.now().toString(36)}_${suffix}`;
+    }
+
+    private detachFromSession(sessionId: string, artifact: FlowArtifact): void {
+        const session = this.sessions.get(sessionId);
+        if (!session) return;
+        switch (artifact.type) {
+            case "research":
+                if (session.artifacts.research === artifact.pack.id) {
+                    delete session.artifacts.research;
+                }
+                break;
+            case "analysis":
+                if (session.artifacts.analysis === artifact.pack.id) {
+                    delete session.artifacts.analysis;
+                }
+                break;
+            case "style":
+                if (session.artifacts.style === artifact.pack.id) {
+                    delete session.artifacts.style;
+                }
+                break;
+            case "draft":
+                session.artifacts.drafts = session.artifacts.drafts.filter((id) => id !== artifact.pack.id);
+                break;
+            case "review":
+                session.artifacts.reviews = session.artifacts.reviews.filter((id) => id !== artifact.report.id);
+                if (session.outcome?.finalReviewId === artifact.report.id) {
+                    session.outcome.finalReviewId = undefined;
+                }
+                break;
+            default:
+                break;
+        }
+        session.updatedAt = Date.now();
+        if (this.options.autoPersist) {
+            void this.persistSession(session);
+        }
     }
 }

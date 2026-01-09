@@ -538,10 +538,29 @@ export class ExplorePillar {
         const indexSnapshot = indexState
             ? await indexState.getSnapshot().catch(() => undefined)
             : undefined;
+        const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
         const cacheKey = this.getResearchCacheKey(research, indexSnapshot);
         if (cacheKey) {
             const cached = ExplorePillar.researchCache.get(cacheKey);
             if (cached) {
+                if (sessionId && artifactManager) {
+                    const derived = {
+                        ...cached,
+                        id: this.generateResearchPackId(),
+                        createdAt: Date.now(),
+                        expiresAt: Date.now() + DEFAULT_RESEARCH_TTL_MS
+                    };
+                    artifactManager.store({
+                        id: derived.id,
+                        type: "research",
+                        createdAt: derived.createdAt,
+                        expiresAt: derived.expiresAt,
+                        pack: derived,
+                        sessionId,
+                        metadata: intent ? { intent } : undefined
+                    });
+                    return derived;
+                }
                 return cached;
             }
         }
@@ -561,7 +580,6 @@ export class ExplorePillar {
             createdAt: now,
             expiresAt: now + DEFAULT_RESEARCH_TTL_MS
         };
-        const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
         if (artifactManager) {
             artifactManager.store({
                 id: pack.id,

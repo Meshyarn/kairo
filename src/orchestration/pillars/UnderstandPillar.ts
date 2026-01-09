@@ -26,9 +26,11 @@ import { resolveProgressState, logProgress, logToolStart, logToolEnd, ProgressSt
 
 
 export class UnderstandPillar {
+  private static readonly styleCacheTtlMs =
+    Number.parseInt(process.env.KAIRO_STYLE_PACK_TTL_MS ?? "1800000", 10) || 1800000;
   private static styleCache = new LRUCache<string, StylePack>({
     max: Number.parseInt(process.env.KAIRO_STYLE_PACK_CACHE_SIZE ?? "50", 10) || 50,
-    ttl: Number.parseInt(process.env.KAIRO_STYLE_PACK_TTL_MS ?? "1800000", 10) || 1800000
+    ttl: UnderstandPillar.styleCacheTtlMs
   });
 
   constructor(private readonly registry: InternalToolRegistry) {}
@@ -294,6 +296,27 @@ export class UnderstandPillar {
     if (cacheKey) {
       const cached = UnderstandPillar.styleCache.get(cacheKey);
       if (cached) {
+        if (sessionId) {
+          const derived: StylePack = {
+            ...cached,
+            id: this.generateStylePackId(),
+            createdAt: Date.now(),
+            expiresAt: Date.now() + UnderstandPillar.styleCacheTtlMs
+          };
+          const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
+          if (artifactManager) {
+            artifactManager.store({
+              id: derived.id,
+              type: "style",
+              createdAt: derived.createdAt,
+              expiresAt: derived.expiresAt,
+              pack: derived,
+              sessionId,
+              metadata: intent ? { intent } : undefined
+            });
+          }
+          return derived;
+        }
         return cached;
       }
     }
@@ -354,6 +377,11 @@ export class UnderstandPillar {
     const includeNorms = vibe?.includeNorms !== false ? "norms" : "no-norms";
     const epoch = indexSnapshot?.epoch ?? 0;
     return `style:${scope}:${includeNorms}:epoch:${epoch}`;
+  }
+
+  private generateStylePackId(): string {
+    const suffix = Math.random().toString(36).slice(2, 8);
+    return `style_${Date.now().toString(36)}_${suffix}`;
   }
 
   private extractPath(text: string): string | null {

@@ -51,7 +51,11 @@ describe("FlowArtifactManager", () => {
             const session = manager.getSession(sessionId as string);
             expect(session?.artifacts.style).toBe("style_test");
 
-            const sessionPath = await manager.persistSession(session as any);
+            manager.discard("style_test");
+            const afterDiscard = manager.getSession(sessionId as string);
+            expect(afterDiscard?.artifacts.style).toBeUndefined();
+
+            const sessionPath = await manager.persistSession(afterDiscard as any);
             expect(sessionPath).toContain("sessions");
         } finally {
             await fs.rm(tempDir, { recursive: true, force: true });

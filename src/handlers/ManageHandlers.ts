@@ -251,6 +251,29 @@ export class ManageHandlers extends BaseHandler {
                         suggestedTests: report?.suggestedTests ?? []
                     };
                 }
+            case 'sessions':
+                {
+                    const limit = typeof args?.limit === "number" ? args.limit : (args?.artifactOptions?.limit ?? 10);
+                    const sessions = this.context.flowArtifactManager.listSessions(limit);
+                    return {
+                        success: true,
+                        output: "Sessions listed.",
+                        sessions
+                    };
+                }
+            case 'session':
+                {
+                    const target = args?.target ?? args?.sessionId ?? args?.artifactOptions?.sessionId;
+                    if (!target) {
+                        return { success: false, output: "Missing target session id." };
+                    }
+                    const session = this.context.flowArtifactManager.getSession(target);
+                    return {
+                        success: Boolean(session),
+                        output: session ? "Session retrieved." : "Session not found.",
+                        session
+                    };
+                }
             case 'artifacts':
                 {
                     const options = args?.artifactOptions ?? {};
