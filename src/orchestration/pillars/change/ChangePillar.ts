@@ -39,6 +39,7 @@ import {
     normalizeGuardrailContent,
     resolveGuardrailTargetPath
 } from "../../guardrails/IntegrityGuardrails.js";
+import { DraftPackBuilder } from "../../../generation/draft-pack-builder.js";
 import {
     executeBatchChange,
     executeV2BatchChange
@@ -384,6 +385,32 @@ export class ChangePillar {
         ? `${finalResult.diff.slice(0, budget.maxDiffBytes)}\n... (diff truncated)`
         : finalResult.diff;
 
+      let draftPack: any = undefined;
+      if (dryRun && targetPath) {
+        let originalContent = "";
+        try {
+          originalContent = await this.fileSystem.readFile(targetPath);
+        } catch {
+          originalContent = "";
+        }
+        let nextContent = originalContent;
+        try {
+          nextContent = applyEditsToContent(originalContent, edits).newContent;
+        } catch {
+          nextContent = originalContent;
+        }
+        const builder = new DraftPackBuilder({
+          skeletonOnly: constraints?.draftOptions?.skeletonOnly !== false,
+          includePhantomDiff: true
+        });
+        draftPack = await builder.buildForChange({
+          intent: originalIntent,
+          targetPath,
+          oldContent: originalContent,
+          newContent: nextContent
+        });
+      }
+
       let relatedDocs: Array<any> | undefined;
       if (!dryRun && finalResult.success && shouldSuggestDocs(constraints)) {
         const packId = constraints?.evidencePack ?? constraints?.evidencePackId ?? constraints?.packId;
@@ -415,6 +442,7 @@ export class ChangePillar {
         targetFile: targetPath,
         diff: truncatedDiff,
         plan,
+        draftPack,
         impactReport,
         architecturalRisk,
         architecturalWarnings: architecturalWarnings.length > 0 ? architecturalWarnings : undefined,

@@ -118,3 +118,78 @@ export interface StylePack {
     expiresAt?: number;
     localOverrides?: Array<{ glob: string; profile: Partial<VibeProfile>; reason?: string }>;
 }
+
+export type DraftPackId = string;
+
+export interface SkeletonCode {
+    content: string;
+    signatures: Array<{
+        name: string;
+        type: "function" | "class" | "method" | "interface" | "type";
+        signature: string;
+        lineStart: number;
+        lineEnd: number;
+    }>;
+    structure: {
+        imports: string[];
+        exports: string[];
+        dependencies: string[];
+    };
+    placeholders: Array<{
+        line: number;
+        description: string;
+    }>;
+}
+
+export interface PhantomFile {
+    path: string;
+    content: string;
+    isNew: boolean;
+    language: string;
+}
+
+export interface PhantomDiff {
+    path: string;
+    hunks: Array<{
+        oldStart: number;
+        oldLines: number;
+        newStart: number;
+        newLines: number;
+        lines: string[];
+    }>;
+    summary: string;
+    additions: number;
+    deletions: number;
+}
+
+export interface ImpactAnalysis {
+    directlyAffected: string[];
+    potentiallyAffected: string[];
+    breakingChanges: Array<{
+        type: "signature" | "export" | "type" | "behavior";
+        description: string;
+        affectedFiles: string[];
+    }>;
+    testFiles: string[];
+}
+
+export interface PreflightCheck {
+    syntaxValid: boolean;
+    typesResolvable: boolean;
+    guardrailsPassed: boolean;
+    warnings: string[];
+}
+
+export interface DraftPack {
+    id: DraftPackId;
+    intent: string;
+    skeleton: SkeletonCode | PhantomDiff[];
+    phantomFiles: PhantomFile[];
+    phantomDiffs?: PhantomDiff[];
+    changePlan?: any;
+    impactAnalysis?: ImpactAnalysis;
+    preflightCheck: PreflightCheck;
+    stylePack?: StylePack;
+    createdAt: number;
+    status: "pending" | "approved" | "rejected" | "applied";
+}

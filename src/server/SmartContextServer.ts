@@ -932,6 +932,13 @@ export class SmartContextServer {
                         target: { type: 'string' },
                         targetFiles: { type: 'array', items: { type: 'string' } },
                         edits: { type: 'array', items: { type: 'object' } },
+                        draftOptions: {
+                            type: 'object',
+                            properties: {
+                                skeletonOnly: { type: 'boolean' },
+                                includeImpact: { type: 'boolean' }
+                            }
+                        },
                         options: {
                             type: 'object',
                             properties: {
@@ -958,6 +965,14 @@ export class SmartContextServer {
                         targetPath: { type: 'string' },
                         template: { type: 'string' },
                         content: { type: 'string' },
+                        dryRun: { type: 'boolean' },
+                        draftOptions: {
+                            type: 'object',
+                            properties: {
+                                skeletonOnly: { type: 'boolean' },
+                                includeImpact: { type: 'boolean' }
+                            }
+                        },
                         options: {
                             type: 'object',
                             properties: {

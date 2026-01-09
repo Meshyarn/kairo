@@ -72,6 +72,11 @@ export interface IntentConstraints {
   quickGenerate?: boolean;      // Phase 2.5: Enable quick code generation
   smartWrite?: boolean;         // Phase 3: Enable full code generation with pattern extraction
   styleReference?: string[];    // Phase 3: Explicit reference files for pattern extraction
+  draftId?: string;
+  draftOptions?: {
+    skeletonOnly?: boolean;
+    includeImpact?: boolean;
+  };
 }
 
 

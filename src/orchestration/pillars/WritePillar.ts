@@ -18,6 +18,8 @@ import {
 } from "../guardrails/IntegrityGuardrails.js";
 import type { DependencyGraph } from "../../ast/DependencyGraph.js";
 import type { IndexStateManager } from "../../indexing/IndexStateManager.js";
+import type { DraftPack } from "../../types/flow-artifacts.js";
+import { DraftPackBuilder } from "../../generation/draft-pack-builder.js";
 
 export class WritePillar {
   constructor(private readonly registry: InternalToolRegistry) {}
@@ -37,10 +39,11 @@ export class WritePillar {
       let content = constraints.content ?? '';
       const hasExplicitContent = constraints.content !== undefined;
       const safeWrite = Boolean((constraints as any).safeWrite);
-      
       const quickGenerate = Boolean((constraints as any).quickGenerate);
       const smartWrite = Boolean((constraints as any).smartWrite);
       const styleReference = (constraints as any).styleReference as string[] | undefined;
+      const dryRun = Boolean((constraints as any).dryRun);
+      const draftOptions = (constraints as any).draftOptions as { skeletonOnly?: boolean } | undefined;
 
       if (!targetPath) {
         return {
@@ -56,6 +59,81 @@ export class WritePillar {
       }
 
       const resolvedPath = await this.resolveTargetPath(targetPath);
+
+      if (dryRun) {
+        if (smartWrite && !hasExplicitContent) {
+          try {
+            const generated = await smartWriteCode(
+              resolvedPath,
+              originalIntent,
+              constraints,
+              context,
+              (ctx, tool, args) => this.runTool(ctx, tool, args),
+              (i, p) => this.parseGenerationIntent(i, p),
+              styleReference
+            );
+            if (generated) {
+              content = generated.code;
+            }
+          } catch (error: any) {
+            console.warn(`Smart write (dry-run) failed: ${error.message}`);
+          }
+        }
+
+        if ((quickGenerate || smartWrite) && !hasExplicitContent && content === '') {
+          try {
+            const generated = await quickGenerateCode(resolvedPath, originalIntent, (i, p) => this.parseGenerationIntent(i, p));
+            if (generated) {
+              content = generated.code;
+            }
+          } catch (error: any) {
+            console.warn(`Quick generate (dry-run) failed: ${error.message}`);
+          }
+        }
+
+        if (content === '' && template) {
+          const templated = await resolveTemplateContent(
+            template,
+            resolvedPath,
+            originalIntent,
+            context,
+            (ctx, tool, args) => this.runTool(ctx, tool, args),
+            (v) => this.toPascalCase(v),
+            (v) => this.looksLikePath(v)
+          );
+          if (typeof templated === 'string') {
+            content = templated;
+          }
+        }
+
+        let existingContent: string | null = null;
+        try {
+          existingContent = await this.runTool(context, 'code_read', { filePath: resolvedPath, view: 'full' });
+        } catch {
+          existingContent = null;
+        }
+
+        const builder = new DraftPackBuilder({
+          skeletonOnly: draftOptions?.skeletonOnly !== false,
+          includePhantomDiff: true
+        });
+        const draftPack: DraftPack = await builder.buildForWrite({
+          intent: originalIntent,
+          targetPath: resolvedPath,
+          content,
+          existingContent
+        });
+
+        return {
+          success: true,
+          status: 'draft',
+          draftPack,
+          guidance: {
+            message: 'DraftPack generated. Review skeleton and phantom diff before applying.',
+            suggestedActions: []
+          }
+        };
+      }
 
       if (smartWrite && !hasExplicitContent) {
         const stopSmartWrite = metrics.startTimer("write.smart_write_ms");
