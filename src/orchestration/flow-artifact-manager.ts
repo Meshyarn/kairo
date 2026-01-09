@@ -7,7 +7,8 @@ import type {
     ArtifactType,
     FlowArtifact,
     FlowSession,
-    FlowSessionOutcome
+    FlowSessionOutcome,
+    StylePack
 } from "../types/flow-artifacts.js";
 
 export interface FlowArtifactManagerOptions {
@@ -60,6 +61,13 @@ export class FlowArtifactManager {
     getBySession(sessionId: string): FlowArtifact[] {
         return Array.from(this.cache.values())
             .filter((artifact) => artifact.sessionId === sessionId);
+    }
+
+    getLatestStylePack(sessionId: string): StylePack | undefined {
+        const latest = this.getBySession(sessionId)
+            .filter((artifact) => artifact.type === "style")
+            .sort((a, b) => b.createdAt - a.createdAt)[0];
+        return latest && "pack" in latest ? (latest.pack as StylePack) : undefined;
     }
 
     resolveSessionId(rawSessionId: string | undefined, intent: string): string | undefined {

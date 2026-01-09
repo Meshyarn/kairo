@@ -50,6 +50,9 @@ export class WritePillar {
       const rawSessionId = typeof (constraints as any).sessionId === "string" ? (constraints as any).sessionId : undefined;
       const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
       const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, originalIntent);
+      const sessionStylePack = resolvedSessionId && artifactManager
+        ? artifactManager.getLatestStylePack(resolvedSessionId)
+        : undefined;
       const attachSession = <T extends Record<string, any>>(payload: T): T & { sessionId?: string } =>
         resolvedSessionId ? { ...payload, sessionId: resolvedSessionId } : payload;
 
@@ -143,7 +146,8 @@ export class WritePillar {
               filePath: resolvedPath,
               content,
               oldContent: existingContent ?? "",
-              constraints
+              constraints,
+              stylePack: sessionStylePack
             })
           : undefined;
         if (artifactManager) {

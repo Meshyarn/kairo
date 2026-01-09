@@ -77,6 +77,9 @@ export class ChangePillar {
       const rawSessionId = typeof constraints.sessionId === "string" ? constraints.sessionId : undefined;
       const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
       const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, originalIntent);
+      const sessionStylePack = resolvedSessionId && artifactManager
+        ? artifactManager.getLatestStylePack(resolvedSessionId)
+        : undefined;
 
       const rawEdits = Array.isArray(constraints.edits) ? constraints.edits : [];
       const targetFiles = this.resolveTargetFiles(constraints, targets);
@@ -414,13 +417,14 @@ export class ChangePillar {
       const preApplyReview = (reviewOptions?.preApply ?? dryRun) && targetPath
         ? await new ReviewReportBuilder(
             { dependencyGraph, indexStateManager },
-            { strictness: reviewOptions?.strictness }
-          ).review({
+          { strictness: reviewOptions?.strictness }
+        ).review({
             filePath: targetPath,
             content: reviewNextContent ?? reviewOriginalContent ?? "",
             oldContent: reviewOriginalContent,
             guardrailResult,
-            constraints
+            constraints,
+            stylePack: sessionStylePack
           })
         : undefined;
 
@@ -439,7 +443,8 @@ export class ChangePillar {
           filePath: targetPath,
           content: currentContent,
           oldContent: reviewOriginalContent,
-          constraints
+          constraints,
+          stylePack: sessionStylePack
         });
       }
       if (artifactManager) {

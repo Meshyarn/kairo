@@ -61,4 +61,32 @@ describe("FlowArtifactManager", () => {
             await fs.rm(tempDir, { recursive: true, force: true });
         }
     });
+
+    it("returns the latest StylePack for a session", async () => {
+        const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "kairo-artifacts-"));
+        try {
+            const manager = new FlowArtifactManager({ persistPath: tempDir });
+            const sessionId = manager.resolveSessionId("new", "Style session");
+            const firstCreated = Date.now() - 1000;
+            manager.store({
+                id: "style_old",
+                type: "style",
+                createdAt: firstCreated,
+                pack: { id: "style_old", profile: { codeStyle: { indent: "spaces", indentSize: 2, quotes: "single", semicolons: true, lineEndings: "lf" }, patterns: { imports: [], naming: [], fileOrg: { fileNamePattern: "", directoryPattern: "" } }, confidence: "low" }, scope: "**/*", createdAt: firstCreated },
+                sessionId
+            } as any);
+            manager.store({
+                id: "style_new",
+                type: "style",
+                createdAt: Date.now(),
+                pack: { id: "style_new", profile: { codeStyle: { indent: "tabs", indentSize: 1, quotes: "double", semicolons: false, lineEndings: "lf" }, patterns: { imports: [], naming: [], fileOrg: { fileNamePattern: "", directoryPattern: "" } }, confidence: "low" }, scope: "**/*", createdAt: Date.now() },
+                sessionId
+            } as any);
+
+            const latest = manager.getLatestStylePack(sessionId as string);
+            expect(latest?.id).toBe("style_new");
+        } finally {
+            await fs.rm(tempDir, { recursive: true, force: true });
+        }
+    });
 });
