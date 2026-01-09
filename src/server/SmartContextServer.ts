@@ -844,6 +844,14 @@ export class SmartContextServer {
                                 dependencies: { type: 'boolean' }
                             }
                         },
+                        vibe: {
+                            type: 'object',
+                            properties: {
+                                extract: { type: 'boolean' },
+                                scope: { type: 'string' },
+                                includeNorms: { type: 'boolean' }
+                            }
+                        },
                         limits: {
                             type: 'object',
                             properties: {

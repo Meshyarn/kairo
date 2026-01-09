@@ -37,6 +37,11 @@ export interface IntentConstraints {
     pageRank?: boolean;
     dependencies?: boolean;
   };
+  vibe?: {
+    extract?: boolean;
+    scope?: string;
+    includeNorms?: boolean;
+  };
   query?: string;
   paths?: string[];
   intent?: string;

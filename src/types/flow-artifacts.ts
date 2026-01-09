@@ -47,3 +47,74 @@ export interface ResearchPack {
     createdAt: number;
     expiresAt?: number;
 }
+
+export type StylePackId = string;
+
+export interface CodeStyle {
+    indent: "spaces" | "tabs";
+    indentSize: number;
+    quotes: "single" | "double";
+    semicolons: boolean;
+    lineEndings: "lf" | "crlf";
+    trailingComma?: boolean;
+    maxLineLength?: number;
+    braceStyle?: "1tbs" | "allman" | "stroustrup";
+}
+
+export interface PatternSet {
+    imports: Array<{
+        module: string;
+        style: "named" | "default" | "namespace" | "side-effect";
+        count: number;
+        example?: string;
+    }>;
+    naming: Array<{
+        type: "class" | "function" | "variable" | "constant" | "file" | "directory";
+        convention: "camelCase" | "PascalCase" | "snake_case" | "SCREAMING_SNAKE" | "kebab-case";
+        confidence: number;
+        examples?: string[];
+    }>;
+    fileOrg: {
+        fileNamePattern: string;
+        directoryPattern: string;
+        testPattern?: string;
+        indexPattern?: "barrel" | "none" | "mixed";
+    };
+    exports?: Array<{
+        style: "default" | "named" | "namespace";
+        exportedNames: string[];
+        count: number;
+    }>;
+    affixes?: {
+        prefixes: string[];
+        suffixes: string[];
+    };
+    errorHandling?: {
+        style: "try-catch" | "result-type" | "callback" | "mixed";
+        customErrorClass?: boolean;
+    };
+}
+
+export interface NormClaim {
+    claim: string;
+    source: string;
+    sourceType: "adr" | "readme" | "contributing" | "comment" | "config";
+    confidence: number;
+    keywords?: string[];
+}
+
+export interface VibeProfile {
+    codeStyle: CodeStyle;
+    patterns: PatternSet;
+    norms?: NormClaim[];
+    confidence: "low" | "medium" | "high";
+}
+
+export interface StylePack {
+    id: StylePackId;
+    profile: VibeProfile;
+    scope: string;
+    createdAt: number;
+    expiresAt?: number;
+    localOverrides?: Array<{ glob: string; profile: Partial<VibeProfile>; reason?: string }>;
+}
