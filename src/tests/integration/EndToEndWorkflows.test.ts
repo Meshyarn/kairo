@@ -72,4 +72,23 @@ describe('End-to-end workflows', () => {
         const updated = fs.readFileSync(path.join(testRoot, relPath), 'utf-8');
         expect(updated).toContain('"hi"');
     });
+
+    it('세션 아티팩트 없이도 change가 경고를 제공하며 계획을 반환한다', async () => {
+        const relPath = path.join('src', 'greeting.ts');
+
+        const change = await runJsonTool(server, 'change', {
+            intent: 'Update greeting',
+            targetFiles: [relPath],
+            edits: [{ targetString: '"hello"', replacementString: '"hey"' }],
+            options: { dryRun: true, includeImpact: false },
+            sessionId: 'new'
+        });
+
+        expect(change.success).toBe(true);
+        expect(change.workflowWarnings).toEqual(expect.arrayContaining([
+            'No StylePack found in session. Consider running understand({ vibe: { extract: true } }).',
+            'No AnalysisPack found in session. Consider running understand({ analysis: { clusters: true } }).',
+            'No ResearchPack found in session. Consider running explore({ research: { sketch: true } }).'
+        ]));
+    });
 });
