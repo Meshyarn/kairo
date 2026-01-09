@@ -75,6 +75,9 @@ export class ChangePillar {
       const ucg = context.getState<UnifiedContextGraph>('ucg');
       const reviewOptions = constraints.reviewOptions ?? {};
       const rawSessionId = typeof constraints.sessionId === "string" ? constraints.sessionId : undefined;
+      const draftId = typeof (constraints as any).draftId === "string" ? (constraints as any).draftId : undefined;
+      const refinement = typeof (constraints as any).refinement === "string" ? (constraints as any).refinement : undefined;
+      const refinedIntent = refinement ? `${originalIntent}\nRefinement: ${refinement}` : originalIntent;
       const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
       const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, originalIntent);
       const sessionStylePack = resolvedSessionId && artifactManager
@@ -151,7 +154,7 @@ export class ChangePillar {
       }
 
       const budget = ChangeBudgetManager.create({
-        intentText: originalIntent,
+        intentText: refinedIntent,
         targetSample: edits[0]?.targetString,
         includeImpact,
         dryRun,
@@ -246,6 +249,58 @@ export class ChangePillar {
             guidance: {
               message: guardrailResult.violations?.[0]?.message ?? "Resolve guardrail violations before retrying."
             }
+          };
+        }
+      }
+
+      const blockOn = Array.isArray(reviewOptions?.blockOn) ? reviewOptions.blockOn : [];
+      const shouldBlockOn = !dryRun && blockOn.length > 0 && Boolean(targetPath);
+      let preApplyReview: any = undefined;
+      let preApplyReviewComputed = false;
+      if (shouldBlockOn && targetPath) {
+        preApplyReview = await new ReviewReportBuilder(
+          { dependencyGraph, indexStateManager },
+          { strictness: reviewOptions?.strictness }
+        ).review({
+          filePath: targetPath,
+          content: reviewNextContent ?? reviewOriginalContent ?? "",
+          oldContent: reviewOriginalContent,
+          guardrailResult,
+          constraints,
+          stylePack: sessionStylePack
+        });
+        preApplyReviewComputed = true;
+
+        const blockReasons = collectBlockReasons(preApplyReview, blockOn);
+        if (blockReasons.length > 0) {
+          if (artifactManager) {
+            artifactManager.store({
+              id: preApplyReview.id,
+              type: "review",
+              createdAt: preApplyReview.reviewedAt,
+              report: preApplyReview,
+              sessionId: resolvedSessionId,
+              metadata: { intent: originalIntent }
+            });
+          }
+          const message = `Review blocked by ${blockReasons.map((item) => `${item.kind}(${item.verdict})`).join(", ")}.`;
+          return {
+            success: false,
+            status: "blocked",
+            message,
+            operation: "apply",
+            targetFile: targetPath,
+            review: preApplyReview,
+            reviewBlockReasons: blockReasons,
+            blockedReason: "review_blocked",
+            guidance: {
+              message,
+              reviewBlockReasons: blockReasons,
+              suggestedActions: [
+                { pillar: "change", action: "review", target: targetPath }
+              ]
+            },
+            sessionId: resolvedSessionId
           };
         }
       }
@@ -407,26 +462,26 @@ export class ChangePillar {
           includePhantomDiff: true
         });
         draftPack = await builder.buildForChange({
-          intent: originalIntent,
+          intent: refinedIntent,
           targetPath,
           oldContent: originalContent,
           newContent: nextContent
         });
       }
 
-      const preApplyReview = (reviewOptions?.preApply ?? dryRun) && targetPath
-        ? await new ReviewReportBuilder(
-            { dependencyGraph, indexStateManager },
+      if (!preApplyReviewComputed && (reviewOptions?.preApply ?? dryRun) && targetPath) {
+        preApplyReview = await new ReviewReportBuilder(
+          { dependencyGraph, indexStateManager },
           { strictness: reviewOptions?.strictness }
         ).review({
-            filePath: targetPath,
-            content: reviewNextContent ?? reviewOriginalContent ?? "",
-            oldContent: reviewOriginalContent,
-            guardrailResult,
-            constraints,
-            stylePack: sessionStylePack
-          })
-        : undefined;
+          filePath: targetPath,
+          content: reviewNextContent ?? reviewOriginalContent ?? "",
+          oldContent: reviewOriginalContent,
+          guardrailResult,
+          constraints,
+          stylePack: sessionStylePack
+        });
+      }
 
       let postReview: any = undefined;
       if (!dryRun && reviewOptions?.postApply && targetPath && finalResult.success) {
@@ -455,6 +510,7 @@ export class ChangePillar {
             createdAt: draftPack.createdAt,
             pack: draftPack,
             sessionId: resolvedSessionId,
+            parentId: draftId,
             metadata: { intent: originalIntent }
           });
         }
@@ -610,4 +666,43 @@ export class ChangePillar {
       ]
     };
   }
+}
+
+function collectBlockReasons(
+  report: {
+    syntax?: { verdict?: string };
+    semantic?: { verdict?: string };
+    guardrails?: { verdict?: string };
+    vibeAlignment?: { verdict?: string };
+  },
+  blockOn: string[]
+): Array<{ kind: string; verdict: string }> {
+  const reasons: Array<{ kind: string; verdict: string }> = [];
+  for (const kind of blockOn) {
+    switch (kind) {
+      case "syntax": {
+        const verdict = report.syntax?.verdict;
+        if (verdict && verdict !== "pass") reasons.push({ kind, verdict });
+        break;
+      }
+      case "semantic": {
+        const verdict = report.semantic?.verdict;
+        if (verdict && verdict !== "pass") reasons.push({ kind, verdict });
+        break;
+      }
+      case "guardrails": {
+        const verdict = report.guardrails?.verdict;
+        if (verdict && verdict !== "pass") reasons.push({ kind, verdict });
+        break;
+      }
+      case "vibe": {
+        const verdict = report.vibeAlignment?.verdict;
+        if (verdict && verdict !== "pass") reasons.push({ kind, verdict });
+        break;
+      }
+      default:
+        break;
+    }
+  }
+  return reasons;
 }

@@ -955,6 +955,8 @@ export class SmartContextServer {
                                 includeImpact: { type: 'boolean' }
                             }
                         },
+                        draftId: { type: 'string' },
+                        refinement: { type: 'string' },
                         reviewOptions: {
                             type: 'object',
                             properties: {
@@ -999,6 +1001,8 @@ export class SmartContextServer {
                                 includeImpact: { type: 'boolean' }
                             }
                         },
+                        draftId: { type: 'string' },
+                        refinement: { type: 'string' },
                         reviewOptions: {
                             type: 'object',
                             properties: {

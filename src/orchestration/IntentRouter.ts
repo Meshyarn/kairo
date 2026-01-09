@@ -79,6 +79,7 @@ export interface IntentConstraints {
   smartWrite?: boolean;         // Phase 3: Enable full code generation with pattern extraction
   styleReference?: string[];    // Phase 3: Explicit reference files for pattern extraction
   draftId?: string;
+  refinement?: string;
   draftOptions?: {
     skeletonOnly?: boolean;
     includeImpact?: boolean;

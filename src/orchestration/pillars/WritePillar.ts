@@ -48,11 +48,16 @@ export class WritePillar {
       const draftOptions = (constraints as any).draftOptions as { skeletonOnly?: boolean } | undefined;
       const reviewOptions = (constraints as any).reviewOptions ?? {};
       const rawSessionId = typeof (constraints as any).sessionId === "string" ? (constraints as any).sessionId : undefined;
+      const draftId = typeof (constraints as any).draftId === "string" ? (constraints as any).draftId : undefined;
+      const refinement = typeof (constraints as any).refinement === "string" ? (constraints as any).refinement : undefined;
       const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
       const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, originalIntent);
       const sessionStylePack = resolvedSessionId && artifactManager
         ? artifactManager.getLatestStylePack(resolvedSessionId)
         : undefined;
+      const draftArtifact = draftId ? artifactManager?.get(draftId) : undefined;
+      const draftPack = draftArtifact?.type === "draft" ? (draftArtifact as any).pack : undefined;
+      const draftContent = draftPack?.phantomFiles?.[0]?.content as string | undefined;
       const attachSession = <T extends Record<string, any>>(payload: T): T & { sessionId?: string } =>
         resolvedSessionId ? { ...payload, sessionId: resolvedSessionId } : payload;
 
@@ -72,11 +77,15 @@ export class WritePillar {
       const resolvedPath = await this.resolveTargetPath(targetPath);
 
       if (dryRun) {
+        const refinedIntent = refinement ? `${originalIntent}\nRefinement: ${refinement}` : originalIntent;
+        if (!hasExplicitContent && draftContent) {
+          content = draftContent;
+        }
         if (smartWrite && !hasExplicitContent) {
           try {
             const generated = await smartWriteCode(
               resolvedPath,
-              originalIntent,
+              refinedIntent,
               constraints,
               context,
               (ctx, tool, args) => this.runTool(ctx, tool, args),
@@ -93,7 +102,7 @@ export class WritePillar {
 
         if ((quickGenerate || smartWrite) && !hasExplicitContent && content === '') {
           try {
-            const generated = await quickGenerateCode(resolvedPath, originalIntent, (i, p) => this.parseGenerationIntent(i, p));
+            const generated = await quickGenerateCode(resolvedPath, refinedIntent, (i, p) => this.parseGenerationIntent(i, p));
             if (generated) {
               content = generated.code;
             }
@@ -106,7 +115,7 @@ export class WritePillar {
           const templated = await resolveTemplateContent(
             template,
             resolvedPath,
-            originalIntent,
+            refinedIntent,
             context,
             (ctx, tool, args) => this.runTool(ctx, tool, args),
             (v) => this.toPascalCase(v),
@@ -129,7 +138,7 @@ export class WritePillar {
           includePhantomDiff: true
         });
         const draftPack: DraftPack = await builder.buildForWrite({
-          intent: originalIntent,
+          intent: refinedIntent,
           targetPath: resolvedPath,
           content,
           existingContent
@@ -157,6 +166,7 @@ export class WritePillar {
             createdAt: draftPack.createdAt,
             pack: draftPack,
             sessionId: resolvedSessionId,
+            parentId: draftId,
             metadata: { intent: originalIntent }
           });
           if (preApplyReview) {
@@ -271,6 +281,33 @@ export class WritePillar {
               }
             });
           }
+          const reviewBlock = await this.checkReviewBlock({
+            filePath: resolvedPath,
+            content,
+            oldContent: existingContent,
+            guardrailResult,
+            constraints,
+            reviewOptions,
+            stylePack: sessionStylePack
+          });
+          if (reviewBlock.blocked) {
+            stopSafePatch();
+            return attachSession({
+              success: false,
+              status: 'blocked',
+              createdFiles: [],
+              transactionId: '',
+              rollbackAvailable: false,
+              writeMode: 'safe',
+              blockedReason: 'review_blocked',
+              review: reviewBlock.review,
+              reviewBlockReasons: reviewBlock.reasons,
+              guidance: {
+                message: reviewBlock.message ?? 'Write blocked by review policy.',
+                reviewBlockReasons: reviewBlock.reasons
+              }
+            });
+          }
 
           const edit = {
             targetString: existingContent,
@@ -353,6 +390,32 @@ export class WritePillar {
             warnings: guardrailResult.warnings,
             guidance: {
               message: guardrailResult.violations?.[0]?.message ?? 'Write blocked by integrity guardrails.'
+            }
+          });
+        }
+        const reviewBlock = await this.checkReviewBlock({
+          filePath: resolvedPath,
+          content,
+          oldContent: existingContent,
+          guardrailResult,
+          constraints,
+          reviewOptions,
+          stylePack: sessionStylePack
+        });
+        if (reviewBlock.blocked) {
+          return attachSession({
+            success: false,
+            status: 'blocked',
+            createdFiles: [],
+            transactionId: '',
+            rollbackAvailable: false,
+            writeMode: 'fast',
+            blockedReason: 'review_blocked',
+            review: reviewBlock.review,
+            reviewBlockReasons: reviewBlock.reasons,
+            guidance: {
+              message: reviewBlock.message ?? 'Write blocked by review policy.',
+              reviewBlockReasons: reviewBlock.reasons
             }
           });
         }
@@ -460,6 +523,32 @@ export class WritePillar {
           }
         });
       }
+      const reviewBlock = await this.checkReviewBlock({
+        filePath: resolvedPath,
+        content,
+        oldContent: existingContent ?? '',
+        guardrailResult,
+        constraints,
+        reviewOptions,
+        stylePack: sessionStylePack
+      });
+      if (reviewBlock.blocked) {
+        return attachSession({
+          success: false,
+          status: 'blocked',
+          createdFiles: [],
+          transactionId: '',
+          rollbackAvailable: false,
+          writeMode: 'safe',
+          blockedReason: 'review_blocked',
+          review: reviewBlock.review,
+          reviewBlockReasons: reviewBlock.reasons,
+          guidance: {
+            message: reviewBlock.message ?? 'Write blocked by review policy.',
+            reviewBlockReasons: reviewBlock.reasons
+          }
+        });
+      }
 
       const editResult = await this.runTool(context, 'edit_transaction', {
         filePath: resolvedPath,
@@ -532,6 +621,47 @@ export class WritePillar {
       runTool: (tool, args) => this.runTool(context, tool, args),
       applyMode: true
     });
+  }
+
+  private async checkReviewBlock(params: {
+    filePath: string;
+    content: string;
+    oldContent: string;
+    guardrailResult?: any;
+    constraints?: any;
+    reviewOptions: any;
+    stylePack?: any;
+  }): Promise<{ blocked: boolean; review?: any; message?: string; reasons?: Array<{ kind: string; verdict: string }> }> {
+    const blockOn = Array.isArray(params.reviewOptions?.blockOn) ? params.reviewOptions.blockOn : [];
+    if (blockOn.length === 0) {
+      return { blocked: false };
+    }
+
+    const review = await new ReviewReportBuilder(
+      {
+        dependencyGraph: this.registry.getMetadata<DependencyGraph>("dependencyGraph"),
+        indexStateManager: this.registry.getMetadata<IndexStateManager>("indexStateManager")
+      },
+      { strictness: params.reviewOptions?.strictness }
+    ).review({
+      filePath: params.filePath,
+      content: params.content,
+      oldContent: params.oldContent,
+      guardrailResult: params.guardrailResult,
+      constraints: params.constraints,
+      stylePack: params.stylePack
+    });
+
+    const reasons = collectBlockReasons(review, blockOn);
+    if (reasons.length === 0) {
+      return { blocked: false, review, reasons };
+    }
+    return {
+      blocked: true,
+      review,
+      reasons,
+      message: `Review blocked by ${reasons.map((item) => `${item.kind}(${item.verdict})`).join(", ")}.`
+    };
   }
 
   private async runTool(context: OrchestrationContext, tool: string, args: any) {
@@ -687,6 +817,36 @@ export class WritePillar {
           }
         };
       }
+      const reviewBlock = await this.checkReviewBlock({
+        filePath,
+        content: finalContent,
+        oldContent: existingContent,
+        guardrailResult,
+        constraints,
+        reviewOptions: constraints?.reviewOptions ?? {},
+        stylePack: sessionId
+          ? this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager")?.getLatestStylePack(sessionId)
+          : undefined
+      });
+      if (reviewBlock.blocked) {
+        return {
+          success: false,
+          status: 'blocked',
+          createdFiles: [],
+          transactionId: '',
+          rollbackAvailable: false,
+          writeMode: 'quickGenerate',
+          templateType,
+          blockedReason: 'review_blocked',
+          review: reviewBlock.review,
+          reviewBlockReasons: reviewBlock.reasons,
+          sessionId,
+          guidance: {
+            message: reviewBlock.message ?? 'Write blocked by review policy.',
+            reviewBlockReasons: reviewBlock.reasons
+          }
+        };
+      }
       const edit = { targetString: existingContent, replacementString: finalContent, indexRange: { start: 0, end: existingContent.length }, expectedHash: existingContent ? this.computeHash(existingContent) : undefined };
       const result = await this.runTool(context, 'edit_transaction', { filePath, edits: [edit], dryRun: false });
       return {
@@ -715,4 +875,43 @@ export class WritePillar {
       return { success: false, status: 'failure', createdFiles: [], transactionId: '', rollbackAvailable: false, writeMode: 'quickGenerate', sessionId, guidance: { message: `Quick generate failed: ${error.message}`, suggestedActions: [] } };
     }
   }
+}
+
+function collectBlockReasons(
+  report: {
+    syntax?: { verdict?: string };
+    semantic?: { verdict?: string };
+    guardrails?: { verdict?: string };
+    vibeAlignment?: { verdict?: string };
+  },
+  blockOn: string[]
+): Array<{ kind: string; verdict: string }> {
+  const reasons: Array<{ kind: string; verdict: string }> = [];
+  for (const kind of blockOn) {
+    switch (kind) {
+      case "syntax": {
+        const verdict = report.syntax?.verdict;
+        if (verdict && verdict !== "pass") reasons.push({ kind, verdict });
+        break;
+      }
+      case "semantic": {
+        const verdict = report.semantic?.verdict;
+        if (verdict && verdict !== "pass") reasons.push({ kind, verdict });
+        break;
+      }
+      case "guardrails": {
+        const verdict = report.guardrails?.verdict;
+        if (verdict && verdict !== "pass") reasons.push({ kind, verdict });
+        break;
+      }
+      case "vibe": {
+        const verdict = report.vibeAlignment?.verdict;
+        if (verdict && verdict !== "pass") reasons.push({ kind, verdict });
+        break;
+      }
+      default:
+        break;
+    }
+  }
+  return reasons;
 }

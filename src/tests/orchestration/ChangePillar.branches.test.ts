@@ -2,6 +2,7 @@ import { describe, it, expect, jest, beforeEach } from "@jest/globals";
 import { ChangePillar } from "../../orchestration/pillars/change/ChangePillar.js";
 import { InternalToolRegistry } from "../../orchestration/InternalToolRegistry.js";
 import { OrchestrationContext } from "../../orchestration/OrchestrationContext.js";
+import { FlowArtifactManager } from "../../orchestration/flow-artifact-manager.js";
 
 describe("ChangePillar Branches", () => {
   let pillar: ChangePillar;
@@ -67,5 +68,39 @@ describe("ChangePillar Branches", () => {
     const result = await pillar.execute(intent as any, context);
     expect(result.success).toBe(false);
     expect(result.message).toBe("hard failure");
+  });
+
+  it("chains draftId and refinement in dryRun drafts", async () => {
+    const manager = new FlowArtifactManager();
+    registry.setMetadata("flowArtifactManager", manager);
+    jest.spyOn(registry, "execute").mockImplementation(async (tool) => {
+      if (tool === "edit_transaction") {
+        return {
+          success: true,
+          diff: "diff",
+          impactPreview: { riskLevel: "low", summary: { impactedFiles: [] } }
+        } as any;
+      }
+      if (tool === "relationship_analyze") return { nodes: [], edges: [] } as any;
+      if (tool === "hotspot_detect") return [] as any;
+      return { success: true } as any;
+    });
+
+    const intent = {
+      targets: ["src/demo.ts"],
+      constraints: {
+        dryRun: true,
+        edits: [{ targetString: "a", replacementString: "b" }],
+        draftId: "draft_seed",
+        refinement: "add error handling"
+      },
+      originalIntent: "update demo"
+    };
+
+    const result = await pillar.execute(intent as any, context);
+    expect(result.success).toBe(true);
+    expect(result.draftPack.intent).toContain("Refinement: add error handling");
+    const drafts = manager.getByType("draft");
+    expect(drafts[0]?.parentId).toBe("draft_seed");
   });
 });
