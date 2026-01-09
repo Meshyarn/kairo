@@ -134,6 +134,41 @@ Some MCP hosts support allow/deny lists for tool names and shell commands. If yo
 - `understand({ goal: "Explain the project architecture" })`
 - `change({ intent: "…", options: { dryRun: true } })`
 
+## Writer's Flow (sessions) quickstart
+
+For the best review quality and iteration speed, use a session and build the core artifacts once:
+
+1) `explore` (optional) with `research.sketch=true`
+2) `understand` with `vibe.extract=true` and `analysis.clusters=true`
+3) `write` / `change` in `dryRun` first, then apply
+
+Example:
+
+```ts
+const exploreRes = await explore({ query: "auth flow", research: { sketch: true }, sessionId: "new" });
+const sessionId = exploreRes.sessionId;
+
+await understand({
+  goal: "src/auth",
+  sessionId,
+  vibe: { extract: true, scope: "src/**/*.ts" },
+  analysis: { clusters: true }
+});
+
+const plan = await change({
+  intent: "Update greeting",
+  targetFiles: ["src/greeting.ts"],
+  edits: [{ targetString: "\"hello\"", replacementString: "\"hi\"" }],
+  options: { dryRun: true },
+  sessionId
+});
+
+// Inspect: plan.workflowMeta + plan.workflowWarnings (if present)
+await change({ ...plan, options: { dryRun: false }, sessionId });
+```
+
+When sessions are used, `write`/`change` include `workflowMeta` and (if needed) `workflowWarnings` to make missing steps obvious.
+
 See `README.md` for the public overview.
 
 ## Next

@@ -155,6 +155,13 @@ When `KAIRO_VECTOR_INDEX_REBUILD=manual`, use the CLI `kairo-build-vector-index`
 | `KAIRO_WRITERS_FLOW_DEFAULT_DRYRUN` | Default dry-run for writer flow when sessionId is present. | `on|off|beta|canary` |
 | `KAIRO_WRITERS_FLOW_REVIEW_DEFAULTS` | Enable session-based reviewOptions defaults. | `on|off|beta|canary` |
 
+## StylePack cache (ADR-051)
+
+| Variable | Purpose | Notes |
+|---|---|---|
+| `KAIRO_STYLE_PACK_TTL_MS` | Cache TTL for StylePack reuse across sessions. | Default: `1800000` (30 min). |
+| `KAIRO_STYLE_PACK_CACHE_SIZE` | Max cached StylePacks. | Default: `50`. |
+
 ## Full list (source of truth)
 
 Search the codebase: `rg "process\\.env\\.KAIRO_" src`.
