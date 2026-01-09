@@ -9,6 +9,7 @@
 - Syncs architecture intent + constraints with edits (guardrails before apply)
 - Builds project-aware context from code + docs (fast search + structured reads)
 - Learns and applies repo coding style/patterns for consistent output
+- Captures Writer’s Flow artifacts (research/style/draft/review) with session chaining
 - Emphasizes safe changes (dry-run, validation, backups/transactions where applicable)
 
 ## Quickstart (from source)
