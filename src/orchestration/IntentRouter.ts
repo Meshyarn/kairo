@@ -77,6 +77,12 @@ export interface IntentConstraints {
     skeletonOnly?: boolean;
     includeImpact?: boolean;
   };
+  reviewOptions?: {
+    preApply?: boolean;
+    postApply?: boolean;
+    strictness?: "strict" | "balanced" | "permissive";
+    blockOn?: Array<"syntax" | "semantic" | "guardrails" | "vibe">;
+  };
 }
 
 

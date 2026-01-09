@@ -40,6 +40,7 @@ import {
     resolveGuardrailTargetPath
 } from "../../guardrails/IntegrityGuardrails.js";
 import { DraftPackBuilder } from "../../../generation/draft-pack-builder.js";
+import { ReviewReportBuilder } from "../../../generation/review-report-builder.js";
 import {
     executeBatchChange,
     executeV2BatchChange
@@ -71,6 +72,7 @@ export class ChangePillar {
       const { dryRun = true, includeImpact = false, includeSymbolImpact = false } = constraints;
       const integrityOptions = IntegrityEngine.resolveOptions(constraints.integrity, "change");
       const ucg = context.getState<UnifiedContextGraph>('ucg');
+      const reviewOptions = constraints.reviewOptions ?? {};
 
       const rawEdits = Array.isArray(constraints.edits) ? constraints.edits : [];
       const targetFiles = this.resolveTargetFiles(constraints, targets);
@@ -189,6 +191,8 @@ export class ChangePillar {
       const dependencyGraph = this.registry.getMetadata<DependencyGraph>("dependencyGraph");
       const indexStateManager = this.registry.getMetadata<IndexStateManager>("indexStateManager");
       let guardrailResult: any = undefined;
+      let reviewOriginalContent = "";
+      let reviewNextContent = "";
       if (targetPath) {
         const guardrailTargetPath = resolveGuardrailTargetPath(targetPath);
         let originalContent = "";
@@ -203,6 +207,8 @@ export class ChangePillar {
         } catch {
           nextContent = originalContent;
         }
+        reviewOriginalContent = originalContent;
+        reviewNextContent = nextContent;
         guardrailResult = await evaluateIntegrityGuardrails({
           targetPath: guardrailTargetPath,
           oldContent: normalizeGuardrailContent(originalContent),
@@ -387,18 +393,8 @@ export class ChangePillar {
 
       let draftPack: any = undefined;
       if (dryRun && targetPath) {
-        let originalContent = "";
-        try {
-          originalContent = await this.fileSystem.readFile(targetPath);
-        } catch {
-          originalContent = "";
-        }
-        let nextContent = originalContent;
-        try {
-          nextContent = applyEditsToContent(originalContent, edits).newContent;
-        } catch {
-          nextContent = originalContent;
-        }
+        const originalContent = reviewOriginalContent ?? "";
+        const nextContent = reviewNextContent ?? originalContent;
         const builder = new DraftPackBuilder({
           skeletonOnly: constraints?.draftOptions?.skeletonOnly !== false,
           includePhantomDiff: true
@@ -408,6 +404,38 @@ export class ChangePillar {
           targetPath,
           oldContent: originalContent,
           newContent: nextContent
+        });
+      }
+
+      const preApplyReview = (reviewOptions?.preApply ?? dryRun) && targetPath
+        ? await new ReviewReportBuilder(
+            { dependencyGraph, indexStateManager },
+            { strictness: reviewOptions?.strictness }
+          ).review({
+            filePath: targetPath,
+            content: reviewNextContent ?? reviewOriginalContent ?? "",
+            oldContent: reviewOriginalContent,
+            guardrailResult,
+            constraints
+          })
+        : undefined;
+
+      let postReview: any = undefined;
+      if (!dryRun && reviewOptions?.postApply && targetPath && finalResult.success) {
+        let currentContent = "";
+        try {
+          currentContent = await this.fileSystem.readFile(targetPath);
+        } catch {
+          currentContent = reviewNextContent ?? "";
+        }
+        postReview = await new ReviewReportBuilder(
+          { dependencyGraph, indexStateManager },
+          { strictness: reviewOptions?.strictness }
+        ).review({
+          filePath: targetPath,
+          content: currentContent,
+          oldContent: reviewOriginalContent,
+          constraints
         });
       }
 
@@ -443,6 +471,8 @@ export class ChangePillar {
         diff: truncatedDiff,
         plan,
         draftPack,
+        review: preApplyReview,
+        postReview,
         impactReport,
         architecturalRisk,
         architecturalWarnings: architecturalWarnings.length > 0 ? architecturalWarnings : undefined,

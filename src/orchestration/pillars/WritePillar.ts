@@ -20,6 +20,7 @@ import type { DependencyGraph } from "../../ast/DependencyGraph.js";
 import type { IndexStateManager } from "../../indexing/IndexStateManager.js";
 import type { DraftPack } from "../../types/flow-artifacts.js";
 import { DraftPackBuilder } from "../../generation/draft-pack-builder.js";
+import { ReviewReportBuilder } from "../../generation/review-report-builder.js";
 
 export class WritePillar {
   constructor(private readonly registry: InternalToolRegistry) {}
@@ -44,6 +45,7 @@ export class WritePillar {
       const styleReference = (constraints as any).styleReference as string[] | undefined;
       const dryRun = Boolean((constraints as any).dryRun);
       const draftOptions = (constraints as any).draftOptions as { skeletonOnly?: boolean } | undefined;
+      const reviewOptions = (constraints as any).reviewOptions ?? {};
 
       if (!targetPath) {
         return {
@@ -124,10 +126,26 @@ export class WritePillar {
           existingContent
         });
 
+        const preApplyReview = (reviewOptions?.preApply ?? true)
+          ? await new ReviewReportBuilder(
+              {
+                dependencyGraph: this.registry.getMetadata<DependencyGraph>("dependencyGraph"),
+                indexStateManager: this.registry.getMetadata<IndexStateManager>("indexStateManager")
+              },
+              { strictness: reviewOptions?.strictness }
+            ).review({
+              filePath: resolvedPath,
+              content,
+              oldContent: existingContent ?? "",
+              constraints
+            })
+          : undefined;
+
         return {
           success: true,
           status: 'draft',
           draftPack,
+          review: preApplyReview,
           guidance: {
             message: 'DraftPack generated. Review skeleton and phantom diff before applying.',
             suggestedActions: []

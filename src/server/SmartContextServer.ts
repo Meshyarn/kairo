@@ -939,6 +939,15 @@ export class SmartContextServer {
                                 includeImpact: { type: 'boolean' }
                             }
                         },
+                        reviewOptions: {
+                            type: 'object',
+                            properties: {
+                                preApply: { type: 'boolean' },
+                                postApply: { type: 'boolean' },
+                                strictness: { type: 'string', enum: ['strict', 'balanced', 'permissive'] },
+                                blockOn: { type: 'array', items: { type: 'string', enum: ['syntax', 'semantic', 'guardrails', 'vibe'] } }
+                            }
+                        },
                         options: {
                             type: 'object',
                             properties: {
@@ -971,6 +980,15 @@ export class SmartContextServer {
                             properties: {
                                 skeletonOnly: { type: 'boolean' },
                                 includeImpact: { type: 'boolean' }
+                            }
+                        },
+                        reviewOptions: {
+                            type: 'object',
+                            properties: {
+                                preApply: { type: 'boolean' },
+                                postApply: { type: 'boolean' },
+                                strictness: { type: 'string', enum: ['strict', 'balanced', 'permissive'] },
+                                blockOn: { type: 'array', items: { type: 'string', enum: ['syntax', 'semantic', 'guardrails', 'vibe'] } }
                             }
                         },
                         options: {
