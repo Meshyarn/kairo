@@ -1,0 +1,20 @@
+# vscode settings
+.vscode
+
+# kairo artifact files
+.kairo
+
+# Node artifact files
+node_modules
+
+# test output
+coverage
+
+# build output
+dist
+
+# bundled models (local only)
+models
+
+# benchmark files
+benchmarks

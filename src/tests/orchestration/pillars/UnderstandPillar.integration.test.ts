@@ -1,0 +1,38 @@
+import { describe, it, expect } from '@jest/globals';
+import { InternalToolRegistry } from '../../../orchestration/InternalToolRegistry.js';
+import { OrchestrationContext } from '../../../orchestration/OrchestrationContext.js';
+import { UnderstandPillar } from '../../../orchestration/pillars/UnderstandPillar.js';
+import type { ParsedIntent } from '../../../orchestration/IntentRouter.js';
+
+const buildIntent = (): ParsedIntent => ({
+    category: 'understand',
+    action: 'analyze',
+    targets: ['src/demo.ts'],
+    originalIntent: 'Understand demo',
+    constraints: {
+        goal: 'demo',
+        include: {}
+    },
+    confidence: 1
+});
+
+describe('UnderstandPillar integration', () => {
+    it('returns a structured response for a basic code target', async () => {
+        const registry = new InternalToolRegistry();
+        registry.register('project_search', async () => ({
+            results: [{ path: 'src/demo.ts' }]
+        }) as any);
+        registry.register('code_read', async () => 'SKELETON' as any);
+        registry.register('file_profile', async () => ({
+            metadata: { lineCount: 2 },
+            structure: { symbols: [] }
+        }) as any);
+
+        const pillar = new UnderstandPillar(registry);
+        const result = await pillar.execute(buildIntent(), new OrchestrationContext());
+
+        expect(result.success).toBe(true);
+        expect(result.primaryFile).toBe('src/demo.ts');
+        expect(result.skeleton).toBe('SKELETON');
+    });
+});
