@@ -857,6 +857,14 @@ export class SmartContextServer {
                                 includeNorms: { type: 'boolean' }
                             }
                         },
+                        analysis: {
+                            type: 'object',
+                            properties: {
+                                clusters: { type: 'boolean' },
+                                maxClusters: { type: 'number' },
+                                maxFilesPerCluster: { type: 'number' }
+                            }
+                        },
                         limits: {
                             type: 'object',
                             properties: {

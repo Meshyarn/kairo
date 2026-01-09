@@ -42,6 +42,11 @@ export interface IntentConstraints {
     scope?: string;
     includeNorms?: boolean;
   };
+  analysis?: {
+    clusters?: boolean;
+    maxClusters?: number;
+    maxFilesPerCluster?: number;
+  };
   query?: string;
   paths?: string[];
   intent?: string;

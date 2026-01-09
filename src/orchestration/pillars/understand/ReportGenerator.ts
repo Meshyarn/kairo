@@ -19,6 +19,7 @@ export function buildUnderstandResponse(args: {
   allowGraphs: boolean;
   indexSnapshot?: any;
   stylePack?: any;
+  analysisPack?: any;
 }): any {
   const {
     subject,
@@ -40,7 +41,8 @@ export function buildUnderstandResponse(args: {
     budget,
     allowGraphs,
     indexSnapshot,
-    stylePack
+    stylePack,
+    analysisPack
   } = args;
 
   const status = includeCalls && !symbolName
@@ -95,6 +97,7 @@ export function buildUnderstandResponse(args: {
     },
     integrity: integrityReport,
     stylePack,
+    analysisPack,
     indexSnapshot,
     guidance: {
       message: guidanceMessage,

@@ -8,8 +8,9 @@ import { analyzeQuery, isStrongQuery } from '../../engine/search/QueryMetrics.js
 import { IntegrityEngine } from '../../integrity/IntegrityEngine.js';
 import { UnifiedContextGraph } from '../context/UnifiedContextGraph.js';
 import type { IndexStateManager } from '../../indexing/IndexStateManager.js';
-import type { StylePack } from '../../types/flow-artifacts.js';
+import type { AnalysisPack, StylePack } from '../../types/flow-artifacts.js';
 import { VibeProfileBuilder } from '../../generation/vibe-profile-builder.js';
+import { AnalysisPackBuilder } from '../../generation/analysis-pack-builder.js';
 import type { FlowArtifactManager } from '../flow-artifact-manager.js';
 import { extractSymbol, fetchCallGraph } from './understand/CallGraphAnalysis.js';
 import {
@@ -39,6 +40,8 @@ export class UnderstandPillar {
     const include = constraints.include ?? {};
     const vibe = constraints.vibe as { extract?: boolean; scope?: string; includeNorms?: boolean } | undefined;
     const wantsVibe = vibe?.extract === true;
+    const analysis = constraints.analysis as { clusters?: boolean; maxClusters?: number; maxFilesPerCluster?: number } | undefined;
+    const wantsAnalysis = analysis?.clusters === true;
     const includeDependencies = include.dependencies === true || include.pageRank === true;
     const includeCalls = include.callGraph === true;
     const explicitPath = this.extractPath(subject) ?? (typeof originalIntent === 'string' ? this.extractPath(originalIntent) : null);
@@ -224,6 +227,30 @@ export class UnderstandPillar {
       : undefined;
     const indexStateManager = this.registry.getMetadata<IndexStateManager>("indexStateManager");
     const indexSnapshot = indexStateManager ? await indexStateManager.getSnapshot().catch(() => undefined) : undefined;
+    const analysisPack = wantsAnalysis
+      ? this.buildAnalysisPack({
+          goal: subject,
+          primaryFile: filePath,
+          searchResults: searchResult?.results,
+          dependencyEdges: deps?.edges,
+          hotSpots,
+          degraded,
+          analysis
+        })
+      : undefined;
+
+    if (analysisPack) {
+      const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
+      if (artifactManager) {
+        artifactManager.store({
+          id: analysisPack.id,
+          type: "analysis",
+          createdAt: analysisPack.createdAt,
+          pack: analysisPack
+        });
+      }
+    }
+
     return buildUnderstandResponse({
       subject,
       filePath,
@@ -244,7 +271,8 @@ export class UnderstandPillar {
       budget,
       allowGraphs,
       indexSnapshot,
-      stylePack: wantsVibe ? await this.buildStylePack(filePath, vibe, indexSnapshot) : undefined
+      stylePack: wantsVibe ? await this.buildStylePack(filePath, vibe, indexSnapshot) : undefined,
+      analysisPack
     });
 
   }
@@ -280,6 +308,29 @@ export class UnderstandPillar {
       UnderstandPillar.styleCache.set(cacheKey, pack);
     }
     return pack;
+  }
+
+  private buildAnalysisPack(input: {
+    goal: string;
+    primaryFile?: string;
+    searchResults?: Array<{ path?: string; score?: number; reason?: string }>;
+    dependencyEdges?: Array<{ from: string; to: string; type?: string }>;
+    hotSpots?: Array<{ path?: string; score?: number; reason?: string }>;
+    degraded: boolean;
+    analysis?: { maxClusters?: number; maxFilesPerCluster?: number };
+  }): AnalysisPack {
+    const builder = new AnalysisPackBuilder({
+      maxClusters: input.analysis?.maxClusters,
+      maxFilesPerCluster: input.analysis?.maxFilesPerCluster
+    });
+    return builder.build({
+      goal: input.goal,
+      primaryFile: input.primaryFile,
+      searchResults: input.searchResults,
+      dependencyEdges: input.dependencyEdges,
+      hotSpots: input.hotSpots,
+      degraded: input.degraded
+    });
   }
 
   private getStyleCacheKey(
