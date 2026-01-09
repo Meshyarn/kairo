@@ -61,8 +61,23 @@ export class WritePillar {
       const draftArtifact = draftId ? artifactManager?.get(draftId) : undefined;
       const draftPack = draftArtifact?.type === "draft" ? (draftArtifact as any).pack : undefined;
       const draftContent = draftPack?.phantomFiles?.[0]?.content as string | undefined;
-      const attachSession = <T extends Record<string, any>>(payload: T): T & { sessionId?: string } =>
-        resolvedSessionId ? { ...payload, sessionId: resolvedSessionId } : payload;
+      const workflowMeta = this.buildWorkflowMeta({
+        sessionId: resolvedSessionId,
+        dryRun,
+        stylePack: sessionStylePack,
+        artifactManager
+      });
+      const workflowWarnings = this.buildWorkflowWarnings(workflowMeta, Boolean(resolvedSessionId));
+      const attachSession = <T extends Record<string, any>>(payload: T): T & { sessionId?: string; workflowMeta: WorkflowMeta; workflowWarnings?: string[] } => {
+        const next = {
+          ...payload,
+          workflowMeta
+        } as T & { sessionId?: string; workflowMeta: WorkflowMeta; workflowWarnings?: string[] };
+        if (workflowWarnings.length > 0) {
+          next.workflowWarnings = workflowWarnings;
+        }
+        return resolvedSessionId ? { ...next, sessionId: resolvedSessionId } : next;
+      };
 
       if (!targetPath) {
         return attachSession({
@@ -146,12 +161,7 @@ export class WritePillar {
           content,
           existingContent
         });
-        draftPack.workflowMeta = this.buildWorkflowMeta({
-          sessionId: resolvedSessionId,
-          dryRun,
-          stylePack: sessionStylePack,
-          artifactManager
-        });
+        draftPack.workflowMeta = workflowMeta;
 
         const preApplyReview = (reviewOptions?.preApply ?? true)
           ? await new ReviewReportBuilder(
@@ -219,7 +229,7 @@ export class WritePillar {
           
           if (generated) {
             content = generated.code;
-            return await this.writeGeneratedCode(
+            const result = await this.writeGeneratedCode(
               resolvedPath,
               content,
               originalIntent,
@@ -231,6 +241,7 @@ export class WritePillar {
               reviewOptions,
               sessionStylePack
             );
+            return attachSession(result);
           }
         } catch (error: any) {
           stopSmartWrite();
@@ -245,7 +256,19 @@ export class WritePillar {
           stopGenerate();
           if (generated) {
             content = generated.code;
-            return await this.writeGeneratedCode(resolvedPath, content, originalIntent, context, generated.templateType, undefined, constraints, resolvedSessionId);
+            const result = await this.writeGeneratedCode(
+              resolvedPath,
+              content,
+              originalIntent,
+              context,
+              generated.templateType,
+              undefined,
+              constraints,
+              resolvedSessionId,
+              reviewOptions,
+              sessionStylePack
+            );
+            return attachSession(result);
           }
         } catch (error: any) {
           stopGenerate();
@@ -687,6 +710,23 @@ export class WritePillar {
         dryRunUsed
       }
     };
+  }
+
+  private buildWorkflowWarnings(meta: WorkflowMeta, hasSession: boolean): string[] {
+    const warnings: string[] = [];
+    if (hasSession && !meta.workflowStatus.hasStylePack) {
+      warnings.push("No StylePack found in session. Consider running understand({ vibe: { extract: true } }).");
+    }
+    if (hasSession && !meta.workflowStatus.hasAnalysis) {
+      warnings.push("No AnalysisPack found in session. Consider running understand({ analysis: { clusters: true } }).");
+    }
+    if (hasSession && !meta.workflowStatus.hasResearch) {
+      warnings.push("No ResearchPack found in session. Consider running explore({ research: { sketch: true } }).");
+    }
+    if (!meta.workflowStatus.dryRunUsed) {
+      warnings.push("Applied changes without dryRun; review is recommended before apply.");
+    }
+    return warnings;
   }
 
   private looksLikePath(value: string): boolean {

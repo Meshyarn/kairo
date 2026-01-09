@@ -82,11 +82,33 @@ export class ChangePillar {
       const refinedIntent = refinement ? `${originalIntent}\nRefinement: ${refinement}` : originalIntent;
       const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
       const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, originalIntent);
+      const draftArtifact = draftId ? artifactManager?.get(draftId) : undefined;
+      const draftPackFromId = draftArtifact?.type === "draft" ? (draftArtifact as any).pack : undefined;
+      const draftPhantom = draftPackFromId?.phantomFiles?.[0];
+      const draftContent = typeof draftPhantom?.content === "string" ? draftPhantom.content : undefined;
+      const draftTargetPath = typeof draftPhantom?.path === "string" ? draftPhantom.path : undefined;
       const stylePackOverride = this.resolveStylePack((constraints as any).stylePack, artifactManager);
       const sessionStylePack = stylePackOverride
         ?? (resolvedSessionId && artifactManager
           ? artifactManager.getLatestStylePack(resolvedSessionId)
           : undefined);
+      const workflowMeta = this.buildWorkflowMeta({
+        sessionId: resolvedSessionId,
+        dryRun,
+        stylePack: sessionStylePack,
+        artifactManager
+      });
+      const workflowWarnings = this.buildWorkflowWarnings(workflowMeta, Boolean(resolvedSessionId));
+      const attachWorkflow = <T extends Record<string, any>>(payload: T): T & { workflowMeta: WorkflowMeta; workflowWarnings?: string[] } => {
+        const next = {
+          ...payload,
+          workflowMeta
+        } as T & { workflowMeta: WorkflowMeta; workflowWarnings?: string[] };
+        if (workflowWarnings.length > 0) {
+          next.workflowWarnings = workflowWarnings;
+        }
+        return next;
+      };
 
       const rawEdits = Array.isArray(constraints.edits) ? constraints.edits : [];
       const targetFiles = this.resolveTargetFiles(constraints, targets);
@@ -98,22 +120,24 @@ export class ChangePillar {
       const useV2 = v2Enabled && v2Mode !== 'off';
     
       if (useV2 && shouldBatch) {
-        return executeV2BatchChange(
+        const result = await executeV2BatchChange(
           { intent, context, rawEdits, targetFiles, dryRun, v2Mode },
           () => this.getEditResolver(),
           () => this.getEditCoordinator()
         );
+        return attachWorkflow(result);
       }
 
       if (shouldBatch) {
         const dependencyGraph = this.registry.getMetadata<DependencyGraph>("dependencyGraph");
         const indexStateManager = this.registry.getMetadata<IndexStateManager>("indexStateManager");
-        return executeBatchChange(
+        const result = await executeBatchChange(
           { intent, context, rawEdits, targetFiles, dryRun, includeImpact, dependencyGraph, indexStateManager, constraints },
           (ctx, tool, args) => this.runTool(ctx, tool, args),
           (e) => this.extractEditFilePath(e),
           (args) => this.buildFailureGuidance(args)
         );
+        return attachWorkflow(result);
       }
 
       let targetPath: string | undefined = constraints.targetPath || targets[0] || this.extractTargetFromEdits(rawEdits);
@@ -125,8 +149,12 @@ export class ChangePillar {
         candidates = resolved.candidates;
       }
 
+      if (!targetPath && draftTargetPath) {
+        targetPath = draftTargetPath;
+      }
+
       if (!targetPath) {
-        return {
+        return attachWorkflow({
           success: false,
           message: 'Could not identify the target to modify.',
           candidates,
@@ -137,35 +165,61 @@ export class ChangePillar {
               { pillar: 'change', action: 'retry', intent: originalIntent, target: '<filePath>' }
             ]
           }
-        };
+        });
       }
 
-      const normalization = normalizeEdits(rawEdits, targetPath);
-      const edits = normalization.edits;
-      if (edits.length === 0) {
-        return {
+      const useDraftApply = !dryRun && rawEdits.length === 0 && Boolean(draftContent);
+      if (useDraftApply && draftTargetPath && draftTargetPath !== targetPath) {
+        return attachWorkflow({
           success: false,
-          message: 'No valid edits provided. Ensure targetContent/targetString and replacement/template are set.',
-          invalidEdits: normalization.invalidEdits,
+          message: 'Draft target path does not match the requested target.',
+          targetFile: targetPath,
+          draftTarget: draftTargetPath,
           guidance: {
-            message: 'Use read to copy exact text or provide a shorter targetString.',
+            message: 'Align targetPath with the draft file or regenerate the draft for the intended target.',
             suggestedActions: [
-              { pillar: 'read', action: 'view_fragment', target: targetPath },
-              { pillar: 'change', action: 'retry', intent: originalIntent, target: targetPath }
+              { pillar: 'change', action: 'retry', intent: originalIntent, target: draftTargetPath }
             ]
-          }
-        };
+          },
+          sessionId: resolvedSessionId
+        });
       }
 
-      const budget = ChangeBudgetManager.create({
-        intentText: refinedIntent,
-        targetSample: edits[0]?.targetString,
-        includeImpact,
-        dryRun,
-        editCount: edits.length,
-        batchMode: Boolean(constraints?.batchMode)
-      });
-      const allowImpactPreview = includeImpact === true;
+      let edits: any[] = [];
+      let invalidEdits: any[] = [];
+      if (!useDraftApply) {
+        const normalization = normalizeEdits(rawEdits, targetPath);
+        edits = normalization.edits;
+        invalidEdits = normalization.invalidEdits;
+        if (edits.length === 0) {
+          return attachWorkflow({
+            success: false,
+            message: 'No valid edits provided. Ensure targetContent/targetString and replacement/template are set.',
+            invalidEdits: normalization.invalidEdits,
+            guidance: {
+              message: 'Use read to copy exact text or provide a shorter targetString.',
+              suggestedActions: [
+                { pillar: 'read', action: 'view_fragment', target: targetPath },
+                { pillar: 'change', action: 'retry', intent: originalIntent, target: targetPath }
+              ]
+            },
+            sessionId: resolvedSessionId
+          });
+        }
+      } else if (!draftContent) {
+        return attachWorkflow({
+          success: false,
+          message: 'Draft content not available for apply.',
+          targetFile: targetPath,
+          guidance: {
+            message: 'Re-run a dryRun to generate a DraftPack before applying.',
+            suggestedActions: [
+              { pillar: 'change', action: 'plan', intent: originalIntent, target: targetPath }
+            ]
+          },
+          sessionId: resolvedSessionId
+        });
+      }
 
       let integrityReport: IntegrityReport | undefined;
       if (integrityOptions && integrityOptions.mode !== "off") {
@@ -188,7 +242,7 @@ export class ChangePillar {
             blockedReason: integrityReport.blockedReason ?? "high_severity_conflict"
           };
           const blockedSummary = formatIntegrityBlockMessage(blockedReport.topFindings);
-          return {
+          return attachWorkflow({
             success: false,
             status: "blocked",
             message: blockedSummary,
@@ -198,7 +252,7 @@ export class ChangePillar {
             guidance: {
               message: blockedSummary
             }
-          };
+          });
         }
       }
 
@@ -217,7 +271,16 @@ export class ChangePillar {
         }
         let nextContent = originalContent;
         try {
-          nextContent = applyEditsToContent(originalContent, edits).newContent;
+          if (useDraftApply && draftContent) {
+            edits = this.buildDraftApplyEdits({
+              filePath: targetPath,
+              originalContent,
+              draftContent
+            });
+            nextContent = draftContent;
+          } else {
+            nextContent = applyEditsToContent(originalContent, edits).newContent;
+          }
         } catch {
           nextContent = originalContent;
         }
@@ -236,7 +299,7 @@ export class ChangePillar {
         });
 
         if (!dryRun && guardrailResult?.status === "block") {
-          return {
+          return attachWorkflow({
             success: false,
             status: "blocked",
             message: guardrailResult.violations?.[0]?.message ?? "Blocked by integrity guardrails.",
@@ -253,9 +316,19 @@ export class ChangePillar {
             guidance: {
               message: guardrailResult.violations?.[0]?.message ?? "Resolve guardrail violations before retrying."
             }
-          };
+          });
         }
       }
+
+      const budget = ChangeBudgetManager.create({
+        intentText: refinedIntent,
+        targetSample: edits[0]?.targetString,
+        includeImpact,
+        dryRun,
+        editCount: edits.length,
+        batchMode: Boolean(constraints?.batchMode)
+      });
+      const allowImpactPreview = includeImpact === true;
 
       const blockOn = Array.isArray(reviewOptions?.blockOn) ? reviewOptions.blockOn : [];
       const shouldBlockOn = !dryRun && blockOn.length > 0 && Boolean(targetPath);
@@ -288,7 +361,7 @@ export class ChangePillar {
             });
           }
           const message = `Review blocked by ${blockReasons.map((item) => `${item.kind}(${item.verdict})`).join(", ")}.`;
-          return {
+          return attachWorkflow({
             success: false,
             status: "blocked",
             message,
@@ -305,7 +378,7 @@ export class ChangePillar {
               ]
             },
             sessionId: resolvedSessionId
-          };
+          });
         }
       }
 
@@ -471,12 +544,7 @@ export class ChangePillar {
           oldContent: originalContent,
           newContent: nextContent
         });
-        draftPack.workflowMeta = this.buildWorkflowMeta({
-          sessionId: resolvedSessionId,
-          dryRun,
-          stylePack: sessionStylePack,
-          artifactManager
-        });
+        draftPack.workflowMeta = workflowMeta;
       }
 
       if (!preApplyReviewComputed && (reviewOptions?.preApply ?? dryRun) && targetPath) {
@@ -572,7 +640,7 @@ export class ChangePillar {
         }
       }
 
-      return {
+      return attachWorkflow({
         success: finalResult.success,
         message: finalResult.success ? undefined : (finalResult.message ?? finalResult.details?.message),
         operation: dryRun ? 'plan' : 'apply',
@@ -609,7 +677,7 @@ export class ChangePillar {
             attempts: 1 + autoCorrectionAttempts.length
           }
         }
-      };
+      });
     } finally {
       stopTotal();
     }
@@ -747,6 +815,45 @@ export class ChangePillar {
         { pillar: 'change', action: 'retry', intent: args.intent, target: args.targetPath }
       ]
     };
+  }
+
+  private buildDraftApplyEdits(args: {
+    filePath: string;
+    originalContent: string;
+    draftContent: string;
+  }): any[] {
+    if (args.originalContent.length === 0) {
+      return [{
+        filePath: args.filePath,
+        targetString: "",
+        replacementString: args.draftContent,
+        insertMode: "at",
+        insertLineRange: { start: 1 }
+      }];
+    }
+    return [{
+      filePath: args.filePath,
+      targetString: args.originalContent,
+      replacementString: args.draftContent,
+      indexRange: { start: 0, end: args.originalContent.length }
+    }];
+  }
+
+  private buildWorkflowWarnings(meta: WorkflowMeta, hasSession: boolean): string[] {
+    const warnings: string[] = [];
+    if (hasSession && !meta.workflowStatus.hasStylePack) {
+      warnings.push("No StylePack found in session. Consider running understand({ vibe: { extract: true } }).");
+    }
+    if (hasSession && !meta.workflowStatus.hasAnalysis) {
+      warnings.push("No AnalysisPack found in session. Consider running understand({ analysis: { clusters: true } }).");
+    }
+    if (hasSession && !meta.workflowStatus.hasResearch) {
+      warnings.push("No ResearchPack found in session. Consider running explore({ research: { sketch: true } }).");
+    }
+    if (!meta.workflowStatus.dryRunUsed) {
+      warnings.push("Applied changes without dryRun; review is recommended before apply.");
+    }
+    return warnings;
   }
 }
 

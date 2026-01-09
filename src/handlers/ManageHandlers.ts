@@ -77,11 +77,14 @@ export class ManageHandlers extends BaseHandler {
                         );
                         const indexSnapshot = await this.context.indexStateManager.getSnapshot();
                         const indexActivity = this.context.indexStateManager.getActivity();
+                        const embeddingStatus = await this.context.documentSearchEngine.getEmbeddingStatus();
+
                         if (includePerFile) {
                             return {
                                 success: true,
                                 output: "Index status",
                                 status,
+                                embedding: embeddingStatus,
                                 indexSnapshot,
                                 activity: {
                                     reindexInProgress: this.reindexInProgress,
@@ -105,6 +108,7 @@ export class ManageHandlers extends BaseHandler {
                                 global: status.global,
                                 unresolvedSample
                             },
+                            embedding: embeddingStatus,
                             indexSnapshot,
                             activity: {
                                 reindexInProgress: this.reindexInProgress,

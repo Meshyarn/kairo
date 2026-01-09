@@ -1,5 +1,7 @@
 import { describe, it, expect } from "@jest/globals";
 import { ReviewReportBuilder } from "../../generation/review-report-builder.js";
+import { scoreVibeAlignment } from "../../generation/vibe-alignment-scorer.js";
+import type { StylePack } from "../../types/flow-artifacts.js";
 
 describe("ReviewReportBuilder", () => {
     it("builds a review report for valid content", async () => {
@@ -44,5 +46,91 @@ describe("ReviewReportBuilder", () => {
 
         expect(report.vibeAlignment?.summary).toContain("Vibe alignment");
         expect(report.vibeAlignment?.score).toBeGreaterThanOrEqual(0.5);
+    });
+
+    it("flags formatting, imports, naming, and patterns deviations", () => {
+        const stylePack: StylePack = {
+            id: "style_test",
+            scope: "**/*",
+            createdAt: Date.now(),
+            profile: {
+                codeStyle: {
+                    indent: "spaces",
+                    indentSize: 2,
+                    quotes: "single",
+                    semicolons: true,
+                    lineEndings: "crlf"
+                },
+                patterns: {
+                    imports: [{ module: "react", style: "named", count: 2 }],
+                    naming: [{ type: "variable", convention: "camelCase", confidence: 0.9 }],
+                    fileOrg: { fileNamePattern: "*.service.ts", directoryPattern: "." }
+                },
+                confidence: "medium"
+            }
+        };
+        const content = [
+            "import React from \"react\"",
+            "\tconst Bad_Name = 1",
+            "export function BAD() {",
+            "  return \"ok\"",
+            "}"
+        ].join("\n");
+        const result = scoreVibeAlignment({
+            filePath: "src/bad.ts",
+            content,
+            stylePack,
+            strictness: "balanced"
+        });
+
+        expect(result.breakdown.formatting.score).toBeLessThan(0.5);
+        expect(result.breakdown.imports.score).toBeLessThan(0.7);
+        expect(result.breakdown.naming.score).toBeLessThan(0.7);
+        expect(result.breakdown.patterns.score).toBeLessThan(1);
+    });
+
+    it("adjusts verdict based on strictness", () => {
+        const stylePack: StylePack = {
+            id: "style_test",
+            scope: "**/*",
+            createdAt: Date.now(),
+            profile: {
+                codeStyle: {
+                    indent: "spaces",
+                    indentSize: 2,
+                    quotes: "single",
+                    semicolons: true,
+                    lineEndings: "crlf"
+                },
+                patterns: {
+                    imports: [{ module: "react", style: "named", count: 3 }],
+                    naming: [{ type: "variable", convention: "camelCase", confidence: 0.9 }],
+                    fileOrg: { fileNamePattern: "*.service.ts", directoryPattern: "." }
+                },
+                confidence: "medium"
+            }
+        };
+        const content = [
+            "import React from \"react\"",
+            "\tconst Bad_Name = 1",
+            "export function BAD() {",
+            "  return \"ok\"",
+            "}"
+        ].join("\n");
+        const permissive = scoreVibeAlignment({
+            filePath: "src/bad.ts",
+            content,
+            stylePack,
+            strictness: "permissive"
+        });
+        const strict = scoreVibeAlignment({
+            filePath: "src/bad.ts",
+            content,
+            stylePack,
+            strictness: "strict"
+        });
+
+        expect(permissive.verdict).toBe("warn");
+        expect(strict.verdict).toBe("block");
     });
 });

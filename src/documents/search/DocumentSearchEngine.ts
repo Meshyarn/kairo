@@ -37,6 +37,19 @@ export class DocumentSearchEngine {
         this.packCache = new LRUCache({ max: Number.isFinite(max) && max > 0 ? max : 100 });
     }
 
+    public async getEmbeddingStatus(): Promise<{ provider: string; model: string; dims: number } | null> {
+        try {
+            const provider = await this.embeddingFactory.getProvider();
+            return {
+                provider: provider.provider,
+                model: provider.model,
+                dims: provider.dims
+            };
+        } catch {
+            return null;
+        }
+    }
+
     public async search(query: string, options: DocumentSearchOptions = {}): Promise<DocumentSearchResponse> {
         const stopTotal = metrics.startTimer("docs.search.total_ms");
         const output = options.output ?? "full";

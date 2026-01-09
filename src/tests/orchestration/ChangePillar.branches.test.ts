@@ -1,4 +1,7 @@
 import { describe, it, expect, jest, beforeEach } from "@jest/globals";
+import { promises as fs } from "fs";
+import os from "os";
+import path from "path";
 import { ChangePillar } from "../../orchestration/pillars/change/ChangePillar.js";
 import { InternalToolRegistry } from "../../orchestration/InternalToolRegistry.js";
 import { OrchestrationContext } from "../../orchestration/OrchestrationContext.js";
@@ -102,5 +105,58 @@ describe("ChangePillar Branches", () => {
     expect(result.draftPack.intent).toContain("Refinement: add error handling");
     const drafts = manager.getByType("draft");
     expect(drafts[0]?.parentId).toBe("draft_seed");
+  });
+
+  it("applies draftId when edits are missing", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "kairo-change-draft-"));
+    const filePath = path.join(tempDir, "demo.ts");
+    try {
+      await fs.writeFile(filePath, "export const value = 1;\n");
+      const manager = new FlowArtifactManager();
+      const draftId = "draft_seed_apply";
+      manager.store({
+        id: draftId,
+        type: "draft",
+        createdAt: Date.now(),
+        pack: {
+          id: draftId,
+          intent: "apply draft",
+          skeleton: { content: "", signatures: [], structure: { imports: [], exports: [], dependencies: [] }, placeholders: [] },
+          phantomFiles: [{
+            path: filePath,
+            content: "export const value = 2;\n",
+            isNew: false,
+            language: "ts"
+          }],
+          preflightCheck: { syntaxValid: true, typesResolvable: true, guardrailsPassed: true, warnings: [] },
+          createdAt: Date.now(),
+          status: "pending"
+        }
+      } as any);
+      registry.setMetadata("flowArtifactManager", manager);
+
+      const editCalls: any[] = [];
+      jest.spyOn(registry, "execute").mockImplementation(async (tool, args) => {
+        if (tool === "edit_transaction") {
+          editCalls.push(args);
+          return { success: true, diff: "diff" } as any;
+        }
+        if (tool === "impact_analyze") return { riskLevel: "low" } as any;
+        if (tool === "relationship_analyze") return { nodes: [], edges: [] } as any;
+        if (tool === "hotspot_detect") return [] as any;
+        return { success: true } as any;
+      });
+
+      const result = await pillar.execute({
+        targets: [],
+        constraints: { dryRun: false, draftId, targetPath: filePath },
+        originalIntent: "apply draft"
+      } as any, context);
+
+      expect(result.success).toBe(true);
+      expect(editCalls[0].edits[0].replacementString).toBe("export const value = 2;\n");
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
   });
 });
