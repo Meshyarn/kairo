@@ -1,8 +1,9 @@
 import { DependencyGraph } from '../ast/DependencyGraph.js';
 import { CallGraphBuilder } from '../ast/CallGraphBuilder.js';
 import { SymbolIndex } from '../ast/SymbolIndex.js';
-import { Edit, ImpactPreview, ImpactRiskLevel, SymbolInfo, DefinitionSymbol, CrossLangImpact } from '../types.js';
+import { Edit, ImpactPreview, ImpactRiskLevel, SymbolInfo, DefinitionSymbol, CrossLangImpact, CrossLangFieldImpact } from '../types.js';
 import type { ContractDiff } from '../contracts/ContractDiffer.js';
+import type { PropertyAccessIndex, PropertyAccessLocation } from '../ast/PropertyAccessIndex.js';
 import * as path from 'path';
 
 export class ImpactAnalyzer {
@@ -10,7 +11,8 @@ export class ImpactAnalyzer {
         private dependencyGraph: DependencyGraph,
         private callGraphBuilder: CallGraphBuilder,
         private symbolIndex: SymbolIndex,
-        private pagerankScores?: Map<string, number> // Tier 1 PageRank scores
+        private pagerankScores?: Map<string, number>, // Tier 1 PageRank scores
+        private propertyAccessIndex?: PropertyAccessIndex
     ) {}
 
     public setPagerankScores(scores: Map<string, number>) {
@@ -68,13 +70,105 @@ export class ImpactAnalyzer {
             ...(diff.reasons ?? []),
             ...(hasOnlyAdditions ? ["contract_non_breaking_change"] : [])
         ]));
+        const fieldImpacts = await this.collectFieldImpacts(packageName, consumerFiles, diff);
         return {
             packageName,
             consumerFiles: Array.from(new Set(consumerFiles)),
             changedExports: Array.from(new Set(changedExports)),
             degraded,
-            reasons
+            reasons,
+            fieldImpacts: fieldImpacts.length > 0 ? fieldImpacts : undefined
         };
+    }
+
+    public async analyzeFieldImpact(
+        packageName: string,
+        exportName: string,
+        fieldName: string
+    ): Promise<PropertyAccessLocation[]> {
+        if (!this.propertyAccessIndex) {
+            return [];
+        }
+        return this.propertyAccessIndex.getUsages(packageName, exportName, fieldName);
+    }
+
+    private async collectFieldImpacts(
+        packageName: string,
+        consumerFiles: string[],
+        diff: ContractDiff
+    ): Promise<CrossLangFieldImpact[]> {
+        if (!this.propertyAccessIndex) {
+            return [];
+        }
+
+        const exportNames = Array.from(new Set(
+            diff.changed.filter((entry) => entry.kind === "field").map((entry) => entry.exportName)
+        ));
+        if (exportNames.length === 0) {
+            return [];
+        }
+
+        for (const filePath of consumerFiles) {
+            if (!filePath) continue;
+            try {
+                this.propertyAccessIndex.indexFile(filePath, { packageName, exportNames });
+            } catch {
+                // ignore indexing failures for non-existent or unreadable files
+            }
+        }
+
+        const impacts: CrossLangFieldImpact[] = [];
+        for (const entry of diff.changed) {
+            if (entry.kind !== "field") continue;
+            const fieldNames = this.extractChangedFields(entry.before, entry.after);
+            for (const fieldName of fieldNames) {
+                const usages = await this.analyzeFieldImpact(packageName, entry.exportName, fieldName);
+                if (usages.length === 0) continue;
+                impacts.push({
+                    exportName: entry.exportName,
+                    fieldName,
+                    usages
+                });
+            }
+        }
+
+        return impacts;
+    }
+
+    private extractChangedFields(beforeValue: unknown, afterValue: unknown): string[] {
+        const beforeFields = this.extractFieldMap(beforeValue);
+        const afterFields = this.extractFieldMap(afterValue);
+        if (!beforeFields && !afterFields) {
+            return [];
+        }
+        const names = new Set<string>([
+            ...Array.from(beforeFields?.keys() ?? []),
+            ...Array.from(afterFields?.keys() ?? [])
+        ]);
+        const changed: string[] = [];
+        for (const name of names) {
+            const beforeType = beforeFields?.get(name);
+            const afterType = afterFields?.get(name);
+            if (!beforeFields?.has(name) || !afterFields?.has(name) || beforeType !== afterType) {
+                changed.push(name);
+            }
+        }
+        return changed;
+    }
+
+    private extractFieldMap(value: unknown): Map<string, string | undefined> | undefined {
+        if (!value || typeof value !== "object") return undefined;
+        const candidate = value as { kind?: unknown; fields?: unknown };
+        if (candidate.kind !== "interface") return undefined;
+        if (!Array.isArray(candidate.fields)) return undefined;
+        const map = new Map<string, string | undefined>();
+        for (const field of candidate.fields) {
+            if (!field || typeof field !== "object") continue;
+            const fieldValue = field as { name?: unknown; type?: unknown };
+            if (typeof fieldValue.name !== "string") continue;
+            map.set(fieldValue.name, typeof fieldValue.type === "string" ? fieldValue.type : undefined);
+        }
+        return map;
     }
 
     private identifyModifiedSymbols(symbols: SymbolInfo[], edits: Edit[]): string[] {

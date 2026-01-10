@@ -38,6 +38,7 @@ import { TransactionLog } from "../engine/TransactionLog.js";
 import { ConfigurationManager } from "../config/ConfigurationManager.js";
 import { RepoRegistry } from "../config/RepoRegistry.js";
 import { PackageAliasMap } from "../config/PackageAliasMap.js";
+import { PropertyAccessIndex } from "../ast/PropertyAccessIndex.js";
 import { FeatureFlags, FeatureFlagContext } from "../config/FeatureFlags.js";
 import { RolloutController } from "../config/RolloutController.js";
 import { ModularRolloutController } from "../config/ModularRolloutController.js";
@@ -209,7 +210,8 @@ export class SmartContextServer {
         this.callGraphBuilder = new CallGraphBuilder(this.rootPath, this.symbolIndex, this.moduleResolver);
         this.typeDependencyTracker = new TypeDependencyTracker(this.rootPath, this.symbolIndex);
         this.dataFlowTracer = new DataFlowTracer(this.rootPath, this.symbolIndex, this.fileSystem);
-        this.impactAnalyzer = new ImpactAnalyzer(this.dependencyGraph, this.callGraphBuilder, this.symbolIndex);
+        const propertyAccessIndex = new PropertyAccessIndex(this.rootPath);
+        this.impactAnalyzer = new ImpactAnalyzer(this.dependencyGraph, this.callGraphBuilder, this.symbolIndex, undefined, propertyAccessIndex);
         this.hotSpotDetector = new HotSpotDetector(this.symbolIndex, this.dependencyGraph);
         this.referenceFinder = new ReferenceFinder(
             this.rootPath,
@@ -316,6 +318,7 @@ export class SmartContextServer {
         this.internalRegistry.setMetadata('repoRegistry', this.repoRegistry);
         this.internalRegistry.setMetadata('packageAliasMap', packageAliasMap);
         this.internalRegistry.setMetadata('impactAnalyzer', this.impactAnalyzer);
+        this.internalRegistry.setMetadata('propertyAccessIndex', propertyAccessIndex);
         
         this.setupHandlers();
         this.initializeModularHandlers();
