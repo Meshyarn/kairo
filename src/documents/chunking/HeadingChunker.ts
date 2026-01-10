@@ -208,7 +208,7 @@ function resolveTokenOptions(
     options: DocumentOutlineOptions,
     profile?: ToolProfile
 ): { maxTokens: number; overlapTokens: number } | null {
-    if (options.targetChunkTokens && options.overlapTokens) {
+    if (options.targetChunkTokens != null && options.overlapTokens != null) {
         return {
             maxTokens: options.targetChunkTokens,
             overlapTokens: options.overlapTokens

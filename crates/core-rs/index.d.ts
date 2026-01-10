@@ -10,6 +10,12 @@ export interface ChunkResult {
   startToken: number
   endToken: number
 }
+export interface DiffResult {
+  diff: string
+  added: number
+  removed: number
+}
+export declare function diffUnified(oldText: string, newText: string, contextLines: number): DiffResult
 export declare class SmartChunker {
   constructor(modelPath: string)
   chunk(text: string, maxTokens: number, overlap: number): Array<ChunkResult>

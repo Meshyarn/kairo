@@ -96,7 +96,8 @@ export class WritePillar {
                   profile: resolvedOptions.effective.profile,
                   safety: resolvedOptions.effective.safety,
                   dryRun,
-                  reviewOptions
+                  reviewOptions,
+                  diffMode: resolvedOptions.effective.diffMode
                 },
                 decisionTrace: {
                   dryRun: {

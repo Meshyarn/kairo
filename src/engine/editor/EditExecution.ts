@@ -2,6 +2,7 @@ import * as path from "path";
 import { ConfigurationManager } from "../../config/ConfigurationManager.js";
 import { MyersDiff } from "../Diff.js";
 import { PatienceDiff } from "../PatienceDiff.js";
+import { RustDiff } from "../RustDiff.js";
 import type {
     DiffMode,
     Edit,
@@ -222,14 +223,22 @@ export class EditExecutor {
             let semanticSummary: SemanticDiffSummary | undefined;
 
             if (diffMode === "semantic") {
-                const hunks = PatienceDiff.diff(originalContent, newContent, {
-                    contextLines: 3,
-                    semantic: true
-                });
-                const summary = PatienceDiff.summarize(hunks);
-                diffText = PatienceDiff.formatUnified(hunks);
-                added = summary.added;
-                removed = summary.removed;
+                const rustDiff = RustDiff.getShared();
+                if (rustDiff.isAvailable()) {
+                    const result = rustDiff.diffUnified(originalContent, newContent, 3);
+                    diffText = result.diff;
+                    added = result.added;
+                    removed = result.removed;
+                } else {
+                    const hunks = PatienceDiff.diff(originalContent, newContent, {
+                        contextLines: 3,
+                        semantic: true
+                    });
+                    const summary = PatienceDiff.summarize(hunks);
+                    diffText = PatienceDiff.formatUnified(hunks);
+                    added = summary.added;
+                    removed = summary.removed;
+                }
                 if (this.semanticDiffProvider) {
                     semanticSummary = await this.semanticDiffProvider.diff(filePath, originalContent, newContent);
                 }

@@ -84,6 +84,7 @@ export class ChangePillar {
       const dryRun = resolvedOptions.effective.dryRun;
       const reviewOptions = resolvedOptions.effective.reviewOptions;
       const traceEnabled = resolvedOptions.effective.traceEnabled;
+      const diffMode = resolvedOptions.effective.diffMode;
       const draftId = typeof (constraints as any).draftId === "string" ? (constraints as any).draftId : undefined;
       const refinement = typeof (constraints as any).refinement === "string" ? (constraints as any).refinement : undefined;
       const refinedIntent = refinement ? `${originalIntent}\nRefinement: ${refinement}` : originalIntent;
@@ -128,7 +129,8 @@ export class ChangePillar {
                   profile: resolvedOptions.effective.profile,
                   safety: resolvedOptions.effective.safety,
                   dryRun,
-                  reviewOptions
+                  reviewOptions,
+                  diffMode
                 },
                 decisionTrace: {
                   dryRun: {
@@ -169,7 +171,7 @@ export class ChangePillar {
         const dependencyGraph = this.registry.getMetadata<DependencyGraph>("dependencyGraph");
         const indexStateManager = this.registry.getMetadata<IndexStateManager>("indexStateManager");
         const result = await executeBatchChange(
-          { intent, context, rawEdits, targetFiles, dryRun, includeImpact, dependencyGraph, indexStateManager, constraints },
+          { intent, context, rawEdits, targetFiles, dryRun, includeImpact, dependencyGraph, indexStateManager, constraints, diffMode },
           (ctx, tool, args) => this.runTool(ctx, tool, args),
           (e) => this.extractEditFilePath(e),
           (args) => this.buildFailureGuidance(args)
@@ -444,14 +446,15 @@ export class ChangePillar {
       const stopEdit = metrics.startTimer("change.edit_coordinator_ms");
       let editResult: any;
       try {
-        editResult = await this.runTool(context, 'edit_transaction', {
-          filePath: targetPath,
-          edits,
-          dryRun,
-          options: {
-            skipImpactPreview: dryRun && !allowImpactPreview
-          }
-        });
+          editResult = await this.runTool(context, 'edit_transaction', {
+            filePath: targetPath,
+            edits,
+            dryRun,
+            options: {
+              skipImpactPreview: dryRun && !allowImpactPreview,
+              ...(diffMode ? { diffMode } : {})
+            }
+          });
       } finally {
         stopEdit();
       }
@@ -500,7 +503,8 @@ export class ChangePillar {
             correctedResult = await this.runTool(context, 'edit_transaction', {
               filePath: targetPath,
               edits: attempt.edits,
-              dryRun
+              dryRun,
+              options: diffMode ? { diffMode } : undefined
             });
           } finally {
             stopCorrect();

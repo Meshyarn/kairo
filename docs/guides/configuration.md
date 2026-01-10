@@ -65,6 +65,7 @@ Create `.kairo/config/languages.json` to extend or override built-ins:
 | `KAIRO_TOKENIZER_PATH` | Absolute path to `tokenizer.json`. | Required to enable Rust chunking if model dir is not set. |
 | `KAIRO_DOC_CHUNK_PROFILE` | Default token chunk profile for indexing. | `fast/balanced/deep` (only used when outlineOptions don’t override). |
 
+
 ## Skeleton (large files)
 
 | Variable | Purpose |

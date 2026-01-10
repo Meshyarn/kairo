@@ -1,6 +1,7 @@
 import { FeatureFlags } from "../../config/FeatureFlags.js";
 import type { IntentConstraints } from "../IntentRouter.js";
 import type { SessionPolicy } from "../../types/flow-artifacts.js";
+import type { DiffMode } from "../../types.js";
 
 export type ToolProfile = "fast" | "balanced" | "deep";
 export type ToolSources = "code" | "docs" | "both";
@@ -54,6 +55,7 @@ type WriteLikeEffective = {
   dryRun: boolean;
   reviewOptions: any;
   traceEnabled: boolean;
+  diffMode?: DiffMode;
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -235,6 +237,7 @@ export class OptionResolver {
     const traceEnabled = args.trace === true;
     const dryRun = this.resolveDryRun(args, sessionId, safety);
     const reviewOptions = this.resolveReviewOptions(args.reviewOptions, Boolean(sessionId), profile, dryRun);
+    const diffMode = this.resolveDiffMode(profile);
 
     return {
       effective: {
@@ -242,7 +245,8 @@ export class OptionResolver {
         safety,
         dryRun,
         reviewOptions,
-        traceEnabled
+        traceEnabled,
+        diffMode
       }
     };
   }
@@ -314,5 +318,10 @@ export class OptionResolver {
       blockOn: ["syntax", "semantic", "guardrails", "vibe"],
       postApply: dryRun ? false : true
     };
+  }
+
+  private static resolveDiffMode(profile?: ToolProfile): DiffMode | undefined {
+    if (!profile) return undefined;
+    return profile === "fast" ? "myers" : "semantic";
   }
 }
