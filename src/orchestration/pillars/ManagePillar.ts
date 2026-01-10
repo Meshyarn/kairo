@@ -2,6 +2,7 @@
 import { InternalToolRegistry } from '../InternalToolRegistry.js';
 import { OrchestrationContext } from '../OrchestrationContext.js';
 import { ParsedIntent } from '../IntentRouter.js';
+import { buildDegradedReasons } from '../DegradedReasonMapper.js';
 
 
 export class ManagePillar {
@@ -138,10 +139,16 @@ export class ManagePillar {
   private wrapResponse(raw: any) {
     const indexStatus = raw?.status?.status ?? raw?.status ?? undefined;
     const projectState = indexStatus ? { indexStatus, pendingTransactions: raw?.history?.pendingTransactions?.length ?? 0, lastModified: new Date().toISOString() } : undefined;
+    const reasons = Array.isArray(raw?.reasons)
+      ? raw.reasons
+      : (Array.isArray(raw?.result?.reasons) ? raw.result.reasons : undefined);
+    const degraded = Boolean(raw?.degraded ?? raw?.result?.degraded);
     return {
       success: raw?.success ?? false,
       result: raw,
-      projectState
+      projectState,
+      degraded,
+      degradedReasons: buildDegradedReasons(reasons)
     };
   }
 }

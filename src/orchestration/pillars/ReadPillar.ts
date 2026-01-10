@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { InternalToolRegistry } from '../InternalToolRegistry.js';
 import { OrchestrationContext } from '../OrchestrationContext.js';
 import { ParsedIntent } from '../IntentRouter.js';
+import { buildDegradedReasons } from '../DegradedReasonMapper.js';
 
 export class ReadPillar {
   constructor(private readonly registry: InternalToolRegistry) {}
@@ -20,6 +21,8 @@ export class ReadPillar {
 
     let content: string;
     let documentOutline: any = undefined;
+    let contentSource: any = undefined;
+    const reasons: string[] = [];
 
     if (isDocument && (sectionId || headingPath)) {
       const mode = (constraints.mode ?? (view === 'full' ? 'raw' : 'preview')) as 'summary' | 'preview' | 'raw';
@@ -34,6 +37,8 @@ export class ReadPillar {
         mode,
         maxChars
       });
+      contentSource = docSection;
+      if (Array.isArray(docSection?.reasons)) reasons.push(...docSection.reasons);
       content = docSection?.content ?? '';
       documentOutline = docSection?.section ? [docSection.section] : undefined;
     } else if (isDocument && view === 'skeleton') {
@@ -41,15 +46,20 @@ export class ReadPillar {
         filePath: resolvedPath,
         options: constraints.outlineOptions
       });
+      contentSource = docSkeleton;
+      if (Array.isArray(docSkeleton?.reasons)) reasons.push(...docSkeleton.reasons);
       const maxChars = Number.parseInt(process.env.KAIRO_DOC_SKELETON_MAX_CHARS ?? "2000", 10);
       content = truncateText(docSkeleton?.skeleton ?? '', maxChars);
       documentOutline = docSkeleton?.outline;
     } else {
-      content = await this.runTool(context, 'code_read', {
+      const codeRead = await this.runTool(context, 'code_read', {
         filePath: resolvedPath,
         view,
         lineRange
       });
+      contentSource = codeRead;
+      if (Array.isArray(codeRead?.reasons)) reasons.push(...codeRead.reasons);
+      content = typeof codeRead === 'string' ? codeRead : (codeRead?.content ?? '');
     }
 
     const needsFullContent = view === 'full' || includeHash;
@@ -72,6 +82,11 @@ export class ReadPillar {
       language: profile?.metadata?.language ?? null
     };
 
+    const degradedReasons = buildDegradedReasons(reasons.length > 0 ? reasons : undefined, {
+      filePath: metadata.filePath,
+      languageId: metadata.language ?? undefined
+    });
+
     return {
       success: true,
       status: 'success',
@@ -80,6 +95,8 @@ export class ReadPillar {
       profile: includeProfile ? (profile ?? undefined) : undefined,
       skeleton: typeof skeleton === 'string' ? skeleton : undefined,
       document: documentOutline ? { outline: documentOutline } : undefined,
+      degraded: Boolean(contentSource?.degraded),
+      degradedReasons,
       guidance: {
         message: view === 'full'
           ? 'Full content loaded.'

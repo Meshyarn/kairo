@@ -5,6 +5,7 @@ import { ParsedIntent } from '../IntentRouter.js';
 import { BudgetManager } from '../BudgetManager.js';
 import { analyzeQuery, isStrongQuery } from '../../engine/search/QueryMetrics.js';
 import { resolveProgressState, logProgress, logToolStart, logToolEnd, ProgressState } from '../../utils/ProgressLogger.js';
+import { buildDegradedReasons } from '../DegradedReasonMapper.js';
 
 
 export class NavigatePillar {
@@ -196,6 +197,7 @@ export class NavigatePillar {
       };
     });
 
+    const degradedReasons = buildDegradedReasons(refinementReason ? [refinementReason] : undefined);
     const response: any = {
       success: true,
       status: rawResults.length === 0 ? 'no_results' : 'success',
@@ -203,6 +205,7 @@ export class NavigatePillar {
       relatedSymbols,
       codePreview: locations[0]?.snippet,
       degraded: finalDegraded || (refinementReason === 'budget_exceeded') || false,
+      degradedReasons,
       budget: finalBudget ?? budget,
       refinement: {
         stage: refinementStage,

@@ -313,6 +313,19 @@ export class GuidanceGenerator {
         });
       }
     }
+    if (this.hasLanguageSupportDegradedReason(degradedReasons)) {
+      const alreadySuggested = suggestedActions.some((action) => action.pillar === 'manage' && action.action === 'verify_languages');
+      if (!alreadySuggested) {
+        suggestedActions.push({
+          priority: 2,
+          pillar: 'manage',
+          action: 'verify_languages',
+          description: 'Verify language assets (query packs/grammars/validators).',
+          rationale: 'Language support assets appear missing or degraded.',
+          toolCall: { tool: 'manage', args: { command: 'doctor', scope: 'languages' } }
+        });
+      }
+    }
 
     const recoveryStrategies = context.error ? this.buildRecoveryStrategies(context.error) : undefined;
     const meta: GuidanceMeta = {
@@ -394,6 +407,10 @@ export class GuidanceGenerator {
 
   private hasContractDegradedReason(reasons: string[]): boolean {
     return reasons.some((reason) => reason.startsWith("contract_") || reason.startsWith("cross_lang_contract_"));
+  }
+
+  private hasLanguageSupportDegradedReason(reasons: string[]): boolean {
+    return reasons.some((reason) => reason === "missing_query_pack" || reason === "missing_wasm_grammar" || reason === "unsupported_language");
   }
 
   private detectTestContext(history: Array<{ tool: string; args?: any; output?: any }>): boolean {
