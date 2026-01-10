@@ -75,8 +75,8 @@ The entries below cover all ADRs from the project history. Items marked “retou
 ### Performance, observability, and scaling
 
 - ADR-042 series (retouched): P0–P2 baseline + PH editor + Layer 3 → `docs/adr/ADR-042-series-production-baseline.md`
-- ADR-053 (implemented): Hybrid Rust core phases 1–4 → `docs/adr/ADR-053-hybrid-rust-architecture-and-optimization.md`
-- ADR-053-H (proposed): Universal hybrid architecture + multi-engine framework → `docs/adr/ADR-053-H-universal-hybrid-architecture.md`
+- ADR-053: Hybrid Rust core phases 1–4 → `docs/adr/ADR-053-hybrid-rust-architecture-and-optimization.md`
+- ADR-053-H: Universal hybrid architecture + multi-engine framework → `docs/adr/ADR-053-H-universal-hybrid-architecture.md`
 - ADR-022: Scalable memory architecture (on-disk/lazy/streaming baseline ideas).
 - ADR-028: Performance + accuracy enhancements (historical deep dive).
 - ADR-029: Production readiness / system maturity (historical).

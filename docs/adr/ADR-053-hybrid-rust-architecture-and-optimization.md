@@ -2,7 +2,7 @@
 
 **Status:** Implemented
 **Date:** 2026-01-10
-**Superseded by:** `docs/adr/ADR-053-H-universal-hybrid-architecture.md`
+**Follow-up (implemented):** `docs/adr/ADR-053-H-universal-hybrid-architecture.md`
 
 ## Summary
 
@@ -14,4 +14,4 @@ Implemented phases:
 - **Phase 3 (Syntax):** Rust syntax validation for JS/TS/TSX with Tree-sitter(WASM) fallback.
 - **Phase 4 (Vector math):** Rust cosine similarity batch scoring for bruteforce vector search with JS fallback.
 
-The direct Rust imports in TS modules are now tracked as technical debt and are generalized in **ADR-053-H**, which defines a capability registry and provider selection model.
+The direct Rust imports in TS modules were replaced in **ADR-053-H** with a capability registry and provider selection model.

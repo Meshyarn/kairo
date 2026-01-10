@@ -57,11 +57,17 @@ Create `.kairo/config/languages.json` to extend or override built-ins:
 |---|---|
 | `KAIRO_WASM_DIR` | Where tree-sitter WASM assets are resolved (including custom Markdown WASM). |
 
-## Document chunking (ADR-053 Phase 1)
+## Native engine toggles (ADR-053-H)
 
 | Variable | Purpose | Notes |
 |---|---|---|
-| `KAIRO_RUST_CHUNKING` | Enable Rust tokenizer-aware chunking. | `on/off` or `true/false` (default: off). |
+| `KAIRO_RUST_CORE_ENABLED` | Enable Rust core globally. | `on/off` (default: on). |
+| `KAIRO_RUST_CHUNKING_ENABLED` | Enable Rust chunking. | `on/off` (default: on). |
+| `KAIRO_RUST_DIFF_ENABLED` | Enable Rust diffing. | `on/off` (default: on). |
+| `KAIRO_RUST_SYNTAX_ENABLED` | Enable Rust syntax validation. | `on/off` (default: on). |
+| `KAIRO_RUST_VECTOR_ENABLED` | Enable Rust vector math. | `on/off` (default: on). |
+| `KAIRO_WASM_CHUNKING_ENABLED` | Enable WASM chunking provider. | `on/off` (default: off). |
+| `KAIRO_RUST_CHUNKING` | Legacy Rust chunking toggle. | Backward-compat; prefer `KAIRO_RUST_CHUNKING_ENABLED`. |
 | `KAIRO_TOKENIZER_PATH` | Absolute path to `tokenizer.json`. | Required to enable Rust chunking if model dir is not set. |
 | `KAIRO_DOC_CHUNK_PROFILE` | Default token chunk profile for indexing. | `fast/balanced/deep` (only used when outlineOptions don’t override). |
 
