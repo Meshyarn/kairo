@@ -28,7 +28,7 @@ export class TokenChunker {
     private enabled = false;
 
     private constructor() {
-        this.enabled = process.env.KAIRO_RUST_CHUNKING === "true";
+        this.enabled = parseBoolish(process.env.KAIRO_RUST_CHUNKING);
         if (!this.enabled) return;
         const tokenizerPath = resolveTokenizerPath();
         if (!tokenizerPath) {
@@ -65,6 +65,14 @@ export class TokenChunker {
         TokenChunker.warned = true;
         console.warn(`[TokenChunker] ${message}`);
     }
+}
+
+function parseBoolish(value: string | undefined): boolean {
+    if (!value) return false;
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true" || normalized === "1" || normalized === "on" || normalized === "yes") return true;
+    if (normalized === "false" || normalized === "0" || normalized === "off" || normalized === "no") return false;
+    return false;
 }
 
 function resolveTokenizerPath(): string | null {

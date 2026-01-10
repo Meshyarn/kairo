@@ -57,6 +57,14 @@ Create `.kairo/config/languages.json` to extend or override built-ins:
 |---|---|
 | `KAIRO_WASM_DIR` | Where tree-sitter WASM assets are resolved (including custom Markdown WASM). |
 
+## Document chunking (ADR-053 Phase 1)
+
+| Variable | Purpose | Notes |
+|---|---|---|
+| `KAIRO_RUST_CHUNKING` | Enable Rust tokenizer-aware chunking. | `on/off` or `true/false` (default: off). |
+| `KAIRO_TOKENIZER_PATH` | Absolute path to `tokenizer.json`. | Required to enable Rust chunking if model dir is not set. |
+| `KAIRO_DOC_CHUNK_PROFILE` | Default token chunk profile for indexing. | `fast/balanced/deep` (only used when outlineOptions don’t override). |
+
 ## Skeleton (large files)
 
 | Variable | Purpose |
