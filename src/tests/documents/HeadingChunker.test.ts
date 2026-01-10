@@ -1,5 +1,6 @@
-import { describe, it, expect } from "@jest/globals";
+import { describe, it, expect, jest } from "@jest/globals";
 import { HeadingChunker } from "../../documents/chunking/HeadingChunker.js";
+import { TokenChunker } from "../../documents/chunking/TokenChunker.js";
 import { DocumentSection } from "../../types.js";
 
 const content = `# Title
@@ -149,5 +150,58 @@ describe("HeadingChunker", () => {
             minSectionChars: 50
         });
         expect(chunks).toHaveLength(1);
+    });
+
+    it("maps token chunk byte offsets to line ranges", () => {
+        const lines = [
+            "# Title",
+            "",
+            "First line here.",
+            "Second line here.",
+            "Third line here."
+        ];
+        const tokenContent = lines.join("\n");
+        const lineCount = lines.length;
+        const outlineAll: DocumentSection[] = [
+            {
+                id: "section-1",
+                filePath: "docs/token.md",
+                kind: "markdown",
+                title: "Title",
+                level: 1,
+                path: ["Title"],
+                range: { startLine: 1, endLine: lineCount, startByte: 0, endByte: tokenContent.length }
+            }
+        ];
+        const line3 = "First line here.";
+        const line4 = "Second line here.";
+        const line3Start = tokenContent.indexOf(line3);
+        const line4Start = tokenContent.indexOf(line4);
+        const line3End = line3Start + line3.length;
+        const line4End = line4Start + line4.length;
+        const mockTokenChunker = {
+            isAvailable: () => true,
+            chunk: () => [
+                { text: line3, startByte: line3Start, endByte: line3End, startToken: 0, endToken: 5 },
+                { text: line4, startByte: line4Start, endByte: line4End, startToken: 5, endToken: 10 }
+            ]
+        };
+        const getSharedSpy = jest.spyOn(TokenChunker, "getShared").mockReturnValue(mockTokenChunker as any);
+        const chunker = new HeadingChunker();
+        const chunks = chunker.chunk("docs/token.md", "markdown", outlineAll, tokenContent, {
+            chunkStrategy: "structural",
+            chunkProfile: "fast"
+        });
+        getSharedSpy.mockRestore();
+
+        expect(chunks).toHaveLength(2);
+        expect(chunks[0].range.startLine).toBe(3);
+        expect(chunks[0].range.endLine).toBe(3);
+        expect(chunks[0].range.startByte).toBe(line3Start);
+        expect(chunks[0].range.endByte).toBe(line3End);
+        expect(chunks[1].range.startLine).toBe(4);
+        expect(chunks[1].range.endLine).toBe(4);
+        expect(chunks[1].range.startByte).toBe(line4Start);
+        expect(chunks[1].range.endByte).toBe(line4End);
     });
 });

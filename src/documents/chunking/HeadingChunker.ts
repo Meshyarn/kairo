@@ -87,8 +87,8 @@ export class HeadingChunker {
                         continue;
                     }
                     for (const tokenChunk of tokenChunks) {
-                        const startByte = segmentStartByte + tokenChunk.start_byte;
-                        const endByte = segmentStartByte + tokenChunk.end_byte;
+                        const startByte = segmentStartByte + tokenChunk.startByte;
+                        const endByte = segmentStartByte + tokenChunk.endByte;
                         const startLine = findLineForByte(startByte, lineOffsets);
                         const endLine = findLineForByte(Math.max(endByte - 1, startByte), lineOffsets);
                         chunks.push(this.buildChunkFromText({

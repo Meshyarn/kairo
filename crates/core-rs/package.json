@@ -1,0 +1,25 @@
+{
+  "name": "@kairo/core-rs",
+  "version": "0.1.0",
+  "description": "Kairo Rust core (NAPI) for high-performance chunking.",
+  "license": "MIT",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "*.node"
+  ],
+  "scripts": {
+    "build": "napi build --release",
+    "build:debug": "napi build",
+    "prepublishOnly": "napi prepublish -t npm"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^2.16.3"
+  },
+  "napi": {
+    "name": "core_rs",
+    "binaryName": "core_rs"
+  }
+}

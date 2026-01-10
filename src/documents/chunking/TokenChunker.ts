@@ -5,10 +5,10 @@ import { resolveEmbeddingConfigFromEnv } from "../../embeddings/EmbeddingConfig.
 
 export type TokenChunkResult = {
     text: string;
-    start_byte: number;
-    end_byte: number;
-    start_token: number;
-    end_token: number;
+    startByte: number;
+    endByte: number;
+    startToken: number;
+    endToken: number;
 };
 
 type SmartChunkerCtor = new (modelPath: string) => {
