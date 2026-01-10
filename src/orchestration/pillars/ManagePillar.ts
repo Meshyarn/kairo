@@ -17,6 +17,14 @@ export class ManagePillar {
     const outcome = (constraints as any).outcome;
     const policy = (constraints as any).policy;
     const policyMode = (constraints as any).policyMode;
+    const mode = (constraints as any).mode;
+    const configTargets = (constraints as any).targets;
+    const root = (constraints as any).root;
+    const multiRepo = (constraints as any).multiRepo;
+    const presets = (constraints as any).presets;
+    const languageScan = (constraints as any).languageScan;
+    const applyOptions = (constraints as any).applyOptions;
+    const apply = (constraints as any).apply;
     const execute = async (command: string) => {
       const started = Date.now();
       const output = await this.registry.execute('project_manage', {
@@ -28,12 +36,38 @@ export class ManagePillar {
         sessionId,
         outcome,
         policy,
-        policyMode
+        policyMode,
+        mode,
+        targets: configTargets,
+        root,
+        multiRepo,
+        presets,
+        languageScan,
+        applyOptions,
+        apply
       });
       context.addStep({
         id: `${command}_${context.getFullHistory().length + 1}`,
         tool: 'project_manage',
-        args: { command, target, scope, artifactOptions, limit, sessionId, outcome, policy, policyMode },
+        args: {
+          command,
+          target,
+          scope,
+          artifactOptions,
+          limit,
+          sessionId,
+          outcome,
+          policy,
+          policyMode,
+          mode,
+          targets: configTargets,
+          root,
+          multiRepo,
+          presets,
+          languageScan,
+          applyOptions,
+          apply
+        },
         output,
         status: output?.success === false || output?.isError ? 'failure' : 'success',
         duration: Date.now() - started
