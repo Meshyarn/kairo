@@ -1114,7 +1114,7 @@ export class SmartContextServer {
                                 'import'
                             ]
                         },
-                        scope: { type: 'string', enum: ['file', 'transaction', 'project'] },
+                        scope: { type: 'string', enum: ['file', 'transaction', 'project', 'config', 'languages', 'wasm', 'host', 'contracts'] },
                         target: { type: 'string' },
                         limit: { type: 'number' },
                         outcome: { type: 'object' },

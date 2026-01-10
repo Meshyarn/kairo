@@ -85,7 +85,7 @@ export type ManageInitArgs = {
 
 export type ManageDoctorArgs = {
     mode?: BootstrapMode;
-    scope?: "project" | "config" | "languages" | "wasm" | "host";
+    scope?: "project" | "config" | "languages" | "wasm" | "host" | "contracts";
     root?: string;
 };
 
@@ -216,6 +216,10 @@ export class ConfigBootstrapper {
         if (wasm.missing.length > 0) {
             hints.push(`Missing WASM assets for: ${wasm.missing.join(", ")}. Consider setting KAIRO_WASM_DIR=${wasm.suggestedWasmDir ?? path.join(rootPath, "wasm")}`);
         }
+
+        const contractSignals = this.buildContractFindings(rootPath);
+        findings.push(...contractSignals.findings);
+        hints.push(...contractSignals.hints);
 
         const plan: ConfigWriteOp[] = [];
         if (targets.includes("kairo")) {
@@ -1063,6 +1067,8 @@ export class ConfigBootstrapper {
                 return code === "HOST_CONFIG_MISSING" || code === "HOST_CONFIG_PATCH";
             case "config":
                 return code === "CONFIG_PARSE_ERROR" || code === "MIGRATION_NEEDED" || code === "CONFIG_CONFLICT";
+            case "contracts":
+                return code.startsWith("CONTRACT");
             case "project":
                 return true;
             default:
@@ -1087,6 +1093,9 @@ export class ConfigBootstrapper {
                 || normalized.endsWith("/.kairo/config/mcp-config.json")
                 || normalized.endsWith("/.kairo/config/languages.json");
         }
+        if (scope === "contracts") {
+            return filePath.replace(/\\\\/g, "/").includes("/.kairo/contracts/");
+        }
         return true;
     }
 
@@ -1104,7 +1113,42 @@ export class ConfigBootstrapper {
         if (scope === "config") {
             return hint.includes(".mcp-config") || hint.includes(".kairo/config");
         }
+        if (scope === "contracts") {
+            return hint.includes(".kairo/contracts") || hint.includes("contracts");
+        }
         return true;
+    }
+
+    private buildContractFindings(rootPath: string): { findings: ConfigFinding[]; hints: string[] } {
+        const findings: ConfigFinding[] = [];
+        const hints: string[] = [];
+        const contractsDir = path.join(rootPath, ".kairo", "contracts");
+        if (!fs.existsSync(contractsDir)) {
+            findings.push({
+                code: "CONTRACTS_DIR_MISSING",
+                severity: "warn",
+                message: "Contracts directory is missing (.kairo/contracts).",
+                action: "init_contracts",
+                evidence: { path: contractsDir }
+            });
+            hints.push(`Create ${contractsDir} or run a build step that generates contract manifests.`);
+            return { findings, hints };
+        }
+
+        const entries = fs.readdirSync(contractsDir, { withFileTypes: true });
+        const hasManifest = entries.some((entry) => entry.isDirectory() || entry.isFile());
+        if (!hasManifest) {
+            findings.push({
+                code: "CONTRACTS_EMPTY",
+                severity: "warn",
+                message: "Contracts directory exists but no manifests were found.",
+                action: "generate_contracts",
+                evidence: { path: contractsDir }
+            });
+            hints.push("Generate contract manifests (e.g. NAPI d.ts manifest) to enable cross-language impact.");
+        }
+
+        return { findings, hints };
     }
 
     private async applyPlan(plan: ConfigWriteOp[], options?: ManageInitArgs["applyOptions"]): Promise<BootstrapApplyResult[]> {
