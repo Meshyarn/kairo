@@ -204,4 +204,78 @@ describe("HeadingChunker", () => {
         expect(chunks[1].range.startByte).toBe(line4Start);
         expect(chunks[1].range.endByte).toBe(line4End);
     });
+
+    it("passes profile-based token limits to the chunker", () => {
+        const tokenContent = [
+            "# Title",
+            "",
+            "First line here.",
+            "Second line here."
+        ].join("\n");
+        const outlineAll: DocumentSection[] = [
+            {
+                id: "section-1",
+                filePath: "docs/token.md",
+                kind: "markdown",
+                title: "Title",
+                level: 1,
+                path: ["Title"],
+                range: { startLine: 1, endLine: 4, startByte: 0, endByte: tokenContent.length }
+            }
+        ];
+        const mockTokenChunker: { isAvailable: () => boolean; chunk: jest.Mock } = {
+            isAvailable: () => true,
+            chunk: jest.fn(() => [
+                { text: tokenContent, startByte: 0, endByte: tokenContent.length, startToken: 0, endToken: 1 }
+            ])
+        };
+        const getSharedSpy = jest.spyOn(TokenChunker, "getShared").mockReturnValue(mockTokenChunker as any);
+        const chunker = new HeadingChunker();
+        chunker.chunk("docs/token.md", "markdown", outlineAll, tokenContent, {
+            chunkStrategy: "structural",
+            chunkProfile: "deep"
+        });
+        getSharedSpy.mockRestore();
+
+        expect(mockTokenChunker.chunk).toHaveBeenCalled();
+        const args = mockTokenChunker.chunk.mock.calls[0] as unknown as [string, number, number];
+        expect(args[1]).toBe(768);
+        expect(args[2]).toBe(128);
+    });
+
+    it("falls back to character chunking when token chunker is unavailable", () => {
+        const tokenContent = [
+            "# Title",
+            "",
+            "First line here.",
+            "Second line here.",
+            "Third line here."
+        ].join("\n");
+        const outlineAll: DocumentSection[] = [
+            {
+                id: "section-1",
+                filePath: "docs/token.md",
+                kind: "markdown",
+                title: "Title",
+                level: 1,
+                path: ["Title"],
+                range: { startLine: 1, endLine: 5, startByte: 0, endByte: tokenContent.length }
+            }
+        ];
+        const mockTokenChunker: { isAvailable: () => boolean; chunk: jest.Mock } = {
+            isAvailable: () => false,
+            chunk: jest.fn(() => [])
+        };
+        const getSharedSpy = jest.spyOn(TokenChunker, "getShared").mockReturnValue(mockTokenChunker as any);
+        const chunker = new HeadingChunker();
+        const chunks = chunker.chunk("docs/token.md", "markdown", outlineAll, tokenContent, {
+            chunkStrategy: "structural",
+            maxBlockChars: 40,
+            chunkProfile: "fast"
+        });
+        getSharedSpy.mockRestore();
+
+        expect(mockTokenChunker.chunk).not.toHaveBeenCalled();
+        expect(chunks.length).toBeGreaterThan(1);
+    });
 });
