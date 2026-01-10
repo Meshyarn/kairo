@@ -217,7 +217,7 @@ export class ConfigBootstrapper {
             hints.push(`Missing WASM assets for: ${wasm.missing.join(", ")}. Consider setting KAIRO_WASM_DIR=${wasm.suggestedWasmDir ?? path.join(rootPath, "wasm")}`);
         }
 
-        const contractSignals = this.buildContractFindings(rootPath);
+        const contractSignals = this.buildContractFindings(rootPath, repos);
         findings.push(...contractSignals.findings);
         hints.push(...contractSignals.hints);
 
@@ -1119,7 +1119,7 @@ export class ConfigBootstrapper {
         return true;
     }
 
-    private buildContractFindings(rootPath: string): { findings: ConfigFinding[]; hints: string[] } {
+    private buildContractFindings(rootPath: string, repos: RepoSummary[]): { findings: ConfigFinding[]; hints: string[] } {
         const findings: ConfigFinding[] = [];
         const hints: string[] = [];
         const contractsDir = path.join(rootPath, ".kairo", "contracts");
@@ -1148,7 +1148,93 @@ export class ConfigBootstrapper {
             hints.push("Generate contract manifests (e.g. NAPI d.ts manifest) to enable cross-language impact.");
         }
 
+        const linkedRepos = repos.filter((repo) => repo.type === "linked");
+        for (const repo of linkedRepos) {
+            const repoPath = path.resolve(rootPath, repo.path);
+            const packageJsonPath = path.join(repoPath, "package.json");
+            if (!fs.existsSync(packageJsonPath)) {
+                findings.push({
+                    code: "CONTRACT_ALIAS_MISSING",
+                    severity: "warn",
+                    message: `Linked repo "${repo.id}" is missing package.json; cannot map package alias.`,
+                    action: "add_package_name",
+                    evidence: { path: repoPath, repoId: repo.id }
+                });
+                hints.push(`Add package.json with name field in ${repoPath} to enable alias mapping.`);
+                continue;
+            }
+
+            let pkg: { name?: string; types?: string; typings?: string; main?: string } | undefined;
+            try {
+                pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
+            } catch {
+                findings.push({
+                    code: "CONTRACT_ALIAS_INVALID",
+                    severity: "warn",
+                    message: `Linked repo "${repo.id}" has invalid package.json; cannot map package alias.`,
+                    action: "fix_package_json",
+                    evidence: { path: packageJsonPath, repoId: repo.id }
+                });
+                continue;
+            }
+
+            if (!pkg?.name) {
+                findings.push({
+                    code: "CONTRACT_ALIAS_INVALID",
+                    severity: "warn",
+                    message: `Linked repo "${repo.id}" package.json is missing name; cannot map package alias.`,
+                    action: "add_package_name",
+                    evidence: { path: packageJsonPath, repoId: repo.id }
+                });
+            }
+
+            if (!pkg) {
+                continue;
+            }
+
+            const entry = this.resolvePackageEntry(repoPath, pkg);
+            if (!entry) {
+                findings.push({
+                    code: "CONTRACT_ALIAS_ENTRY_MISSING",
+                    severity: "warn",
+                    message: `Linked repo "${repo.id}" has no resolvable entry file for alias mapping.`,
+                    action: "add_entry_file",
+                    evidence: { path: packageJsonPath, repoId: repo.id }
+                });
+                hints.push(`Add types/main or index.d.ts for ${repoPath} to enable cross-language alias mapping.`);
+            }
+        }
+
         return { findings, hints };
+    }
+
+    private resolvePackageEntry(
+        repoPath: string,
+        pkg: { types?: string; typings?: string; main?: string }
+    ): string | undefined {
+        const candidates = [pkg.types, pkg.typings, pkg.main].filter(Boolean) as string[];
+        for (const candidate of candidates) {
+            const resolved = this.resolvePackageEntryCandidate(repoPath, candidate);
+            if (resolved) return resolved;
+        }
+        return this.resolvePackageEntryCandidate(repoPath, "index");
+    }
+
+    private resolvePackageEntryCandidate(repoPath: string, candidate: string): string | undefined {
+        const absolute = path.isAbsolute(candidate) ? candidate : path.resolve(repoPath, candidate);
+        if (fs.existsSync(absolute)) {
+            const stat = fs.statSync(absolute);
+            if (stat.isFile()) return absolute;
+            if (stat.isDirectory()) {
+                return this.resolvePackageEntryCandidate(absolute, "index");
+            }
+        }
+        const extensions = [".d.ts", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
+        for (const ext of extensions) {
+            const resolved = `${absolute}${ext}`;
+            if (fs.existsSync(resolved)) return resolved;
+        }
+        return undefined;
     }
 
     private async applyPlan(plan: ConfigWriteOp[], options?: ManageInitArgs["applyOptions"]): Promise<BootstrapApplyResult[]> {

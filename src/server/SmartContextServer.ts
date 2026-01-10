@@ -37,6 +37,7 @@ import { EvidencePackRepository } from "../indexing/EvidencePackRepository.js";
 import { TransactionLog } from "../engine/TransactionLog.js";
 import { ConfigurationManager } from "../config/ConfigurationManager.js";
 import { RepoRegistry } from "../config/RepoRegistry.js";
+import { PackageAliasMap } from "../config/PackageAliasMap.js";
 import { FeatureFlags, FeatureFlagContext } from "../config/FeatureFlags.js";
 import { RolloutController } from "../config/RolloutController.js";
 import { ModularRolloutController } from "../config/ModularRolloutController.js";
@@ -182,6 +183,8 @@ export class SmartContextServer {
         this.pathNormalizer = new PathNormalizer(this.rootPath);
         this.configurationManager = new ConfigurationManager(this.rootPath);
         this.repoRegistry = new RepoRegistry(this.rootPath);
+        const packageAliasMap = new PackageAliasMap(this.repoRegistry);
+        packageAliasMap.build();
         const initialIgnorePatterns = this.configurationManager.getIgnoreGlobs();
         const ignoreFilter = this.createIgnoreFilter(initialIgnorePatterns);
         this.contextEngine = new ContextEngine(ignoreFilter, this.fileSystem);
@@ -201,7 +204,7 @@ export class SmartContextServer {
             vectorIndexManager: this.vectorIndexManager
         });
         this.symbolIndex = new SymbolIndex(this.rootPath, this.skeletonGenerator, initialIgnorePatterns, this.indexDatabase);
-        this.moduleResolver = new ModuleResolver(this.rootPath);
+        this.moduleResolver = new ModuleResolver({ rootPath: this.rootPath, packageAliasMap });
         this.dependencyGraph = new DependencyGraph(this.rootPath, this.symbolIndex, this.moduleResolver, this.indexDatabase);
         this.callGraphBuilder = new CallGraphBuilder(this.rootPath, this.symbolIndex, this.moduleResolver);
         this.typeDependencyTracker = new TypeDependencyTracker(this.rootPath, this.symbolIndex);

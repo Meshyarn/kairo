@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as resolve from 'resolve';
 import { builtinModules } from 'module';
 import { createMatchPath, loadConfig, MatchPath } from 'tsconfig-paths';
+import type { PackageAliasMap } from '../config/PackageAliasMap.js';
 
 export type ModuleResolverFallback = 'node' | 'bundler';
 
@@ -10,6 +11,7 @@ export interface ModuleResolverConfig {
     rootPath: string;
     tsconfigPaths?: string[];
     fallbackResolution?: ModuleResolverFallback;
+    packageAliasMap?: PackageAliasMap;
 }
 
 interface TsconfigMatcher {
@@ -43,6 +45,7 @@ export class ModuleResolver {
     private rootPath: string;
     private tsconfigMatchers: TsconfigMatcher[] = [];
     private fallback: ModuleResolverFallback;
+    private packageAliasMap?: PackageAliasMap;
 
     constructor(config: string | ModuleResolverConfig) {
         if (typeof config === 'string') {
@@ -51,6 +54,7 @@ export class ModuleResolver {
         } else {
             this.rootPath = config.rootPath;
             this.fallback = config.fallbackResolution || 'node';
+            this.packageAliasMap = config.packageAliasMap;
             if (config.tsconfigPaths && config.tsconfigPaths.length > 0) {
                 this.initializeTsconfigMatchers(config.tsconfigPaths);
             }
@@ -78,6 +82,27 @@ export class ModuleResolver {
 
         const recordAttempt = (attempt: ResolutionAttempt) => attempts.push(attempt);
         const isBareSpecifier = !importPath.startsWith('./') && !importPath.startsWith('../') && !path.isAbsolute(importPath);
+
+        if (isBareSpecifier && this.packageAliasMap) {
+            const alias = this.packageAliasMap.resolve(importPath);
+            if (alias?.entryPath) {
+                recordAttempt({ strategy: 'alias', detail: 'package-alias' });
+                const result: ResolutionResult = {
+                    resolvedPath: alias.entryPath,
+                    strategy: 'alias',
+                    attempts,
+                    error: undefined,
+                    metadata: {
+                        packageName: importPath,
+                        repoId: alias.repoId,
+                        alias: 'true',
+                        entryPath: alias.entryPath
+                    }
+                };
+                this.resolutionCache.set(cacheKey, result);
+                return result;
+            }
+        }
         if (isBareSpecifier) {
             if (this.isCoreModule(importPath)) {
                 recordAttempt({ strategy: 'node', detail: 'core' });
@@ -134,7 +159,7 @@ export class ModuleResolver {
         if (resolved) {
             const normalized = path.normalize(resolved);
             const isExternal = normalized.includes(`${path.sep}node_modules${path.sep}`) || !normalized.startsWith(this.rootPath);
-            if (isExternal) {
+            if (isExternal && metadata?.alias !== 'true') {
                 metadata = { ...(metadata ?? {}), external: 'true' };
             }
         }
