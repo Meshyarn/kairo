@@ -2,6 +2,7 @@ import { BaseHandler } from "./BaseHandler.js";
 import { HandlerContext } from "./HandlerContext.js";
 import { metrics } from "../utils/MetricsCollector.js";
 import { resolveEmbeddingConfigFromEnv } from "../embeddings/EmbeddingConfig.js";
+import { ConfigBootstrapper } from "../config/ConfigBootstrapper.js";
 
 export class ManageHandlers extends BaseHandler {
     private reindexInProgress = false;
@@ -152,6 +153,36 @@ export class ManageHandlers extends BaseHandler {
                                 provider: embeddingConfig.provider ?? "auto"
                             }
                         }
+                    };
+                }
+            case 'init':
+                {
+                    const bootstrapper = new ConfigBootstrapper(this.context.rootPath);
+                    const result = await bootstrapper.init({
+                        mode: args?.mode,
+                        targets: args?.targets,
+                        root: args?.root,
+                        multiRepo: args?.multiRepo,
+                        presets: args?.presets,
+                        languageScan: args?.languageScan,
+                        applyOptions: args?.applyOptions
+                    });
+                    return {
+                        ...result,
+                        output: "Config init completed."
+                    };
+                }
+            case 'doctor':
+                {
+                    const bootstrapper = new ConfigBootstrapper(this.context.rootPath);
+                    const result = await bootstrapper.doctor({
+                        mode: args?.mode,
+                        scope: args?.scope,
+                        root: args?.root
+                    });
+                    return {
+                        ...result,
+                        output: "Config doctor completed."
                     };
                 }
             case 'reindex':

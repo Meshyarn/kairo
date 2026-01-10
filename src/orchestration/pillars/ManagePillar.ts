@@ -50,6 +50,10 @@ export class ManagePillar {
         return this.wrapResponse(await execute('status'));
       case 'rebuild':
         return this.wrapResponse(await execute('reindex'));
+      case 'init':
+        return this.wrapResponse(await execute('init'));
+      case 'doctor':
+        return this.wrapResponse(await execute('doctor'));
       case 'history':
         return this.wrapResponse(await execute('history'));
       case 'test':
