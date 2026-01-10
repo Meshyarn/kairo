@@ -588,6 +588,16 @@ export class ChangePillar {
           }] :
           [{ pillar: 'manage', action: 'test' }]
       };
+      if (dryRun && targetPath && !includeImpact && this.shouldSuggestImpact(targetPath, guardrailResult, edits)) {
+        successGuidance.suggestedActions.push({
+          pillar: 'change',
+          action: 'plan',
+          intent: originalIntent,
+          target: targetPath,
+          edits,
+          options: { dryRun: true, includeImpact: true }
+        });
+      }
 
       const truncatedDiff = (typeof finalResult.diff === 'string' && finalResult.diff.length > budget.maxDiffBytes)
         ? `${finalResult.diff.slice(0, budget.maxDiffBytes)}\n... (diff truncated)`
@@ -1078,6 +1088,27 @@ export class ChangePillar {
 
   private escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  private shouldSuggestImpact(targetPath: string, guardrailResult: any, edits: any[]): boolean {
+    const publicSurface = guardrailResult?.architecturalRisk?.publicSurface;
+    if (publicSurface?.hasChanges) return true;
+    if (/index\.d\.ts$/i.test(targetPath)) return true;
+    if (/package\.json$/i.test(targetPath)) return true;
+    if (this.editsLookLikePublicApiChange(edits)) return true;
+    return false;
+  }
+
+  private editsLookLikePublicApiChange(edits: any[]): boolean {
+    const signals = /\b(export|public|pub|interface|type|class|struct|enum|fn|def)\b/;
+    for (const edit of edits ?? []) {
+      const target = typeof edit?.targetString === "string" ? edit.targetString : "";
+      const replacement = typeof edit?.replacementString === "string" ? edit.replacementString : "";
+      if (signals.test(target) || signals.test(replacement)) {
+        return true;
+      }
+    }
+    return false;
   }
 
 }
