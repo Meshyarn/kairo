@@ -34,6 +34,7 @@
     "build": "node scripts/clean-dist.mjs && tsc && mkdir -p dist/queries && cp -r src/queries/* dist/queries/",
     "build:core-rs": "npm --prefix crates/core-rs run build",
     "build:markdown-wasm": "node dist/cli/build-markdown-wasm.js",
+    "validate:languages": "node --import tsx scripts/validate-language-support.ts",
     "start": "tsx src/index.ts",
     "prepack": "npm run build && npm run bundle:models"
   },

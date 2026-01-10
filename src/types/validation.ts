@@ -23,6 +23,8 @@ export interface ValidationResult {
     blockingErrors?: ValidationDiagnostic[];
     warnings?: ValidationDiagnostic[];
     durationMs?: number;
+    languageId?: string;
+    supportLevel?: "understand-grade" | "edit-safe";
 }
 
 export interface ValidationSummary {

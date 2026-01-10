@@ -1,0 +1,6 @@
+;; SQL Symbols (best-effort)
+(create_table_statement name: (identifier) @type)
+(create_view_statement name: (identifier) @type)
+(create_function_statement name: (identifier) @function)
+(create_procedure_statement name: (identifier) @function)
+(create_trigger_statement name: (identifier) @function)

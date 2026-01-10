@@ -1,0 +1,6 @@
+;; SQL Skeleton Folding (best-effort)
+(create_table_statement (_) @skeleton.fold)
+(create_view_statement (_) @skeleton.fold)
+(create_function_statement (_) @skeleton.fold)
+(create_procedure_statement (_) @skeleton.fold)
+(create_trigger_statement (_) @skeleton.fold)
