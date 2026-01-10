@@ -68,7 +68,7 @@ Create `.kairo/config/languages.json` to extend or override built-ins:
 | `KAIRO_RUST_VECTOR_ENABLED` | Enable Rust vector math. | `on/off` (default: on). |
 | `KAIRO_WASM_CHUNKING_ENABLED` | Enable WASM chunking provider. | `on/off` (default: off). |
 | `KAIRO_RUST_CHUNKING` | Legacy Rust chunking toggle. | Backward-compat; prefer `KAIRO_RUST_CHUNKING_ENABLED`. |
-| `KAIRO_TOKENIZER_PATH` | Absolute path to `tokenizer.json`. | Required to enable Rust chunking if model dir is not set. |
+| `KAIRO_TOKENIZER_PATH` | Absolute path to `tokenizer.json`. | Optional; Kairo automatically discovers this in standard cache/model paths. |
 | `KAIRO_DOC_CHUNK_PROFILE` | Default token chunk profile for indexing. | `fast/balanced/deep` (only used when outlineOptions don’t override). |
 
 

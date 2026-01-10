@@ -42,6 +42,11 @@ ADR-053-H replaces point-to-point native imports with a centralized capability r
 - Direct `@kairo/core-rs` imports are removed from call sites.
 - Legacy wrapper singletons were deleted; callers use `EngineManager.getProvider(...)`.
 - Chunking selection can respect profile hints (native preferred for fast/deep).
+- **Smart Auto-Discovery**: Rust engines now automatically discover `tokenizer.json` by probing:
+    - `KAIRO_TOKENIZER_PATH` (env)
+    - Embedding model directories (via `KAIRO_MODEL_DIR`)
+    - Transformers.js standard cache paths (ex: `node_modules/@xenova/transformers/.cache/`)
+    - Global HuggingFace hub cache (`~/.cache/huggingface/`)
 
 ## Testing & Performance
 
