@@ -51,6 +51,16 @@ Create `.kairo/config/languages.json` to extend or override built-ins:
 }
 ```
 
+### Config bootstrap (manage init/doctor)
+
+You can generate a starter config skeleton with the `manage` tool:
+
+- `manage({ command: "init", mode: "plan" })` → returns a plan (no files written)
+- `manage({ command: "init", mode: "apply" })` → writes `.kairo/config/*` (and minimal `.mcp-config.json`)
+- `manage({ command: "doctor" })` → diagnoses missing/misplaced settings and suggests fixes
+
+By default, `init` targets Kairo config files only. Pass `targets: ["vscode"]` to get a suggested `.vscode/mcp.json` patch.
+
 ## Documents / parsers
 
 | Variable | Purpose |

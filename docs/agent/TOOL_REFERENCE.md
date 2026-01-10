@@ -254,6 +254,11 @@ What do you need?
 - If edits go wrong: `manage({ command: "undo" })`
 - If results look stale: `manage({ command: "reindex" })`
 
+### Bootstrap config
+- `manage({ command: "init", mode: "plan" })` to generate a safe config plan
+- `manage({ command: "init", mode: "apply" })` to write config files
+- `manage({ command: "doctor" })` to diagnose missing/misplaced settings
+
 ---
 
 ## Internal Tools (Opt-in)

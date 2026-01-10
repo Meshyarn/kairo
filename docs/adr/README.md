@@ -54,8 +54,9 @@ The entries below cover all ADRs from the project history. Items marked “retou
 
 - ADR-040 (retouched): Five Pillars toolset consolidation → `docs/adr/ADR-040-five-pillars-toolset.md`
 - ADR-050 (retouched): Writer’s Flow contract → `docs/adr/ADR-050-writers-flow.md`
-- ADR-051 (archived/implemented): Review quality + session UX → see `docs/agent/TOOL_REFERENCE.md` + `docs/guides/getting-started.md` + `docs/guides/configuration.md`
-- ADR-052 (archived): Pillar option profiles + session policy → `docs/adr/ADR-052-pillar-option-profiles-and-session-policy.md`
+- ADR-051: Review quality + session UX → see `docs/agent/TOOL_REFERENCE.md` + `docs/guides/getting-started.md` + `docs/guides/configuration.md`
+- ADR-052: Pillar option profiles + session policy → `docs/adr/ADR-052-pillar-option-profiles-and-session-policy.md`
+- ADR-053-C (summary): Managed config bootstrap (`manage init/doctor`) → `docs/adr/ADR-053-C-managed-config-bootstrap.md`
 - ADR-033: “Six Pillars” precursor to ADR-040; introduced orchestration primitives and earlier public surface.
 - ADR-019/020: Toolset consolidation strategy (historical); led to the eventual Pillars surface.
 
