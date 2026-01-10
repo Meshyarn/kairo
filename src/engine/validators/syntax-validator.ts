@@ -1,4 +1,5 @@
-import { EngineManager } from "../../orchestration/capabilities/EngineManager.js";
+import path from "path";
+import { EngineManager, type CapabilityTier } from "../../orchestration/capabilities/EngineManager.js";
 import { CAP_SYNTAX_VALIDATE } from "../../orchestration/capabilities/CapabilityIds.js";
 import type { ISyntaxValidationProvider } from "../../orchestration/capabilities/SyntaxValidation.js";
 import type { ValidationResult } from "../../types/validation.js";
@@ -14,7 +15,11 @@ export class SyntaxValidator {
         const support = getSupportForFilePath(filePath);
         const languageId = astManager.getLanguageId(filePath);
         try {
-            const provider = EngineManager.getProvider<ISyntaxValidationProvider>(CAP_SYNTAX_VALIDATE);
+            const preferredTier = this.resolvePreferredTier(filePath);
+            const provider = EngineManager.getProvider<ISyntaxValidationProvider>(
+                CAP_SYNTAX_VALIDATE,
+                preferredTier ? { preferredTier } : undefined
+            );
             if (!provider) {
                 return {
                     success: true,
@@ -90,6 +95,21 @@ export class SyntaxValidator {
             return Boolean(language);
         } catch {
             return false;
+        }
+    }
+
+    private resolvePreferredTier(filePath: string): CapabilityTier | undefined {
+        const ext = path.extname(filePath).toLowerCase();
+        switch (ext) {
+            case ".ts":
+            case ".tsx":
+            case ".js":
+            case ".jsx":
+            case ".mjs":
+            case ".cjs":
+                return "native";
+            default:
+                return "wasm";
         }
     }
 }
