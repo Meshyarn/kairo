@@ -9,7 +9,8 @@
     "core_rs.node"
   ],
   "scripts": {
-    "build": "napi build --release"
+    "build": "napi build --release",
+    "postbuild": "node scripts/generate-contract-manifest.js"
   },
   "devDependencies": {
     "@napi-rs/cli": "^2.18.0"

@@ -6,6 +6,7 @@ import { createRequire } from "module";
 import { fileURLToPath } from "url";
 import { LanguageConfigLoader } from "./LanguageConfig.js";
 import { getSupportForLanguageId, SupportLevel } from "./LanguageSupportLevels.js";
+import { ContractManifestLoader } from "../contracts/ContractManifestLoader.js";
 
 export type BootstrapMode = "plan" | "apply";
 export type BootstrapTarget = "kairo" | "vscode";
@@ -1149,6 +1150,7 @@ export class ConfigBootstrapper {
         }
 
         const linkedRepos = repos.filter((repo) => repo.type === "linked");
+        const manifestLoader = new ContractManifestLoader(rootPath);
         for (const repo of linkedRepos) {
             const repoPath = path.resolve(rootPath, repo.path);
             const packageJsonPath = path.join(repoPath, "package.json");
@@ -1186,6 +1188,38 @@ export class ConfigBootstrapper {
                     action: "add_package_name",
                     evidence: { path: packageJsonPath, repoId: repo.id }
                 });
+            }
+
+            if (pkg?.name) {
+                const manifestResult = manifestLoader.loadManifest(pkg.name, "ffi_napi");
+                if (manifestResult.reason === "contract_manifest_missing") {
+                    findings.push({
+                        code: "CONTRACT_MANIFEST_MISSING",
+                        severity: "warn",
+                        message: `Contract manifest for "${pkg.name}" not found.`,
+                        action: "generate_contracts",
+                        evidence: { packageName: pkg.name, repoId: repo.id }
+                    });
+                    hints.push(`Generate contract manifest for ${pkg.name} (e.g. run build in ${repoPath}).`);
+                } else if (manifestResult.reason === "contract_manifest_invalid") {
+                    findings.push({
+                        code: "CONTRACT_MANIFEST_INVALID",
+                        severity: "warn",
+                        message: `Contract manifest for "${pkg.name}" is invalid.`,
+                        action: "regenerate_contracts",
+                        evidence: { packageName: pkg.name, repoId: repo.id }
+                    });
+                    hints.push(`Regenerate contract manifest for ${pkg.name} to fix invalid schema.`);
+                } else if (manifestResult.stale) {
+                    findings.push({
+                        code: "CONTRACT_MANIFEST_STALE",
+                        severity: "warn",
+                        message: `Contract manifest for "${pkg.name}" is stale.`,
+                        action: "regenerate_contracts",
+                        evidence: { packageName: pkg.name, repoId: repo.id }
+                    });
+                    hints.push(`Regenerate contract manifest for ${pkg.name} to pick up recent changes.`);
+                }
             }
 
             if (!pkg) {
