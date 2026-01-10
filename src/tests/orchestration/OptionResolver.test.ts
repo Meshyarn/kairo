@@ -42,6 +42,12 @@ describe("OptionResolver", () => {
     expect(explicit.effective.dryRun).toBe(false);
   });
 
+  it("maps profiles to chunking token limits", () => {
+    expect(OptionResolver.resolveChunkingOptions("fast")).toEqual({ maxTokens: 384, overlapTokens: 32 });
+    expect(OptionResolver.resolveChunkingOptions("balanced")).toEqual({ maxTokens: 512, overlapTokens: 64 });
+    expect(OptionResolver.resolveChunkingOptions("deep")).toEqual({ maxTokens: 768, overlapTokens: 128 });
+  });
+
   it("applies session policy when no explicit overrides", () => {
     const result = OptionResolver.resolveExploreOptions({} as any, {
       sources: "docs",

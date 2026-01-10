@@ -255,6 +255,16 @@ export class OptionResolver {
     return this.resolveWriteOptions(args, sessionId, sessionPolicy);
   }
 
+  static resolveChunkingOptions(profile?: ToolProfile): { maxTokens: number; overlapTokens: number } {
+    if (profile === "fast") {
+      return { maxTokens: 384, overlapTokens: 32 };
+    }
+    if (profile === "deep") {
+      return { maxTokens: 768, overlapTokens: 128 };
+    }
+    return { maxTokens: 512, overlapTokens: 64 };
+  }
+
   private static resolveDryRun(args: IntentConstraints, sessionId: string | undefined, safety?: ToolSafety): boolean {
     if (typeof args.dryRun === "boolean") return args.dryRun;
     if (safety === "plan") return true;
