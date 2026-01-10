@@ -83,7 +83,7 @@ describe("DocumentIndexer", () => {
         };
         EngineManager.resetForTesting();
         EngineManager.registerProvider(CAP_CHUNKING_TOKENS, {
-            meta: { id: "DocumentIndexerTestChunker", tier: "js", priority: 1000 },
+            meta: { id: "DocumentIndexerTestChunker", tier: "native", priority: 10000 },
             isAvailable: () => true,
             get: () => mockProvider
         });

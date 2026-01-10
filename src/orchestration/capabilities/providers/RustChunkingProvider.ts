@@ -34,18 +34,43 @@ export class RustChunkingProvider implements CapabilityProvider<ITokenChunkingPr
 }
 
 function resolveTokenizerPath(): string | null {
+    // 1. Explicit environment variable (Highest priority)
     const explicit = process.env.KAIRO_TOKENIZER_PATH?.trim();
     if (explicit && fs.existsSync(explicit)) {
         return explicit;
     }
+
     const embeddingConfig = resolveEmbeddingConfigFromEnv();
-    const modelDir = embeddingConfig.modelDir ?? process.env.KAIRO_MODEL_DIR;
     const modelId = embeddingConfig.local?.model;
-    if (modelDir && modelId) {
-        const candidate = path.join(modelDir, modelId, "tokenizer.json");
-        if (fs.existsSync(candidate)) {
-            return candidate;
+    if (!modelId) return null;
+
+    // 2. Resolve Home directory for global cache support
+    const homeDir = process.env.HOME || process.env.USERPROFILE || "";
+
+    // 3. Define all standard discovery locations
+    const candidates = [
+        // a. User-defined model directory
+        embeddingConfig.modelDir ? path.join(embeddingConfig.modelDir, modelId) : null,
+
+        // b. Transformers.js local node_modules cache (Project-local)
+        path.join(process.cwd(), "node_modules", "@xenova", "transformers", ".cache", modelId),
+
+        // c. Transformers.js global cache (User-level)
+        path.join(homeDir, ".cache", "huggingface", "hub", modelId.replace(/\//g, "--")), // Huggingface hub convention
+
+        // d. Kairo bundled models directory
+        path.join(process.cwd(), "models", modelId),
+
+        // e. Absolute path fallback for installed package
+        path.join(new URL('.', import.meta.url).pathname, "..", "..", "..", "..", "models", modelId)
+    ].filter((c): c is string => c !== null);
+
+    for (const dir of candidates) {
+        const fullPath = path.join(dir, "tokenizer.json");
+        if (fs.existsSync(fullPath)) {
+            return fullPath;
         }
     }
+
     return null;
 }
