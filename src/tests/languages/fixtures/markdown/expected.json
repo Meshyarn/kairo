@@ -1,0 +1,5 @@
+{
+  "imports": ["./guide.md"],
+  "symbols": ["Title", "Section"],
+  "skeletonIncludes": ["# Title"]
+}

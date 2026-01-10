@@ -55,7 +55,7 @@ Create `.kairo/config/languages.json` to extend or override built-ins:
 
 | Variable | Purpose |
 |---|---|
-| `KAIRO_WASM_DIR` | Where tree-sitter WASM assets are resolved (including custom Markdown WASM). |
+| `KAIRO_WASM_DIR` | Where tree-sitter WASM assets are resolved (including Markdown/SQL WASM). |
 
 ## Native engine toggles (ADR-053-H)
 

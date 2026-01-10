@@ -1,0 +1,6 @@
+{
+  "imports": ["./utils"],
+  "exports": ["local exports"],
+  "symbols": ["greet", "User"],
+  "skeletonIncludes": ["export class User"]
+}

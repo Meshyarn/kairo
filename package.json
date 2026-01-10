@@ -31,7 +31,7 @@
     "test:coverage": "NODE_OPTIONS=\"--experimental-vm-modules --max-old-space-size=8196\" jest dist --coverage",
     "test:coverage:orchestration": "NODE_OPTIONS=\"--experimental-vm-modules --max-old-space-size=8196\" jest dist --runInBand --coverage --collectCoverageFrom=\"dist/orchestration/**/*.js\" --coveragePathIgnorePatterns=\"/dist/tests/\"",
     "test:markdown-wasm-cli": "node scripts/test-markdown-wasm-cli.mjs",
-    "build": "node scripts/clean-dist.mjs && tsc && mkdir -p dist/queries && cp -r src/queries/* dist/queries/",
+    "build": "node scripts/clean-dist.mjs && tsc && mkdir -p dist/queries dist/tests/languages/fixtures && cp -r src/queries/* dist/queries/ && cp -r src/tests/languages/fixtures/* dist/tests/languages/fixtures/",
     "build:core-rs": "npm --prefix crates/core-rs run build",
     "build:markdown-wasm": "node dist/cli/build-markdown-wasm.js",
     "validate:languages": "node --import tsx scripts/validate-language-support.ts",

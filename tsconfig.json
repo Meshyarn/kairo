@@ -11,5 +11,5 @@
     "moduleResolution": "NodeNext"                           /* Specify how modules are resolved. */
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "benchmarks", "test-*.ts"]
+  "exclude": ["node_modules", "benchmarks", "test-*.ts", "src/tests/languages/fixtures"]
 }

@@ -1,0 +1,5 @@
+{
+  "imports": ["fmt"],
+  "symbols": ["greet", "User"],
+  "skeletonIncludes": ["func greet"]
+}

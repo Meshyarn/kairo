@@ -11,6 +11,8 @@ Universal language parity means:
 - the same high-level capabilities work across languages (within practical limits)
 - adding a new language is primarily a matter of adding query files + a mapping entry
 
+Language “parity” should be interpreted via explicit support levels (L2/L3); see `docs/adr/ADR-053-L-language-support-levels.md`.
+
 ## Decision
 
 1) Adopt a **query-driven architecture**:
