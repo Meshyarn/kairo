@@ -23,6 +23,8 @@ import {
 } from './understand/DependencyAnalysis.js';
 import { buildUnderstandResponse } from './understand/ReportGenerator.js';
 import { resolveProgressState, logProgress, logToolStart, logToolEnd, ProgressState } from '../../utils/ProgressLogger.js';
+import { FeatureFlags } from '../../config/FeatureFlags.js';
+import { OptionResolver } from '../options/OptionResolver.js';
 
 
 export class UnderstandPillar {
@@ -38,8 +40,12 @@ export class UnderstandPillar {
   public async execute(intent: ParsedIntent, context: OrchestrationContext): Promise<any> {
     const { targets, constraints, originalIntent } = intent;
     const subject = constraints.goal || targets[0] || originalIntent;
-    const depth = constraints.depth || 'standard';
-    const include = constraints.include ?? {};
+    const resolvedOptions = OptionResolver.resolveUnderstandOptions(constraints, {
+      enableProfiles: FeatureFlags.isEnabled(FeatureFlags.PILLAR_OPTION_PROFILES)
+    });
+    const depth = resolvedOptions.effective.depth || 'standard';
+    const include = resolvedOptions.effective.include ?? {};
+    const traceEnabled = resolvedOptions.effective.traceEnabled;
     const vibe = constraints.vibe as { extract?: boolean; scope?: string; includeNorms?: boolean } | undefined;
     const wantsVibe = vibe?.extract === true;
     const analysis = constraints.analysis as { clusters?: boolean; maxClusters?: number; maxFilesPerCluster?: number } | undefined;
@@ -258,7 +264,7 @@ export class UnderstandPillar {
       }
     }
 
-    return buildUnderstandResponse({
+    const response = buildUnderstandResponse({
       subject,
       filePath,
       symbolName,
@@ -282,6 +288,19 @@ export class UnderstandPillar {
       analysisPack,
       sessionId: resolvedSessionId
     });
+    if (traceEnabled) {
+      response.effectiveOptions = {
+        profile: resolvedOptions.effective.profile,
+        sources: resolvedOptions.effective.sources,
+        depth,
+        include
+      };
+      response.decisionTrace = {
+        profileApplied: resolvedOptions.effective.profile ?? null,
+        sourcesApplied: resolvedOptions.effective.sources ?? null
+      };
+    }
+    return response;
 
   }
 

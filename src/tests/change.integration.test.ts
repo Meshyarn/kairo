@@ -48,6 +48,26 @@ describe('SmartContextServer - change integration', () => {
     expect(updated).toContain('const message = "hi";');
   });
 
+  it('applies edits when safety=apply is set without explicit dryRun', async () => {
+    const relPath = path.join('src', 'safety.ts');
+    const absPath = path.join(testRoot, relPath);
+    fs.writeFileSync(absPath, 'const message = "hello";\n', 'utf-8');
+
+    const result = await runTool(server, 'change', {
+      intent: 'Replace greeting via safety',
+      safety: 'apply',
+      targetFiles: [relPath],
+      edits: [{
+        target: 'const message = "hello";',
+        replacement: 'const message = "hi";'
+      }]
+    });
+
+    expect(result.success).toBe(true);
+    const updated = fs.readFileSync(absPath, 'utf-8');
+    expect(updated).toContain('const message = "hi";');
+  });
+
   it('applies batch edits across multiple files', async () => {
     const relA = path.join('src', 'batch-a.ts');
     const relB = path.join('src', 'batch-b.ts');

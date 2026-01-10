@@ -49,6 +49,7 @@ import {
     executeV2BatchChange
 } from "./BatchExecution.js";
 import { resolveTargetPath } from "./shared/TargetResolver.js";
+import { OptionResolver } from "../../options/OptionResolver.js";
 
 export class ChangePillar {
   private fileSystem = new NodeFileSystem(process.cwd());
@@ -72,11 +73,14 @@ export class ChangePillar {
     const stopTotal = metrics.startTimer("change.total_ms");
     try {
       const { targets, constraints, originalIntent } = intent;
-      const { dryRun = true, includeImpact = false, includeSymbolImpact = false } = constraints;
+      const { includeImpact = false, includeSymbolImpact = false } = constraints;
       const integrityOptions = IntegrityEngine.resolveOptions(constraints.integrity, "change");
       const ucg = context.getState<UnifiedContextGraph>('ucg');
-      const reviewOptions = this.resolveReviewOptions(constraints.reviewOptions, Boolean(constraints.sessionId));
       const rawSessionId = typeof constraints.sessionId === "string" ? constraints.sessionId : undefined;
+      const resolvedOptions = OptionResolver.resolveChangeOptions(constraints, rawSessionId);
+      const dryRun = resolvedOptions.effective.dryRun;
+      const reviewOptions = resolvedOptions.effective.reviewOptions;
+      const traceEnabled = resolvedOptions.effective.traceEnabled;
       const draftId = typeof (constraints as any).draftId === "string" ? (constraints as any).draftId : undefined;
       const refinement = typeof (constraints as any).refinement === "string" ? (constraints as any).refinement : undefined;
       const refinedIntent = refinement ? `${originalIntent}\nRefinement: ${refinement}` : originalIntent;
@@ -102,7 +106,25 @@ export class ChangePillar {
       const attachWorkflow = <T extends Record<string, any>>(payload: T): T & { workflowMeta: WorkflowMeta; workflowWarnings?: string[] } => {
         const next = {
           ...payload,
-          workflowMeta
+          workflowMeta,
+          ...(traceEnabled
+            ? {
+                effectiveOptions: {
+                  profile: resolvedOptions.effective.profile,
+                  safety: resolvedOptions.effective.safety,
+                  dryRun,
+                  reviewOptions
+                },
+                decisionTrace: {
+                  dryRun: {
+                    explicit: typeof constraints.dryRun === "boolean",
+                    resolved: dryRun
+                  },
+                  safety: resolvedOptions.effective.safety ?? null,
+                  profile: resolvedOptions.effective.profile ?? null
+                }
+              }
+            : {})
         } as T & { workflowMeta: WorkflowMeta; workflowWarnings?: string[] };
         if (workflowWarnings.length > 0) {
           next.workflowWarnings = workflowWarnings;

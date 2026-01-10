@@ -84,6 +84,19 @@ describe('ExplorePillar Integration', () => {
     expect(secondResult.pack.hit).toBe(true);
   });
 
+  it('respects sources=docs and emits trace', async () => {
+    const result = await runTool(server, 'explore', {
+      query: 'How to Improve Session UX?',
+      sources: 'docs',
+      trace: true
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.effectiveOptions?.sources).toBe('docs');
+    expect(result.decisionTrace?.docSearch).toBeDefined();
+    expect(result.decisionTrace?.docSearch?.skippedReason).not.toBe('doc_search_skipped');
+  });
+
   it('blocks sensitive files by default', async () => {
     fs.writeFileSync(path.join(testRoot, '.env'), 'SECRET_KEY=12345');
     

@@ -13,6 +13,8 @@ import type { DependencyGraph } from "../../../ast/DependencyGraph.js";
 import { ProjectSketchBuilder } from "../../../generation/project-sketch-builder.js";
 import type { ResearchPack } from "../../../types/flow-artifacts.js";
 import type { FlowArtifactManager } from "../../flow-artifact-manager.js";
+import { FeatureFlags } from "../../../config/FeatureFlags.js";
+import { OptionResolver } from "../../options/OptionResolver.js";
 
 import { 
     ExploreItem, 
@@ -66,10 +68,15 @@ export class ExplorePillar {
         const constraints = intent.constraints as any;
         const query = typeof constraints.query === "string" ? constraints.query : undefined;
         const paths = Array.isArray(constraints.paths) ? constraints.paths : [];
-        const view = (constraints.view ?? "auto") as "auto" | "preview" | "section" | "full";
-        const include = (constraints.include ?? {}) as { docs?: boolean; code?: boolean; comments?: boolean; logs?: boolean };
-        const includeExplicit = !!constraints.include && typeof constraints.include === "object" && !Array.isArray(constraints.include)
-            && Object.keys(constraints.include).length > 0;
+        const resolvedOptions = OptionResolver.resolveExploreOptions(constraints, {
+            enableProfiles: FeatureFlags.isEnabled(FeatureFlags.PILLAR_OPTION_PROFILES)
+        });
+        const view = resolvedOptions.effective.view;
+        const include = resolvedOptions.effective.include;
+        const includeExplicit = resolvedOptions.meta.includeExplicit;
+        const sourcesWantsDocs = resolvedOptions.meta.sourcesWantsDocs;
+        const traceEnabled = resolvedOptions.effective.traceEnabled;
+        const profile = resolvedOptions.effective.profile;
         const research = constraints.research as {
             sketch?: boolean;
             topN?: number;
@@ -77,7 +84,7 @@ export class ExplorePillar {
         } | undefined;
         const rawSessionId = typeof constraints.sessionId === "string" ? constraints.sessionId : undefined;
         const researchRequested = !!research && research?.sketch !== false;
-        const limits = (constraints.limits ?? {}) as {
+        const limits = resolvedOptions.effective.limits as {
             maxResults?: number;
             maxChars?: number;
             maxItemChars?: number;
@@ -165,12 +172,19 @@ export class ExplorePillar {
             );
         }
 
+        const packOptions: Record<string, unknown> = {
+            include: { docs: includeDocs, code: includeCode, comments: includeComments, logs: includeLogs },
+            intent: constraints.intent,
+            paths
+        };
+        if (resolvedOptions.meta.profileAffectsPack && resolvedOptions.effective.profile) {
+            packOptions.profile = resolvedOptions.effective.profile;
+        }
+        if (resolvedOptions.meta.sourcesAffectsPack && resolvedOptions.effective.sources) {
+            packOptions.sources = resolvedOptions.effective.sources;
+        }
         const effectivePackId = query
-            ? (packId ?? computeExplorePackId(query, {
-                include: { docs: includeDocs, code: includeCode, comments: includeComments, logs: includeLogs },
-                intent: constraints.intent,
-                paths
-            }))
+            ? (packId ?? computeExplorePackId(query, packOptions))
             : undefined;
 
         const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
@@ -183,6 +197,12 @@ export class ExplorePillar {
             data: { docs: [], code: [] },
             sessionId: resolvedSessionId
         };
+        const decisionTrace = traceEnabled ? {
+            cache: {} as Record<string, unknown>,
+            docSearch: {} as Record<string, unknown>,
+            heuristic: { symbolLikeQuery: symbolQuery },
+            budget: { timeoutMs }
+        } : undefined;
 
         if (researchRequested) {
             response.researchPack = await this.buildResearchPack(research, resolvedSessionId, intent.originalIntent).catch(() => undefined);
@@ -226,6 +246,10 @@ export class ExplorePillar {
             const contentCursorState = parseItemsCursor(constraints.cursor?.content);
             const cachedPack = effectivePackId ? ExplorePillar.packCache.get(effectivePackId) : undefined;
             if (cachedPack) {
+                if (decisionTrace) {
+                    decisionTrace.cache = { packHit: true, packId: cachedPack.packId };
+                    decisionTrace.docSearch = { attempted: false, skippedReason: "cache_hit" };
+                }
                 if (constraints.cursor?.content) {
                     const sliced = slicePack(cachedPack, contentCursorState, maxResults, includeDocs, includeCode, includeComments, includeLogs);
                     const expandedDocs = await Promise.all(sliced.docs.map((item) => this.expandDocContent(item, maxChars, context)));
@@ -250,7 +274,11 @@ export class ExplorePillar {
                     expiresAt: cachedPack.expiresAt
                 };
             } else {
-                const packMaxResults = Math.max(maxResults, DEFAULT_PACK_RESULTS);
+                if (decisionTrace) {
+                    decisionTrace.cache = { packHit: false };
+                }
+                const isDeepProfile = profile === "deep";
+                const packMaxResults = Math.max(maxResults, DEFAULT_PACK_RESULTS, isDeepProfile ? 40 : 0);
                 let docsForPack: ExploreItem[] = [];
                 let codeForPack: ExploreItem[] = [];
 
@@ -306,13 +334,17 @@ export class ExplorePillar {
                     }
                 }
 
-                const shouldPreferCode = symbolQuery && !includeExplicit;
+                const shouldPreferCode = symbolQuery && !includeExplicit && !sourcesWantsDocs;
                 const shouldRunDocSearch = (includeDocs || includeComments)
                     && !shouldPreferCode
                     && (!hasDeadline || timeRemaining() > 400);
 
                 if (shouldRunDocSearch) {
-                    const docMaxCandidatesBase = Math.max(packMaxResults * 3, 24);
+                    if (decisionTrace) {
+                        decisionTrace.docSearch = { attempted: true };
+                    }
+                    const docCandidateMultiplier = isDeepProfile ? 6 : 3;
+                    const docMaxCandidatesBase = Math.max(packMaxResults * docCandidateMultiplier, isDeepProfile ? 48 : 24);
                     const docMaxCandidates = Math.min(
                         docMaxCandidatesBase,
                         maxFiles,
@@ -370,6 +402,12 @@ export class ExplorePillar {
                 } else if (includeDocs || includeComments) {
                     degraded = true;
                     reasons.push(shouldPreferCode ? "doc_search_skipped" : "budget_exceeded");
+                    if (decisionTrace) {
+                        decisionTrace.docSearch = {
+                            attempted: false,
+                            skippedReason: shouldPreferCode ? "doc_search_skipped" : "budget_exceeded"
+                        };
+                    }
                 }
 
                 if (effectivePackId) {
@@ -470,6 +508,17 @@ export class ExplorePillar {
         if (degraded) {
             response.degraded = true;
             response.reasons = Array.from(new Set(reasons));
+        }
+
+        if (traceEnabled) {
+            response.effectiveOptions = {
+                profile: resolvedOptions.effective.profile,
+                sources: resolvedOptions.effective.sources,
+                include,
+                limits,
+                view
+            };
+            response.decisionTrace = decisionTrace;
         }
 
         this.addIndexStatusInsights(response);

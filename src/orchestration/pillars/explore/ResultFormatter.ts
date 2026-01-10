@@ -35,6 +35,8 @@ export type ExploreResponse = {
     }>;
     indexSnapshot?: IndexSnapshot;
     sessionId?: string;
+    effectiveOptions?: Record<string, unknown>;
+    decisionTrace?: Record<string, unknown>;
 };
 
 const DEFAULT_MAX_CHARS = 8000;
