@@ -27,6 +27,11 @@ const CONTRACT_REASON_MAP: Record<string, { type: DegradedReasonType; message: s
     type: "cross_lang_contract_degraded",
     message: "Contract surface changed (non-breaking).",
     action: DEFAULT_ACTION
+  },
+  cross_lang_contract_degraded: {
+    type: "cross_lang_contract_degraded",
+    message: "Cross-language impact used fallback linking; results may be incomplete.",
+    action: DEFAULT_ACTION
   }
 };
 

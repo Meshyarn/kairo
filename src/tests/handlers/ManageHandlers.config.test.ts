@@ -140,4 +140,37 @@ describe("ManageHandlers config bootstrap", () => {
         const codes = result.findings.map((finding: any) => finding.code);
         expect(codes).toContain("CONTRACT_ALIAS_MISSING");
     });
+
+    it("applies contracts bootstrap on doctor apply", async () => {
+        const root = makeTempDir();
+        const configDir = path.join(root, ".kairo", "config");
+        fs.mkdirSync(configDir, { recursive: true });
+
+        const config = {
+            version: "1.0",
+            repositories: {
+                main: { path: ".", name: "Main", type: "primary", languages: ["typescript"] },
+                "core-rs": { path: "crates/core-rs", name: "core-rs", type: "linked", languages: ["rust"] }
+            },
+            defaultRepo: "main"
+        };
+        fs.writeFileSync(path.join(configDir, "mcp-config.json"), JSON.stringify(config, null, 2));
+
+        const coreRoot = path.join(root, "crates", "core-rs");
+        fs.mkdirSync(coreRoot, { recursive: true });
+        fs.writeFileSync(path.join(coreRoot, "package.json"), JSON.stringify({
+            name: "@kairo/core-rs",
+            types: "index.d.ts"
+        }, null, 2));
+        fs.writeFileSync(path.join(coreRoot, "Cargo.toml"), "[package]\nname = \"core-rs\"\nversion = \"0.1.0\"\n");
+        fs.writeFileSync(path.join(coreRoot, "index.d.ts"), "export interface ChunkResult { text: string; }\n");
+
+        const handler = new ManageHandlers(makeContext(root) as any);
+        const raw = (handler as any).manageProjectRaw.bind(handler);
+        const result = await raw({ command: "doctor", mode: "apply", scope: "contracts" });
+
+        expect(result.success).toBe(true);
+        expect(fs.existsSync(path.join(root, ".kairo", "contracts", "ffi_napi"))).toBe(true);
+        expect(fs.existsSync(path.join(root, ".kairo", "contracts", "ffi_napi", "@kairo__core-rs.json"))).toBe(true);
+    });
 });

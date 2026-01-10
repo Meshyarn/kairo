@@ -530,8 +530,15 @@ export class ChangePillar {
       const deps = await dependencyPromise;
       const hotSpots = await hotSpotPromise;
       const symbolImpact = await symbolImpactPromise;
+      const publicSurface = guardrailResult?.architecturalRisk?.publicSurface;
+      const forcedExports = Array.isArray(publicSurface?.changes)
+        ? publicSurface.changes.map((change: any) => change?.name).filter((name: any) => typeof name === "string")
+        : [];
       const crossLangImpact = includeImpact && targetPath
-        ? await this.buildCrossLangImpact(targetPath)
+        ? await this.buildCrossLangImpact(targetPath, context, {
+            force: Boolean(publicSurface?.hasChanges),
+            changedExports: forcedExports
+          })
         : undefined;
       const degradedReasonDetails = crossLangImpact?.reasons
         ? buildDegradedReasons(crossLangImpact.reasons, { packageName: crossLangImpact.packageName })
@@ -913,7 +920,11 @@ export class ChangePillar {
     return warnings;
   }
 
-  private async buildCrossLangImpact(targetPath: string): Promise<CrossLangImpact | undefined> {
+  private async buildCrossLangImpact(
+    targetPath: string,
+    context: OrchestrationContext,
+    options?: { force?: boolean; changedExports?: string[] }
+  ): Promise<CrossLangImpact | undefined> {
     const repoRegistry = this.registry.getMetadata<RepoRegistry>("repoRegistry");
     const packageAliasMap = this.registry.getMetadata<PackageAliasMap>("packageAliasMap");
     const dependencyGraph = this.registry.getMetadata<DependencyGraph>("dependencyGraph");
@@ -930,7 +941,9 @@ export class ChangePillar {
     }
 
     const manifestLoader = new ContractManifestLoader(process.cwd());
-    const loadResult = manifestLoader.loadManifest(alias.packageName, "ffi_napi");
+    const loadResult = manifestLoader.loadManifest(alias.packageName, "ffi_napi", {
+      autoGenerate: true
+    });
     const beforeManifest = loadResult.manifest;
 
     let afterManifest = beforeManifest;
@@ -953,17 +966,65 @@ export class ChangePillar {
       };
     }
 
+    const forcedExports = Array.isArray(options?.changedExports)
+      ? options?.changedExports.filter((name) => typeof name === "string" && name.length > 0)
+      : [];
+    const forceImpact = Boolean(options?.force);
+    const hasOriginalChanges = diff.added.length + diff.removed.length + diff.changed.length > 0;
+    if (forceImpact && forcedExports.length > 0) {
+      const known = new Set([...diff.added, ...diff.removed, ...diff.changed.map((entry) => entry.exportName)]);
+      const extraChanges = forcedExports.filter((name) => !known.has(name));
+      if (extraChanges.length > 0) {
+        diff = {
+          ...diff,
+          changed: [
+            ...diff.changed,
+            ...extraChanges.map((name) => ({
+              exportName: name,
+              kind: "unknown" as const,
+              before: null,
+              after: null,
+              breaking: true
+            }))
+          ]
+        };
+      }
+    }
+    if (forceImpact && !hasOriginalChanges && !diff.degraded) {
+      diff = {
+        ...diff,
+        degraded: true,
+        reasons: Array.from(new Set([...(diff.reasons ?? []), "contract_manifest_stale"]))
+      };
+    }
+
     const hasChanges = diff.added.length + diff.removed.length + diff.changed.length > 0;
     if (!diff.degraded && !hasChanges) {
       return undefined;
     }
 
-    if (impactAnalyzer) {
-      return impactAnalyzer.analyzeCrossLangImpact(alias.packageName, alias.entryPath, diff);
+    const importers = await dependencyGraph.getImporters(alias.entryPath);
+    let consumerFiles = importers.map((edge) => edge.from).filter(Boolean);
+    let usedFallback = false;
+    if (consumerFiles.length === 0) {
+      const fallback = await this.findFallbackConsumers(context, alias.packageName, alias.entryPath);
+      if (fallback.length > 0) {
+        consumerFiles = fallback;
+        usedFallback = true;
+      }
     }
 
-    const importers = await dependencyGraph.getImporters(alias.entryPath);
-    const consumerFiles = importers.map((edge) => edge.from).filter(Boolean);
+    if (impactAnalyzer) {
+      const enriched = await impactAnalyzer.analyzeCrossLangImpact(alias.packageName, alias.entryPath, diff);
+      if (consumerFiles.length > 0 && enriched.consumerFiles.length === 0) {
+        enriched.consumerFiles = consumerFiles;
+      }
+      if (usedFallback) {
+        enriched.degraded = true;
+        enriched.reasons = Array.from(new Set([...(enriched.reasons ?? []), "cross_lang_contract_degraded"]));
+      }
+      return enriched;
+    }
     const changedExports = [
       ...diff.added,
       ...diff.removed,
@@ -974,10 +1035,51 @@ export class ChangePillar {
       packageName: alias.packageName,
       consumerFiles: Array.from(new Set(consumerFiles)),
       changedExports: Array.from(new Set(changedExports)),
-      degraded: diff.degraded,
-      reasons: diff.reasons
+      degraded: diff.degraded || usedFallback,
+      reasons: Array.from(new Set([...(diff.reasons ?? []), ...(usedFallback ? ["cross_lang_contract_degraded"] : [])]))
     };
   }
+
+  private async findFallbackConsumers(
+    context: OrchestrationContext,
+    packageName: string,
+    entryPath: string
+  ): Promise<string[]> {
+    try {
+      const result = await this.runTool(context, "project_search", {
+        query: packageName,
+        maxResults: 80,
+        type: "file"
+      });
+      const paths = Array.isArray(result?.results)
+        ? result.results.map((item: any) => item.path).filter((p: any) => typeof p === "string")
+        : [];
+      const unique = new Set<string>();
+      const importPattern = new RegExp(
+        String.raw`(?:from\s+["']${this.escapeRegExp(packageName)}["']|require\(\s*["']${this.escapeRegExp(packageName)}["']\s*\)|import\(\s*["']${this.escapeRegExp(packageName)}["']\s*\))`
+      );
+      for (const filePath of paths) {
+        if (!filePath || filePath === entryPath) continue;
+        if (filePath.includes("/.kairo/") || filePath.includes("/node_modules/")) continue;
+        if (!/\.(ts|tsx|js|jsx)$/.test(filePath)) continue;
+        try {
+          const content = fs.readFileSync(filePath, "utf-8");
+          if (!importPattern.test(content)) continue;
+        } catch {
+          continue;
+        }
+        unique.add(filePath);
+      }
+      return Array.from(unique);
+    } catch {
+      return [];
+    }
+  }
+
+  private escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
 }
 
 function collectBlockReasons(
