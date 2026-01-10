@@ -1,4 +1,5 @@
 import type { VectorIndex, VectorIndexResult } from "./VectorIndex.js";
+import { RustVectorMath } from "./RustVectorMath.js";
 
 export class BruteforceVectorIndex implements VectorIndex {
     public readonly backend = "bruteforce" as const;
@@ -27,9 +28,23 @@ export class BruteforceVectorIndex implements VectorIndex {
     public search(query: Float32Array, k: number): VectorIndexResult[] {
         if (!query || query.length !== this.dims) return [];
         const results: VectorIndexResult[] = [];
-        for (const [id, vector] of this.vectors.entries()) {
-            const score = cosineSimilarity(query, vector);
-            results.push({ id, score });
+        const rustMath = RustVectorMath.getShared();
+        if (rustMath.isAvailable()) {
+            const ids: string[] = [];
+            const vectors: Float32Array[] = [];
+            for (const [id, vector] of this.vectors.entries()) {
+                ids.push(id);
+                vectors.push(vector);
+            }
+            const scores = rustMath.cosineScores(query, vectors);
+            for (let i = 0; i < ids.length; i += 1) {
+                results.push({ id: ids[i], score: scores[i] ?? 0 });
+            }
+        } else {
+            for (const [id, vector] of this.vectors.entries()) {
+                const score = cosineSimilarity(query, vector);
+                results.push({ id, score });
+            }
         }
         results.sort((a, b) => b.score - a.score);
         return results.slice(0, Math.max(0, k));

@@ -22,6 +22,7 @@ export interface SyntaxIssue {
   message: string
 }
 export declare function validateSyntax(language: string, content: string): Array<SyntaxIssue>
+export declare function cosineScores(query: Float32Array, vectors: Array<Float32Array>): Array<number>
 export declare class SmartChunker {
   constructor(modelPath: string)
   chunk(text: string, maxTokens: number, overlap: number): Array<ChunkResult>
