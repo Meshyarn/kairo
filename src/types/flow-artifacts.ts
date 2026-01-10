@@ -379,6 +379,20 @@ export interface ArtifactManagerStatus {
 
 export type FlowSessionStatus = "active" | "completed" | "abandoned";
 
+export type ToolProfile = "fast" | "balanced" | "deep";
+export type ToolSources = "code" | "docs" | "both";
+export type ToolSafety = "plan" | "apply";
+
+export interface SessionPolicy {
+    profile?: ToolProfile;
+    sources?: ToolSources;
+    safety?: ToolSafety;
+    explore?: { profile?: ToolProfile; sources?: ToolSources };
+    understand?: { profile?: ToolProfile; sources?: ToolSources };
+    write?: { profile?: ToolProfile; safety?: ToolSafety };
+    change?: { profile?: ToolProfile; safety?: ToolSafety };
+}
+
 export interface FlowSessionOutcome {
     filesCreated: string[];
     filesModified: string[];
@@ -399,4 +413,5 @@ export interface FlowSession {
     };
     updatedAt?: number;
     outcome?: FlowSessionOutcome;
+    policy?: SessionPolicy;
 }

@@ -77,15 +77,33 @@ export class ChangePillar {
       const integrityOptions = IntegrityEngine.resolveOptions(constraints.integrity, "change");
       const ucg = context.getState<UnifiedContextGraph>('ucg');
       const rawSessionId = typeof constraints.sessionId === "string" ? constraints.sessionId : undefined;
-      const resolvedOptions = OptionResolver.resolveChangeOptions(constraints, rawSessionId);
+      const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
+      const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, originalIntent);
+      const sessionPolicy = resolvedSessionId ? artifactManager?.getSession(resolvedSessionId)?.policy : undefined;
+      const resolvedOptions = OptionResolver.resolveChangeOptions(constraints, resolvedSessionId, {
+        enableSessionPolicy: FeatureFlags.isEnabled(FeatureFlags.SESSION_POLICY),
+        sessionPolicy
+      });
       const dryRun = resolvedOptions.effective.dryRun;
       const reviewOptions = resolvedOptions.effective.reviewOptions;
       const traceEnabled = resolvedOptions.effective.traceEnabled;
       const draftId = typeof (constraints as any).draftId === "string" ? (constraints as any).draftId : undefined;
       const refinement = typeof (constraints as any).refinement === "string" ? (constraints as any).refinement : undefined;
       const refinedIntent = refinement ? `${originalIntent}\nRefinement: ${refinement}` : originalIntent;
-      const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
-      const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, originalIntent);
+      if (resolvedSessionId && FeatureFlags.isEnabled(FeatureFlags.SESSION_POLICY)) {
+        const policyPatch: Partial<{ profile?: string; safety?: string; change?: Record<string, unknown> }> = {};
+        if (typeof constraints.profile === "string") {
+          policyPatch.profile = constraints.profile;
+          policyPatch.change = { ...(policyPatch.change ?? {}), profile: constraints.profile };
+        }
+        if (typeof (constraints as any).safety === "string") {
+          policyPatch.safety = (constraints as any).safety;
+          policyPatch.change = { ...(policyPatch.change ?? {}), safety: (constraints as any).safety };
+        }
+        if (Object.keys(policyPatch).length > 0) {
+          artifactManager?.updateSessionPolicy(resolvedSessionId, policyPatch as any, "merge");
+        }
+      }
       const draftArtifact = draftId ? artifactManager?.get(draftId) : undefined;
       const draftPackFromId = draftArtifact?.type === "draft" ? (draftArtifact as any).pack : undefined;
       const draftPhantom = draftPackFromId?.phantomFiles?.[0];

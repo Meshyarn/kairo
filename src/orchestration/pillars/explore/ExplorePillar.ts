@@ -68,15 +68,6 @@ export class ExplorePillar {
         const constraints = intent.constraints as any;
         const query = typeof constraints.query === "string" ? constraints.query : undefined;
         const paths = Array.isArray(constraints.paths) ? constraints.paths : [];
-        const resolvedOptions = OptionResolver.resolveExploreOptions(constraints, {
-            enableProfiles: FeatureFlags.isEnabled(FeatureFlags.PILLAR_OPTION_PROFILES)
-        });
-        const view = resolvedOptions.effective.view;
-        const include = resolvedOptions.effective.include;
-        const includeExplicit = resolvedOptions.meta.includeExplicit;
-        const sourcesWantsDocs = resolvedOptions.meta.sourcesWantsDocs;
-        const traceEnabled = resolvedOptions.effective.traceEnabled;
-        const profile = resolvedOptions.effective.profile;
         const research = constraints.research as {
             sketch?: boolean;
             topN?: number;
@@ -84,6 +75,27 @@ export class ExplorePillar {
         } | undefined;
         const rawSessionId = typeof constraints.sessionId === "string" ? constraints.sessionId : undefined;
         const researchRequested = !!research && research?.sketch !== false;
+        const packId = typeof constraints.packId === "string" ? constraints.packId : undefined;
+        const fullPaths = Array.isArray(constraints.fullPaths) ? constraints.fullPaths : [];
+        const allowSensitive = constraints.allowSensitive === true;
+        const allowBinary = constraints.allowBinary === true;
+        const allowGlobs = constraints.allowGlobs === true;
+        const integrityOptions = IntegrityEngine.resolveOptions(constraints.integrity, "explore");
+        const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
+        const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, intent.originalIntent ?? query ?? "explore");
+        const sessionPolicy = resolvedSessionId ? artifactManager?.getSession(resolvedSessionId)?.policy : undefined;
+
+        const resolvedOptions = OptionResolver.resolveExploreOptions(constraints, {
+            enableProfiles: FeatureFlags.isEnabled(FeatureFlags.PILLAR_OPTION_PROFILES),
+            enableSessionPolicy: FeatureFlags.isEnabled(FeatureFlags.SESSION_POLICY),
+            sessionPolicy
+        });
+        const view = resolvedOptions.effective.view;
+        const include = resolvedOptions.effective.include;
+        const includeExplicit = resolvedOptions.meta.includeExplicit;
+        const sourcesWantsDocs = resolvedOptions.meta.sourcesWantsDocs;
+        const traceEnabled = resolvedOptions.effective.traceEnabled;
+        const profile = resolvedOptions.effective.profile;
         const limits = resolvedOptions.effective.limits as {
             maxResults?: number;
             maxChars?: number;
@@ -92,12 +104,6 @@ export class ExplorePillar {
             maxFiles?: number;
             timeoutMs?: number;
         };
-        const packId = typeof constraints.packId === "string" ? constraints.packId : undefined;
-        const fullPaths = Array.isArray(constraints.fullPaths) ? constraints.fullPaths : [];
-        const allowSensitive = constraints.allowSensitive === true;
-        const allowBinary = constraints.allowBinary === true;
-        const allowGlobs = constraints.allowGlobs === true;
-        const integrityOptions = IntegrityEngine.resolveOptions(constraints.integrity, "explore");
 
         const queryMetrics = query ? analyzeQuery(query) : undefined;
         const queryTokens = query ? query.trim().split(/\s+/).filter(Boolean) : [];
@@ -187,8 +193,20 @@ export class ExplorePillar {
             ? (packId ?? computeExplorePackId(query, packOptions))
             : undefined;
 
-        const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
-        const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, intent.originalIntent ?? query ?? "explore");
+        if (resolvedSessionId && FeatureFlags.isEnabled(FeatureFlags.SESSION_POLICY)) {
+            const policyPatch: Partial<{ profile?: string; sources?: string; explore?: Record<string, unknown> }> = {};
+            if (typeof constraints.profile === "string") {
+                policyPatch.profile = constraints.profile;
+                policyPatch.explore = { ...(policyPatch.explore ?? {}), profile: constraints.profile };
+            }
+            if (typeof constraints.sources === "string") {
+                policyPatch.sources = constraints.sources;
+                policyPatch.explore = { ...(policyPatch.explore ?? {}), sources: constraints.sources };
+            }
+            if (Object.keys(policyPatch).length > 0) {
+                artifactManager?.updateSessionPolicy(resolvedSessionId, policyPatch as any, "merge");
+            }
+        }
 
         const response: ExploreResponse = {
             success: true,

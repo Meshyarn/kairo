@@ -1,5 +1,6 @@
 import { FeatureFlags } from "../../config/FeatureFlags.js";
 import type { IntentConstraints } from "../IntentRouter.js";
+import type { SessionPolicy } from "../../types/flow-artifacts.js";
 
 export type ToolProfile = "fast" | "balanced" | "deep";
 export type ToolSources = "code" | "docs" | "both";
@@ -76,9 +77,11 @@ const setIfUnset = <T extends Record<string, any>>(target: T, key: keyof T, valu
 export class OptionResolver {
   static resolveExploreOptions(
     args: IntentConstraints,
-    options?: { enableProfiles?: boolean }
+    options?: { enableProfiles?: boolean; enableSessionPolicy?: boolean; sessionPolicy?: SessionPolicy }
   ): { effective: ExploreEffective; meta: ExploreMeta } {
     const enableProfiles = options?.enableProfiles === true;
+    const enableSessionPolicy = options?.enableSessionPolicy === true;
+    const sessionPolicy = options?.sessionPolicy;
     const include = (isRecord(args.include)
       ? { ...(args.include as Record<string, unknown>) }
       : {}) as ExploreEffective["include"];
@@ -89,13 +92,23 @@ export class OptionResolver {
     const limitsExplicit = Object.keys(limits).length > 0;
     const viewExplicit = typeof args.view === "string";
 
-    const profile = isToolProfile(args.profile) ? args.profile : undefined;
-    const sources = isToolSources(args.sources) ? args.sources : undefined;
+    const profileExplicit = isToolProfile(args.profile);
+    const sourcesExplicit = isToolSources(args.sources);
+    const profileFromArgs = profileExplicit ? args.profile : undefined;
+    const sourcesFromArgs = sourcesExplicit ? args.sources : undefined;
+    const sessionProfile = enableSessionPolicy
+      ? (sessionPolicy?.explore?.profile ?? sessionPolicy?.profile)
+      : undefined;
+    const sessionSources = enableSessionPolicy
+      ? (sessionPolicy?.explore?.sources ?? sessionPolicy?.sources)
+      : undefined;
+    const profile = isToolProfile(profileFromArgs ?? sessionProfile) ? (profileFromArgs ?? sessionProfile) : undefined;
+    const sources = isToolSources(sourcesFromArgs ?? sessionSources) ? (sourcesFromArgs ?? sessionSources) : undefined;
 
-    const profileExplicit = Boolean(profile);
-    const sourcesExplicit = Boolean(sources);
-    const profileAllowed = profileExplicit || enableProfiles;
-    const sourcesAllowed = sourcesExplicit || enableProfiles;
+    const profileAppliedFromSession = !profileExplicit && Boolean(sessionProfile);
+    const sourcesAppliedFromSession = !sourcesExplicit && Boolean(sessionSources);
+    const profileAllowed = profileExplicit || profileAppliedFromSession || enableProfiles;
+    const sourcesAllowed = sourcesExplicit || sourcesAppliedFromSession || enableProfiles;
     let profileApplied = false;
     let sourcesApplied = false;
     let profileAffectsPack = false;
@@ -143,11 +156,11 @@ export class OptionResolver {
         includeExplicit,
         limitsExplicit,
         viewExplicit,
-        profileExplicit,
-        sourcesExplicit,
+        profileExplicit: Boolean(profileExplicit),
+        sourcesExplicit: Boolean(sourcesExplicit),
         sourcesWantsDocs,
-        profileApplied,
-        sourcesApplied,
+        profileApplied: profileApplied || profileAppliedFromSession,
+        sourcesApplied: sourcesApplied || sourcesAppliedFromSession,
         profileAffectsPack,
         sourcesAffectsPack
       }
@@ -156,17 +169,30 @@ export class OptionResolver {
 
   static resolveUnderstandOptions(
     args: IntentConstraints,
-    options?: { enableProfiles?: boolean }
+    options?: { enableProfiles?: boolean; enableSessionPolicy?: boolean; sessionPolicy?: SessionPolicy }
   ): { effective: UnderstandEffective } {
     const enableProfiles = options?.enableProfiles === true;
+    const enableSessionPolicy = options?.enableSessionPolicy === true;
+    const sessionPolicy = options?.sessionPolicy;
     const include = (isRecord(args.include)
       ? { ...(args.include as Record<string, unknown>) }
       : {}) as UnderstandEffective["include"];
     const traceEnabled = args.trace === true;
-    const profile = isToolProfile(args.profile) ? args.profile : undefined;
-    const sources = isToolSources(args.sources) ? args.sources : undefined;
+    const profileExplicit = isToolProfile(args.profile);
+    const sourcesExplicit = isToolSources(args.sources);
+    const profileFromArgs = profileExplicit ? args.profile : undefined;
+    const sourcesFromArgs = sourcesExplicit ? args.sources : undefined;
+    const sessionProfile = enableSessionPolicy
+      ? (sessionPolicy?.understand?.profile ?? sessionPolicy?.profile)
+      : undefined;
+    const sessionSources = enableSessionPolicy
+      ? (sessionPolicy?.understand?.sources ?? sessionPolicy?.sources)
+      : undefined;
+    const profile = isToolProfile(profileFromArgs ?? sessionProfile) ? (profileFromArgs ?? sessionProfile) : undefined;
+    const sources = isToolSources(sourcesFromArgs ?? sessionSources) ? (sourcesFromArgs ?? sessionSources) : undefined;
     const depthExplicit = typeof args.depth === "string";
-    const profileAllowed = Boolean(profile) || enableProfiles;
+    const profileAppliedFromSession = !profileExplicit && Boolean(sessionProfile);
+    const profileAllowed = Boolean(profileExplicit) || profileAppliedFromSession || enableProfiles;
 
     let depth = args.depth;
     if (!depthExplicit && profileAllowed && profile === "fast") {
@@ -192,10 +218,23 @@ export class OptionResolver {
 
   static resolveWriteOptions(
     args: IntentConstraints,
-    sessionId?: string
+    sessionId?: string,
+    options?: { enableSessionPolicy?: boolean; sessionPolicy?: SessionPolicy }
   ): { effective: WriteLikeEffective } {
-    const profile = isToolProfile(args.profile) ? args.profile : undefined;
-    const safety = isToolSafety(args.safety) ? args.safety : undefined;
+    const enableSessionPolicy = options?.enableSessionPolicy === true;
+    const sessionPolicy = options?.sessionPolicy;
+    const profileExplicit = isToolProfile(args.profile);
+    const safetyExplicit = isToolSafety(args.safety);
+    const profileFromArgs = profileExplicit ? args.profile : undefined;
+    const safetyFromArgs = safetyExplicit ? args.safety : undefined;
+    const sessionProfile = enableSessionPolicy
+      ? (sessionPolicy?.write?.profile ?? sessionPolicy?.profile)
+      : undefined;
+    const sessionSafety = enableSessionPolicy
+      ? (sessionPolicy?.write?.safety ?? sessionPolicy?.safety)
+      : undefined;
+    const profile = isToolProfile(profileFromArgs ?? sessionProfile) ? (profileFromArgs ?? sessionProfile) : undefined;
+    const safety = isToolSafety(safetyFromArgs ?? sessionSafety) ? (safetyFromArgs ?? sessionSafety) : undefined;
     const traceEnabled = args.trace === true;
     const dryRun = this.resolveDryRun(args, sessionId, safety);
     const reviewOptions = this.resolveReviewOptions(args.reviewOptions, Boolean(sessionId), profile, dryRun);
@@ -213,9 +252,10 @@ export class OptionResolver {
 
   static resolveChangeOptions(
     args: IntentConstraints,
-    sessionId?: string
+    sessionId?: string,
+    options?: { enableSessionPolicy?: boolean; sessionPolicy?: SessionPolicy }
   ): { effective: WriteLikeEffective } {
-    return this.resolveWriteOptions(args, sessionId);
+    return this.resolveWriteOptions(args, sessionId, options);
   }
 
   private static resolveDryRun(args: IntentConstraints, sessionId: string | undefined, safety?: ToolSafety): boolean {

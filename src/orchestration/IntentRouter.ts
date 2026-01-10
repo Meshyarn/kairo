@@ -95,6 +95,8 @@ export interface IntentConstraints {
   sources?: "code" | "docs" | "both";
   safety?: "plan" | "apply";
   trace?: boolean;
+  policy?: Record<string, unknown>;
+  policyMode?: "merge" | "replace";
   artifactOptions?: {
     type?: string;
     sessionId?: string;

@@ -47,15 +47,33 @@ export class WritePillar {
       const smartWrite = Boolean((constraints as any).smartWrite);
       const styleReference = (constraints as any).styleReference as string[] | undefined;
       const rawSessionId = typeof (constraints as any).sessionId === "string" ? (constraints as any).sessionId : undefined;
-      const resolvedOptions = OptionResolver.resolveWriteOptions(constraints, rawSessionId);
+      const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
+      const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, originalIntent);
+      const sessionPolicy = resolvedSessionId ? artifactManager?.getSession(resolvedSessionId)?.policy : undefined;
+      const resolvedOptions = OptionResolver.resolveWriteOptions(constraints, resolvedSessionId, {
+        enableSessionPolicy: FeatureFlags.isEnabled(FeatureFlags.SESSION_POLICY),
+        sessionPolicy
+      });
       const dryRun = resolvedOptions.effective.dryRun;
       const traceEnabled = resolvedOptions.effective.traceEnabled;
       const draftOptions = (constraints as any).draftOptions as { skeletonOnly?: boolean } | undefined;
       const reviewOptions = resolvedOptions.effective.reviewOptions;
       const draftId = typeof (constraints as any).draftId === "string" ? (constraints as any).draftId : undefined;
       const refinement = typeof (constraints as any).refinement === "string" ? (constraints as any).refinement : undefined;
-      const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
-      const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, originalIntent);
+      if (resolvedSessionId && FeatureFlags.isEnabled(FeatureFlags.SESSION_POLICY)) {
+        const policyPatch: Partial<{ profile?: string; safety?: string; write?: Record<string, unknown> }> = {};
+        if (typeof constraints.profile === "string") {
+          policyPatch.profile = constraints.profile;
+          policyPatch.write = { ...(policyPatch.write ?? {}), profile: constraints.profile };
+        }
+        if (typeof (constraints as any).safety === "string") {
+          policyPatch.safety = (constraints as any).safety;
+          policyPatch.write = { ...(policyPatch.write ?? {}), safety: (constraints as any).safety };
+        }
+        if (Object.keys(policyPatch).length > 0) {
+          artifactManager?.updateSessionPolicy(resolvedSessionId, policyPatch as any, "merge");
+        }
+      }
       const stylePackOverride = this.resolveStylePack((constraints as any).stylePack, artifactManager);
       const sessionStylePack = stylePackOverride
         ?? (resolvedSessionId && artifactManager

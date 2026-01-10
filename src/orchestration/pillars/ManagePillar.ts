@@ -15,6 +15,8 @@ export class ManagePillar {
     const limit = constraints.limit;
     const sessionId = constraints.sessionId;
     const outcome = (constraints as any).outcome;
+    const policy = (constraints as any).policy;
+    const policyMode = (constraints as any).policyMode;
     const execute = async (command: string) => {
       const started = Date.now();
       const output = await this.registry.execute('project_manage', {
@@ -24,12 +26,14 @@ export class ManagePillar {
         artifactOptions,
         limit,
         sessionId,
-        outcome
+        outcome,
+        policy,
+        policyMode
       });
       context.addStep({
         id: `${command}_${context.getFullHistory().length + 1}`,
         tool: 'project_manage',
-        args: { command, target, scope, artifactOptions, limit, sessionId, outcome },
+        args: { command, target, scope, artifactOptions, limit, sessionId, outcome, policy, policyMode },
         output,
         status: output?.success === false || output?.isError ? 'failure' : 'success',
         duration: Date.now() - started
@@ -68,6 +72,8 @@ export class ManagePillar {
         return this.wrapResponse(await execute('session'));
       case 'session_complete':
         return this.wrapResponse(await execute('session_complete'));
+      case 'session_update':
+        return this.wrapResponse(await execute('session_update'));
       default:
         // Check intent directly if action mapping is imprecise
         if (intent.originalIntent.includes('undo')) return this.wrapResponse(await execute('undo'));

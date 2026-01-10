@@ -1081,6 +1081,7 @@ export class SmartContextServer {
                                 'sessions',
                                 'session',
                                 'session_complete',
+                                'session_update',
                                 'artifacts',
                                 'artifact',
                                 'discard',
@@ -1093,6 +1094,9 @@ export class SmartContextServer {
                         target: { type: 'string' },
                         limit: { type: 'number' },
                         outcome: { type: 'object' },
+                        sessionId: { type: 'string' },
+                        policy: { type: 'object' },
+                        policyMode: { type: 'string', enum: ['merge', 'replace'] },
                         artifactOptions: {
                             type: 'object',
                             properties: {

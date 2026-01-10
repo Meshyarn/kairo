@@ -296,6 +296,23 @@ export class ManageHandlers extends BaseHandler {
                         summary: summary?.summary
                     };
                 }
+            case 'session_update':
+                {
+                    const target = args?.target ?? args?.sessionId ?? args?.artifactOptions?.sessionId;
+                    if (!target) {
+                        return { success: false, output: "Missing target session id." };
+                    }
+                    const policy = args?.policy;
+                    const policyMode = args?.policyMode === "replace" ? "replace" : "merge";
+                    const updated = this.context.flowArtifactManager.updateSessionPolicy(target, policy, policyMode);
+                    const summary = updated ? this.context.flowArtifactManager.getSessionSummary(target) : undefined;
+                    return {
+                        success: Boolean(updated),
+                        output: updated ? "Session policy updated." : "Session not found.",
+                        session: updated,
+                        summary: summary?.summary
+                    };
+                }
             case 'artifacts':
                 {
                     const options = args?.artifactOptions ?? {};
