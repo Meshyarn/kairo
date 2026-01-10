@@ -37,12 +37,12 @@ describe("SyntaxValidator", () => {
     expect((result.blockingErrors ?? []).length).toBeGreaterThan(0);
   });
 
-  it("checks syntax with Rust validator when available", () => {
+  it("checks syntax with Rust validator when available", async () => {
     const rustValidator = RustSyntaxValidator.getShared();
     if (!rustValidator.isAvailable()) {
       return;
     }
-    const issues = rustValidator.validate(
+    const issues = await rustValidator.validate(
       "tmp/invalid-syntax.ts",
       [
         "function greet(name: string) {",

@@ -253,7 +253,7 @@ describe("HeadingChunker", () => {
         EngineManager.resetForTesting();
     });
 
-    it("falls back to character chunking when token chunker is unavailable", () => {
+    it("falls back to character chunking when token options are absent", () => {
         EngineManager.resetForTesting();
         const tokenContent = [
             "# Title",
@@ -276,8 +276,7 @@ describe("HeadingChunker", () => {
         const chunker = new HeadingChunker();
         const chunks = chunker.chunk("docs/token.md", "markdown", outlineAll, tokenContent, {
             chunkStrategy: "structural",
-            maxBlockChars: 40,
-            chunkProfile: "fast"
+            maxBlockChars: 40
         });
         EngineManager.resetForTesting();
         expect(chunks.length).toBeGreaterThan(1);

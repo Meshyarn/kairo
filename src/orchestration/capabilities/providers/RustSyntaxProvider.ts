@@ -11,7 +11,7 @@ export class RustSyntaxProvider implements CapabilityProvider<ISyntaxValidationP
         const core = NativeModuleLoader.getShared().getRustCore();
         if (!core) return;
         this.provider = {
-            validate: (filePath: string, content: string): SyntaxIssue[] => {
+            validate: async (filePath: string, content: string): Promise<SyntaxIssue[]> => {
                 const language = resolveLanguageId(filePath);
                 if (!language) return [];
                 return core.validateSyntax(language, content);

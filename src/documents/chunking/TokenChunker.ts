@@ -10,6 +10,7 @@ export type TokenChunkResult = {
     endToken: number;
 };
 
+/** @deprecated Use EngineManager.getProvider(CAP_CHUNKING_TOKENS) instead. */
 export class TokenChunker {
     private static instance: TokenChunker | null = null;
     private provider: ITokenChunkingProvider | null = null;

@@ -3,6 +3,7 @@ import { CAP_SYNTAX_VALIDATE } from "../../orchestration/capabilities/Capability
 import type { ISyntaxValidationProvider } from "../../orchestration/capabilities/SyntaxValidation.js";
 import type { SyntaxIssue } from "../../orchestration/capabilities/SyntaxValidation.js";
 
+/** @deprecated Use EngineManager.getProvider(CAP_SYNTAX_VALIDATE) instead. */
 export class RustSyntaxValidator {
     private static instance: RustSyntaxValidator | null = null;
     private provider: ISyntaxValidationProvider | null = null;
@@ -22,7 +23,7 @@ export class RustSyntaxValidator {
         return this.resolveProvider() !== null;
     }
 
-    validate(filePath: string, content: string): SyntaxIssue[] {
+    async validate(filePath: string, content: string): Promise<SyntaxIssue[]> {
         const provider = this.resolveProvider();
         if (!provider) return [];
         return provider.validate(filePath, content);

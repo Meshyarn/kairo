@@ -5,5 +5,5 @@ export type SyntaxIssue = {
 };
 
 export interface ISyntaxValidationProvider {
-    validate(filePath: string, content: string): SyntaxIssue[];
+    validate(filePath: string, content: string): Promise<SyntaxIssue[]>;
 }

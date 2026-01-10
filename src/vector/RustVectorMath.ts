@@ -2,6 +2,7 @@ import { EngineManager } from "../orchestration/capabilities/EngineManager.js";
 import { CAP_VECTOR_COSINE_BATCH } from "../orchestration/capabilities/CapabilityIds.js";
 import type { IVectorMathProvider } from "../orchestration/capabilities/VectorMath.js";
 
+/** @deprecated Use EngineManager.getProvider(CAP_VECTOR_COSINE_BATCH) instead. */
 export class RustVectorMath {
     private static instance: RustVectorMath | null = null;
     private provider: IVectorMathProvider | null = null;
