@@ -301,13 +301,13 @@ export class GuidanceGenerator {
 
     const degradedReasons = this.extractDegradedReasons(context.lastResult);
     if (this.hasContractDegradedReason(degradedReasons)) {
-      const alreadySuggested = suggestedActions.some((action) => action.pillar === 'manage' && action.action === 'doctor');
+      const alreadySuggested = suggestedActions.some((action) => action.pillar === 'manage' && action.action === 'verify_contracts');
       if (!alreadySuggested) {
         suggestedActions.push({
           priority: 2,
           pillar: 'manage',
-          action: 'doctor',
-          description: 'Check contract/manifest diagnostics for cross-language boundaries.',
+          action: 'verify_contracts',
+          description: 'Verify contract manifests for cross-language boundaries.',
           rationale: 'Contract evidence is missing or degraded; doctor can show setup gaps.',
           toolCall: { tool: 'manage', args: { command: 'doctor', scope: 'contracts' } }
         });
@@ -379,7 +379,15 @@ export class GuidanceGenerator {
       reasons.push(...lastResult.reasons);
     }
     if (Array.isArray(lastResult?.degradedReasons)) {
-      reasons.push(...lastResult.degradedReasons);
+      for (const entry of lastResult.degradedReasons) {
+        if (typeof entry === "string") {
+          reasons.push(entry);
+          continue;
+        }
+        if (entry && typeof entry.type === "string") {
+          reasons.push(entry.type);
+        }
+      }
     }
     return reasons.filter((reason) => typeof reason === "string");
   }

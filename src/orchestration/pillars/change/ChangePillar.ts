@@ -58,6 +58,7 @@ import type { PackageAliasMap } from "../../../config/PackageAliasMap.js";
 import type { RepoRegistry } from "../../../config/RepoRegistry.js";
 import type { ImpactAnalyzer } from "../../../engine/ImpactAnalyzer.js";
 import type { CrossLangImpact } from "../../../types/engine.js";
+import { buildDegradedReasons } from "../../DegradedReasonMapper.js";
 
 export class ChangePillar {
   private fileSystem = new NodeFileSystem(process.cwd());
@@ -532,6 +533,9 @@ export class ChangePillar {
       const crossLangImpact = includeImpact && targetPath
         ? await this.buildCrossLangImpact(targetPath)
         : undefined;
+      const degradedReasonDetails = crossLangImpact?.reasons
+        ? buildDegradedReasons(crossLangImpact.reasons, { packageName: crossLangImpact.packageName })
+        : undefined;
       let impactReport = toImpactReport(impact, deps, targetPath, hotSpots, crossLangImpact);
       let architecturalRisk: any = guardrailResult?.architecturalRisk;
       const architecturalWarnings: string[] = Array.isArray(guardrailResult?.architecturalWarnings)
@@ -723,6 +727,7 @@ export class ChangePillar {
         relatedDocs,
         integrity: integrityReport,
         degraded: !finalResult.success && autoCorrectionAttempts.length === 0,
+        degradedReasons: degradedReasonDetails,
         budget: {
           ...budget,
           used: {
@@ -937,11 +942,14 @@ export class ChangePillar {
     }
 
     let diff = diffManifests(beforeManifest, afterManifest);
-    if (loadResult.reason) {
+    if (loadResult.reason || loadResult.stale) {
+      const extra = [];
+      if (loadResult.reason) extra.push(loadResult.reason);
+      if (loadResult.stale) extra.push("contract_manifest_stale");
       diff = {
         ...diff,
         degraded: true,
-        reasons: Array.from(new Set([...(diff.reasons ?? []), loadResult.reason]))
+        reasons: Array.from(new Set([...(diff.reasons ?? []), ...extra]))
       };
     }
 
