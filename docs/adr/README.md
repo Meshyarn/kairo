@@ -79,6 +79,7 @@ The entries below cover all ADRs from the project history. Items marked “retou
 - ADR-053: Hybrid Rust core phases 1–4 → `docs/adr/ADR-053-hybrid-rust-architecture-and-optimization.md`
 - ADR-053-H: Universal hybrid architecture + multi-engine framework → `docs/adr/ADR-053-H-universal-hybrid-architecture.md`
 - ADR-053-L (summary): Language support levels (L2/L3) + target matrix → `docs/adr/ADR-053-L-language-support-levels.md`
+- ADR-054 (NAPI baseline): Cross-language contract awareness (boundary adapters + field-level impact) → `docs/adr/ADR-054-cross-language-contract-awareness.md`
 - ADR-022: Scalable memory architecture (on-disk/lazy/streaming baseline ideas).
 - ADR-028: Performance + accuracy enhancements (historical deep dive).
 - ADR-029: Production readiness / system maturity (historical).
