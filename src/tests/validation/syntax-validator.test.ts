@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@jest/globals";
 import { SyntaxValidator } from "../../engine/validators/syntax-validator.js";
+import { RustSyntaxValidator } from "../../engine/validators/RustSyntaxValidator.js";
 
 describe("SyntaxValidator", () => {
   it("accepts valid code", async () => {
@@ -34,5 +35,24 @@ describe("SyntaxValidator", () => {
 
     expect(result.success).toBe(false);
     expect((result.blockingErrors ?? []).length).toBeGreaterThan(0);
+  });
+
+  it("checks syntax with Rust validator when available", () => {
+    const rustValidator = RustSyntaxValidator.getShared();
+    if (!rustValidator.isAvailable()) {
+      return;
+    }
+    const issues = rustValidator.validate(
+      "ts",
+      [
+        "function greet(name: string) {",
+        "  if (name {",
+        "    return name.toUpperCase();",
+        "  }",
+        "}",
+        ""
+      ].join("\n")
+    );
+    expect(issues.length).toBeGreaterThan(0);
   });
 });

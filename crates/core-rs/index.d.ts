@@ -16,6 +16,12 @@ export interface DiffResult {
   removed: number
 }
 export declare function diffUnified(oldText: string, newText: string, contextLines: number): DiffResult
+export interface SyntaxIssue {
+  line: number
+  column: number
+  message: string
+}
+export declare function validateSyntax(language: string, content: string): Array<SyntaxIssue>
 export declare class SmartChunker {
   constructor(modelPath: string)
   chunk(text: string, maxTokens: number, overlap: number): Array<ChunkResult>

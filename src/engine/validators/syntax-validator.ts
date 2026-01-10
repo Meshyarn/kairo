@@ -1,19 +1,45 @@
 import { AstManager } from "../../ast/AstManager.js";
+import path from "path";
+import { RustSyntaxValidator } from "./RustSyntaxValidator.js";
 import type { ValidationDiagnostic, ValidationResult } from "../../types/validation.js";
 
 const MAX_SNIPPET_LENGTH = 80;
 
 export class SyntaxValidator {
     private readonly astManager: AstManager;
+    private readonly rustValidator: RustSyntaxValidator;
 
     constructor(astManager?: AstManager) {
         this.astManager = astManager ?? AstManager.getInstance();
+        this.rustValidator = RustSyntaxValidator.getShared();
     }
 
     async validate(filePath: string, content: string): Promise<ValidationResult> {
         const startTime = performance.now();
         let doc: any;
         try {
+            const rustLanguage = this.resolveRustLanguage(filePath);
+            if (rustLanguage && this.rustValidator.isAvailable()) {
+                const issues = this.rustValidator.validate(rustLanguage, content);
+                const durationMs = performance.now() - startTime;
+                if (issues.length > 0) {
+                    return {
+                        success: false,
+                        blockingErrors: issues.map((issue) => ({
+                            filePath,
+                            line: issue.line,
+                            column: issue.column,
+                            message: issue.message,
+                            code: "SYNTAX_ERROR",
+                            provider: "syntax",
+                            severity: "error"
+                        })),
+                        durationMs
+                    };
+                }
+                return { success: true, durationMs };
+            }
+
             doc = await this.astManager.parseFile(filePath, content);
             const rootNode = doc?.rootNode;
             if (!this.supportsTreeSitter(rootNode)) {
@@ -45,6 +71,25 @@ export class SyntaxValidator {
             };
         } finally {
             doc?.dispose?.();
+        }
+    }
+
+    private resolveRustLanguage(filePath: string): string | null {
+        const ext = path.extname(filePath).toLowerCase();
+        switch (ext) {
+            case ".ts":
+                return "ts";
+            case ".tsx":
+                return "tsx";
+            case ".js":
+                return "js";
+            case ".jsx":
+                return "jsx";
+            case ".mjs":
+            case ".cjs":
+                return "js";
+            default:
+                return null;
         }
     }
 
