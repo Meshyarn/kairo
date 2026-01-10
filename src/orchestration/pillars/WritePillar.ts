@@ -50,17 +50,14 @@ export class WritePillar {
       const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
       const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, originalIntent);
       const sessionPolicy = resolvedSessionId ? artifactManager?.getSession(resolvedSessionId)?.policy : undefined;
-      const resolvedOptions = OptionResolver.resolveWriteOptions(constraints, resolvedSessionId, {
-        enableSessionPolicy: FeatureFlags.isEnabled(FeatureFlags.SESSION_POLICY),
-        sessionPolicy
-      });
+    const resolvedOptions = OptionResolver.resolveWriteOptions(constraints, resolvedSessionId, sessionPolicy);
       const dryRun = resolvedOptions.effective.dryRun;
       const traceEnabled = resolvedOptions.effective.traceEnabled;
       const draftOptions = (constraints as any).draftOptions as { skeletonOnly?: boolean } | undefined;
       const reviewOptions = resolvedOptions.effective.reviewOptions;
       const draftId = typeof (constraints as any).draftId === "string" ? (constraints as any).draftId : undefined;
       const refinement = typeof (constraints as any).refinement === "string" ? (constraints as any).refinement : undefined;
-      if (resolvedSessionId && FeatureFlags.isEnabled(FeatureFlags.SESSION_POLICY)) {
+      if (resolvedSessionId) {
         const policyPatch: Partial<{ profile?: string; safety?: string; write?: Record<string, unknown> }> = {};
         if (typeof constraints.profile === "string") {
           policyPatch.profile = constraints.profile;

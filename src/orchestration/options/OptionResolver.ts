@@ -77,11 +77,10 @@ const setIfUnset = <T extends Record<string, any>>(target: T, key: keyof T, valu
 export class OptionResolver {
   static resolveExploreOptions(
     args: IntentConstraints,
-    options?: { enableProfiles?: boolean; enableSessionPolicy?: boolean; sessionPolicy?: SessionPolicy }
+    sessionPolicy?: SessionPolicy
   ): { effective: ExploreEffective; meta: ExploreMeta } {
-    const enableProfiles = options?.enableProfiles === true;
-    const enableSessionPolicy = options?.enableSessionPolicy === true;
-    const sessionPolicy = options?.sessionPolicy;
+    const enableProfiles = true;
+    const enableSessionPolicy = true;
     const include = (isRecord(args.include)
       ? { ...(args.include as Record<string, unknown>) }
       : {}) as ExploreEffective["include"];
@@ -169,11 +168,10 @@ export class OptionResolver {
 
   static resolveUnderstandOptions(
     args: IntentConstraints,
-    options?: { enableProfiles?: boolean; enableSessionPolicy?: boolean; sessionPolicy?: SessionPolicy }
+    sessionPolicy?: SessionPolicy
   ): { effective: UnderstandEffective } {
-    const enableProfiles = options?.enableProfiles === true;
-    const enableSessionPolicy = options?.enableSessionPolicy === true;
-    const sessionPolicy = options?.sessionPolicy;
+    const enableProfiles = true;
+    const enableSessionPolicy = true;
     const include = (isRecord(args.include)
       ? { ...(args.include as Record<string, unknown>) }
       : {}) as UnderstandEffective["include"];
@@ -219,10 +217,9 @@ export class OptionResolver {
   static resolveWriteOptions(
     args: IntentConstraints,
     sessionId?: string,
-    options?: { enableSessionPolicy?: boolean; sessionPolicy?: SessionPolicy }
+    sessionPolicy?: SessionPolicy
   ): { effective: WriteLikeEffective } {
-    const enableSessionPolicy = options?.enableSessionPolicy === true;
-    const sessionPolicy = options?.sessionPolicy;
+    const enableSessionPolicy = true;
     const profileExplicit = isToolProfile(args.profile);
     const safetyExplicit = isToolSafety(args.safety);
     const profileFromArgs = profileExplicit ? args.profile : undefined;
@@ -253,9 +250,9 @@ export class OptionResolver {
   static resolveChangeOptions(
     args: IntentConstraints,
     sessionId?: string,
-    options?: { enableSessionPolicy?: boolean; sessionPolicy?: SessionPolicy }
+    sessionPolicy?: SessionPolicy
   ): { effective: WriteLikeEffective } {
-    return this.resolveWriteOptions(args, sessionId, options);
+    return this.resolveWriteOptions(args, sessionId, sessionPolicy);
   }
 
   private static resolveDryRun(args: IntentConstraints, sessionId: string | undefined, safety?: ToolSafety): boolean {

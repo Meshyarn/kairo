@@ -42,23 +42,13 @@ describe("OptionResolver", () => {
     expect(explicit.effective.dryRun).toBe(false);
   });
 
-  it("applies session policy when enabled and no explicit overrides", () => {
+  it("applies session policy when no explicit overrides", () => {
     const result = OptionResolver.resolveExploreOptions({} as any, {
-      enableSessionPolicy: true,
-      sessionPolicy: { sources: "docs", profile: "deep" }
+      sources: "docs",
+      profile: "deep"
     });
 
     expect(result.effective.sources).toBe("docs");
     expect(result.effective.profile).toBe("deep");
-  });
-
-  it("does not apply session policy when disabled", () => {
-    const result = OptionResolver.resolveExploreOptions({} as any, {
-      enableSessionPolicy: false,
-      sessionPolicy: { sources: "docs", profile: "deep" }
-    });
-
-    expect(result.effective.sources).toBeUndefined();
-    expect(result.effective.profile).toBeUndefined();
   });
 });

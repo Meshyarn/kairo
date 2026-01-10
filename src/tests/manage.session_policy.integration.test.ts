@@ -17,12 +17,8 @@ jest.setTimeout(30000);
 describe('SmartContextServer - session policy integration', () => {
   let server: SmartContextServer;
   let testRoot: string;
-  const originalSessionPolicy = process.env.KAIRO_SESSION_POLICY;
-
   beforeEach(async () => {
-    process.env.KAIRO_SESSION_POLICY = 'on';
     FeatureFlags.initialize();
-    FeatureFlags.set(FeatureFlags.SESSION_POLICY, true, 'on');
     testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'session-policy-test-'));
     fs.mkdirSync(path.join(testRoot, 'src'), { recursive: true });
     server = new SmartContextServer(testRoot);
@@ -31,11 +27,6 @@ describe('SmartContextServer - session policy integration', () => {
   afterEach(async () => {
     await server.shutdown();
     fs.rmSync(testRoot, { recursive: true, force: true });
-    if (originalSessionPolicy === undefined) {
-      delete process.env.KAIRO_SESSION_POLICY;
-    } else {
-      process.env.KAIRO_SESSION_POLICY = originalSessionPolicy;
-    }
     FeatureFlags.initialize();
   });
 

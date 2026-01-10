@@ -82,19 +82,6 @@ export class FeatureFlags {
      */
     static WRITERS_FLOW_REVIEW_DEFAULTS = 'writers_flow_review_defaults';
 
-    /**
-     * Enables pillar option profiles (ADR-052).
-     * Default: false
-     * Env var: KAIRO_PILLAR_OPTION_PROFILES
-     */
-    static PILLAR_OPTION_PROFILES = 'pillar_option_profiles';
-
-    /**
-     * Enables session policy persistence and reuse (ADR-052).
-     * Default: false
-     * Env var: KAIRO_SESSION_POLICY
-     */
-    static SESSION_POLICY = 'session_policy';
     
     static initialize(): void {
         this.canaryUsers = this.parseCanaryUsers(process.env.KAIRO_CANARY_USERS);
@@ -109,9 +96,6 @@ export class FeatureFlags {
         this.applyEnvFlag(this.PILLAR_DECOMPOSITION_ENABLED, process.env.KAIRO_PILLAR_DECOMPOSITION_ENABLED);
         this.applyEnvFlag(this.WRITERS_FLOW_DEFAULT_DRYRUN, process.env.KAIRO_WRITERS_FLOW_DEFAULT_DRYRUN);
         this.applyEnvFlag(this.WRITERS_FLOW_REVIEW_DEFAULTS, process.env.KAIRO_WRITERS_FLOW_REVIEW_DEFAULTS);
-        this.applyEnvFlag(this.PILLAR_OPTION_PROFILES, process.env.KAIRO_PILLAR_OPTION_PROFILES);
-        this.applyEnvFlag(this.SESSION_POLICY, process.env.KAIRO_SESSION_POLICY);
-
         const modularPercent = process.env.KAIRO_MODULAR_ROLLOUT_PERCENT;
         if (!process.env.KAIRO_MODULAR_HANDLERS_ENABLED && modularPercent === undefined) {
             this.set(this.MODULAR_HANDLERS_ENABLED, true, 'on');

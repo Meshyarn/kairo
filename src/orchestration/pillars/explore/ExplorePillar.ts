@@ -13,7 +13,6 @@ import type { DependencyGraph } from "../../../ast/DependencyGraph.js";
 import { ProjectSketchBuilder } from "../../../generation/project-sketch-builder.js";
 import type { ResearchPack } from "../../../types/flow-artifacts.js";
 import type { FlowArtifactManager } from "../../flow-artifact-manager.js";
-import { FeatureFlags } from "../../../config/FeatureFlags.js";
 import { OptionResolver } from "../../options/OptionResolver.js";
 
 import { 
@@ -85,11 +84,7 @@ export class ExplorePillar {
         const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, intent.originalIntent ?? query ?? "explore");
         const sessionPolicy = resolvedSessionId ? artifactManager?.getSession(resolvedSessionId)?.policy : undefined;
 
-        const resolvedOptions = OptionResolver.resolveExploreOptions(constraints, {
-            enableProfiles: FeatureFlags.isEnabled(FeatureFlags.PILLAR_OPTION_PROFILES),
-            enableSessionPolicy: FeatureFlags.isEnabled(FeatureFlags.SESSION_POLICY),
-            sessionPolicy
-        });
+        const resolvedOptions = OptionResolver.resolveExploreOptions(constraints, sessionPolicy);
         const view = resolvedOptions.effective.view;
         const include = resolvedOptions.effective.include;
         const includeExplicit = resolvedOptions.meta.includeExplicit;
@@ -193,7 +188,7 @@ export class ExplorePillar {
             ? (packId ?? computeExplorePackId(query, packOptions))
             : undefined;
 
-        if (resolvedSessionId && FeatureFlags.isEnabled(FeatureFlags.SESSION_POLICY)) {
+        if (resolvedSessionId) {
             const policyPatch: Partial<{ profile?: string; sources?: string; explore?: Record<string, unknown> }> = {};
             if (typeof constraints.profile === "string") {
                 policyPatch.profile = constraints.profile;

@@ -23,7 +23,6 @@ import {
 } from './understand/DependencyAnalysis.js';
 import { buildUnderstandResponse } from './understand/ReportGenerator.js';
 import { resolveProgressState, logProgress, logToolStart, logToolEnd, ProgressState } from '../../utils/ProgressLogger.js';
-import { FeatureFlags } from '../../config/FeatureFlags.js';
 import { OptionResolver } from '../options/OptionResolver.js';
 
 
@@ -44,11 +43,7 @@ export class UnderstandPillar {
     const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
     const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, subject);
     const sessionPolicy = resolvedSessionId ? artifactManager?.getSession(resolvedSessionId)?.policy : undefined;
-    const resolvedOptions = OptionResolver.resolveUnderstandOptions(constraints, {
-      enableProfiles: FeatureFlags.isEnabled(FeatureFlags.PILLAR_OPTION_PROFILES),
-      enableSessionPolicy: FeatureFlags.isEnabled(FeatureFlags.SESSION_POLICY),
-      sessionPolicy
-    });
+    const resolvedOptions = OptionResolver.resolveUnderstandOptions(constraints, sessionPolicy);
     const depth = resolvedOptions.effective.depth || 'standard';
     const include = resolvedOptions.effective.include ?? {};
     const traceEnabled = resolvedOptions.effective.traceEnabled;
@@ -241,7 +236,7 @@ export class UnderstandPillar {
       : undefined;
     const indexStateManager = this.registry.getMetadata<IndexStateManager>("indexStateManager");
     const indexSnapshot = indexStateManager ? await indexStateManager.getSnapshot().catch(() => undefined) : undefined;
-    if (resolvedSessionId && FeatureFlags.isEnabled(FeatureFlags.SESSION_POLICY)) {
+    if (resolvedSessionId) {
       const policyPatch: Partial<{ profile?: string; sources?: string; understand?: Record<string, unknown> }> = {};
       if (typeof constraints.profile === "string") {
         policyPatch.profile = constraints.profile;
