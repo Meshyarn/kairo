@@ -1,23 +1,13 @@
-import { createRequire } from "module";
-
-type RustVectorModule = {
-    cosineScores: (query: Float32Array, vectors: Float32Array[]) => number[];
-};
-
-const require = createRequire(import.meta.url);
+import { EngineManager } from "../orchestration/capabilities/EngineManager.js";
+import { CAP_VECTOR_COSINE_BATCH } from "../orchestration/capabilities/CapabilityIds.js";
+import type { IVectorMathProvider } from "../orchestration/capabilities/VectorMath.js";
 
 export class RustVectorMath {
     private static instance: RustVectorMath | null = null;
-    private static warned = false;
-    private module: RustVectorModule | null = null;
+    private provider: IVectorMathProvider | null = null;
 
     private constructor() {
-        try {
-            this.module = require("@kairo/core-rs") as RustVectorModule;
-        } catch (error: any) {
-            this.warnOnce(`Rust vector math unavailable (${error?.message ?? "unknown error"}); falling back to JS.`);
-            this.module = null;
-        }
+        this.provider = EngineManager.getProvider<IVectorMathProvider>(CAP_VECTOR_COSINE_BATCH);
     }
 
     static getShared(): RustVectorMath {
@@ -28,17 +18,19 @@ export class RustVectorMath {
     }
 
     isAvailable(): boolean {
-        return this.module !== null;
+        return this.resolveProvider() !== null;
     }
 
     cosineScores(query: Float32Array, vectors: Float32Array[]): number[] {
-        if (!this.module) return [];
-        return this.module.cosineScores(query, vectors);
+        const provider = this.resolveProvider();
+        if (!provider) return [];
+        return provider.cosineScores(query, vectors);
     }
 
-    private warnOnce(message: string): void {
-        if (RustVectorMath.warned) return;
-        RustVectorMath.warned = true;
-        console.warn(`[RustVectorMath] ${message}`);
+    private resolveProvider(): IVectorMathProvider | null {
+        if (!this.provider) {
+            this.provider = EngineManager.getProvider<IVectorMathProvider>(CAP_VECTOR_COSINE_BATCH);
+        }
+        return this.provider;
     }
 }

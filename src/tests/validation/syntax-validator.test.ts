@@ -43,7 +43,7 @@ describe("SyntaxValidator", () => {
       return;
     }
     const issues = rustValidator.validate(
-      "ts",
+      "tmp/invalid-syntax.ts",
       [
         "function greet(name: string) {",
         "  if (name {",

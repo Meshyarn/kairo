@@ -3,8 +3,10 @@ import * as path from "path";
 import { DocumentKind, DocumentOutlineOptions, DocumentSection } from "../../types.js";
 import { StoredDocumentChunk } from "../../indexing/DocumentChunkRepository.js";
 import { applyMdxPlaceholders } from "../DocumentProfiler.js";
-import { TokenChunker } from "./TokenChunker.js";
 import { OptionResolver, ToolProfile } from "../../orchestration/options/OptionResolver.js";
+import { EngineManager } from "../../orchestration/capabilities/EngineManager.js";
+import { CAP_CHUNKING_TOKENS } from "../../orchestration/capabilities/CapabilityIds.js";
+import type { ITokenChunkingProvider } from "../../orchestration/capabilities/Chunking.js";
 
 export class HeadingChunker {
     public chunk(
@@ -19,10 +21,10 @@ export class HeadingChunker {
         const lineOffsets = computeLineOffsets(normalizedContent);
         const strategy = options.chunkStrategy ?? "structural";
         const chunks: StoredDocumentChunk[] = [];
-        const tokenChunker = TokenChunker.getShared();
+        const tokenChunker = EngineManager.getProvider<ITokenChunkingProvider>(CAP_CHUNKING_TOKENS);
         const chunkProfile = resolveChunkProfile(options);
         const tokenOptions = resolveTokenOptions(options, chunkProfile);
-        const useTokenChunker = tokenChunker.isAvailable() && tokenOptions !== null;
+        const useTokenChunker = tokenChunker !== null && tokenOptions !== null;
         const effectiveOutline = outline.length === 0
             ? [{
                 filePath,

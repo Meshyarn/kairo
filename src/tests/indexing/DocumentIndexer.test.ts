@@ -1,12 +1,14 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { describe, it, expect, beforeEach, afterEach, jest } from "@jest/globals";
+import { describe, it, expect, beforeEach, afterEach } from "@jest/globals";
 import { MemoryFileSystem } from "../../platform/FileSystem.js";
 import { IndexDatabase } from "../../indexing/IndexDatabase.js";
 import { DocumentIndexer } from "../../indexing/DocumentIndexer.js";
 import { DocumentChunkRepository } from "../../indexing/DocumentChunkRepository.js";
-import { TokenChunker } from "../../documents/chunking/TokenChunker.js";
+import { EngineManager } from "../../orchestration/capabilities/EngineManager.js";
+import { CAP_CHUNKING_TOKENS } from "../../orchestration/capabilities/CapabilityIds.js";
+import type { ITokenChunkingProvider } from "../../orchestration/capabilities/Chunking.js";
 
 describe("DocumentIndexer", () => {
     let tempDir: string;
@@ -28,6 +30,7 @@ describe("DocumentIndexer", () => {
         if (tempDir && fs.existsSync(tempDir)) {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }
+        EngineManager.resetForTesting();
     });
 
     it("detects supported document types and ignore rules", () => {
@@ -72,14 +75,18 @@ describe("DocumentIndexer", () => {
         const line4Start = tokenContent.indexOf(line4);
         const line3End = line3Start + line3.length;
         const line4End = line4Start + line4.length;
-        const mockTokenChunker = {
-            isAvailable: () => true,
+        const mockProvider: ITokenChunkingProvider = {
             chunk: () => [
                 { text: line3, startByte: line3Start, endByte: line3End, startToken: 0, endToken: 5 },
                 { text: line4, startByte: line4Start, endByte: line4End, startToken: 5, endToken: 10 }
             ]
         };
-        const getSharedSpy = jest.spyOn(TokenChunker, "getShared").mockReturnValue(mockTokenChunker as any);
+        EngineManager.resetForTesting();
+        EngineManager.registerProvider(CAP_CHUNKING_TOKENS, {
+            meta: { id: "DocumentIndexerTestChunker", tier: "js", priority: 1000 },
+            isAvailable: () => true,
+            get: () => mockProvider
+        });
         indexer = new DocumentIndexer(tempDir, fileSystem, indexDb, {
             outlineOptions: { chunkStrategy: "structural", chunkProfile: "fast" }
         });
@@ -87,7 +94,6 @@ describe("DocumentIndexer", () => {
         await fileSystem.writeFile("docs/token.md", tokenContent);
         await indexer.indexFile("docs/token.md");
         const chunks = repo.listChunksForFile("docs/token.md");
-        getSharedSpy.mockRestore();
 
         expect(chunks).toHaveLength(2);
         expect(chunks[0].range.startLine).toBe(3);

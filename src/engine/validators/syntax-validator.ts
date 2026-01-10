@@ -1,5 +1,4 @@
 import { AstManager } from "../../ast/AstManager.js";
-import path from "path";
 import { RustSyntaxValidator } from "./RustSyntaxValidator.js";
 import type { ValidationDiagnostic, ValidationResult } from "../../types/validation.js";
 
@@ -18,9 +17,8 @@ export class SyntaxValidator {
         const startTime = performance.now();
         let doc: any;
         try {
-            const rustLanguage = this.resolveRustLanguage(filePath);
-            if (rustLanguage && this.rustValidator.isAvailable()) {
-                const issues = this.rustValidator.validate(rustLanguage, content);
+            if (this.rustValidator.isAvailable()) {
+                const issues = this.rustValidator.validate(filePath, content);
                 const durationMs = performance.now() - startTime;
                 if (issues.length > 0) {
                     return {
@@ -74,24 +72,6 @@ export class SyntaxValidator {
         }
     }
 
-    private resolveRustLanguage(filePath: string): string | null {
-        const ext = path.extname(filePath).toLowerCase();
-        switch (ext) {
-            case ".ts":
-                return "ts";
-            case ".tsx":
-                return "tsx";
-            case ".js":
-                return "js";
-            case ".jsx":
-                return "jsx";
-            case ".mjs":
-            case ".cjs":
-                return "js";
-            default:
-                return null;
-        }
-    }
 
     private supportsTreeSitter(node: any): boolean {
         return Boolean(

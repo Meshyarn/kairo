@@ -2,7 +2,9 @@ import * as path from "path";
 import { ConfigurationManager } from "../../config/ConfigurationManager.js";
 import { MyersDiff } from "../Diff.js";
 import { PatienceDiff } from "../PatienceDiff.js";
-import { RustDiff } from "../RustDiff.js";
+import { EngineManager } from "../../orchestration/capabilities/EngineManager.js";
+import { CAP_DIFF_UNIFIED } from "../../orchestration/capabilities/CapabilityIds.js";
+import type { IDiffingProvider } from "../../orchestration/capabilities/Diffing.js";
 import type {
     DiffMode,
     Edit,
@@ -223,9 +225,9 @@ export class EditExecutor {
             let semanticSummary: SemanticDiffSummary | undefined;
 
             if (diffMode === "semantic") {
-                const rustDiff = RustDiff.getShared();
-                if (rustDiff.isAvailable()) {
-                    const result = rustDiff.diffUnified(originalContent, newContent, 3);
+                const diffProvider = EngineManager.getProvider<IDiffingProvider>(CAP_DIFF_UNIFIED);
+                if (diffProvider) {
+                    const result = diffProvider.diffUnified(originalContent, newContent, 3);
                     diffText = result.diff;
                     added = result.added;
                     removed = result.removed;

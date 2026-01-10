@@ -1,7 +1,6 @@
-import fs from "fs";
-import path from "path";
-import { createRequire } from "module";
-import { resolveEmbeddingConfigFromEnv } from "../../embeddings/EmbeddingConfig.js";
+import { EngineManager } from "../../orchestration/capabilities/EngineManager.js";
+import { CAP_CHUNKING_TOKENS } from "../../orchestration/capabilities/CapabilityIds.js";
+import type { ITokenChunkingProvider } from "../../orchestration/capabilities/Chunking.js";
 
 export type TokenChunkResult = {
     text: string;
@@ -11,37 +10,12 @@ export type TokenChunkResult = {
     endToken: number;
 };
 
-type SmartChunkerCtor = new (modelPath: string) => {
-    chunk: (text: string, maxTokens: number, overlapTokens: number) => TokenChunkResult[];
-};
-
-type RustChunkerModule = {
-    SmartChunker: SmartChunkerCtor;
-};
-
-const require = createRequire(import.meta.url);
-
 export class TokenChunker {
     private static instance: TokenChunker | null = null;
-    private static warned = false;
-    private rustChunker: InstanceType<SmartChunkerCtor> | null = null;
-    private enabled = false;
+    private provider: ITokenChunkingProvider | null = null;
 
     private constructor() {
-        this.enabled = parseBoolish(process.env.KAIRO_RUST_CHUNKING);
-        if (!this.enabled) return;
-        const tokenizerPath = resolveTokenizerPath();
-        if (!tokenizerPath) {
-            this.warnOnce("Tokenizer path not found; falling back to character chunking.");
-            return;
-        }
-        try {
-            const module = require("@kairo/core-rs") as RustChunkerModule;
-            this.rustChunker = new module.SmartChunker(tokenizerPath);
-        } catch (error: any) {
-            this.warnOnce(`Rust chunker unavailable (${error?.message ?? "unknown error"}); falling back to character chunking.`);
-            this.rustChunker = null;
-        }
+        this.provider = EngineManager.getProvider<ITokenChunkingProvider>(CAP_CHUNKING_TOKENS);
     }
 
     static getShared(): TokenChunker {
@@ -52,42 +26,19 @@ export class TokenChunker {
     }
 
     isAvailable(): boolean {
-        return this.enabled && this.rustChunker !== null;
+        return this.resolveProvider() !== null;
     }
 
     chunk(text: string, maxTokens: number, overlapTokens: number): TokenChunkResult[] {
-        if (!this.rustChunker) return [];
-        return this.rustChunker.chunk(text, maxTokens, overlapTokens);
+        const provider = this.resolveProvider();
+        if (!provider) return [];
+        return provider.chunk(text, maxTokens, overlapTokens);
     }
 
-    private warnOnce(message: string): void {
-        if (TokenChunker.warned) return;
-        TokenChunker.warned = true;
-        console.warn(`[TokenChunker] ${message}`);
-    }
-}
-
-function parseBoolish(value: string | undefined): boolean {
-    if (!value) return false;
-    const normalized = value.trim().toLowerCase();
-    if (normalized === "true" || normalized === "1" || normalized === "on" || normalized === "yes") return true;
-    if (normalized === "false" || normalized === "0" || normalized === "off" || normalized === "no") return false;
-    return false;
-}
-
-function resolveTokenizerPath(): string | null {
-    const explicit = process.env.KAIRO_TOKENIZER_PATH?.trim();
-    if (explicit && fs.existsSync(explicit)) {
-        return explicit;
-    }
-    const embeddingConfig = resolveEmbeddingConfigFromEnv();
-    const modelDir = embeddingConfig.modelDir ?? process.env.KAIRO_MODEL_DIR;
-    const modelId = embeddingConfig.local?.model;
-    if (modelDir && modelId) {
-        const candidate = path.join(modelDir, modelId, "tokenizer.json");
-        if (fs.existsSync(candidate)) {
-            return candidate;
+    private resolveProvider(): ITokenChunkingProvider | null {
+        if (!this.provider) {
+            this.provider = EngineManager.getProvider<ITokenChunkingProvider>(CAP_CHUNKING_TOKENS);
         }
+        return this.provider;
     }
-    return null;
 }

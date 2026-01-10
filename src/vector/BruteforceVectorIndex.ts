@@ -1,5 +1,7 @@
 import type { VectorIndex, VectorIndexResult } from "./VectorIndex.js";
-import { RustVectorMath } from "./RustVectorMath.js";
+import { EngineManager } from "../orchestration/capabilities/EngineManager.js";
+import { CAP_VECTOR_COSINE_BATCH } from "../orchestration/capabilities/CapabilityIds.js";
+import type { IVectorMathProvider } from "../orchestration/capabilities/VectorMath.js";
 
 export class BruteforceVectorIndex implements VectorIndex {
     public readonly backend = "bruteforce" as const;
@@ -28,8 +30,8 @@ export class BruteforceVectorIndex implements VectorIndex {
     public search(query: Float32Array, k: number): VectorIndexResult[] {
         if (!query || query.length !== this.dims) return [];
         const results: VectorIndexResult[] = [];
-        const rustMath = RustVectorMath.getShared();
-        if (rustMath.isAvailable()) {
+        const rustMath = EngineManager.getProvider<IVectorMathProvider>(CAP_VECTOR_COSINE_BATCH);
+        if (rustMath) {
             const ids: string[] = [];
             const vectors: Float32Array[] = [];
             for (const [id, vector] of this.vectors.entries()) {
