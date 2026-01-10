@@ -90,6 +90,7 @@ export class EngineManager {
         this.initialized = false;
         this.providers.clear();
         this.diagnostics = { rustCoreAvailable: false, capabilities: {} };
+        DefaultEngineRegistry.resetForTesting();
     }
 
     private static ensureInitialized(): void {

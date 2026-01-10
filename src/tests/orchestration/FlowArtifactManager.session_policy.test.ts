@@ -13,7 +13,7 @@ describe('FlowArtifactManager session policy persistence', () => {
     const sessionId = manager.resolveSessionId('new', 'policy intent');
     expect(sessionId).toBeDefined();
 
-    manager.updateSessionPolicy(sessionId as string, { profile: 'deep', sources: 'docs' }, 'merge');
+    await manager.updateSessionPolicy(sessionId as string, { profile: 'deep', sources: 'docs' }, 'merge');
 
     const restored = new FlowArtifactManager({ persistPath, autoPersist: true });
     await restored.restoreAll();

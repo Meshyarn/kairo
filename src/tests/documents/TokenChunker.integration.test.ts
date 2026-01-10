@@ -1,17 +1,11 @@
 import * as fs from "fs";
 import * as path from "path";
 import { describe, it, expect } from "@jest/globals";
-import { createRequire } from "module";
+import { NativeModuleLoader } from "../../orchestration/capabilities/NativeModuleLoader.js";
 
-const require = createRequire(import.meta.url);
 const tokenizerPath = path.resolve("node_modules/@xenova/transformers/.cache/Xenova/bge-m3/tokenizer.json");
-let SmartChunker: any = null;
-
-try {
-    SmartChunker = require("@kairo/core-rs").SmartChunker;
-} catch {
-    SmartChunker = null;
-}
+const core = NativeModuleLoader.getShared().getRustCore();
+const SmartChunker: any = core?.SmartChunker ?? null;
 
 const hasTokenizer = fs.existsSync(tokenizerPath);
 const run = hasTokenizer && SmartChunker ? it : it.skip;

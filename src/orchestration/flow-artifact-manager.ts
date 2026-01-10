@@ -165,7 +165,11 @@ export class FlowArtifactManager {
         return session;
     }
 
-    updateSessionPolicy(sessionId: string, policy: SessionPolicy | undefined, policyMode: "merge" | "replace" = "merge"): FlowSession | undefined {
+    async updateSessionPolicy(
+        sessionId: string,
+        policy: SessionPolicy | undefined,
+        policyMode: "merge" | "replace" = "merge"
+    ): Promise<FlowSession | undefined> {
         const session = this.sessions.get(sessionId);
         if (!session) return undefined;
         if (!policy) {
@@ -180,7 +184,7 @@ export class FlowArtifactManager {
         session.updatedAt = Date.now();
         this.updateIndexForSession(session);
         if (this.options.autoPersist) {
-            void this.persistSession(session);
+            await this.persistSession(session);
         }
         return session;
     }

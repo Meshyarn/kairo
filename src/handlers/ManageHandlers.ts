@@ -304,7 +304,7 @@ export class ManageHandlers extends BaseHandler {
                     }
                     const policy = args?.policy;
                     const policyMode = args?.policyMode === "replace" ? "replace" : "merge";
-                    const updated = this.context.flowArtifactManager.updateSessionPolicy(target, policy, policyMode);
+                    const updated = await this.context.flowArtifactManager.updateSessionPolicy(target, policy, policyMode);
                     const summary = updated ? this.context.flowArtifactManager.getSessionSummary(target) : undefined;
                     return {
                         success: Boolean(updated),

@@ -118,6 +118,13 @@ export class FeatureFlags {
      */
     static RUST_VECTOR_ENABLED = 'rust_vector_enabled';
 
+    /**
+     * Enables WASM chunking provider.
+     * Default: false
+     * Env var: KAIRO_WASM_CHUNKING_ENABLED
+     */
+    static WASM_CHUNKING_ENABLED = 'wasm_chunking_enabled';
+
     
     static initialize(): void {
         this.canaryUsers = this.parseCanaryUsers(process.env.KAIRO_CANARY_USERS);
@@ -137,6 +144,7 @@ export class FeatureFlags {
         this.applyEnvFlag(this.RUST_DIFF_ENABLED, process.env.KAIRO_RUST_DIFF_ENABLED);
         this.applyEnvFlag(this.RUST_SYNTAX_ENABLED, process.env.KAIRO_RUST_SYNTAX_ENABLED);
         this.applyEnvFlag(this.RUST_VECTOR_ENABLED, process.env.KAIRO_RUST_VECTOR_ENABLED);
+        this.applyEnvFlag(this.WASM_CHUNKING_ENABLED, process.env.KAIRO_WASM_CHUNKING_ENABLED);
         const modularPercent = process.env.KAIRO_MODULAR_ROLLOUT_PERCENT;
         if (!process.env.KAIRO_MODULAR_HANDLERS_ENABLED && modularPercent === undefined) {
             this.set(this.MODULAR_HANDLERS_ENABLED, true, 'on');
@@ -316,14 +324,6 @@ export class FeatureFlags {
     static setBetaPercentForFlag(flag: string, percent: number): void {
         if (!Number.isFinite(percent)) return;
         this.betaPercentByFlag.set(flag, Math.max(0, Math.min(100, percent)));
-    }
-
-    static resetForTesting(): void {
-        this.flags.clear();
-        this.modes.clear();
-        this.canaryUsers.clear();
-        this.betaPercent = 10;
-        this.betaPercentByFlag.clear();
     }
 
     private static debugState(): Record<string, { enabled: boolean; mode: RolloutMode }> {

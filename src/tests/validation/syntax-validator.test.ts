@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@jest/globals";
 import { SyntaxValidator } from "../../engine/validators/syntax-validator.js";
-import { RustSyntaxValidator } from "../../engine/validators/RustSyntaxValidator.js";
+import { EngineManager } from "../../orchestration/capabilities/EngineManager.js";
+import { CAP_SYNTAX_VALIDATE } from "../../orchestration/capabilities/CapabilityIds.js";
 
 describe("SyntaxValidator", () => {
   it("accepts valid code", async () => {
@@ -37,12 +38,17 @@ describe("SyntaxValidator", () => {
     expect((result.blockingErrors ?? []).length).toBeGreaterThan(0);
   });
 
-  it("checks syntax with Rust validator when available", async () => {
-    const rustValidator = RustSyntaxValidator.getShared();
-    if (!rustValidator.isAvailable()) {
-      return;
-    }
-    const issues = await rustValidator.validate(
+  it("uses registered syntax provider", async () => {
+    EngineManager.resetForTesting();
+    EngineManager.registerProvider(CAP_SYNTAX_VALIDATE, {
+      meta: { id: "SyntaxValidatorTestProvider", tier: "js", priority: 1000 },
+      isAvailable: () => true,
+      get: () => ({
+        validate: async () => [{ line: 1, column: 1, message: "Syntax error detected." }]
+      })
+    });
+    const validator = new SyntaxValidator();
+    const result = await validator.validate(
       "tmp/invalid-syntax.ts",
       [
         "function greet(name: string) {",
@@ -53,6 +59,8 @@ describe("SyntaxValidator", () => {
         ""
       ].join("\n")
     );
-    expect(issues.length).toBeGreaterThan(0);
+    EngineManager.resetForTesting();
+    expect(result.success).toBe(false);
+    expect((result.blockingErrors ?? []).length).toBeGreaterThan(0);
   });
 });

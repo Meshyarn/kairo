@@ -1,13 +1,15 @@
-import { CAP_CHUNKING_TOKENS, CAP_DIFF_UNIFIED, CAP_SYNTAX_VALIDATE, CAP_VECTOR_COSINE_BATCH } from "./CapabilityIds.js";
+import { CAP_CHUNKING_TOKENS, CAP_DIFF_UNIFIED, CAP_SYNTAX_VALIDATE, CAP_VECTOR_COSINE_BATCH, CAP_TEXT_STATS } from "./CapabilityIds.js";
 import { EngineManager } from "./EngineManager.js";
 import { JsChunkingProvider } from "./providers/JsChunkingProvider.js";
 import { JsDiffingProvider } from "./providers/JsDiffingProvider.js";
+import { JsTextStatsProvider } from "./providers/JsTextStatsProvider.js";
 import { JsVectorMathProvider } from "./providers/JsVectorMathProvider.js";
 import { RustChunkingProvider } from "./providers/RustChunkingProvider.js";
 import { RustDiffingProvider } from "./providers/RustDiffingProvider.js";
 import { RustSyntaxProvider } from "./providers/RustSyntaxProvider.js";
 import { RustVectorMathProvider } from "./providers/RustVectorMathProvider.js";
 import { TreeSitterSyntaxProvider } from "./providers/TreeSitterSyntaxProvider.js";
+import { WasmChunkingProvider } from "./providers/WasmChunkingProvider.js";
 import { FeatureFlags } from "../../config/FeatureFlags.js";
 
 export class DefaultEngineRegistry {
@@ -23,12 +25,16 @@ export class DefaultEngineRegistry {
             rustCoreEnabled,
             process.env.KAIRO_RUST_CHUNKING
         );
+        const wasmChunkingEnabled = FeatureFlags.isEnabled(FeatureFlags.WASM_CHUNKING_ENABLED, FeatureFlags.getContext());
         const rustDiffEnabled = resolveRustFeature(FeatureFlags.RUST_DIFF_ENABLED, rustCoreEnabled);
         const rustSyntaxEnabled = resolveRustFeature(FeatureFlags.RUST_SYNTAX_ENABLED, rustCoreEnabled);
         const rustVectorEnabled = resolveRustFeature(FeatureFlags.RUST_VECTOR_ENABLED, rustCoreEnabled);
 
         if (rustChunkingEnabled) {
             EngineManager.registerProvider(CAP_CHUNKING_TOKENS, new RustChunkingProvider());
+        }
+        if (wasmChunkingEnabled) {
+            EngineManager.registerProvider(CAP_CHUNKING_TOKENS, new WasmChunkingProvider());
         }
         EngineManager.registerProvider(CAP_CHUNKING_TOKENS, new JsChunkingProvider());
 
@@ -46,6 +52,11 @@ export class DefaultEngineRegistry {
             EngineManager.registerProvider(CAP_VECTOR_COSINE_BATCH, new RustVectorMathProvider());
         }
         EngineManager.registerProvider(CAP_VECTOR_COSINE_BATCH, new JsVectorMathProvider());
+        EngineManager.registerProvider(CAP_TEXT_STATS, new JsTextStatsProvider());
+    }
+
+    static resetForTesting(): void {
+        this.initialized = false;
     }
 }
 

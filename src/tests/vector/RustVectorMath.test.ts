@@ -1,7 +1,6 @@
 import { describe, expect, it, afterEach } from "@jest/globals";
 import { EngineManager } from "../../orchestration/capabilities/EngineManager.js";
 import { CAP_VECTOR_COSINE_BATCH } from "../../orchestration/capabilities/CapabilityIds.js";
-import { RustVectorMath } from "../../vector/RustVectorMath.js";
 
 describe("RustVectorMath", () => {
   afterEach(() => {
@@ -26,10 +25,13 @@ describe("RustVectorMath", () => {
         }
       })
     });
-    const rustMath = RustVectorMath.getShared();
+    const provider = EngineManager.getProvider<{ cosineScores: (q: Float32Array, v: Float32Array[]) => number[] }>(
+      CAP_VECTOR_COSINE_BATCH
+    );
+    expect(provider).not.toBeNull();
     const query = new Float32Array([1, 0]);
     const vectors = [new Float32Array([1, 0]), new Float32Array([0, 1])];
-    const scores = rustMath.cosineScores(query, vectors);
+    const scores = provider!.cosineScores(query, vectors);
     expect(scores.length).toBe(2);
     expect(scores[0]).toBeGreaterThan(0.9);
     expect(scores[1]).toBeLessThan(0.1);
