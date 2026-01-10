@@ -1,7 +1,8 @@
 import { DependencyGraph } from '../ast/DependencyGraph.js';
 import { CallGraphBuilder } from '../ast/CallGraphBuilder.js';
 import { SymbolIndex } from '../ast/SymbolIndex.js';
-import { Edit, ImpactPreview, ImpactRiskLevel, SymbolInfo, DefinitionSymbol } from '../types.js';
+import { Edit, ImpactPreview, ImpactRiskLevel, SymbolInfo, DefinitionSymbol, CrossLangImpact } from '../types.js';
+import type { ContractDiff } from '../contracts/ContractDiffer.js';
 import * as path from 'path';
 
 export class ImpactAnalyzer {
@@ -45,6 +46,34 @@ export class ImpactAnalyzer {
             editCount: edits.length,
             suggestedTests,
             notes: this.generateImpactNotes(riskScore, modifiedSymbols, breakingChanges)
+        };
+    }
+
+    public async analyzeCrossLangImpact(
+        packageName: string,
+        entryPath: string,
+        diff: ContractDiff
+    ): Promise<CrossLangImpact> {
+        const importers = await this.dependencyGraph.getImporters(entryPath);
+        const consumerFiles = importers.map((edge) => edge.from).filter(Boolean);
+        const changedExports = [
+            ...diff.added,
+            ...diff.removed,
+            ...diff.changed.map((entry) => entry.exportName)
+        ];
+        const hasBreaking = diff.removed.length > 0 || diff.changed.some((entry) => entry.breaking);
+        const hasOnlyAdditions = diff.added.length > 0 && !hasBreaking;
+        const degraded = diff.degraded || hasOnlyAdditions;
+        const reasons = Array.from(new Set([
+            ...(diff.reasons ?? []),
+            ...(hasOnlyAdditions ? ["contract_non_breaking_change"] : [])
+        ]));
+        return {
+            packageName,
+            consumerFiles: Array.from(new Set(consumerFiles)),
+            changedExports: Array.from(new Set(changedExports)),
+            degraded,
+            reasons
         };
     }
 

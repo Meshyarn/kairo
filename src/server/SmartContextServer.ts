@@ -313,6 +313,9 @@ export class SmartContextServer {
         this.internalRegistry.setMetadata('indexStateManager', this.indexStateManager);
         this.internalRegistry.setMetadata('dependencyGraph', this.dependencyGraph);
         this.internalRegistry.setMetadata('flowArtifactManager', this.flowArtifactManager);
+        this.internalRegistry.setMetadata('repoRegistry', this.repoRegistry);
+        this.internalRegistry.setMetadata('packageAliasMap', packageAliasMap);
+        this.internalRegistry.setMetadata('impactAnalyzer', this.impactAnalyzer);
         
         this.setupHandlers();
         this.initializeModularHandlers();

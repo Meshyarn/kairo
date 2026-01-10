@@ -4,15 +4,17 @@ export type ContractDiff = {
   added: string[];
   removed: string[];
   changed: Array<{
-    key: string;
+    exportName: string;
+    kind: "signature" | "field" | "method" | "unknown";
     before: unknown;
     after: unknown;
+    breaking: boolean;
   }>;
   degraded: boolean;
   reasons: string[];
 };
 
-export function diffContracts(
+export function diffManifests(
   before: ContractManifest | undefined,
   after: ContractManifest | undefined
 ): ContractDiff {
@@ -40,7 +42,14 @@ export function diffContracts(
     const beforeValue = beforeMap[key];
     const afterValue = afterMap[key];
     if (JSON.stringify(beforeValue) !== JSON.stringify(afterValue)) {
-      changed.push({ key, before: beforeValue, after: afterValue });
+      const kind = classifyChangeKind(beforeValue, afterValue);
+      changed.push({
+        exportName: key,
+        kind,
+        before: beforeValue,
+        after: afterValue,
+        breaking: true
+      });
     }
   }
 
@@ -59,10 +68,22 @@ export function diffContracts(
   };
 }
 
+export const diffContracts = diffManifests;
+
 function extractSurfaceMap(surface: ContractSurface): Record<string, unknown> {
   if (surface.kind === "ffi_napi") return surface.exports ?? {};
   if (surface.kind === "idl_proto") return surface.services ?? {};
   if (surface.kind === "http_openapi") return surface.operations ?? {};
   if (surface.kind === "db_sql_schema") return surface.tables ?? {};
   return {};
+}
+
+function classifyChangeKind(beforeValue: any, afterValue: any): "signature" | "field" | "method" | "unknown" {
+  const beforeKind = beforeValue?.kind;
+  const afterKind = afterValue?.kind;
+  const kind = beforeKind || afterKind;
+  if (kind === "interface") return "field";
+  if (kind === "class") return "method";
+  if (kind === "function") return "signature";
+  return "unknown";
 }

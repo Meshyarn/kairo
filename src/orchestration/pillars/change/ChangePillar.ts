@@ -1,3 +1,4 @@
+import fs from "fs";
 import { InternalToolRegistry } from '../../InternalToolRegistry.js';
 import { OrchestrationContext } from '../../OrchestrationContext.js';
 import { ParsedIntent } from '../../IntentRouter.js';
@@ -50,6 +51,13 @@ import {
 } from "./BatchExecution.js";
 import { resolveTargetPath } from "./shared/TargetResolver.js";
 import { OptionResolver } from "../../options/OptionResolver.js";
+import { ContractManifestLoader } from "../../../contracts/ContractManifestLoader.js";
+import { ContractManifestGenerator } from "../../../contracts/ContractManifestGenerator.js";
+import { diffManifests } from "../../../contracts/ContractDiffer.js";
+import type { PackageAliasMap } from "../../../config/PackageAliasMap.js";
+import type { RepoRegistry } from "../../../config/RepoRegistry.js";
+import type { ImpactAnalyzer } from "../../../engine/ImpactAnalyzer.js";
+import type { CrossLangImpact } from "../../../types/engine.js";
 
 export class ChangePillar {
   private fileSystem = new NodeFileSystem(process.cwd());
@@ -521,7 +529,10 @@ export class ChangePillar {
       const deps = await dependencyPromise;
       const hotSpots = await hotSpotPromise;
       const symbolImpact = await symbolImpactPromise;
-      let impactReport = toImpactReport(impact, deps, targetPath, hotSpots);
+      const crossLangImpact = includeImpact && targetPath
+        ? await this.buildCrossLangImpact(targetPath)
+        : undefined;
+      let impactReport = toImpactReport(impact, deps, targetPath, hotSpots, crossLangImpact);
       let architecturalRisk: any = guardrailResult?.architecturalRisk;
       const architecturalWarnings: string[] = Array.isArray(guardrailResult?.architecturalWarnings)
         ? guardrailResult.architecturalWarnings
@@ -895,6 +906,69 @@ export class ChangePillar {
       warnings.push("Applied changes without dryRun; review is recommended before apply.");
     }
     return warnings;
+  }
+
+  private async buildCrossLangImpact(targetPath: string): Promise<CrossLangImpact | undefined> {
+    const repoRegistry = this.registry.getMetadata<RepoRegistry>("repoRegistry");
+    const packageAliasMap = this.registry.getMetadata<PackageAliasMap>("packageAliasMap");
+    const dependencyGraph = this.registry.getMetadata<DependencyGraph>("dependencyGraph");
+    const impactAnalyzer = this.registry.getMetadata<ImpactAnalyzer>("impactAnalyzer");
+    if (!repoRegistry || !packageAliasMap || !dependencyGraph) {
+      return undefined;
+    }
+
+    const repo = repoRegistry.findRepoByPath(targetPath);
+    if (!repo) return undefined;
+    const alias = packageAliasMap.findByRepoId(repo.id) ?? packageAliasMap.findByRepoPath(repo.path);
+    if (!alias?.packageName || !alias.entryPath) {
+      return undefined;
+    }
+
+    const manifestLoader = new ContractManifestLoader(process.cwd());
+    const loadResult = manifestLoader.loadManifest(alias.packageName, "ffi_napi");
+    const beforeManifest = loadResult.manifest;
+
+    let afterManifest = beforeManifest;
+    if (alias.entryPath.endsWith(".d.ts") && fs.existsSync(alias.entryPath)) {
+      const generator = new ContractManifestGenerator();
+      afterManifest = generator.generateFromDts(alias.packageName, alias.entryPath, {
+        sourceRepo: repo.path
+      });
+    }
+
+    let diff = diffManifests(beforeManifest, afterManifest);
+    if (loadResult.reason) {
+      diff = {
+        ...diff,
+        degraded: true,
+        reasons: Array.from(new Set([...(diff.reasons ?? []), loadResult.reason]))
+      };
+    }
+
+    const hasChanges = diff.added.length + diff.removed.length + diff.changed.length > 0;
+    if (!diff.degraded && !hasChanges) {
+      return undefined;
+    }
+
+    if (impactAnalyzer) {
+      return impactAnalyzer.analyzeCrossLangImpact(alias.packageName, alias.entryPath, diff);
+    }
+
+    const importers = await dependencyGraph.getImporters(alias.entryPath);
+    const consumerFiles = importers.map((edge) => edge.from).filter(Boolean);
+    const changedExports = [
+      ...diff.added,
+      ...diff.removed,
+      ...diff.changed.map((entry) => entry.exportName)
+    ];
+
+    return {
+      packageName: alias.packageName,
+      consumerFiles: Array.from(new Set(consumerFiles)),
+      changedExports: Array.from(new Set(changedExports)),
+      degraded: diff.degraded,
+      reasons: diff.reasons
+    };
   }
 }
 

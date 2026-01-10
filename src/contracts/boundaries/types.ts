@@ -32,7 +32,7 @@ export type ContractManifestHeader = {
   module?: string;
   sourceRepo: string;
   generatedAt: number;
-  evidence: BoundaryEvidence[];
+  evidence?: BoundaryEvidence[];
 };
 
 export type ContractSurface =

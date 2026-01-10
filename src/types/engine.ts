@@ -144,6 +144,14 @@ export interface EnhancedErrorDetails {
 
 export type ImpactRiskLevel = "low" | "medium" | "high";
 
+export interface CrossLangImpact {
+    packageName: string;
+    consumerFiles: string[];
+    changedExports: string[];
+    degraded: boolean;
+    reasons?: string[];
+}
+
 export interface ImpactPreview {
     filePath: string;
     riskLevel: ImpactRiskLevel;
@@ -155,6 +163,7 @@ export interface ImpactPreview {
     editCount: number;
     suggestedTests?: string[];
     notes?: string[];
+    crossLangImpact?: CrossLangImpact;
 }
 
 export interface BatchEditGuidance {

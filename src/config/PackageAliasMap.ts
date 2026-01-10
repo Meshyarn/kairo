@@ -44,6 +44,21 @@ export class PackageAliasMap {
         return this.aliases.get(specifier);
     }
 
+    public findByRepoId(repoId: string): PackageAlias | undefined {
+        for (const alias of this.aliases.values()) {
+            if (alias.repoId === repoId) return alias;
+        }
+        return undefined;
+    }
+
+    public findByRepoPath(repoPath: string): PackageAlias | undefined {
+        const normalized = path.resolve(repoPath);
+        for (const alias of this.aliases.values()) {
+            if (path.resolve(alias.repoPath) === normalized) return alias;
+        }
+        return undefined;
+    }
+
     private resolveEntryPath(
         repoPath: string,
         pkg: { types?: string; typings?: string; main?: string }
