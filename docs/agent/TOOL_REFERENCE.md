@@ -119,7 +119,7 @@ Plan/apply safe edits with impact analysis.
 | `reviewOptions.blockOn` | `("syntax" \| "semantic" \| "guardrails" \| "vibe")[]` |  | Blocking criteria. |
 | `sessionId` | `string` |  | Flow session id (`"new"` to start). |
 | `stylePack` | `string \| object` |  | Override StylePack (artifact id or inline pack). |
-| `options.includeImpact` | `boolean` |  | Include impact report when enabled. |
+| `options.includeImpact` | `boolean` |  | Include `impactReport` (may be suggested by guidance for public API / cross-language risk). |
 | `options.includeSymbolImpact` | `boolean` |  | Include symbol-level impact signals (when available). |
 | `options.autoRollback` | `boolean` |  | Reserved (implementation-dependent). |
 | `options.batchMode` | `boolean` |  | Reserved (implementation-dependent). |
