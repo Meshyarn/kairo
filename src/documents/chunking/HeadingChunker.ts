@@ -21,9 +21,12 @@ export class HeadingChunker {
         const lineOffsets = computeLineOffsets(normalizedContent);
         const strategy = options.chunkStrategy ?? "structural";
         const chunks: StoredDocumentChunk[] = [];
-        const tokenChunker = EngineManager.getProvider<ITokenChunkingProvider>(CAP_CHUNKING_TOKENS);
         const chunkProfile = resolveChunkProfile(options);
         const tokenOptions = resolveTokenOptions(options, chunkProfile);
+        const tokenChunker = EngineManager.getProvider<ITokenChunkingProvider>(
+            CAP_CHUNKING_TOKENS,
+            tokenOptions?.preferredTier ? { preferredTier: tokenOptions.preferredTier } : undefined
+        );
         const useTokenChunker = tokenChunker !== null && tokenOptions !== null;
         const effectiveOutline = outline.length === 0
             ? [{
@@ -71,7 +74,11 @@ export class HeadingChunker {
                 if (!segment.text.trim()) continue;
                 if (useTokenChunker && tokenOptions) {
                     const segmentStartByte = lineOffsets[segment.startLine - 1] ?? 0;
-                    const tokenChunks = tokenChunker.chunk(segment.text, tokenOptions.maxTokens, tokenOptions.overlapTokens);
+                    const tokenChunks = tokenChunker.chunk(
+                        segment.text,
+                        tokenOptions.params.maxTokens,
+                        tokenOptions.params.overlapTokens
+                    );
                     if (tokenChunks.length === 0) {
                         chunks.push(this.buildChunk({
                             filePath,
@@ -209,11 +216,13 @@ function resolveChunkProfile(options: DocumentOutlineOptions): ToolProfile | und
 function resolveTokenOptions(
     options: DocumentOutlineOptions,
     profile?: ToolProfile
-): { maxTokens: number; overlapTokens: number } | null {
+): { params: { maxTokens: number; overlapTokens: number }; preferredTier?: "native" | "wasm" | "js" } | null {
     if (options.targetChunkTokens != null && options.overlapTokens != null) {
         return {
-            maxTokens: options.targetChunkTokens,
-            overlapTokens: options.overlapTokens
+            params: {
+                maxTokens: options.targetChunkTokens,
+                overlapTokens: options.overlapTokens
+            }
         };
     }
     if (profile) {

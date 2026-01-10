@@ -8,13 +8,11 @@ import { resolveEmbeddingConfigFromEnv } from "../../../embeddings/EmbeddingConf
 export class RustChunkingProvider implements CapabilityProvider<ITokenChunkingProvider> {
     meta = { id: "RustChunkingProvider", tier: "native" as const, priority: 100 };
     private chunker: ITokenChunkingProvider | null = null;
-    private enabled = false;
     private tokenizerPath: string | null = null;
 
     constructor() {
-        this.enabled = parseBoolish(process.env.KAIRO_RUST_CHUNKING);
         this.tokenizerPath = resolveTokenizerPath();
-        if (!this.enabled || !this.tokenizerPath) {
+        if (!this.tokenizerPath) {
             return;
         }
         const core = NativeModuleLoader.getShared().getRustCore();
@@ -27,20 +25,12 @@ export class RustChunkingProvider implements CapabilityProvider<ITokenChunkingPr
     }
 
     isAvailable(): boolean {
-        return this.enabled && this.chunker !== null;
+        return this.chunker !== null;
     }
 
     get(): ITokenChunkingProvider {
         return this.chunker as ITokenChunkingProvider;
     }
-}
-
-function parseBoolish(value: string | undefined): boolean {
-    if (!value) return false;
-    const normalized = value.trim().toLowerCase();
-    if (normalized === "true" || normalized === "1" || normalized === "on" || normalized === "yes") return true;
-    if (normalized === "false" || normalized === "0" || normalized === "off" || normalized === "no") return false;
-    return false;
 }
 
 function resolveTokenizerPath(): string | null {

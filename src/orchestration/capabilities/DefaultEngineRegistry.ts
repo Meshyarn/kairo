@@ -8,6 +8,7 @@ import { RustDiffingProvider } from "./providers/RustDiffingProvider.js";
 import { RustSyntaxProvider } from "./providers/RustSyntaxProvider.js";
 import { RustVectorMathProvider } from "./providers/RustVectorMathProvider.js";
 import { TreeSitterSyntaxProvider } from "./providers/TreeSitterSyntaxProvider.js";
+import { FeatureFlags } from "../../config/FeatureFlags.js";
 
 export class DefaultEngineRegistry {
     private static initialized = false;
@@ -16,13 +17,53 @@ export class DefaultEngineRegistry {
         if (this.initialized) return;
         this.initialized = true;
 
-        EngineManager.registerProvider(CAP_CHUNKING_TOKENS, new RustChunkingProvider());
+        const rustCoreEnabled = FeatureFlags.isEnabled(FeatureFlags.RUST_CORE_ENABLED, FeatureFlags.getContext());
+        const rustChunkingEnabled = resolveRustFeature(
+            FeatureFlags.RUST_CHUNKING_ENABLED,
+            rustCoreEnabled,
+            process.env.KAIRO_RUST_CHUNKING
+        );
+        const rustDiffEnabled = resolveRustFeature(FeatureFlags.RUST_DIFF_ENABLED, rustCoreEnabled);
+        const rustSyntaxEnabled = resolveRustFeature(FeatureFlags.RUST_SYNTAX_ENABLED, rustCoreEnabled);
+        const rustVectorEnabled = resolveRustFeature(FeatureFlags.RUST_VECTOR_ENABLED, rustCoreEnabled);
+
+        if (rustChunkingEnabled) {
+            EngineManager.registerProvider(CAP_CHUNKING_TOKENS, new RustChunkingProvider());
+        }
         EngineManager.registerProvider(CAP_CHUNKING_TOKENS, new JsChunkingProvider());
-        EngineManager.registerProvider(CAP_DIFF_UNIFIED, new RustDiffingProvider());
+
+        if (rustDiffEnabled) {
+            EngineManager.registerProvider(CAP_DIFF_UNIFIED, new RustDiffingProvider());
+        }
         EngineManager.registerProvider(CAP_DIFF_UNIFIED, new JsDiffingProvider());
-        EngineManager.registerProvider(CAP_SYNTAX_VALIDATE, new RustSyntaxProvider());
+
+        if (rustSyntaxEnabled) {
+            EngineManager.registerProvider(CAP_SYNTAX_VALIDATE, new RustSyntaxProvider());
+        }
         EngineManager.registerProvider(CAP_SYNTAX_VALIDATE, new TreeSitterSyntaxProvider());
-        EngineManager.registerProvider(CAP_VECTOR_COSINE_BATCH, new RustVectorMathProvider());
+
+        if (rustVectorEnabled) {
+            EngineManager.registerProvider(CAP_VECTOR_COSINE_BATCH, new RustVectorMathProvider());
+        }
         EngineManager.registerProvider(CAP_VECTOR_COSINE_BATCH, new JsVectorMathProvider());
     }
+}
+
+function resolveRustFeature(flag: string, coreEnabled: boolean, legacyEnv?: string): boolean {
+    if (!coreEnabled) return false;
+    if (FeatureFlags.isExplicit(flag)) {
+        return FeatureFlags.isEnabled(flag, FeatureFlags.getContext());
+    }
+    if (legacyEnv !== undefined) {
+        return parseBoolish(legacyEnv);
+    }
+    return true;
+}
+
+function parseBoolish(value: string | undefined): boolean {
+    if (!value) return false;
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true" || normalized === "1" || normalized === "on" || normalized === "yes") return true;
+    if (normalized === "false" || normalized === "0" || normalized === "off" || normalized === "no") return false;
+    return false;
 }

@@ -43,9 +43,17 @@ describe("OptionResolver", () => {
   });
 
   it("maps profiles to chunking token limits", () => {
-    expect(OptionResolver.resolveChunkingOptions("fast")).toEqual({ maxTokens: 384, overlapTokens: 32 });
-    expect(OptionResolver.resolveChunkingOptions("balanced")).toEqual({ maxTokens: 512, overlapTokens: 64 });
-    expect(OptionResolver.resolveChunkingOptions("deep")).toEqual({ maxTokens: 768, overlapTokens: 128 });
+    expect(OptionResolver.resolveChunkingOptions("fast")).toEqual({
+        params: { maxTokens: 384, overlapTokens: 32 },
+        preferredTier: "native"
+    });
+    expect(OptionResolver.resolveChunkingOptions("balanced")).toEqual({
+        params: { maxTokens: 512, overlapTokens: 64 }
+    });
+    expect(OptionResolver.resolveChunkingOptions("deep")).toEqual({
+        params: { maxTokens: 768, overlapTokens: 128 },
+        preferredTier: "native"
+    });
   });
 
   it("maps profiles to diff modes for change/write", () => {

@@ -1,4 +1,5 @@
 import { FeatureFlags } from "../../config/FeatureFlags.js";
+import type { CapabilityTier } from "../capabilities/EngineManager.js";
 import type { IntentConstraints } from "../IntentRouter.js";
 import type { SessionPolicy } from "../../types/flow-artifacts.js";
 import type { DiffMode } from "../../types.js";
@@ -259,14 +260,16 @@ export class OptionResolver {
     return this.resolveWriteOptions(args, sessionId, sessionPolicy);
   }
 
-  static resolveChunkingOptions(profile?: ToolProfile): { maxTokens: number; overlapTokens: number } {
+  static resolveChunkingOptions(
+    profile?: ToolProfile
+  ): { params: { maxTokens: number; overlapTokens: number }; preferredTier?: CapabilityTier } {
     if (profile === "fast") {
-      return { maxTokens: 384, overlapTokens: 32 };
+      return { params: { maxTokens: 384, overlapTokens: 32 }, preferredTier: "native" };
     }
     if (profile === "deep") {
-      return { maxTokens: 768, overlapTokens: 128 };
+      return { params: { maxTokens: 768, overlapTokens: 128 }, preferredTier: "native" };
     }
-    return { maxTokens: 512, overlapTokens: 64 };
+    return { params: { maxTokens: 512, overlapTokens: 64 } };
   }
 
   private static resolveDryRun(args: IntentConstraints, sessionId: string | undefined, safety?: ToolSafety): boolean {

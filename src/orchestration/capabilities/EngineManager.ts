@@ -18,7 +18,7 @@ export interface CapabilityProvider<T> {
 export type CapabilityDiagnostics = {
     rustCoreAvailable: boolean;
     rustCoreError?: string;
-    capabilities: Record<string, { provider?: ProviderMeta }>;
+    capabilities: Record<string, { provider?: ProviderMeta; fallback?: ProviderMeta }>;
 };
 
 export class EngineManager {
@@ -36,16 +36,43 @@ export class EngineManager {
         this.providers.set(capability, existing);
     }
 
-    static getProvider<T>(capability: CapabilityId): T | null {
+    static getProvider<T>(
+        capability: CapabilityId,
+        hint?: { preferredTier?: CapabilityTier }
+    ): T | null {
         this.ensureInitialized();
         const providers = this.providers.get(capability) ?? [];
-        for (const provider of providers) {
-            if (provider.isAvailable()) {
-                this.diagnostics.capabilities[capability] = { provider: provider.meta };
-                return provider.get() as T;
+        let selectedIndex = -1;
+        if (hint?.preferredTier) {
+            for (let i = 0; i < providers.length; i += 1) {
+                const provider = providers[i];
+                if (provider.meta.tier === hint.preferredTier && provider.isAvailable()) {
+                    selectedIndex = i;
+                    break;
+                }
             }
         }
-        this.diagnostics.capabilities[capability] = { provider: undefined };
+        if (selectedIndex === -1) {
+            for (let i = 0; i < providers.length; i += 1) {
+                if (providers[i].isAvailable()) {
+                    selectedIndex = i;
+                    break;
+                }
+            }
+        }
+        if (selectedIndex !== -1) {
+            const selected = providers[selectedIndex];
+            let fallback: ProviderMeta | undefined;
+            for (let i = selectedIndex + 1; i < providers.length; i += 1) {
+                if (providers[i].isAvailable()) {
+                    fallback = providers[i].meta;
+                    break;
+                }
+            }
+            this.diagnostics.capabilities[capability] = { provider: selected.meta, fallback };
+            return selected.get() as T;
+        }
+        this.diagnostics.capabilities[capability] = { provider: undefined, fallback: undefined };
         return null;
     }
 
