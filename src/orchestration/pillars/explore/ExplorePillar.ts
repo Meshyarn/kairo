@@ -10,6 +10,7 @@ import { IntegrityEngine } from "../../../integrity/IntegrityEngine.js";
 import { UnifiedContextGraph } from "../../context/UnifiedContextGraph.js";
 import type { IndexStateManager } from "../../../indexing/IndexStateManager.js";
 import type { DependencyGraph } from "../../../ast/DependencyGraph.js";
+import { AstManager } from "../../../ast/AstManager.js";
 import { ProjectSketchBuilder } from "../../../generation/project-sketch-builder.js";
 import type { ResearchPack } from "../../../types/flow-artifacts.js";
 import type { FlowArtifactManager } from "../../flow-artifact-manager.js";
@@ -481,7 +482,19 @@ export class ExplorePillar {
                 const item = await buildItemForPath(entry.path, { view, maxChars, maxItemChars, allowSensitive, allowBinary, wantsFull, section: constraints.section }, context, (ctx, tool, args) => this.runTool(ctx, tool, args));
 
                 if (item.blocked) {
-                    return { success: false, status: "blocked", message: item.message ?? "Full read blocked.", data: { docs: [], code: [] } };
+                    const reasons = item.reason ? [item.reason] : undefined;
+                    const languageId = item.reason ? AstManager.getInstance().getLanguageId(entry.path) : undefined;
+                    const degradedReasons = reasons
+                        ? buildDegradedReasons(reasons, { languageId, filePath: entry.path })
+                        : undefined;
+                    return {
+                        success: false,
+                        status: "blocked",
+                        message: item.message ?? "Full read blocked.",
+                        data: { docs: [], code: [] },
+                        reasons,
+                        degradedReasons
+                    };
                 }
 
                 if (item.degraded) {

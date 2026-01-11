@@ -4,7 +4,9 @@ import { OrchestrationContext } from "../../OrchestrationContext.js";
 import { InternalToolRegistry } from "../../InternalToolRegistry.js";
 import { UnifiedContextGraph } from "../../context/UnifiedContextGraph.js";
 import { AstManager } from "../../../ast/AstManager.js";
-import { checkSkeletonSupport } from "../../../ast/LanguageSupportSignals.js";
+import { checkQuerySupport, checkSkeletonSupport } from "../../../ast/LanguageSupportSignals.js";
+import { SyntaxValidator } from "../../../engine/validators/syntax-validator.js";
+import { getSupportForFilePath, SupportLevel } from "../../../config/LanguageSupportLevels.js";
 import { TopologyInfo } from "../../../types.js";
 import { ExploreItem, truncate } from "./ResultFormatter.js";
 import { isDocPath, isGlob } from "./FilteringStrategy.js";
@@ -202,6 +204,49 @@ export async function buildItemForPath(
                 why: ["document_skeleton"]
             }
         };
+    }
+
+    const supportSpec = getSupportForFilePath(filePath);
+    if (supportSpec?.level === SupportLevel.L3) {
+        const requiredQueries = supportSpec.editPolicy.requireQueries ?? [];
+        if (requiredQueries.length > 0) {
+            const querySupport = await checkQuerySupport(filePath, requiredQueries, { required: true });
+            if (querySupport.degraded) {
+                const languageId = AstManager.getInstance().getLanguageId(filePath);
+                const missing = Array.isArray(querySupport.missing) ? querySupport.missing : [];
+                const missingSummary = missing.length > 0 ? ` (${missing.join(", ")})` : "";
+                const message = querySupport.reason === "language_parser_unavailable"
+                    ? `Language parser unavailable for ${filePath}.`
+                    : `Missing query pack for ${languageId}${missingSummary}.`;
+                return {
+                    blocked: true,
+                    message,
+                    reason: querySupport.reason
+                };
+            }
+        }
+
+        if (supportSpec.editPolicy.requireSyntaxValidation) {
+            let content = "";
+            try {
+                content = fs.readFileSync(path.resolve(filePath), "utf-8");
+            } catch {
+                return {
+                    blocked: true,
+                    message: `Unable to read ${filePath} for syntax validation.`,
+                    reason: "syntax_validation_failed"
+                };
+            }
+            const validator = new SyntaxValidator();
+            const validation = await validator.validate(filePath, content);
+            if (!validation.success) {
+                return {
+                    blocked: true,
+                    message: `Syntax validation failed for ${filePath}.`,
+                    reason: "syntax_validation_failed"
+                };
+            }
+        }
     }
 
     const support = await checkSkeletonSupport(filePath);

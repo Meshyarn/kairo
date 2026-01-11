@@ -59,6 +59,9 @@ import type { RepoRegistry } from "../../../config/RepoRegistry.js";
 import type { ImpactAnalyzer } from "../../../engine/ImpactAnalyzer.js";
 import type { CrossLangImpact } from "../../../types/engine.js";
 import { buildDegradedReasons } from "../../DegradedReasonMapper.js";
+import { AstManager } from "../../../ast/AstManager.js";
+import { checkQuerySupport } from "../../../ast/LanguageSupportSignals.js";
+import { getSupportForFilePath, SupportLevel } from "../../../config/LanguageSupportLevels.js";
 
 export class ChangePillar {
   private fileSystem = new NodeFileSystem(process.cwd());
@@ -269,6 +272,27 @@ export class ChangePillar {
         });
       }
 
+      const parityBlock = await this.resolveParityBlock(targetPath);
+      if (parityBlock.blocked) {
+        const reasons = parityBlock.reason ? [parityBlock.reason] : undefined;
+        const degradedReasons = reasons
+          ? buildDegradedReasons(reasons, { languageId: parityBlock.languageId, filePath: targetPath })
+          : undefined;
+        const message = parityBlock.message ?? "Language parity requirements are missing.";
+        return attachWorkflow({
+          success: false,
+          status: "blocked",
+          message,
+          targetFile: targetPath,
+          errorCode: "LANGUAGE_PARITY_MISSING",
+          blockedReason: parityBlock.reason ?? "language_parity_missing",
+          blockingErrors: ["LANGUAGE_PARITY_MISSING"],
+          degradedReasons,
+          guidance: { message },
+          sessionId: resolvedSessionId
+        });
+      }
+
       let integrityReport: IntegrityReport | undefined;
       if (integrityOptions && integrityOptions.mode !== "off") {
         integrityReport = (await IntegrityEngine.run(
@@ -466,6 +490,26 @@ export class ChangePillar {
           });
       } finally {
         stopEdit();
+      }
+
+      if (!editResult.success && editResult.errorCode === "SYNTAX_VALIDATION_FAILED" && targetPath) {
+        const astManager = AstManager.getInstance();
+        const languageId = astManager.getLanguageId(targetPath);
+        const degradedReasons = buildDegradedReasons(["syntax_validation_failed"], { languageId, filePath: targetPath });
+        const message = editResult.message ?? "Syntax validation failed.";
+        return attachWorkflow({
+          success: false,
+          status: "blocked",
+          message,
+          targetFile: targetPath,
+          errorCode: editResult.errorCode,
+          blockedReason: "syntax_validation_failed",
+          blockingErrors: ["SYNTAX_VALIDATION_FAILED"],
+          degradedReasons,
+          validationSummary: editResult.validationSummary,
+          guidance: { message },
+          sessionId: resolvedSessionId
+        });
       }
 
       let finalResult = editResult;
@@ -774,6 +818,39 @@ export class ChangePillar {
   private resolveTargetFiles(constraints: any, targets: string[]): string[] {
     const fromConstraints = Array.isArray(constraints?.targetFiles) ? constraints.targetFiles : [];
     return (fromConstraints.length > 0 ? fromConstraints : targets).filter((t: any) => typeof t === 'string');
+  }
+
+  private async resolveParityBlock(targetPath: string): Promise<{
+    blocked: boolean;
+    reason?: string;
+    message?: string;
+    languageId?: string;
+  }> {
+    const support = getSupportForFilePath(targetPath);
+    if (!support || support.level !== SupportLevel.L3) {
+      return { blocked: false };
+    }
+    const requiredQueries = support.editPolicy.requireQueries ?? [];
+    if (requiredQueries.length === 0) {
+      return { blocked: false };
+    }
+    const signal = await checkQuerySupport(targetPath, requiredQueries, { required: true });
+    if (!signal.degraded) {
+      return { blocked: false };
+    }
+    const astManager = AstManager.getInstance();
+    const languageId = astManager.getLanguageId(targetPath);
+    const missing = Array.isArray(signal.missing) ? signal.missing : [];
+    const missingSummary = missing.length > 0 ? ` (${missing.join(", ")})` : "";
+    const message = signal.reason === "language_parser_unavailable"
+      ? `Language parser unavailable for ${targetPath}.`
+      : `Missing query pack for ${languageId}${missingSummary}.`;
+    return {
+      blocked: true,
+      reason: signal.reason,
+      message,
+      languageId
+    };
   }
 
   private collectEditPaths(edits: any[]): string[] {
