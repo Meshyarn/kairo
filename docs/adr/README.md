@@ -60,6 +60,8 @@ The entries below cover all ADRs from the project history. Items marked “retou
 - ADR-054 (summary): Cross-language contract awareness (boundary adapters baseline) → `docs/adr/ADR-054-cross-language-contract-awareness.md`
 - ADR-054-H (summary): Contract hardening & bootstrap alignment (NAPI) → `docs/adr/ADR-054-H-contract-hardening-and-bootstrap.md`
 - ADR-055 (summary): Universal parity & standardization program → `docs/adr/ADR-055-universal-parity-and-standardization.md`
+- ADR-055-H: Adaptive trust policy (no curated summary)
+- ADR-055-L: Action guidance + Understand fallback graph (no curated summary)
 - ADR-033: “Six Pillars” precursor to ADR-040; introduced orchestration primitives and earlier public surface.
 - ADR-019/020: Toolset consolidation strategy (historical); led to the eventual Pillars surface.
 
@@ -85,6 +87,8 @@ The entries below cover all ADRs from the project history. Items marked “retou
 - ADR-054 (NAPI baseline): Cross-language contract awareness (boundary adapters + field-level impact) → `docs/adr/ADR-054-cross-language-contract-awareness.md`
 - ADR-054-H: ADR-054 hardening (bootstrap + deep linking; NAPI Rust ↔ TS/JS)
 - ADR-055 (summary): Universal parity & standardization program (schemas + parity gates + adapter expansion) → `docs/adr/ADR-055-universal-parity-and-standardization.md`
+- ADR-055-H: Adaptive trust policy (archived; no curated summary)
+- ADR-055-L: Action guidance + Understand fallback graph (archived; no curated summary)
 - ADR-022: Scalable memory architecture (on-disk/lazy/streaming baseline ideas).
 - ADR-028: Performance + accuracy enhancements (historical deep dive).
 - ADR-029: Production readiness / system maturity (historical).

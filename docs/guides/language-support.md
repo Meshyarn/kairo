@@ -13,6 +13,7 @@ This guide explains Kairo's language support tiers and what you can expect per l
 - Syntax validation is required and blocking on failure.
 - Structure extraction is reliable enough for impact analysis.
 - Edit flows should be safe-by-default with guardrails.
+- Missing query packs or parser assets should block L3 flows and surface degraded reasons with guidance.
 
 ## Current Target Matrix
 
@@ -41,6 +42,7 @@ Move an L2 language to L3 once:
 - Parser fails to load: ensure `wasm/tree-sitter-<languageId>.wasm` exists or set `KAIRO_WASM_DIR`.
 - Query pack missing: confirm `src/queries/<languageId>/` includes `imports/exports/symbols/skeleton`.
 - Validation degraded: check `npm run validate:languages` for missing assets.
+- Guidance mentions a `manage doctor` action when parity/language assets are missing.
 
 ## Useful diagnostics
 
