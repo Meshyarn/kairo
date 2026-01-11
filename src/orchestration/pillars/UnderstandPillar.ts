@@ -242,10 +242,31 @@ export class UnderstandPillar {
       maxChars: undefined,
       languageId: AstManager.getInstance().getLanguageId(filePath)
     });
+    const compressionDecisions: Array<{
+      item: string;
+      from: "full" | "skeleton" | "reference" | "summary";
+      to: "full" | "skeleton" | "reference" | "summary";
+      reason: "budget_exceeded" | "low_score" | "distance";
+    }> = [];
+    let compressionMode: "truncate" | "distill" = "truncate";
     if (compression.applied && typeof skeleton === "string") {
-      skeleton = compression.text;
+      const digest = this.buildSkeletonDigest(profile);
+      if (digest) {
+        skeleton = digest;
+        compressionMode = "distill";
+        compressionDecisions.push({
+          item: filePath,
+          from: "skeleton",
+          to: "summary",
+          reason: "budget_exceeded"
+        });
+      } else {
+        skeleton = compression.text;
+      }
       degraded = true;
-      degradedReasons.push("budget_exceeded");
+      if (!degradedReasons.includes("budget_exceeded")) {
+        degradedReasons.push("budget_exceeded");
+      }
     }
 
 
@@ -337,12 +358,13 @@ export class UnderstandPillar {
       compression: compression.applied
         ? {
             applied: true,
-            mode: "distill",
+            mode: compressionMode,
             elasticWindowPct: compression.elasticWindowPct,
             maxTokens: compression.maxTokens,
             estimatedTokens: compression.estimatedTokens,
             maxChars: compression.maxChars,
-            usedChars: compression.usedChars
+            usedChars: compression.usedChars,
+            decisions: compressionDecisions.length > 0 ? compressionDecisions : undefined
           }
         : undefined
     });
@@ -418,6 +440,18 @@ export class UnderstandPillar {
       UnderstandPillar.styleCache.set(cacheKey, pack);
     }
     return pack;
+  }
+
+  private buildSkeletonDigest(profile: any): string | undefined {
+    const symbols = profile?.structure?.symbols;
+    if (!Array.isArray(symbols) || symbols.length === 0) return undefined;
+    const lines = symbols.slice(0, 20).map((symbol: any) => {
+      const type = symbol?.type ?? "symbol";
+      const name = symbol?.name ?? symbol?.text ?? "unknown";
+      const signature = symbol?.signature ? ` ${symbol.signature}` : "";
+      return `- ${type} ${name}${signature}`;
+    });
+    return ["// Digest (symbols)", ...lines].join("\n");
   }
 
   private buildAnalysisPack(input: {

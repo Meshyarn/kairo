@@ -322,8 +322,32 @@ export class ExplorePillar {
                     const sliced = slicePack(cachedPack, contentCursorState, maxResults, includeDocs, includeCode, includeComments, includeLogs);
                     const expandedDocs = await Promise.all(sliced.docs.map((item) => this.expandDocContent(item, maxChars, context)));
                     const expandedCode = await Promise.all(sliced.code.map((item) => this.expandCodeContent(item, maxChars, context)));
-                    response.data.docs = expandedDocs.map((item) => applyBudgetToItem(item, true, view !== "full"));
-                    response.data.code = expandedCode.map((item) => applyBudgetToItem(item, true, view !== "full"));
+
+                    const applyBudgetWithGlobalLimit = (items: ExploreItem[]) => {
+                        const results: ExploreItem[] = [];
+                        for (const item of items) {
+                            if (degraded && reasons.includes("budget_exceeded")) break;
+
+                            const processed = applyBudgetToItem(item, true, view !== "full");
+                            if (maxTokens) {
+                                const content = processed.content ?? processed.preview ?? "";
+                                const itemTokens = estimateTokens(content, {
+                                    languageId: isDocPath(processed.filePath) ? undefined : AstManager.getInstance().getLanguageId(processed.filePath)
+                                });
+                                if (totalTokens + itemTokens > maxTokens) {
+                                    degraded = true;
+                                    reasons.push("budget_exceeded");
+                                    break;
+                                }
+                                totalTokens += itemTokens;
+                            }
+                            results.push(processed);
+                        }
+                        return results;
+                    };
+
+                    response.data.docs = applyBudgetWithGlobalLimit(expandedDocs);
+                    response.data.code = applyBudgetWithGlobalLimit(expandedCode);
                     if (sliced.nextCursor) {
                         response.next = { contentCursor: sliced.nextCursor };
                     }

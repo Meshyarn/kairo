@@ -38,6 +38,12 @@ export function buildUnderstandResponse(args: {
     estimatedTokens?: number;
     maxChars?: number;
     usedChars?: number;
+    decisions?: Array<{
+      item: string;
+      from: "full" | "skeleton" | "reference" | "summary";
+      to: "full" | "skeleton" | "reference" | "summary";
+      reason: "budget_exceeded" | "low_score" | "distance";
+    }>;
   };
 }): any {
   const {
