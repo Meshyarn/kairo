@@ -281,9 +281,11 @@ export class ExplorePillar {
         ): ExploreItem => {
             const text = isFullContent ? item.content : item.preview;
             if (!text) return item;
+            const languageId = isDocPath(item.filePath) ? undefined : AstManager.getInstance().getLanguageId(item.filePath);
             const budget = applyTokenBudget(text, {
                 maxTokens: maxItemTokens,
-                maxChars: isFullContent ? maxChars : maxItemChars
+                maxChars: isFullContent ? maxChars : maxItemChars,
+                languageId
             });
             compressionEstimatedTokens += budget.estimatedTokens ?? 0;
             compressionUsedChars += budget.usedChars;
@@ -581,7 +583,9 @@ export class ExplorePillar {
 
                 const contentText = payloadItem.content ?? payloadItem.preview ?? "";
                 const contentLength = contentText.length;
-                const itemTokens = estimateTokens(contentText);
+                const itemTokens = estimateTokens(contentText, {
+                    languageId: isDocPath(payloadItem.filePath) ? undefined : AstManager.getInstance().getLanguageId(payloadItem.filePath)
+                });
                 if (maxTokens) {
                     if (view === "full") {
                         if (totalTokens + itemTokens > maxTokens) {

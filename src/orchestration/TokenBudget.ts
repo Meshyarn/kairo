@@ -3,6 +3,8 @@ export type TokenBudgetOptions = {
   maxChars?: number;
   charsPerToken?: number;
   elasticWindowPct?: number;
+  languageId?: string;
+  estimator?: "chars" | "whitespace";
 };
 
 export type TokenBudgetResult = {
@@ -19,11 +21,64 @@ export type TokenBudgetResult = {
 const DEFAULT_CHARS_PER_TOKEN = 4;
 const DEFAULT_ELASTIC_WINDOW_PCT = 0.05;
 
-export function estimateTokens(text: string, charsPerToken = DEFAULT_CHARS_PER_TOKEN): number {
+const LANGUAGE_MULTIPLIERS: Record<string, number> = {
+  javascript: 1.05,
+  typescript: 1.05,
+  tsx: 1.05,
+  jsx: 1.05,
+  python: 1.05,
+  java: 1.05,
+  go: 1.05,
+  rust: 1.1,
+  cpp: 1.1,
+  c: 1.1,
+  csharp: 1.05,
+  php: 1.05,
+  json: 0.9,
+  yaml: 0.9,
+  markdown: 0.8
+};
+
+function normalizeLanguageId(raw?: string): string | undefined {
+  if (!raw) return undefined;
+  const value = raw.toLowerCase();
+  if (value === "ts") return "typescript";
+  if (value === "js") return "javascript";
+  if (value === "c#") return "csharp";
+  return value;
+}
+
+function estimateTokensByChars(text: string, charsPerToken = DEFAULT_CHARS_PER_TOKEN): number {
   const value = String(text ?? "");
   if (!value.length) return 0;
   const denom = charsPerToken > 0 ? charsPerToken : DEFAULT_CHARS_PER_TOKEN;
   return Math.ceil(value.length / denom);
+}
+
+function estimateTokensByWhitespace(text: string): number {
+  const value = String(text ?? "");
+  if (!value.length) return 0;
+  const matches = value.match(/[A-Za-z0-9_]+|[^\sA-Za-z0-9_]/g);
+  return matches ? matches.length : 0;
+}
+
+export function estimateTokens(
+  text: string,
+  options?: number | { charsPerToken?: number; estimator?: "chars" | "whitespace"; languageId?: string }
+): number {
+  const value = String(text ?? "");
+  if (!value.length) return 0;
+  const legacyChars = typeof options === "number" ? options : undefined;
+  const estimator = typeof options === "object" && options?.estimator
+    ? options.estimator
+    : (process.env.KAIRO_TOKEN_ESTIMATOR === "chars" ? "chars" : "whitespace");
+  const charsPerToken = typeof options === "object" ? options.charsPerToken : undefined;
+  const base = estimator === "chars"
+    ? estimateTokensByChars(value, legacyChars ?? charsPerToken ?? DEFAULT_CHARS_PER_TOKEN)
+    : estimateTokensByWhitespace(value);
+  const languageId = typeof options === "object" ? normalizeLanguageId(options.languageId) : undefined;
+  const multiplier = languageId ? (LANGUAGE_MULTIPLIERS[languageId] ?? 1) : 1;
+  return Math.max(1, Math.ceil(base * multiplier));
 }
 
 function findElasticCutIndex(text: string, targetChars: number, windowPct: number): number {
@@ -64,8 +119,13 @@ export function applyTokenBudget(text: string, options: TokenBudgetOptions): Tok
     ? options.maxChars
     : undefined;
   const charsPerToken = options.charsPerToken ?? DEFAULT_CHARS_PER_TOKEN;
+  const estimator = options.estimator ?? (process.env.KAIRO_TOKEN_ESTIMATOR === "chars" ? "chars" : "whitespace");
   const windowPct = options.elasticWindowPct ?? DEFAULT_ELASTIC_WINDOW_PCT;
-  const estimatedTokens = estimateTokens(value, charsPerToken);
+  const estimatedTokens = estimateTokens(value, {
+    charsPerToken,
+    estimator,
+    languageId: options.languageId
+  });
 
   if (!maxTokens && !maxChars) {
     return {

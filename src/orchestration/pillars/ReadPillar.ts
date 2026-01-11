@@ -169,7 +169,8 @@ export class ReadPillar {
 
     const tokenBudget = applyTokenBudget(content, {
       maxTokens,
-      maxChars: typeof constraints.maxChars === 'number' ? constraints.maxChars : undefined
+      maxChars: typeof constraints.maxChars === 'number' ? constraints.maxChars : undefined,
+      languageId: metadata.language ?? undefined
     });
     if (tokenBudget.applied) {
       content = tokenBudget.text;

@@ -239,7 +239,8 @@ export class UnderstandPillar {
 
     const compression = applyTokenBudget(typeof skeleton === "string" ? skeleton : String(skeleton ?? ""), {
       maxTokens,
-      maxChars: undefined
+      maxChars: undefined,
+      languageId: AstManager.getInstance().getLanguageId(filePath)
     });
     if (compression.applied && typeof skeleton === "string") {
       skeleton = compression.text;
