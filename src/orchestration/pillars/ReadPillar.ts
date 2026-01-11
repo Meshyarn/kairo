@@ -1,8 +1,13 @@
 import crypto from 'crypto';
+import fs from 'fs';
 import { InternalToolRegistry } from '../InternalToolRegistry.js';
 import { OrchestrationContext } from '../OrchestrationContext.js';
 import { ParsedIntent } from '../IntentRouter.js';
 import { buildDegradedReasons } from '../DegradedReasonMapper.js';
+import { checkQuerySupport } from '../../ast/LanguageSupportSignals.js';
+import { SyntaxValidator } from '../../engine/validators/syntax-validator.js';
+import { AstManager } from '../../ast/AstManager.js';
+import { getSupportForFilePath, SupportLevel } from '../../config/LanguageSupportLevels.js';
 
 export class ReadPillar {
   constructor(private readonly registry: InternalToolRegistry) {}
@@ -19,10 +24,75 @@ export class ReadPillar {
     const headingPath = constraints.headingPath;
     const isDocument = this.isDocumentPath(resolvedPath);
 
-    let content: string;
+    let content: string = '';
     let documentOutline: any = undefined;
     let contentSource: any = undefined;
     const reasons: string[] = [];
+
+    if (!isDocument && view !== 'full') {
+      const supportSpec = getSupportForFilePath(resolvedPath);
+      if (supportSpec?.level === SupportLevel.L3) {
+        const requiredQueries = supportSpec.editPolicy.requireQueries ?? [];
+        if (requiredQueries.length > 0) {
+          const querySupport = await checkQuerySupport(resolvedPath, requiredQueries, { required: true });
+          if (querySupport.degraded) {
+            const languageId = AstManager.getInstance().getLanguageId(resolvedPath);
+            const missing = Array.isArray(querySupport.missing) ? querySupport.missing : [];
+            const missingSummary = missing.length > 0 ? ` (${missing.join(", ")})` : "";
+            const message = querySupport.reason === "language_parser_unavailable"
+              ? `Language parser unavailable for ${resolvedPath}.`
+              : `Missing query pack for ${languageId}${missingSummary}.`;
+            const degradedReasons = buildDegradedReasons([querySupport.reason ?? "language_query_missing"], {
+              filePath: resolvedPath,
+              languageId
+            });
+            return {
+              success: false,
+              status: 'blocked',
+              message,
+              reasons: [querySupport.reason ?? "language_query_missing"],
+              degradedReasons
+            };
+          }
+        }
+
+        if (supportSpec.editPolicy.requireSyntaxValidation && process.env.KAIRO_SKIP_PARITY_CHECK !== 'true') {
+          let fullContent = '';
+          try {
+            const codeRead = await this.runTool(context, 'code_read', { filePath: resolvedPath, view: 'full' });
+            fullContent = typeof codeRead === 'string' ? codeRead : (codeRead?.content ?? '');
+          } catch {
+            const degradedReasons = buildDegradedReasons(["syntax_validation_failed"], {
+              filePath: resolvedPath,
+              languageId: AstManager.getInstance().getLanguageId(resolvedPath)
+            });
+            return {
+              success: false,
+              status: 'blocked',
+              message: `Unable to read ${resolvedPath} for syntax validation.`,
+              reasons: ["syntax_validation_failed"],
+              degradedReasons
+            };
+          }
+
+          const validator = new SyntaxValidator();
+          const validation = await validator.validate(resolvedPath, fullContent);
+          if (!validation.success) {
+            const degradedReasons = buildDegradedReasons(["syntax_validation_failed"], {
+              filePath: resolvedPath,
+              languageId: validation.languageId
+            });
+            return {
+              success: false,
+              status: 'blocked',
+              message: `Syntax validation failed for ${resolvedPath}.`,
+              reasons: ["syntax_validation_failed"],
+              degradedReasons
+            };
+          }
+        }
+      }
+    }
 
     if (isDocument && (sectionId || headingPath)) {
       const mode = (constraints.mode ?? (view === 'full' ? 'raw' : 'preview')) as 'summary' | 'preview' | 'raw';

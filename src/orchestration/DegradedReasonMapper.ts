@@ -1,7 +1,8 @@
 import type { DegradedReason, DegradedReasonType } from "../types/tool-responses.js";
 
-const DEFAULT_CONTRACT_ACTION = "Run manage doctor --scope=contracts";
-const DEFAULT_LANGUAGE_ACTION = "Run manage doctor --scope=languages";
+const DEFAULT_CONTRACT_ACTION = "manage doctor --scope=contracts";
+const DEFAULT_LANGUAGE_ACTION = "manage doctor --scope=languages";
+const DEFAULT_PARITY_ACTION = "manage doctor --scope=parity";
 
 const CONTRACT_REASON_MAP: Record<string, { type: DegradedReasonType; message: string; action?: string }> = {
   contract_manifest_missing: {
@@ -53,12 +54,12 @@ const PARITY_REASON_MAP: Record<string, { type: DegradedReasonType; message: str
   missing_query_pack: {
     type: "missing_query_pack",
     message: "Query pack is missing for this language.",
-    action: DEFAULT_LANGUAGE_ACTION
+    action: DEFAULT_PARITY_ACTION
   },
   missing_wasm_grammar: {
     type: "missing_wasm_grammar",
     message: "WASM grammar is missing for this language.",
-    action: DEFAULT_LANGUAGE_ACTION
+    action: DEFAULT_PARITY_ACTION
   },
   syntax_validation_failed: {
     type: "syntax_validation_failed",
@@ -75,12 +76,12 @@ const PARITY_REASON_MAP: Record<string, { type: DegradedReasonType; message: str
   language_parser_unavailable: {
     type: "missing_wasm_grammar",
     message: "Language parser is unavailable.",
-    action: DEFAULT_LANGUAGE_ACTION
+    action: DEFAULT_PARITY_ACTION
   },
   language_query_missing: {
     type: "missing_query_pack",
     message: "Language query pack is missing.",
-    action: DEFAULT_LANGUAGE_ACTION
+    action: DEFAULT_PARITY_ACTION
   }
 };
 

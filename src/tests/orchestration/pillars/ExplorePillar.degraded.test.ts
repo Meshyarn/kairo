@@ -82,4 +82,24 @@ describe("ExplorePillar degraded blocking", () => {
     expect(response.status).toBe("blocked");
     expect(response.degradedReasons?.some((reason: any) => reason.type === "syntax_validation_failed")).toBe(true);
   });
+
+  it("allows full view even when L3 syntax validation fails", async () => {
+    fs.writeFileSync(filePath, "function greet(name: string) { if (name { return name; } }\n", "utf-8");
+
+    const registry = new InternalToolRegistry();
+    registry.register("file_list", async () => ([
+      { path: filePath, mtime: 1, size: 64 }
+    ]));
+    registry.register("code_read", async () => "function greet(name: string) { if (name { return name; } }");
+
+    const pillar = new ExplorePillar(registry);
+    const response = await pillar.execute(
+      makeIntent({ paths: [filePath], include: { code: true, docs: false }, view: "full" }) as any,
+      new OrchestrationContext()
+    );
+
+    expect(response.success).toBe(true);
+    expect(response.status).toBe("ok");
+    expect(response.data.code[0]?.kind).toBe("file_full");
+  });
 });

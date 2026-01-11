@@ -45,6 +45,9 @@ export async function checkQuerySupport(
 }
 
 export async function checkSkeletonSupport(filePath: string): Promise<DegradationSignal> {
+    if (process.env.KAIRO_SKIP_PARITY_CHECK === 'true') {
+        return { degraded: false };
+    }
     const astManager = AstManager.getInstance();
     const languageId = astManager.getLanguageId(filePath);
     const support = getSupportForLanguageId(languageId);

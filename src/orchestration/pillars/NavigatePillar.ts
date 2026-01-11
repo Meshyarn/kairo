@@ -6,6 +6,8 @@ import { BudgetManager } from '../BudgetManager.js';
 import { analyzeQuery, isStrongQuery } from '../../engine/search/QueryMetrics.js';
 import { resolveProgressState, logProgress, logToolStart, logToolEnd, ProgressState } from '../../utils/ProgressLogger.js';
 import { buildDegradedReasons } from '../DegradedReasonMapper.js';
+import { checkSkeletonSupport } from '../../ast/LanguageSupportSignals.js';
+import { AstManager } from '../../ast/AstManager.js';
 
 
 export class NavigatePillar {
@@ -197,7 +199,10 @@ export class NavigatePillar {
       };
     });
 
-    const degradedReasons = buildDegradedReasons(refinementReason ? [refinementReason] : undefined);
+    const parityReasons: string[] = [];
+    if (refinementReason) parityReasons.push(refinementReason);
+    let parityPath: string | undefined = undefined;
+    let parityLanguageId: string | undefined = undefined;
     const response: any = {
       success: true,
       status: rawResults.length === 0 ? 'no_results' : 'success',
@@ -205,7 +210,6 @@ export class NavigatePillar {
       relatedSymbols,
       codePreview: locations[0]?.snippet,
       degraded: finalDegraded || (refinementReason === 'budget_exceeded') || false,
-      degradedReasons,
       budget: finalBudget ?? budget,
       refinement: {
         stage: refinementStage,
@@ -225,13 +229,30 @@ export class NavigatePillar {
             response.codePreview = docSkeleton.skeleton;
             response.document = { outline: docSkeleton.outline ?? [] };
           }
+          if (Array.isArray(docSkeleton?.reasons)) {
+            parityReasons.push(...docSkeleton.reasons);
+          }
         } else {
           const skeleton = await this.runTool(context, 'code_read', { filePath: primary.path, view: 'skeleton' }, progress);
           if (typeof skeleton === 'string') {
             response.codePreview = skeleton;
           }
+          const support = await checkSkeletonSupport(primary.path);
+          if (support.degraded && support.reason) {
+            parityReasons.push(support.reason);
+            parityPath = primary.path;
+            parityLanguageId = AstManager.getInstance().getLanguageId(primary.path);
+          }
         }
       }
+    }
+
+    response.degradedReasons = buildDegradedReasons(
+      parityReasons.length > 0 ? parityReasons : undefined,
+      parityPath ? { filePath: parityPath, languageId: parityLanguageId } : undefined
+    );
+    if (parityReasons.length > 0) {
+      response.degraded = true;
     }
 
     const elapsedMs = Date.now() - startedAt;
