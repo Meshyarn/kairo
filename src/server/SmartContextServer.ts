@@ -861,6 +861,8 @@ export class SmartContextServer {
                     type: 'object',
                     properties: {
                         goal: { type: 'string' },
+                        profile: { type: 'string', enum: ['fast', 'balanced', 'deep'] },
+                        sources: { type: 'string', enum: ['code', 'docs', 'both'] },
                         depth: { type: 'string', enum: ['shallow', 'standard', 'deep'] },
                         scope: { type: 'string', enum: ['symbol', 'file', 'module', 'project'] },
                         include: {
@@ -873,6 +875,7 @@ export class SmartContextServer {
                             }
                         },
                         sessionId: { type: 'string' },
+                        trace: { type: 'boolean' },
                         vibe: {
                             type: 'object',
                             properties: {
@@ -907,6 +910,8 @@ export class SmartContextServer {
                     properties: {
                         query: { type: 'string' },
                         paths: { type: 'array', items: { type: 'string' } },
+                        profile: { type: 'string', enum: ['fast', 'balanced', 'deep'] },
+                        sources: { type: 'string', enum: ['code', 'docs', 'both'] },
                         view: { type: 'string', enum: ['auto', 'preview', 'section', 'full'] },
                         include: {
                             type: 'object',
@@ -918,6 +923,7 @@ export class SmartContextServer {
                             }
                         },
                         sessionId: { type: 'string' },
+                        trace: { type: 'boolean' },
                         research: {
                             type: 'object',
                             properties: {
@@ -967,10 +973,13 @@ export class SmartContextServer {
                     type: 'object',
                     properties: {
                         intent: { type: 'string' },
+                        profile: { type: 'string', enum: ['fast', 'balanced', 'deep'] },
+                        safety: { type: 'string', enum: ['plan', 'apply'] },
                         target: { type: 'string' },
                         targetFiles: { type: 'array', items: { type: 'string' } },
                         edits: { type: 'array', items: { type: 'object' } },
                         sessionId: { type: 'string' },
+                        trace: { type: 'boolean' },
                         stylePack: { anyOf: [{ type: 'string' }, { type: 'object' }] },
                         draftOptions: {
                             type: 'object',
@@ -1013,11 +1022,14 @@ export class SmartContextServer {
                     type: 'object',
                     properties: {
                         intent: { type: 'string' },
+                        profile: { type: 'string', enum: ['fast', 'balanced', 'deep'] },
+                        safety: { type: 'string', enum: ['plan', 'apply'] },
                         targetPath: { type: 'string' },
                         template: { type: 'string' },
                         content: { type: 'string' },
                         dryRun: { type: 'boolean' },
                         sessionId: { type: 'string' },
+                        trace: { type: 'boolean' },
                         stylePack: { anyOf: [{ type: 'string' }, { type: 'object' }] },
                         draftOptions: {
                             type: 'object',
@@ -1069,6 +1081,7 @@ export class SmartContextServer {
                                 'sessions',
                                 'session',
                                 'session_complete',
+                                'session_update',
                                 'artifacts',
                                 'artifact',
                                 'discard',
@@ -1081,6 +1094,9 @@ export class SmartContextServer {
                         target: { type: 'string' },
                         limit: { type: 'number' },
                         outcome: { type: 'object' },
+                        sessionId: { type: 'string' },
+                        policy: { type: 'object' },
+                        policyMode: { type: 'string', enum: ['merge', 'replace'] },
                         artifactOptions: {
                             type: 'object',
                             properties: {

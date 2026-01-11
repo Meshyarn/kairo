@@ -33,6 +33,9 @@ const makeContext = () => {
             markReindexComplete: jest.fn(),
             markReindexFailed: jest.fn()
         },
+        documentSearchEngine: {
+            getEmbeddingStatus: jest.fn(async () => ({ available: true }))
+        },
         skeletonCache: { clearAll: jest.fn(async () => undefined) },
         searchEngine: { rebuild: jest.fn(async () => undefined) },
         documentIndexer: { rebuildAll: jest.fn(async () => undefined) },

@@ -91,6 +91,12 @@ export interface IntentConstraints {
     strictness?: "strict" | "balanced" | "permissive";
     blockOn?: Array<"syntax" | "semantic" | "guardrails" | "vibe">;
   };
+  profile?: "fast" | "balanced" | "deep";
+  sources?: "code" | "docs" | "both";
+  safety?: "plan" | "apply";
+  trace?: boolean;
+  policy?: Record<string, unknown>;
+  policyMode?: "merge" | "replace";
   artifactOptions?: {
     type?: string;
     sessionId?: string;

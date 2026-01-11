@@ -23,6 +23,7 @@ import type { DraftPack, StylePack, WorkflowMeta } from "../../types/flow-artifa
 import { DraftPackBuilder } from "../../generation/draft-pack-builder.js";
 import { ReviewReportBuilder } from "../../generation/review-report-builder.js";
 import type { FlowArtifactManager } from "../flow-artifact-manager.js";
+import { OptionResolver } from "../options/OptionResolver.js";
 
 export class WritePillar {
   constructor(private readonly registry: InternalToolRegistry) {}
@@ -46,13 +47,30 @@ export class WritePillar {
       const smartWrite = Boolean((constraints as any).smartWrite);
       const styleReference = (constraints as any).styleReference as string[] | undefined;
       const rawSessionId = typeof (constraints as any).sessionId === "string" ? (constraints as any).sessionId : undefined;
-      const dryRun = this.resolveDryRun(constraints, rawSessionId);
-      const draftOptions = (constraints as any).draftOptions as { skeletonOnly?: boolean } | undefined;
-      const reviewOptions = this.resolveReviewOptions((constraints as any).reviewOptions, Boolean(rawSessionId));
-      const draftId = typeof (constraints as any).draftId === "string" ? (constraints as any).draftId : undefined;
-      const refinement = typeof (constraints as any).refinement === "string" ? (constraints as any).refinement : undefined;
       const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
       const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, originalIntent);
+      const sessionPolicy = resolvedSessionId ? artifactManager?.getSession(resolvedSessionId)?.policy : undefined;
+    const resolvedOptions = OptionResolver.resolveWriteOptions(constraints, resolvedSessionId, sessionPolicy);
+      const dryRun = resolvedOptions.effective.dryRun;
+      const traceEnabled = resolvedOptions.effective.traceEnabled;
+      const draftOptions = (constraints as any).draftOptions as { skeletonOnly?: boolean } | undefined;
+      const reviewOptions = resolvedOptions.effective.reviewOptions;
+      const draftId = typeof (constraints as any).draftId === "string" ? (constraints as any).draftId : undefined;
+      const refinement = typeof (constraints as any).refinement === "string" ? (constraints as any).refinement : undefined;
+      if (resolvedSessionId) {
+        const policyPatch: Partial<{ profile?: string; safety?: string; write?: Record<string, unknown> }> = {};
+        if (typeof constraints.profile === "string") {
+          policyPatch.profile = constraints.profile;
+          policyPatch.write = { ...(policyPatch.write ?? {}), profile: constraints.profile };
+        }
+        if (typeof (constraints as any).safety === "string") {
+          policyPatch.safety = (constraints as any).safety;
+          policyPatch.write = { ...(policyPatch.write ?? {}), safety: (constraints as any).safety };
+        }
+        if (Object.keys(policyPatch).length > 0) {
+          artifactManager?.updateSessionPolicy(resolvedSessionId, policyPatch as any, "merge");
+        }
+      }
       const stylePackOverride = this.resolveStylePack((constraints as any).stylePack, artifactManager);
       const sessionStylePack = stylePackOverride
         ?? (resolvedSessionId && artifactManager
@@ -71,7 +89,25 @@ export class WritePillar {
       const attachSession = <T extends Record<string, any>>(payload: T): T & { sessionId?: string; workflowMeta: WorkflowMeta; workflowWarnings?: string[] } => {
         const next = {
           ...payload,
-          workflowMeta
+          workflowMeta,
+          ...(traceEnabled
+            ? {
+                effectiveOptions: {
+                  profile: resolvedOptions.effective.profile,
+                  safety: resolvedOptions.effective.safety,
+                  dryRun,
+                  reviewOptions
+                },
+                decisionTrace: {
+                  dryRun: {
+                    explicit: typeof constraints.dryRun === "boolean",
+                    resolved: dryRun
+                  },
+                  safety: resolvedOptions.effective.safety ?? null,
+                  profile: resolvedOptions.effective.profile ?? null
+                }
+              }
+            : {})
         } as T & { sessionId?: string; workflowMeta: WorkflowMeta; workflowWarnings?: string[] };
         if (workflowWarnings.length > 0) {
           next.workflowWarnings = workflowWarnings;

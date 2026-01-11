@@ -81,6 +81,7 @@ export class FeatureFlags {
      * Env var: KAIRO_WRITERS_FLOW_REVIEW_DEFAULTS
      */
     static WRITERS_FLOW_REVIEW_DEFAULTS = 'writers_flow_review_defaults';
+
     
     static initialize(): void {
         this.canaryUsers = this.parseCanaryUsers(process.env.KAIRO_CANARY_USERS);
@@ -95,7 +96,6 @@ export class FeatureFlags {
         this.applyEnvFlag(this.PILLAR_DECOMPOSITION_ENABLED, process.env.KAIRO_PILLAR_DECOMPOSITION_ENABLED);
         this.applyEnvFlag(this.WRITERS_FLOW_DEFAULT_DRYRUN, process.env.KAIRO_WRITERS_FLOW_DEFAULT_DRYRUN);
         this.applyEnvFlag(this.WRITERS_FLOW_REVIEW_DEFAULTS, process.env.KAIRO_WRITERS_FLOW_REVIEW_DEFAULTS);
-
         const modularPercent = process.env.KAIRO_MODULAR_ROLLOUT_PERCENT;
         if (!process.env.KAIRO_MODULAR_HANDLERS_ENABLED && modularPercent === undefined) {
             this.set(this.MODULAR_HANDLERS_ENABLED, true, 'on');

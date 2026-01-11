@@ -9,6 +9,7 @@ import type {
     FlowSession,
     FlowSessionOutcome,
     FlowSessionStatus,
+    SessionPolicy,
     StylePack
 } from "../types/flow-artifacts.js";
 
@@ -156,6 +157,26 @@ export class FlowArtifactManager {
         if (!session) return undefined;
         session.status = "completed";
         session.outcome = outcome;
+        session.updatedAt = Date.now();
+        this.updateIndexForSession(session);
+        if (this.options.autoPersist) {
+            void this.persistSession(session);
+        }
+        return session;
+    }
+
+    updateSessionPolicy(sessionId: string, policy: SessionPolicy | undefined, policyMode: "merge" | "replace" = "merge"): FlowSession | undefined {
+        const session = this.sessions.get(sessionId);
+        if (!session) return undefined;
+        if (!policy) {
+            if (policyMode === "replace") {
+                session.policy = undefined;
+            }
+        } else if (policyMode === "replace") {
+            session.policy = { ...policy };
+        } else {
+            session.policy = this.mergePolicy(session.policy, policy);
+        }
         session.updatedAt = Date.now();
         this.updateIndexForSession(session);
         if (this.options.autoPersist) {
@@ -466,6 +487,18 @@ export class FlowArtifactManager {
             acc[artifact.type] = (acc[artifact.type] ?? 0) + 1;
             return acc;
         }, {} as Record<ArtifactType, number>);
+    }
+
+    private mergePolicy(existing: SessionPolicy | undefined, patch: SessionPolicy): SessionPolicy {
+        const base: SessionPolicy = existing ? { ...existing } : {};
+        return {
+            ...base,
+            ...patch,
+            explore: { ...(base.explore ?? {}), ...(patch.explore ?? {}) },
+            understand: { ...(base.understand ?? {}), ...(patch.understand ?? {}) },
+            write: { ...(base.write ?? {}), ...(patch.write ?? {}) },
+            change: { ...(base.change ?? {}), ...(patch.change ?? {}) }
+        };
     }
 
     private createSession(intent: string, sessionId?: string): FlowSession {

@@ -23,6 +23,7 @@ import {
 } from './understand/DependencyAnalysis.js';
 import { buildUnderstandResponse } from './understand/ReportGenerator.js';
 import { resolveProgressState, logProgress, logToolStart, logToolEnd, ProgressState } from '../../utils/ProgressLogger.js';
+import { OptionResolver } from '../options/OptionResolver.js';
 
 
 export class UnderstandPillar {
@@ -38,13 +39,18 @@ export class UnderstandPillar {
   public async execute(intent: ParsedIntent, context: OrchestrationContext): Promise<any> {
     const { targets, constraints, originalIntent } = intent;
     const subject = constraints.goal || targets[0] || originalIntent;
-    const depth = constraints.depth || 'standard';
-    const include = constraints.include ?? {};
+    const rawSessionId = typeof constraints.sessionId === "string" ? constraints.sessionId : undefined;
+    const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
+    const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, subject);
+    const sessionPolicy = resolvedSessionId ? artifactManager?.getSession(resolvedSessionId)?.policy : undefined;
+    const resolvedOptions = OptionResolver.resolveUnderstandOptions(constraints, sessionPolicy);
+    const depth = resolvedOptions.effective.depth || 'standard';
+    const include = resolvedOptions.effective.include ?? {};
+    const traceEnabled = resolvedOptions.effective.traceEnabled;
     const vibe = constraints.vibe as { extract?: boolean; scope?: string; includeNorms?: boolean } | undefined;
     const wantsVibe = vibe?.extract === true;
     const analysis = constraints.analysis as { clusters?: boolean; maxClusters?: number; maxFilesPerCluster?: number } | undefined;
     const wantsAnalysis = analysis?.clusters === true;
-    const rawSessionId = typeof constraints.sessionId === "string" ? constraints.sessionId : undefined;
     const includeDependencies = include.dependencies === true || include.pageRank === true;
     const includeCalls = include.callGraph === true;
     const explicitPath = this.extractPath(subject) ?? (typeof originalIntent === 'string' ? this.extractPath(originalIntent) : null);
@@ -230,8 +236,20 @@ export class UnderstandPillar {
       : undefined;
     const indexStateManager = this.registry.getMetadata<IndexStateManager>("indexStateManager");
     const indexSnapshot = indexStateManager ? await indexStateManager.getSnapshot().catch(() => undefined) : undefined;
-    const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
-    const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, subject);
+    if (resolvedSessionId) {
+      const policyPatch: Partial<{ profile?: string; sources?: string; understand?: Record<string, unknown> }> = {};
+      if (typeof constraints.profile === "string") {
+        policyPatch.profile = constraints.profile;
+        policyPatch.understand = { ...(policyPatch.understand ?? {}), profile: constraints.profile };
+      }
+      if (typeof constraints.sources === "string") {
+        policyPatch.sources = constraints.sources;
+        policyPatch.understand = { ...(policyPatch.understand ?? {}), sources: constraints.sources };
+      }
+      if (Object.keys(policyPatch).length > 0) {
+        artifactManager?.updateSessionPolicy(resolvedSessionId, policyPatch as any, "merge");
+      }
+    }
 
     const analysisPack = wantsAnalysis
       ? this.buildAnalysisPack({
@@ -258,7 +276,7 @@ export class UnderstandPillar {
       }
     }
 
-    return buildUnderstandResponse({
+    const response = buildUnderstandResponse({
       subject,
       filePath,
       symbolName,
@@ -282,6 +300,19 @@ export class UnderstandPillar {
       analysisPack,
       sessionId: resolvedSessionId
     });
+    if (traceEnabled) {
+      response.effectiveOptions = {
+        profile: resolvedOptions.effective.profile,
+        sources: resolvedOptions.effective.sources,
+        depth,
+        include
+      };
+      response.decisionTrace = {
+        profileApplied: resolvedOptions.effective.profile ?? null,
+        sourcesApplied: resolvedOptions.effective.sources ?? null
+      };
+    }
+    return response;
 
   }
 

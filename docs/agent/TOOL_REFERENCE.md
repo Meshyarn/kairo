@@ -26,6 +26,8 @@ Unified search + read interface for docs and code.
 |---|---|---:|---|
 | `query` | `string` |  | Search query for docs/code. |
 | `paths` | `string[]` |  | Explicit files/dirs to read. |
+| `profile` | `"fast" \| "balanced" \| "deep"` |  | Preset for depth/limits/include defaults. |
+| `sources` | `"code" \| "docs" \| "both"` |  | Prefer code vs docs search (default: both). |
 | `view` | `"auto" \| "preview" \| "section" \| "full"` |  | Defaults to token-safe previews. |
 | `section.sectionId` | `string` |  | Use when targeting a specific doc section. |
 | `section.headingPath` | `string[]` |  | Alternative to sectionId. |
@@ -51,6 +53,7 @@ Unified search + read interface for docs and code.
 | `allowSensitive` | `boolean` |  | Opt-in for sensitive files. |
 | `allowBinary` | `boolean` |  | Opt-in for binary files. |
 | `allowGlobs` | `boolean` |  | Opt-in for glob paths. |
+| `trace` | `boolean` |  | Return `effectiveOptions` + `decisionTrace`. |
 
 **Usage**
 
@@ -58,6 +61,7 @@ Unified search + read interface for docs and code.
 - `explore({ paths: ["src/auth/AuthService.ts"], view: "full" })`
 - `explore({ query: "refund", packId, cursor: { items } })`
 - `explore({ research: { sketch: true }, sessionId: "new" })`
+- `explore({ query: "ADR-051", profile: "deep", sources: "docs", trace: true })`
 
 ---
 
@@ -72,6 +76,8 @@ Deep analysis of structure and relationships (opt-in includes).
 | `goal` | `string` | ✓ | What you want to understand (symbol/file/free-text). |
 | `scope` | `"symbol" \| "file" \| "module" \| "project"` |  | Narrow the search mode. |
 | `depth` | `"shallow" \| "standard" \| "deep"` |  | Controls analysis depth. |
+| `profile` | `"fast" \| "balanced" \| "deep"` |  | Preset for analysis defaults. |
+| `sources` | `"code" \| "docs" \| "both"` |  | Prefer code vs docs (note: doc search support is rolling out). |
 | `include.callGraph` | `boolean` |  | Include call graph (default is conservative; enable explicitly). |
 | `include.dependencies` | `boolean` |  | Include dependency edges. |
 | `include.hotSpots` | `boolean` |  | Include hotspot signals. |
@@ -84,6 +90,7 @@ Deep analysis of structure and relationships (opt-in includes).
 | `analysis.maxClusters` | `number` |  | Max cluster count. |
 | `analysis.maxFilesPerCluster` | `number` |  | Max files per cluster. |
 | `limits.timeoutMs` | `number` |  | Per-call timeout budget (best-effort). |
+| `trace` | `boolean` |  | Return `effectiveOptions` + `decisionTrace`. |
 
 ---
 
@@ -99,6 +106,8 @@ Plan/apply safe edits with impact analysis.
 | `target` | `string` |  | Optional hint (file/symbol). |
 | `targetFiles` | `string[]` |  | Constrain the blast radius. |
 | `edits` | `object[]` |  | Structured edits (advanced). |
+| `profile` | `"fast" \| "balanced" \| "deep"` |  | Preset for review/limits defaults. |
+| `safety` | `"plan" \| "apply"` |  | Maps to dry-run behavior (plan=true by default). |
 | `options.dryRun` | `boolean` |  | Default behavior is dry-run planning. |
 | `draftId` | `string` |  | Continue a refinement loop from a prior DraftPack. |
 | `refinement` | `string` |  | Extra guidance when refining a prior draft. |
@@ -116,6 +125,7 @@ Plan/apply safe edits with impact analysis.
 | `options.batchMode` | `boolean` |  | Reserved (implementation-dependent). |
 | `options.suggestDocs` | `boolean` |  | Enable doc update suggestions on successful apply. |
 | `options.batchImpactLimit` | `number` |  | Max files to include in batch impact preview. |
+| `trace` | `boolean` |  | Return `effectiveOptions` + `decisionTrace`. |
 
 **Workflow output**
 
@@ -155,6 +165,8 @@ Create or scaffold files.
 | `targetPath` | `string` |  | Where to create it. |
 | `template` | `string` |  | Template name/path (if supported). |
 | `content` | `string` |  | Explicit content overrides generation. |
+| `profile` | `"fast" \| "balanced" \| "deep"` |  | Preset for review/limits defaults. |
+| `safety` | `"plan" \| "apply"` |  | Maps to dry-run behavior (plan=true by default). |
 | `dryRun` | `boolean` |  | Generate DraftPack only. |
 | `draftId` | `string` |  | Continue a refinement loop from a prior DraftPack. |
 | `refinement` | `string` |  | Extra guidance when refining a prior draft. |
@@ -170,6 +182,7 @@ Create or scaffold files.
 | `options.quickGenerate` | `boolean` |  | Generate content from intent when `content` is not provided. |
 | `options.smartWrite` | `boolean` |  | Pattern-aware generation using similar files (when possible). |
 | `options.styleReference` | `string[]` |  | Optional explicit reference files for pattern extraction. |
+| `trace` | `boolean` |  | Return `effectiveOptions` + `decisionTrace`. |
 
 **Workflow output**
 
@@ -198,12 +211,14 @@ Project/session state utilities.
 
 | Field | Type | Required | Notes |
 |---|---|---:|---|
-| `command` | `"status" \| "undo" \| "redo" \| "reindex" \| "rebuild" \| "history" \| "test" \| "sessions" \| "session" \| "session_complete" \| "artifacts" \| "artifact" \| "discard" \| "prune" \| "export" \| "import"` | ✓ | `rebuild` maps to `reindex`. |
+| `command` | `"status" \| "undo" \| "redo" \| "reindex" \| "rebuild" \| "history" \| "test" \| "sessions" \| "session" \| "session_complete" \| "session_update" \| "artifacts" \| "artifact" \| "discard" \| "prune" \| "export" \| "import"` | ✓ | `rebuild` maps to `reindex`. |
 | `scope` | `"file" \| "transaction" \| "project"` |  | Mainly used by `test`. |
 | `target` | `string` |  | Mainly used by `test`. |
 | `limit` | `number` |  | Max items for list commands (sessions). |
 | `sessionId` | `string` |  | Session id for `session` / `session_complete`. |
 | `outcome` | `object` |  | Used by `session_complete` (e.g. `{ summary, status, nextSteps }`). |
+| `policy` | `object` |  | SessionPolicy update for `session_update`. |
+| `policyMode` | `"merge" \| "replace"` |  | Merge or replace session policy. |
 | `artifactOptions.type` | `string` |  | Filter artifacts by type. |
 | `artifactOptions.sessionId` | `string` |  | Filter artifacts by session. |
 | `artifactOptions.limit` | `number` |  | Max artifacts to return. |
