@@ -29,12 +29,18 @@ export type ExploreResponse = {
     degradedReasons?: DegradedReason[];
     compression?: {
         applied: boolean;
-        mode: "none" | "truncate";
+        mode: "none" | "truncate" | "distill";
         elasticWindowPct?: number;
         maxTokens?: number;
         estimatedTokens?: number;
         maxChars?: number;
         usedChars?: number;
+        decisions?: Array<{
+            item: string;
+            from: "full" | "skeleton" | "reference" | "summary";
+            to: "full" | "skeleton" | "reference" | "summary";
+            reason: "budget_exceeded" | "low_score" | "distance";
+        }>;
     };
     stats?: Record<string, unknown>;
     researchPack?: ResearchPack;

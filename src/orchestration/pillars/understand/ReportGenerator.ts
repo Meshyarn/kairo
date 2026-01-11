@@ -30,6 +30,15 @@ export function buildUnderstandResponse(args: {
   stylePack?: any;
   analysisPack?: any;
   sessionId?: string;
+  compression?: {
+    applied: boolean;
+    mode: "none" | "truncate" | "distill";
+    elasticWindowPct?: number;
+    maxTokens?: number;
+    estimatedTokens?: number;
+    maxChars?: number;
+    usedChars?: number;
+  };
 }): any {
   const {
     subject,
@@ -56,7 +65,8 @@ export function buildUnderstandResponse(args: {
     indexSnapshot,
     stylePack,
     analysisPack,
-    sessionId
+    sessionId,
+    compression
   } = args;
 
   const status = includeCalls && !symbolName
@@ -114,6 +124,7 @@ export function buildUnderstandResponse(args: {
     analysisPack,
     indexSnapshot,
     sessionId,
+    compression,
     guidance: {
       message: guidanceMessage,
       suggestedActions: [

@@ -267,8 +267,18 @@ export class ExplorePillar {
         let totalTokens = 0;
         let compressionEstimatedTokens = 0;
         let compressionUsedChars = 0;
+        const compressionDecisions: Array<{
+            item: string;
+            from: "full" | "skeleton" | "reference" | "summary";
+            to: "full" | "skeleton" | "reference" | "summary";
+            reason: "budget_exceeded" | "low_score" | "distance";
+        }> = [];
 
-        const applyBudgetToItem = (item: ExploreItem, isFullContent: boolean): ExploreItem => {
+        const applyBudgetToItem = (
+            item: ExploreItem,
+            isFullContent: boolean,
+            allowDistill: boolean
+        ): ExploreItem => {
             const text = isFullContent ? item.content : item.preview;
             if (!text) return item;
             const budget = applyTokenBudget(text, {
@@ -280,7 +290,16 @@ export class ExplorePillar {
             if (budget.applied) {
                 budgetExceeded = true;
             }
-            if (isFullContent) {
+            if (isFullContent && allowDistill && budget.applied) {
+                item.preview = truncate(budget.text, maxItemChars);
+                item.content = undefined;
+                compressionDecisions.push({
+                    item: item.filePath,
+                    from: "full",
+                    to: "skeleton",
+                    reason: "budget_exceeded"
+                });
+            } else if (isFullContent) {
                 item.content = budget.text;
             } else {
                 item.preview = budget.text;
@@ -301,15 +320,15 @@ export class ExplorePillar {
                     const sliced = slicePack(cachedPack, contentCursorState, maxResults, includeDocs, includeCode, includeComments, includeLogs);
                     const expandedDocs = await Promise.all(sliced.docs.map((item) => this.expandDocContent(item, maxChars, context)));
                     const expandedCode = await Promise.all(sliced.code.map((item) => this.expandCodeContent(item, maxChars, context)));
-                    response.data.docs = expandedDocs.map((item) => applyBudgetToItem(item, true));
-                    response.data.code = expandedCode.map((item) => applyBudgetToItem(item, true));
+                    response.data.docs = expandedDocs.map((item) => applyBudgetToItem(item, true, view !== "full"));
+                    response.data.code = expandedCode.map((item) => applyBudgetToItem(item, true, view !== "full"));
                     if (sliced.nextCursor) {
                         response.next = { contentCursor: sliced.nextCursor };
                     }
                 } else {
                     const sliced = slicePack(cachedPack, cursorState, maxResults, includeDocs, includeCode, includeComments, includeLogs);
-                    response.data.docs = sliced.docs.map((item) => applyBudgetToItem(item, false));
-                    response.data.code = sliced.code.map((item) => applyBudgetToItem(item, false));
+                    response.data.docs = sliced.docs.map((item) => applyBudgetToItem(item, false, false));
+                    response.data.code = sliced.code.map((item) => applyBudgetToItem(item, false, false));
                     if (sliced.nextCursor) {
                         response.next = { itemsCursor: sliced.nextCursor };
                     }
@@ -372,7 +391,7 @@ export class ExplorePillar {
                     }));
 
                     codeForPack = codeItems;
-                    response.data.code = codeItems.slice(0, maxResults).map((item) => applyBudgetToItem(item, false));
+                    response.data.code = codeItems.slice(0, maxResults).map((item) => applyBudgetToItem(item, false, false));
                     if (codeResults?.degraded) {
                         degraded = true;
                         if (codeResults?.reason) {
@@ -439,7 +458,7 @@ export class ExplorePillar {
                         why: ["document_search"]
                     }));
                     docsForPack = docs;
-                    response.data.docs = docs.slice(0, maxResults).map((item: ExploreItem) => applyBudgetToItem(item, false));
+                    response.data.docs = docs.slice(0, maxResults).map((item: ExploreItem) => applyBudgetToItem(item, false, false));
                     if (docResults?.degraded) {
                         degraded = true;
                         if (Array.isArray(docResults?.reasons)) {
@@ -558,7 +577,7 @@ export class ExplorePillar {
                 if (!payloadItem) continue;
 
                 const isFullContent = typeof payloadItem.content === "string";
-                applyBudgetToItem(payloadItem, isFullContent);
+                applyBudgetToItem(payloadItem, isFullContent, view !== "full");
 
                 const contentText = payloadItem.content ?? payloadItem.preview ?? "";
                 const contentLength = contentText.length;
@@ -618,12 +637,13 @@ export class ExplorePillar {
             reasons.push("budget_exceeded");
             response.compression = {
                 applied: true,
-                mode: "truncate",
+                mode: compressionDecisions.length > 0 ? "distill" : "truncate",
                 elasticWindowPct: maxTokens ? 0.05 : undefined,
                 maxTokens,
                 estimatedTokens: compressionEstimatedTokens > 0 ? compressionEstimatedTokens : undefined,
                 maxChars,
-                usedChars: compressionUsedChars > 0 ? compressionUsedChars : undefined
+                usedChars: compressionUsedChars > 0 ? compressionUsedChars : undefined,
+                decisions: compressionDecisions.length > 0 ? compressionDecisions : undefined
             };
         }
 

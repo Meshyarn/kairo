@@ -28,6 +28,7 @@ import { checkSkeletonSupport } from '../../ast/LanguageSupportSignals.js';
 import { buildDegradedReasons } from '../DegradedReasonMapper.js';
 import { UniversalFallbackExtractor } from '../../ast/extraction/UniversalFallbackExtractor.js';
 import { AstManager } from '../../ast/AstManager.js';
+import { applyTokenBudget } from '../TokenBudget.js';
 
 
 export class UnderstandPillar {
@@ -63,6 +64,11 @@ export class UnderstandPillar {
     const progress = resolveProgressState('Understand', constraints);
     const startedAt = Date.now();
     const integrityOptions = IntegrityEngine.resolveOptions(constraints.integrity, "understand");
+    const envMaxTokens = Number.parseInt(process.env.KAIRO_UNDERSTAND_MAX_TOKENS ?? process.env.KAIRO_DEFAULT_MAX_TOKENS ?? "", 10);
+    const limits = constraints.limits ?? {};
+    const maxTokens = Number.isFinite(limits.maxTokens) && limits.maxTokens! > 0
+      ? limits.maxTokens
+      : (Number.isFinite(envMaxTokens) && envMaxTokens > 0 ? envMaxTokens : undefined);
 
     const metrics = analyzeQuery(subject);
     const initialProjectStats = context.getState<any>("project_profile");
@@ -231,6 +237,16 @@ export class UnderstandPillar {
       fallbackGraph = await this.buildFallbackGraph(filePath);
     }
 
+    const compression = applyTokenBudget(typeof skeleton === "string" ? skeleton : String(skeleton ?? ""), {
+      maxTokens,
+      maxChars: undefined
+    });
+    if (compression.applied && typeof skeleton === "string") {
+      skeleton = compression.text;
+      degraded = true;
+      degradedReasons.push("budget_exceeded");
+    }
+
 
         // 3. Synthesize Response (Advanced synthesis in Phase 3)
     const status = includeCalls && !symbolName ? 'partial_success' : (degraded ? 'partial_success' : 'ok');
@@ -316,7 +332,18 @@ export class UnderstandPillar {
       indexSnapshot,
       stylePack: wantsVibe ? await this.buildStylePack(filePath, vibe, indexSnapshot, resolvedSessionId, subject) : undefined,
       analysisPack,
-      sessionId: resolvedSessionId
+      sessionId: resolvedSessionId,
+      compression: compression.applied
+        ? {
+            applied: true,
+            mode: "distill",
+            elasticWindowPct: compression.elasticWindowPct,
+            maxTokens: compression.maxTokens,
+            estimatedTokens: compression.estimatedTokens,
+            maxChars: compression.maxChars,
+            usedChars: compression.usedChars
+          }
+        : undefined
     });
     if (traceEnabled) {
       response.effectiveOptions = {
