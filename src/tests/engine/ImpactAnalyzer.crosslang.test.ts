@@ -3,7 +3,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { ImpactAnalyzer } from "../../engine/ImpactAnalyzer.js";
-import { PropertyAccessIndex } from "../../ast/PropertyAccessIndex.js";
+import { FieldAccessIndex } from "../../ast/FieldAccessIndex.js";
 
 describe("ImpactAnalyzer cross-language impact", () => {
     it("returns consumer files for a package entry", async () => {
@@ -69,15 +69,15 @@ console.log(result.text);
                 { from: "src/consumer.ts", to: "crates/core-rs/index.d.ts", type: "named" }
             ]
         };
-        const propertyIndex = new PropertyAccessIndex(root);
-        propertyIndex.indexFile(consumerPath, { packageName: "@kairo/core-rs", exportNames: ["ChunkResult"] });
+        const fieldIndex = new FieldAccessIndex(root);
+        await fieldIndex.indexFile(consumerPath, { packageName: "@kairo/core-rs", exportNames: ["ChunkResult"] });
 
         const analyzer = new ImpactAnalyzer(
             dependencyGraph as any,
             {} as any,
             {} as any,
             undefined,
-            propertyIndex
+            fieldIndex
         );
 
         const diff = {

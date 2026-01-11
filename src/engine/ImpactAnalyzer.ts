@@ -3,7 +3,8 @@ import { CallGraphBuilder } from '../ast/CallGraphBuilder.js';
 import { SymbolIndex } from '../ast/SymbolIndex.js';
 import { Edit, ImpactPreview, ImpactRiskLevel, SymbolInfo, DefinitionSymbol, CrossLangImpact, CrossLangFieldImpact } from '../types.js';
 import type { ContractDiff } from '../contracts/ContractDiffer.js';
-import type { PropertyAccessIndex, PropertyAccessLocation } from '../ast/PropertyAccessIndex.js';
+import type { FieldAccessIndex } from '../ast/FieldAccessIndex.js';
+import type { FieldAccessLookup } from '../ast/FieldAccessTypes.js';
 import * as path from 'path';
 
 export class ImpactAnalyzer {
@@ -12,7 +13,7 @@ export class ImpactAnalyzer {
         private callGraphBuilder: CallGraphBuilder,
         private symbolIndex: SymbolIndex,
         private pagerankScores?: Map<string, number>, // Tier 1 PageRank scores
-        private propertyAccessIndex?: PropertyAccessIndex
+        private fieldAccessIndex?: FieldAccessIndex
     ) {}
 
     public setPagerankScores(scores: Map<string, number>) {
@@ -85,11 +86,11 @@ export class ImpactAnalyzer {
         packageName: string,
         exportName: string,
         fieldName: string
-    ): Promise<PropertyAccessLocation[]> {
-        if (!this.propertyAccessIndex) {
-            return [];
+    ): Promise<FieldAccessLookup> {
+        if (!this.fieldAccessIndex) {
+            return { usages: [], confidence: "high" };
         }
-        return this.propertyAccessIndex.getUsages(packageName, exportName, fieldName);
+        return this.fieldAccessIndex.getUsages(packageName, exportName, fieldName);
     }
 
     private async collectFieldImpacts(
@@ -97,7 +98,7 @@ export class ImpactAnalyzer {
         consumerFiles: string[],
         diff: ContractDiff
     ): Promise<CrossLangFieldImpact[]> {
-        if (!this.propertyAccessIndex) {
+        if (!this.fieldAccessIndex) {
             return [];
         }
 
@@ -111,7 +112,7 @@ export class ImpactAnalyzer {
         for (const filePath of consumerFiles) {
             if (!filePath) continue;
             try {
-                this.propertyAccessIndex.indexFile(filePath, { packageName, exportNames });
+                await this.fieldAccessIndex.indexFile(filePath, { packageName, exportNames });
             } catch {
                 // ignore indexing failures for non-existent or unreadable files
             }
@@ -122,12 +123,12 @@ export class ImpactAnalyzer {
             if (entry.kind !== "field") continue;
             const fieldNames = this.extractChangedFields(entry.before, entry.after);
             for (const fieldName of fieldNames) {
-                const usages = await this.analyzeFieldImpact(packageName, entry.exportName, fieldName);
-                if (usages.length === 0) continue;
+                const lookup = await this.analyzeFieldImpact(packageName, entry.exportName, fieldName);
+                if (lookup.usages.length === 0) continue;
                 impacts.push({
                     exportName: entry.exportName,
                     fieldName,
-                    usages
+                    usages: lookup.usages
                 });
             }
         }

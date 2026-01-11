@@ -119,7 +119,7 @@ Plan/apply safe edits with impact analysis.
 | `reviewOptions.blockOn` | `("syntax" \| "semantic" \| "guardrails" \| "vibe")[]` |  | Blocking criteria. |
 | `sessionId` | `string` |  | Flow session id (`"new"` to start). |
 | `stylePack` | `string \| object` |  | Override StylePack (artifact id or inline pack). |
-| `options.includeImpact` | `boolean` |  | Include impact report when enabled. |
+| `options.includeImpact` | `boolean` |  | Include `impactReport` (may be suggested by guidance for public API / cross-language risk). |
 | `options.includeSymbolImpact` | `boolean` |  | Include symbol-level impact signals (when available). |
 | `options.autoRollback` | `boolean` |  | Reserved (implementation-dependent). |
 | `options.batchMode` | `boolean` |  | Reserved (implementation-dependent). |
@@ -258,6 +258,8 @@ What do you need?
 - `manage({ command: "init", mode: "plan" })` to generate a safe config plan
 - `manage({ command: "init", mode: "apply" })` to write config files
 - `manage({ command: "doctor" })` to diagnose missing/misplaced settings
+- `manage({ command: "doctor", scope: "parity" })` to check query packs + WASM grammar availability
+- `manage({ command: "doctor", scope: "contracts" })` to check `.kairo/contracts` health
 
 ---
 

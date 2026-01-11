@@ -24,6 +24,7 @@ import { DraftPackBuilder } from "../../generation/draft-pack-builder.js";
 import { ReviewReportBuilder } from "../../generation/review-report-builder.js";
 import type { FlowArtifactManager } from "../flow-artifact-manager.js";
 import { OptionResolver } from "../options/OptionResolver.js";
+import { buildDegradedReasons } from "../DegradedReasonMapper.js";
 
 export class WritePillar {
   constructor(private readonly registry: InternalToolRegistry) {}
@@ -636,6 +637,11 @@ export class WritePillar {
         dryRun: false
       });
 
+      const reasonCodes = Array.isArray(guardrailResult?.blockingErrors)
+        ? guardrailResult.blockingErrors
+        : undefined;
+      const degradedReasons = buildDegradedReasons(reasonCodes, { filePath: resolvedPath });
+
       return attachSession({
         success: editResult.success ?? true,
         status: editResult.success === false ? 'failure' : 'success',
@@ -649,6 +655,8 @@ export class WritePillar {
         blockedReason: guardrailResult?.blockedReason,
         violations: guardrailResult?.violations,
         warnings: guardrailResult?.warnings,
+        degraded: Boolean(guardrailResult?.blockingErrors?.length),
+        degradedReasons,
         guidance: {
           message: editResult.success ? 'File written.' : 'File write failed.',
           suggestedActions: editResult.success ? [{ pillar: 'read', action: 'view_full', target: resolvedPath }] : []

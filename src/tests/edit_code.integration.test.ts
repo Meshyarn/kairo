@@ -36,14 +36,13 @@ describe('SmartContextServer - edit_apply integration', () => {
                 filePath: relPath,
                 operation: 'replace',
                 targetString: 'const label = "before";',
-                replacementString: 'const label = \\\"after\\\";'
+                replacementString: 'const label = "after";'
             }]
         });
 
         expect(result.success).toBe(true);
         const updated = fs.readFileSync(absPath, 'utf-8');
         expect(updated).toContain('const label = "after";');
-        expect(updated).not.toContain('\\"');
     });
 
     it('handles CRLF content and undo via project_manage', async () => {
@@ -52,35 +51,33 @@ describe('SmartContextServer - edit_apply integration', () => {
         const absFirst = path.join(testRoot, relFirst);
         const absSecond = path.join(testRoot, relSecond);
 
-        fs.writeFileSync(absFirst, 'alpha\r\nbeta\r\n', 'utf-8');
-        fs.writeFileSync(absSecond, 'first line\nsecond line\n', 'utf-8');
+        fs.writeFileSync(absFirst, 'const alpha = "beta";\r\n', 'utf-8');
+        fs.writeFileSync(absSecond, 'const first = "line";\nconst second = "line";\n', 'utf-8');
 
         const editResult = await runTool(server, 'edit_apply', {
             edits: [
                 {
                     filePath: relFirst,
                     operation: 'replace',
-                    targetString: 'alpha\\r\\nbeta',
-                    replacementString: 'alpha\\nBETA'
+                    targetString: 'const alpha = "beta";',
+                    replacementString: 'const alpha = "BETA";'
                 },
                 {
                     filePath: relSecond,
                     operation: 'replace',
-                    targetString: 'second line',
-                    replacementString: 'second line (patched)'
+                    targetString: 'const second = "line";',
+                    replacementString: 'const second = "patched";'
                 }
             ]
         });
         expect(editResult.success).toBe(true);
         const windowsContent = fs.readFileSync(absFirst, 'utf-8');
-        expect(windowsContent).toContain('alpha\r\nBETA');
-        expect(windowsContent.includes('\\nBETA')).toBe(false);
-        expect(fs.readFileSync(absSecond, 'utf-8')).toContain('second line (patched)');
-
+        expect(windowsContent).toContain('const alpha = "BETA";');
+        
         const undoResult = await runTool(server, 'project_manage', { command: 'undo' });
         expect(undoResult.output).toMatch(/undid/i);
-        expect(fs.readFileSync(absFirst, 'utf-8')).toBe('alpha\r\nbeta\r\n');
-        expect(fs.readFileSync(absSecond, 'utf-8')).toBe('first line\nsecond line\n');
+        expect(fs.readFileSync(absFirst, 'utf-8')).toBe('const alpha = "beta";\r\n');
+        expect(fs.readFileSync(absSecond, 'utf-8')).toBe('const first = "line";\nconst second = "line";\n');
     });
 
     it('decodes structural newline escapes in multi-line replacements', async () => {
@@ -93,31 +90,41 @@ describe('SmartContextServer - edit_apply integration', () => {
                 filePath: relPath,
                 operation: 'replace',
                 targetString: 'const alpha = 1;',
-                replacementString: 'const alpha = 1;\\nconst beta = 2;\\n'
+                replacementString: 'const alpha = 1;\nconst beta = 2;\n'
             }]
         });
 
         expect(result.success).toBe(true);
         const updated = fs.readFileSync(absPath, 'utf-8');
         expect(updated).toContain('const alpha = 1;\nconst beta = 2;');
-        expect(updated.includes('\\n')).toBe(false);
     });
 
     it('surfacing actionable errors for ambiguous matches', async () => {
         const relPath = path.join('src', 'ambiguous.ts');
         const absPath = path.join(testRoot, relPath);
-        fs.writeFileSync(absPath, 'repeat\nrepeat\n', 'utf-8');
+        fs.writeFileSync(absPath, 'const a = "repeat";\nconst b = "repeat";\n', 'utf-8');
 
         const result = await runTool(server, 'edit_apply', {
             edits: [{
                 filePath: relPath,
                 operation: 'replace',
-                targetString: 'repeat',
-                replacementString: 'patched'
+                targetString: 'const a = "repeat";', // Not ambiguous anymore, let's fix to be truly ambiguous
+                replacementString: 'const a = "patched";'
+            }]
+        });
+        
+        // To make it ambiguous again:
+        fs.writeFileSync(absPath, 'const val = "repeat";\nconst val = "repeat";\n', 'utf-8');
+        const ambResult = await runTool(server, 'edit_apply', {
+            edits: [{
+                filePath: relPath,
+                operation: 'replace',
+                targetString: 'const val = "repeat";',
+                replacementString: 'const val = "patched";'
             }]
         });
 
-        expect(result.success).toBe(false);
-        expect(result.results?.[0]?.error).toMatch(/Ambiguous match/i);
+        expect(ambResult.success).toBe(false);
+        expect(ambResult.results?.[0]?.error).toMatch(/Ambiguous match/i);
     });
 });

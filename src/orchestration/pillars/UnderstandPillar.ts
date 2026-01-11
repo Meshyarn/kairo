@@ -26,6 +26,8 @@ import { resolveProgressState, logProgress, logToolStart, logToolEnd, ProgressSt
 import { OptionResolver } from '../options/OptionResolver.js';
 import { checkSkeletonSupport } from '../../ast/LanguageSupportSignals.js';
 import { buildDegradedReasons } from '../DegradedReasonMapper.js';
+import { UniversalFallbackExtractor } from '../../ast/extraction/UniversalFallbackExtractor.js';
+import { AstManager } from '../../ast/AstManager.js';
 
 
 export class UnderstandPillar {
@@ -155,6 +157,7 @@ export class UnderstandPillar {
     let mentionMatches: any[] | undefined = undefined;
     let degraded = false;
     const degradedReasons: string[] = [];
+    let fallbackGraph: { mode: "l2"; edges: Array<{ from: string; to: string; confidence: "low"; reason?: string }>; evidence?: string[] } | undefined = undefined;
     let refinementReason: string | undefined = undefined;
     if (isDocument) {
       const docAnalysis = await this.runTool(context, 'document_analyze', { filePath }, progress);
@@ -222,6 +225,10 @@ export class UnderstandPillar {
     } else if (include.hotSpots === true && !allowGraphs) {
       degraded = true;
       refinementReason = refinementReason ?? 'budget_exceeded';
+    }
+
+    if (!isDocument && this.shouldBuildFallbackGraph(degradedReasons)) {
+      fallbackGraph = await this.buildFallbackGraph(filePath);
     }
 
 
@@ -302,6 +309,7 @@ export class UnderstandPillar {
       degraded,
       degradedReasons: degradedReasons.length > 0 ? degradedReasons : undefined,
       degradedReasonDetails: buildDegradedReasons(degradedReasons),
+      fallbackGraph,
       refinementReason,
       budget,
       allowGraphs,
@@ -490,6 +498,39 @@ export class UnderstandPillar {
     };
   }
 
+  private async buildFallbackGraph(
+    filePath: string
+  ): Promise<{ mode: "l2"; edges: Array<{ from: string; to: string; confidence: "low"; reason?: string }>; evidence?: string[] } | undefined> {
+    let content = "";
+    try {
+      const full = await this.runTool(new OrchestrationContext(), 'code_read', { filePath, view: 'full' });
+      content = typeof full === "string" ? full : (full?.content ?? "");
+    } catch {
+      content = "";
+    }
+    if (!content) return undefined;
+
+    const languageId = AstManager.getInstance().getLanguageId(filePath);
+    const extractor = new UniversalFallbackExtractor();
+    const imports = extractor.extractImports(content, languageId);
+    if (!imports || imports.length === 0) {
+      return undefined;
+    }
+
+    const edges = imports.map((entry) => ({
+      from: filePath,
+      to: entry.source ?? entry.name,
+      confidence: "low" as const,
+      reason: "regex_imports"
+    }));
+
+    return {
+      mode: "l2",
+      edges,
+      evidence: ["regex_imports"]
+    };
+  }
+
   private async runSearch(
     context: OrchestrationContext,
     args: { query: string; symbolHint?: string | null; scope?: string; maxResults: number; budget?: ReturnType<typeof BudgetManager.create> },
@@ -518,6 +559,16 @@ export class UnderstandPillar {
     }
 
     return { results: [] };
+  }
+
+  private shouldBuildFallbackGraph(reasons: string[]): boolean {
+    return reasons.some((reason) =>
+      reason === "language_query_missing"
+      || reason === "language_parser_unavailable"
+      || reason === "unsupported_language"
+      || reason === "missing_query_pack"
+      || reason === "missing_wasm_grammar"
+    );
   }
 
   private filterSearchResults(result: any): any {

@@ -38,6 +38,25 @@ describe("ContractManifestLoader", () => {
         fs.rmSync(root, { recursive: true, force: true });
     });
 
+    it("auto-generates a manifest when types are available", () => {
+        const root = makeTempDir();
+        const packageDir = path.join(root, "node_modules", "@kairo", "core-rs");
+        fs.mkdirSync(packageDir, { recursive: true });
+        fs.writeFileSync(path.join(packageDir, "package.json"), JSON.stringify({
+            name: "@kairo/core-rs",
+            types: "index.d.ts"
+        }, null, 2));
+        fs.writeFileSync(path.join(packageDir, "index.d.ts"), "export interface ChunkResult { text: string; }\n");
+
+        const loader = new ContractManifestLoader(root);
+        const result = loader.loadManifest("@kairo/core-rs", "ffi_napi", { autoGenerate: true });
+        expect(result.manifest?.header?.module).toBe("@kairo/core-rs");
+        const manifestPath = path.join(root, ".kairo", "contracts", "ffi_napi", "@kairo__core-rs.json");
+        expect(fs.existsSync(manifestPath)).toBe(true);
+
+        fs.rmSync(root, { recursive: true, force: true });
+    });
+
     it("returns an invalid reason for malformed manifest", () => {
         const root = makeTempDir();
         const manifestDir = path.join(root, ".kairo", "contracts", "ffi_napi");

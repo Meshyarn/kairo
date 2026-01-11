@@ -1,6 +1,6 @@
 {
   "name": "kairo",
-  "version": "0.4.0",
+  "version": "0.4.2",
   "type": "module",
   "bin": {
     "kairo": "dist/index.js",
@@ -35,6 +35,7 @@
     "build:core-rs": "npm --prefix crates/core-rs run build",
     "build:markdown-wasm": "node dist/cli/build-markdown-wasm.js",
     "validate:languages": "node --import tsx scripts/validate-language-support.ts",
+    "validate:parity": "node --import tsx scripts/validate-parity.ts",
     "start": "tsx src/index.ts",
     "prepack": "npm run build && npm run bundle:models"
   },

@@ -9,19 +9,44 @@ import { CallGraphBuilder } from "../../../ast/CallGraphBuilder.js";
 import { AstDiffEngine } from "../../../ast/AstDiffEngine.js";
 import { SymbolImpactAnalyzer, type SymbolImpactRequest, type SymbolImpactResult } from "../../../engine/SymbolImpactAnalyzer.js";
 import { AutoRepairSuggester } from "../../../engine/AutoRepairSuggester.js";
+import path from "path";
 
 export function toImpactReport(impact: any, deps: any, targetPath: string, hotSpots: any, crossLangImpact?: any) {
   if (!impact) return undefined;
   const suggestedTests = Array.isArray(impact.suggestedTests) ? impact.suggestedTests : [];
   const testPriority = new Map(suggestedTests.map((t: string) => [t, 'important' as const]));
   const impacted = Array.isArray(impact?.summary?.impactedFiles) ? impact.summary.impactedFiles : [];
-  const pageRankDelta = computePageRankDelta(deps, [targetPath, ...impacted]);
-  const impactedSet = new Set([targetPath, ...impacted].filter(Boolean));
+  const crossLangConsumers = Array.isArray(crossLangImpact?.consumerFiles) ? crossLangImpact.consumerFiles : [];
+  const normalizedConsumers = crossLangConsumers
+    .map((filePath: string) => {
+      if (!filePath) return "";
+      if (path.isAbsolute(filePath)) {
+        const relative = path.relative(process.cwd(), filePath);
+        return (relative || path.basename(filePath)).replace(/\\/g, "/");
+      }
+      return String(filePath).replace(/\\/g, "/");
+    })
+    .filter((filePath: string) => filePath.length > 0);
+  const mergedImpacted = Array.from(new Set([...impacted, ...normalizedConsumers]));
+  const preview = impact?.summary && mergedImpacted.length > impacted.length
+    ? {
+        ...impact,
+        summary: {
+          ...impact.summary,
+          impactedFiles: mergedImpacted,
+          outgoingCount: typeof impact.summary.outgoingCount === "number"
+            ? Math.max(impact.summary.outgoingCount, mergedImpacted.length)
+            : mergedImpacted.length
+        }
+      }
+    : impact;
+  const pageRankDelta = computePageRankDelta(deps, [targetPath, ...mergedImpacted]);
+  const impactedSet = new Set([targetPath, ...mergedImpacted].filter(Boolean));
   const affectedHotSpots = Array.isArray(hotSpots)
     ? hotSpots.filter((spot: any) => impactedSet.has(spot?.filePath))
     : [];
   return {
-    preview: impact,
+    preview,
     affectedHotSpots,
     pageRankDelta,
     breakingChangeRisk: impact.riskLevel ?? 'low',

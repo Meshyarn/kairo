@@ -4,16 +4,18 @@ import * as crypto from "crypto";
 import ignore from "ignore";
 import { createRequire } from "module";
 import { fileURLToPath } from "url";
-import { LanguageConfigLoader } from "./LanguageConfig.js";
+import { LanguageConfigLoader, BUILTIN_LANGUAGE_MAPPINGS } from "./LanguageConfig.js";
 import { getSupportForLanguageId, SupportLevel } from "./LanguageSupportLevels.js";
+import { LANGUAGE_PARITY_MATRIX } from "./LanguageParityMatrix.js";
 import { ContractManifestLoader } from "../contracts/ContractManifestLoader.js";
+import { ContractManifestGenerator } from "../contracts/ContractManifestGenerator.js";
 
 export type BootstrapMode = "plan" | "apply";
 export type BootstrapTarget = "kairo" | "vscode";
 export type HostPreset = "minimal" | "recommended";
 
 export type ConfigWriteOp = {
-    op: "create" | "update" | "noop";
+    op: "create" | "update" | "noop" | "mkdir";
     path: string;
     content?: string;
     patch?: {
@@ -86,7 +88,7 @@ export type ManageInitArgs = {
 
 export type ManageDoctorArgs = {
     mode?: BootstrapMode;
-    scope?: "project" | "config" | "languages" | "wasm" | "host" | "contracts";
+    scope?: "project" | "config" | "languages" | "wasm" | "host" | "contracts" | "parity";
     root?: string;
 };
 
@@ -214,6 +216,10 @@ export class ConfigBootstrapper {
         const wasmFindings = this.buildWasmFindings(wasm, languages);
         findings.push(...wasmFindings);
 
+        const paritySignals = this.buildParityFindings(rootPath);
+        findings.push(...paritySignals.findings);
+        hints.push(...paritySignals.hints);
+
         if (wasm.missing.length > 0) {
             hints.push(`Missing WASM assets for: ${wasm.missing.join(", ")}. Consider setting KAIRO_WASM_DIR=${wasm.suggestedWasmDir ?? path.join(rootPath, "wasm")}`);
         }
@@ -263,6 +269,8 @@ export class ConfigBootstrapper {
                     });
                 }
             }
+
+            plan.push(...this.buildContractPlan(rootPath, repos));
         }
 
         if (targets.includes("vscode")) {
@@ -774,6 +782,87 @@ export class ConfigBootstrapper {
         return findings;
     }
 
+    private buildParityFindings(rootPath: string): { findings: ConfigFinding[]; hints: string[] } {
+        const findings: ConfigFinding[] = [];
+        const hints: string[] = [];
+        const mappedLanguageIds = new Set(
+            Object.values(BUILTIN_LANGUAGE_MAPPINGS)
+                .map((mapping) => mapping.languageId)
+                .filter((id): id is string => typeof id === "string")
+        );
+        const queriesRoot = this.resolveQueriesRoot();
+        const requiredQueries = ["imports", "exports", "symbols", "skeleton"];
+
+        for (const entry of LANGUAGE_PARITY_MATRIX.languages) {
+            const severity = entry.supportLevel === "L3" ? "error" : "warn";
+            if (!mappedLanguageIds.has(entry.languageId)) {
+                findings.push({
+                    code: "LANGUAGE_SUPPORT_GAP",
+                    severity,
+                    message: `No LanguageConfig mapping for "${entry.languageId}".`,
+                    action: "add_language_mappings",
+                    evidence: { languageId: entry.languageId }
+                });
+            }
+
+            if (entry.requiredQueryPack) {
+                const missing: string[] = [];
+                const candidates = this.resolveQueryCandidates(entry.languageId);
+                for (const query of requiredQueries) {
+                    let found = false;
+                    if (queriesRoot) {
+                        for (const candidate of candidates) {
+                            const queryPath = path.join(queriesRoot, candidate, `${query}.scm`);
+                            if (fs.existsSync(queryPath)) {
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!found) {
+                        missing.push(query);
+                    }
+                }
+                if (missing.length > 0) {
+                    findings.push({
+                        code: "MISSING_QUERY_PACK",
+                        severity,
+                        message: `Missing query packs for ${entry.languageId}: ${missing.join(", ")}.`,
+                        action: "add_query_packs",
+                        evidence: { languageId: entry.languageId, missing }
+                    });
+                    hints.push(`Missing query packs for ${entry.languageId}. Add ${missing.join(", ")} under ${path.join("src", "queries", entry.languageId)}.`);
+                }
+            }
+
+            if (entry.requiredWasmGrammar) {
+                const wasmPath = this.resolveWasmPath(entry.languageId, rootPath);
+                if (!wasmPath || !fs.existsSync(wasmPath)) {
+                    findings.push({
+                        code: "MISSING_WASM_GRAMMAR",
+                        severity,
+                        message: `Missing tree-sitter WASM for ${entry.languageId}.`,
+                        action: "add_wasm",
+                        evidence: { languageId: entry.languageId }
+                    });
+                    hints.push(`Missing WASM for ${entry.languageId}. Set KAIRO_WASM_DIR or add tree-sitter-${entry.languageId}.wasm to ${path.join(rootPath, "wasm")}.`);
+                }
+            }
+
+            if (entry.requiredSyntaxValidator && !mappedLanguageIds.has(entry.languageId)) {
+                findings.push({
+                    code: "MISSING_VALIDATOR",
+                    severity,
+                    message: `Missing syntax validator mapping for ${entry.languageId}.`,
+                    action: "add_language_mappings",
+                    evidence: { languageId: entry.languageId }
+                });
+            }
+        }
+
+        return { findings, hints };
+    }
+
     private buildRepoConfigPlan(
         configPath: string,
         repos: RepoSummary[],
@@ -1064,6 +1153,11 @@ export class ConfigBootstrapper {
                 return code === "LANGUAGE_GAP" || code === "SCAN_TRUNCATED";
             case "wasm":
                 return code === "WASM_MISSING";
+            case "parity":
+                return code === "MISSING_QUERY_PACK"
+                    || code === "MISSING_WASM_GRAMMAR"
+                    || code === "MISSING_VALIDATOR"
+                    || code === "LANGUAGE_SUPPORT_GAP";
             case "host":
                 return code === "HOST_CONFIG_MISSING" || code === "HOST_CONFIG_PATCH";
             case "config":
@@ -1095,7 +1189,12 @@ export class ConfigBootstrapper {
                 || normalized.endsWith("/.kairo/config/languages.json");
         }
         if (scope === "contracts") {
-            return filePath.replace(/\\\\/g, "/").includes("/.kairo/contracts/");
+            return filePath.replace(/\\\\/g, "/").includes("/.kairo/contracts");
+        }
+        if (scope === "parity") {
+            const normalized = filePath.replace(/\\\\/g, "/");
+            return normalized.endsWith("/.kairo/config/languages.json")
+                || normalized.includes("/wasm/");
         }
         return true;
     }
@@ -1116,6 +1215,9 @@ export class ConfigBootstrapper {
         }
         if (scope === "contracts") {
             return hint.includes(".kairo/contracts") || hint.includes("contracts");
+        }
+        if (scope === "parity") {
+            return hint.includes("query") || hint.includes("WASM") || hint.includes("language");
         }
         return true;
     }
@@ -1242,6 +1344,68 @@ export class ConfigBootstrapper {
         return { findings, hints };
     }
 
+    private buildContractPlan(rootPath: string, repos: RepoSummary[]): ConfigWriteOp[] {
+        const plan: ConfigWriteOp[] = [];
+        const contractsDir = path.join(rootPath, ".kairo", "contracts");
+        const napiDir = path.join(contractsDir, "ffi_napi");
+        if (!fs.existsSync(contractsDir)) {
+            plan.push({
+                op: "mkdir",
+                path: contractsDir,
+                reason: "Create contracts directory."
+            });
+        }
+        if (!fs.existsSync(napiDir)) {
+            plan.push({
+                op: "mkdir",
+                path: napiDir,
+                reason: "Create NAPI contracts directory."
+            });
+        }
+
+        const manifestLoader = new ContractManifestLoader(rootPath);
+        const generator = new ContractManifestGenerator();
+        const linkedRepos = repos.filter((repo) => repo.type === "linked");
+
+        for (const repo of linkedRepos) {
+            const repoPath = path.resolve(rootPath, repo.path);
+            const packageJsonPath = path.join(repoPath, "package.json");
+            if (!fs.existsSync(packageJsonPath)) continue;
+
+            let pkg: { name?: string; types?: string; typings?: string; main?: string } | undefined;
+            try {
+                pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
+            } catch {
+                continue;
+            }
+            if (!pkg?.name) continue;
+
+            const entry = this.resolvePackageEntry(repoPath, pkg);
+            if (!entry || !entry.endsWith(".d.ts") || !fs.existsSync(entry)) {
+                continue;
+            }
+
+            const manifestPath = manifestLoader.resolveManifestPath(pkg.name, "ffi_napi");
+            if (fs.existsSync(manifestPath)) {
+                continue;
+            }
+
+            try {
+                const manifest = generator.generateFromDts(pkg.name, entry, { sourceRepo: repo.path });
+                plan.push({
+                    op: "create",
+                    path: manifestPath,
+                    content: JSON.stringify(manifest, null, 2),
+                    reason: `Generate contract manifest for ${pkg.name}.`
+                });
+            } catch {
+                // ignore plan generation failures; doctor will surface findings
+            }
+        }
+
+        return plan;
+    }
+
     private resolvePackageEntry(
         repoPath: string,
         pkg: { types?: string; typings?: string; main?: string }
@@ -1287,6 +1451,20 @@ export class ConfigBootstrapper {
                 fs.mkdirSync(path.dirname(entry.path), { recursive: true });
                 fs.writeFileSync(entry.path, entry.content ?? "", "utf-8");
                 results.push({ path: entry.path, op: entry.op, success: true, message: "File created." });
+                continue;
+            }
+            if (entry.op === "mkdir") {
+                if (fs.existsSync(entry.path)) {
+                    const stat = fs.statSync(entry.path);
+                    if (stat.isDirectory()) {
+                        results.push({ path: entry.path, op: entry.op, success: true, message: "Directory already exists." });
+                    } else {
+                        results.push({ path: entry.path, op: entry.op, success: false, message: "Path exists and is not a directory." });
+                    }
+                    continue;
+                }
+                fs.mkdirSync(entry.path, { recursive: true });
+                results.push({ path: entry.path, op: entry.op, success: true, message: "Directory created." });
                 continue;
             }
             if (entry.op === "update") {

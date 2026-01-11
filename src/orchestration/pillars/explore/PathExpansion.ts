@@ -4,7 +4,9 @@ import { OrchestrationContext } from "../../OrchestrationContext.js";
 import { InternalToolRegistry } from "../../InternalToolRegistry.js";
 import { UnifiedContextGraph } from "../../context/UnifiedContextGraph.js";
 import { AstManager } from "../../../ast/AstManager.js";
-import { checkSkeletonSupport } from "../../../ast/LanguageSupportSignals.js";
+import { checkQuerySupport, checkSkeletonSupport } from "../../../ast/LanguageSupportSignals.js";
+import { SyntaxValidator } from "../../../engine/validators/syntax-validator.js";
+import { getSupportForFilePath, SupportLevel } from "../../../config/LanguageSupportLevels.js";
 import { TopologyInfo } from "../../../types.js";
 import { ExploreItem, truncate } from "./ResultFormatter.js";
 import { isDocPath, isGlob } from "./FilteringStrategy.js";
@@ -204,6 +206,80 @@ export async function buildItemForPath(
         };
     }
 
+    const supportSpec = getSupportForFilePath(filePath);
+    let l3Content: string | undefined;
+    let queryDegraded = false;
+    let queryReason: string | undefined;
+
+    if (supportSpec?.level === SupportLevel.L3) {
+        const requiredQueries = supportSpec.editPolicy.requireQueries ?? [];
+        if (requiredQueries.length > 0) {
+            const querySupport = await checkQuerySupport(filePath, requiredQueries, { required: true });
+            if (querySupport.degraded) {
+                // ADR-040/041: L3 level missing queries must block to preserve system integrity
+                const languageId = AstManager.getInstance().getLanguageId(filePath);
+                const missing = Array.isArray(querySupport.missing) ? querySupport.missing : [];
+                const missingSummary = missing.length > 0 ? ` (${missing.join(", ")})` : "";
+                const message = querySupport.reason === "language_parser_unavailable"
+                    ? `Language parser unavailable for ${filePath}.`
+                    : `Missing query pack for ${languageId}${missingSummary}.`;
+                return {
+                    blocked: true,
+                    message,
+                    reason: querySupport.reason
+                };
+            }
+        }
+
+        if (supportSpec.editPolicy.requireSyntaxValidation) {
+            try {
+                l3Content = fs.readFileSync(path.resolve(filePath), "utf-8");
+            } catch {
+                if (options.wantsFull) {
+                    return {
+                        blocked: true,
+                        message: `Unable to read ${filePath} for syntax validation.`,
+                        reason: "syntax_validation_failed"
+                    };
+                } else {
+                    // Fallback to tool-based read if direct FS read fails (common in tests)
+                    try {
+                        const toolContent = await runTool(context, "code_read", { filePath, view: "full" });
+                        l3Content = typeof toolContent === "string" ? toolContent : undefined;
+                    } catch {
+                        l3Content = undefined;
+                    }
+
+                    if (!l3Content) {
+                        return {
+                            value: {
+                                kind: "file_preview",
+                                filePath,
+                                preview: "(content unavailable)",
+                                why: ["code_read"]
+                            },
+                            degraded: true,
+                            reason: "syntax_validation_failed"
+                        };
+                    }
+                }
+            }
+
+            if (l3Content) {
+                const validator = new SyntaxValidator();
+                const validation = await validator.validate(filePath, l3Content);
+                if (!validation.success) {
+                    // Syntax validation failure is always blocking for L3
+                    return {
+                        blocked: true,
+                        message: `Syntax validation failed for ${filePath}.`,
+                        reason: "syntax_validation_failed"
+                    };
+                }
+            }
+        }
+    }
+
     const support = await checkSkeletonSupport(filePath);
     const content = await runTool(context, "code_read", { filePath, view: "skeleton" });
     const preview = safePreview(typeof content === "string" ? content : "");
@@ -214,7 +290,7 @@ export async function buildItemForPath(
             preview,
             why: ["code_read"]
         },
-        degraded: support.degraded,
-        reason: support.reason
+        degraded: support.degraded || queryDegraded,
+        reason: support.reason || queryReason
     };
 }

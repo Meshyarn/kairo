@@ -300,18 +300,18 @@ export class GuidanceGenerator {
     }
 
     const degradedReasons = this.extractDegradedReasons(context.lastResult);
+    const actionScopes = this.extractManageDoctorScopes(context.lastResult);
+    for (const scope of actionScopes) {
+      this.appendManageDoctorSuggestion(suggestedActions, scope);
+    }
     if (this.hasContractDegradedReason(degradedReasons)) {
-      const alreadySuggested = suggestedActions.some((action) => action.pillar === 'manage' && action.action === 'verify_contracts');
-      if (!alreadySuggested) {
-        suggestedActions.push({
-          priority: 2,
-          pillar: 'manage',
-          action: 'verify_contracts',
-          description: 'Verify contract manifests for cross-language boundaries.',
-          rationale: 'Contract evidence is missing or degraded; doctor can show setup gaps.',
-          toolCall: { tool: 'manage', args: { command: 'doctor', scope: 'contracts' } }
-        });
-      }
+      this.appendManageDoctorSuggestion(suggestedActions, 'contracts');
+    }
+    if (this.hasLanguageSupportDegradedReason(degradedReasons)) {
+      this.appendManageDoctorSuggestion(suggestedActions, 'languages');
+    }
+    if (this.hasParityDegradedReason(degradedReasons)) {
+      this.appendManageDoctorSuggestion(suggestedActions, 'parity');
     }
 
     const recoveryStrategies = context.error ? this.buildRecoveryStrategies(context.error) : undefined;
@@ -394,6 +394,63 @@ export class GuidanceGenerator {
 
   private hasContractDegradedReason(reasons: string[]): boolean {
     return reasons.some((reason) => reason.startsWith("contract_") || reason.startsWith("cross_lang_contract_"));
+  }
+
+  private hasLanguageSupportDegradedReason(reasons: string[]): boolean {
+    return reasons.some((reason) => reason === "unsupported_language");
+  }
+
+  private hasParityDegradedReason(reasons: string[]): boolean {
+    return reasons.some((reason) => reason === "missing_query_pack" || reason === "missing_wasm_grammar");
+  }
+
+  private extractManageDoctorScopes(lastResult: any): string[] {
+    const scopes = new Set<string>();
+    if (Array.isArray(lastResult?.degradedReasons)) {
+      for (const entry of lastResult.degradedReasons) {
+        if (!entry || typeof entry !== "object") continue;
+        const action = typeof entry.action === "string" ? entry.action.trim() : "";
+        const parsed = this.parseManageDoctorAction(action);
+        if (parsed) {
+          scopes.add(parsed);
+        }
+      }
+    }
+    return Array.from(scopes);
+  }
+
+  private parseManageDoctorAction(action: string): string | null {
+    if (!action) return null;
+    const cleaned = action.replace(/^run\s+/i, "").trim();
+    const match = cleaned.match(/^manage\s+doctor\s+--scope=([a-z_]+)$/i);
+    if (!match) return null;
+    return match[1];
+  }
+
+  private appendManageDoctorSuggestion(suggestedActions: SuggestedAction[], scope: string): void {
+    const actionId = `verify_${scope}`;
+    const alreadySuggested = suggestedActions.some(
+      (action) => action.pillar === 'manage' && action.action === actionId
+    );
+    if (alreadySuggested) return;
+    const description = scope === "contracts"
+      ? "Verify contract manifests for cross-language boundaries."
+      : (scope === "parity"
+        ? "Verify parity assets (query packs/grammars/validators)."
+        : "Verify language asset mappings and support.");
+    const rationale = scope === "contracts"
+      ? "Contract evidence is missing or degraded; doctor can show setup gaps."
+      : (scope === "parity"
+        ? "Parity assets appear missing or degraded."
+        : "Language support assets appear missing or degraded.");
+    suggestedActions.push({
+      priority: 2,
+      pillar: 'manage',
+      action: actionId,
+      description,
+      rationale,
+      toolCall: { tool: 'manage', args: { command: 'doctor', scope } }
+    });
   }
 
   private detectTestContext(history: Array<{ tool: string; args?: any; output?: any }>): boolean {

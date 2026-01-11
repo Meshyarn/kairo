@@ -10,6 +10,7 @@ import { IntegrityEngine } from "../../../integrity/IntegrityEngine.js";
 import { UnifiedContextGraph } from "../../context/UnifiedContextGraph.js";
 import type { IndexStateManager } from "../../../indexing/IndexStateManager.js";
 import type { DependencyGraph } from "../../../ast/DependencyGraph.js";
+import { AstManager } from "../../../ast/AstManager.js";
 import { ProjectSketchBuilder } from "../../../generation/project-sketch-builder.js";
 import type { ResearchPack } from "../../../types/flow-artifacts.js";
 import type { FlowArtifactManager } from "../../flow-artifact-manager.js";
@@ -140,7 +141,8 @@ export class ExplorePillar {
                 success: false,
                 status: "invalid_args",
                 message: "Missing query or paths.",
-                data: { docs: [], code: [] }
+                data: { docs: [], code: [] },
+                sessionId: resolvedSessionId
             };
         }
 
@@ -454,7 +456,8 @@ export class ExplorePillar {
                     success: false,
                     status: "invalid_args",
                     message: expanded.message ?? "Invalid paths.",
-                    data: { docs: [], code: [] }
+                    data: { docs: [], code: [] },
+                    sessionId: resolvedSessionId
                 };
             }
 
@@ -468,20 +471,51 @@ export class ExplorePillar {
                 const wantsFull = view === "full" && (fullPaths.length === 0 || fullPathSet.has(entry.path));
                 if (wantsFull) {
                     if (!allowSensitive && isSensitivePath(entry.path)) {
-                        return { success: false, status: "blocked", message: `Full read blocked for sensitive path: ${entry.path}`, data: { docs: [], code: [] } };
+                        return {
+                            success: false,
+                            status: "blocked",
+                            message: `Full read blocked for sensitive path: ${entry.path}`,
+                            data: { docs: [], code: [] },
+                            sessionId: resolvedSessionId
+                        };
                     }
                     if (!allowBinary && isBinaryPath(entry.path)) {
-                        return { success: false, status: "blocked", message: `Full read blocked for binary path: ${entry.path}`, data: { docs: [], code: [] } };
+                        return {
+                            success: false,
+                            status: "blocked",
+                            message: `Full read blocked for binary path: ${entry.path}`,
+                            data: { docs: [], code: [] },
+                            sessionId: resolvedSessionId
+                        };
                     }
                     if (typeof maxBytes === "number" && entry.size && entry.size > maxBytes) {
-                        return { success: false, status: "blocked", message: `Full read blocked by maxBytes for ${entry.path}.`, data: { docs: [], code: [] } };
+                        return {
+                            success: false,
+                            status: "blocked",
+                            message: `Full read blocked by maxBytes for ${entry.path}.`,
+                            data: { docs: [], code: [] },
+                            sessionId: resolvedSessionId
+                        };
                     }
                 }
 
                 const item = await buildItemForPath(entry.path, { view, maxChars, maxItemChars, allowSensitive, allowBinary, wantsFull, section: constraints.section }, context, (ctx, tool, args) => this.runTool(ctx, tool, args));
 
                 if (item.blocked) {
-                    return { success: false, status: "blocked", message: item.message ?? "Full read blocked.", data: { docs: [], code: [] } };
+                    const reasons = item.reason ? [item.reason] : undefined;
+                    const languageId = item.reason ? AstManager.getInstance().getLanguageId(entry.path) : undefined;
+                    const degradedReasons = reasons
+                        ? buildDegradedReasons(reasons, { languageId, filePath: entry.path })
+                        : undefined;
+                    return {
+                        success: false,
+                        status: "blocked",
+                        message: item.message ?? "Full read blocked.",
+                        data: { docs: [], code: [] },
+                        reasons,
+                        degradedReasons,
+                        sessionId: resolvedSessionId
+                    };
                 }
 
                 if (item.degraded) {
@@ -495,7 +529,13 @@ export class ExplorePillar {
                 const contentLength = (payloadItem.content ?? payloadItem.preview ?? "").length;
                 if (view === "full") {
                     if (totalChars + contentLength > maxChars) {
-                        return { success: false, status: "blocked", message: "Full read blocked by maxChars. Increase limits.maxChars and retry.", data: { docs: [], code: [] } };
+                        return {
+                            success: false,
+                            status: "blocked",
+                            message: "Full read blocked by maxChars. Increase limits.maxChars and retry.",
+                            data: { docs: [], code: [] },
+                            sessionId: resolvedSessionId
+                        };
                     }
                 } else {
                     if (totalChars + contentLength > maxChars) {

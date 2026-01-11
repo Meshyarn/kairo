@@ -15,6 +15,17 @@ const buildIntent = (overrides: Partial<any> = {}) => ({
 });
 
 describe("BasePillars Read", () => {
+    const originalSkip = process.env.KAIRO_SKIP_PARITY_CHECK;
+
+    beforeAll(() => {
+        process.env.KAIRO_SKIP_PARITY_CHECK = "true";
+    });
+
+    afterAll(() => {
+        if (originalSkip === undefined) delete process.env.KAIRO_SKIP_PARITY_CHECK;
+        else process.env.KAIRO_SKIP_PARITY_CHECK = originalSkip;
+    });
+
   it("avoids extra reads when view=full and hash not requested", async () => {
     const registry = new InternalToolRegistry();
     const calls: Array<{ tool: string; view?: string }> = [];

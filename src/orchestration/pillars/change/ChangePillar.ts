@@ -59,6 +59,9 @@ import type { RepoRegistry } from "../../../config/RepoRegistry.js";
 import type { ImpactAnalyzer } from "../../../engine/ImpactAnalyzer.js";
 import type { CrossLangImpact } from "../../../types/engine.js";
 import { buildDegradedReasons } from "../../DegradedReasonMapper.js";
+import { AstManager } from "../../../ast/AstManager.js";
+import { checkQuerySupport } from "../../../ast/LanguageSupportSignals.js";
+import { getSupportForFilePath, SupportLevel } from "../../../config/LanguageSupportLevels.js";
 
 export class ChangePillar {
   private fileSystem = new NodeFileSystem(process.cwd());
@@ -269,6 +272,27 @@ export class ChangePillar {
         });
       }
 
+      const parityBlock = await this.resolveParityBlock(targetPath);
+      if (parityBlock.blocked) {
+        const reasons = parityBlock.reason ? [parityBlock.reason] : undefined;
+        const degradedReasons = reasons
+          ? buildDegradedReasons(reasons, { languageId: parityBlock.languageId, filePath: targetPath })
+          : undefined;
+        const message = parityBlock.message ?? "Language parity requirements are missing.";
+        return attachWorkflow({
+          success: false,
+          status: "blocked",
+          message,
+          targetFile: targetPath,
+          errorCode: "LANGUAGE_PARITY_MISSING",
+          blockedReason: parityBlock.reason ?? "language_parity_missing",
+          blockingErrors: ["LANGUAGE_PARITY_MISSING"],
+          degradedReasons,
+          guidance: { message },
+          sessionId: resolvedSessionId
+        });
+      }
+
       let integrityReport: IntegrityReport | undefined;
       if (integrityOptions && integrityOptions.mode !== "off") {
         integrityReport = (await IntegrityEngine.run(
@@ -468,6 +492,26 @@ export class ChangePillar {
         stopEdit();
       }
 
+      if (!editResult.success && editResult.errorCode === "SYNTAX_VALIDATION_FAILED" && targetPath) {
+        const astManager = AstManager.getInstance();
+        const languageId = astManager.getLanguageId(targetPath);
+        const degradedReasons = buildDegradedReasons(["syntax_validation_failed"], { languageId, filePath: targetPath });
+        const message = editResult.message ?? "Syntax validation failed.";
+        return attachWorkflow({
+          success: false,
+          status: "blocked",
+          message,
+          targetFile: targetPath,
+          errorCode: editResult.errorCode,
+          blockedReason: "syntax_validation_failed",
+          blockingErrors: ["SYNTAX_VALIDATION_FAILED"],
+          degradedReasons,
+          validationSummary: editResult.validationSummary,
+          guidance: { message },
+          sessionId: resolvedSessionId
+        });
+      }
+
       let finalResult = editResult;
       let autoCorrected = false;
       const autoCorrectionAttempts: string[] = [];
@@ -530,8 +574,15 @@ export class ChangePillar {
       const deps = await dependencyPromise;
       const hotSpots = await hotSpotPromise;
       const symbolImpact = await symbolImpactPromise;
+      const publicSurface = guardrailResult?.architecturalRisk?.publicSurface;
+      const forcedExports = Array.isArray(publicSurface?.changes)
+        ? publicSurface.changes.map((change: any) => change?.name).filter((name: any) => typeof name === "string")
+        : [];
       const crossLangImpact = includeImpact && targetPath
-        ? await this.buildCrossLangImpact(targetPath)
+        ? await this.buildCrossLangImpact(targetPath, context, {
+            force: Boolean(publicSurface?.hasChanges),
+            changedExports: forcedExports
+          })
         : undefined;
       const degradedReasonDetails = crossLangImpact?.reasons
         ? buildDegradedReasons(crossLangImpact.reasons, { packageName: crossLangImpact.packageName })
@@ -581,6 +632,16 @@ export class ChangePillar {
           }] :
           [{ pillar: 'manage', action: 'test' }]
       };
+      if (dryRun && targetPath && !includeImpact && this.shouldSuggestImpact(targetPath, guardrailResult, edits)) {
+        successGuidance.suggestedActions.push({
+          pillar: 'change',
+          action: 'plan',
+          intent: originalIntent,
+          target: targetPath,
+          edits,
+          options: { dryRun: true, includeImpact: true }
+        });
+      }
 
       const truncatedDiff = (typeof finalResult.diff === 'string' && finalResult.diff.length > budget.maxDiffBytes)
         ? `${finalResult.diff.slice(0, budget.maxDiffBytes)}\n... (diff truncated)`
@@ -759,6 +820,39 @@ export class ChangePillar {
     return (fromConstraints.length > 0 ? fromConstraints : targets).filter((t: any) => typeof t === 'string');
   }
 
+  private async resolveParityBlock(targetPath: string): Promise<{
+    blocked: boolean;
+    reason?: string;
+    message?: string;
+    languageId?: string;
+  }> {
+    const support = getSupportForFilePath(targetPath);
+    if (!support || support.level !== SupportLevel.L3) {
+      return { blocked: false };
+    }
+    const requiredQueries = support.editPolicy.requireQueries ?? [];
+    if (requiredQueries.length === 0) {
+      return { blocked: false };
+    }
+    const signal = await checkQuerySupport(targetPath, requiredQueries, { required: true });
+    if (!signal.degraded) {
+      return { blocked: false };
+    }
+    const astManager = AstManager.getInstance();
+    const languageId = astManager.getLanguageId(targetPath);
+    const missing = Array.isArray(signal.missing) ? signal.missing : [];
+    const missingSummary = missing.length > 0 ? ` (${missing.join(", ")})` : "";
+    const message = signal.reason === "language_parser_unavailable"
+      ? `Language parser unavailable for ${targetPath}.`
+      : `Missing query pack for ${languageId}${missingSummary}.`;
+    return {
+      blocked: true,
+      reason: signal.reason,
+      message,
+      languageId
+    };
+  }
+
   private collectEditPaths(edits: any[]): string[] {
     const paths = new Set<string>();
     for (const edit of edits) {
@@ -913,7 +1007,11 @@ export class ChangePillar {
     return warnings;
   }
 
-  private async buildCrossLangImpact(targetPath: string): Promise<CrossLangImpact | undefined> {
+  private async buildCrossLangImpact(
+    targetPath: string,
+    context: OrchestrationContext,
+    options?: { force?: boolean; changedExports?: string[] }
+  ): Promise<CrossLangImpact | undefined> {
     const repoRegistry = this.registry.getMetadata<RepoRegistry>("repoRegistry");
     const packageAliasMap = this.registry.getMetadata<PackageAliasMap>("packageAliasMap");
     const dependencyGraph = this.registry.getMetadata<DependencyGraph>("dependencyGraph");
@@ -930,7 +1028,9 @@ export class ChangePillar {
     }
 
     const manifestLoader = new ContractManifestLoader(process.cwd());
-    const loadResult = manifestLoader.loadManifest(alias.packageName, "ffi_napi");
+    const loadResult = manifestLoader.loadManifest(alias.packageName, "ffi_napi", {
+      autoGenerate: true
+    });
     const beforeManifest = loadResult.manifest;
 
     let afterManifest = beforeManifest;
@@ -953,17 +1053,65 @@ export class ChangePillar {
       };
     }
 
+    const forcedExports = Array.isArray(options?.changedExports)
+      ? options?.changedExports.filter((name) => typeof name === "string" && name.length > 0)
+      : [];
+    const forceImpact = Boolean(options?.force);
+    const hasOriginalChanges = diff.added.length + diff.removed.length + diff.changed.length > 0;
+    if (forceImpact && forcedExports.length > 0) {
+      const known = new Set([...diff.added, ...diff.removed, ...diff.changed.map((entry) => entry.exportName)]);
+      const extraChanges = forcedExports.filter((name) => !known.has(name));
+      if (extraChanges.length > 0) {
+        diff = {
+          ...diff,
+          changed: [
+            ...diff.changed,
+            ...extraChanges.map((name) => ({
+              exportName: name,
+              kind: "unknown" as const,
+              before: null,
+              after: null,
+              breaking: true
+            }))
+          ]
+        };
+      }
+    }
+    if (forceImpact && !hasOriginalChanges && !diff.degraded) {
+      diff = {
+        ...diff,
+        degraded: true,
+        reasons: Array.from(new Set([...(diff.reasons ?? []), "contract_manifest_stale"]))
+      };
+    }
+
     const hasChanges = diff.added.length + diff.removed.length + diff.changed.length > 0;
     if (!diff.degraded && !hasChanges) {
       return undefined;
     }
 
-    if (impactAnalyzer) {
-      return impactAnalyzer.analyzeCrossLangImpact(alias.packageName, alias.entryPath, diff);
+    const importers = await dependencyGraph.getImporters(alias.entryPath);
+    let consumerFiles = importers.map((edge) => edge.from).filter(Boolean);
+    let usedFallback = false;
+    if (consumerFiles.length === 0) {
+      const fallback = await this.findFallbackConsumers(context, alias.packageName, alias.entryPath);
+      if (fallback.length > 0) {
+        consumerFiles = fallback;
+        usedFallback = true;
+      }
     }
 
-    const importers = await dependencyGraph.getImporters(alias.entryPath);
-    const consumerFiles = importers.map((edge) => edge.from).filter(Boolean);
+    if (impactAnalyzer) {
+      const enriched = await impactAnalyzer.analyzeCrossLangImpact(alias.packageName, alias.entryPath, diff);
+      if (consumerFiles.length > 0 && enriched.consumerFiles.length === 0) {
+        enriched.consumerFiles = consumerFiles;
+      }
+      if (usedFallback) {
+        enriched.degraded = true;
+        enriched.reasons = Array.from(new Set([...(enriched.reasons ?? []), "cross_lang_contract_degraded"]));
+      }
+      return enriched;
+    }
     const changedExports = [
       ...diff.added,
       ...diff.removed,
@@ -974,10 +1122,72 @@ export class ChangePillar {
       packageName: alias.packageName,
       consumerFiles: Array.from(new Set(consumerFiles)),
       changedExports: Array.from(new Set(changedExports)),
-      degraded: diff.degraded,
-      reasons: diff.reasons
+      degraded: diff.degraded || usedFallback,
+      reasons: Array.from(new Set([...(diff.reasons ?? []), ...(usedFallback ? ["cross_lang_contract_degraded"] : [])]))
     };
   }
+
+  private async findFallbackConsumers(
+    context: OrchestrationContext,
+    packageName: string,
+    entryPath: string
+  ): Promise<string[]> {
+    try {
+      const result = await this.runTool(context, "project_search", {
+        query: packageName,
+        maxResults: 80,
+        type: "file"
+      });
+      const paths = Array.isArray(result?.results)
+        ? result.results.map((item: any) => item.path).filter((p: any) => typeof p === "string")
+        : [];
+      const unique = new Set<string>();
+      const importPattern = new RegExp(
+        String.raw`(?:from\s+["']${this.escapeRegExp(packageName)}["']|require\(\s*["']${this.escapeRegExp(packageName)}["']\s*\)|import\(\s*["']${this.escapeRegExp(packageName)}["']\s*\))`
+      );
+      for (const filePath of paths) {
+        if (!filePath || filePath === entryPath) continue;
+        if (filePath.includes("/.kairo/") || filePath.includes("/node_modules/")) continue;
+        if (!/\.(ts|tsx|js|jsx)$/.test(filePath)) continue;
+        try {
+          const content = fs.readFileSync(filePath, "utf-8");
+          if (!importPattern.test(content)) continue;
+        } catch {
+          continue;
+        }
+        unique.add(filePath);
+      }
+      return Array.from(unique);
+    } catch {
+      return [];
+    }
+  }
+
+  private escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  private shouldSuggestImpact(targetPath: string, guardrailResult: any, edits: any[]): boolean {
+    const publicSurface = guardrailResult?.architecturalRisk?.publicSurface;
+    if (publicSurface?.hasChanges) return true;
+    if (/index\.d\.ts$/i.test(targetPath)) return true;
+    if (/package\.json$/i.test(targetPath)) return true;
+    if (this.editsLookLikePublicApiChange(edits)) return true;
+    return false;
+  }
+
+  private editsLookLikePublicApiChange(edits: any[]): boolean {
+    const signals = /\b(export|public|pub|interface|type|class|struct|enum|fn|def)\b/;
+    for (const edit of edits ?? []) {
+      const target = typeof edit?.targetString === "string" ? edit.targetString : "";
+      const replacement = typeof edit?.replacementString === "string" ? edit.replacementString : "";
+      if (signals.test(target) || signals.test(replacement)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
 }
 
 function collectBlockReasons(

@@ -4,6 +4,17 @@ import { OrchestrationContext } from "../../orchestration/OrchestrationContext.j
 import { InternalToolRegistry } from "../../orchestration/InternalToolRegistry.js";
 
 describe("NavigatePillar budget behavior", () => {
+    const originalSkip = process.env.KAIRO_SKIP_PARITY_CHECK;
+
+    beforeAll(() => {
+        process.env.KAIRO_SKIP_PARITY_CHECK = "true";
+    });
+
+    afterAll(() => {
+        if (originalSkip === undefined) delete process.env.KAIRO_SKIP_PARITY_CHECK;
+        else process.env.KAIRO_SKIP_PARITY_CHECK = originalSkip;
+    });
+
   it("prefers filename search for weak queries and returns budget metadata", async () => {
     const registry = new InternalToolRegistry();
     const searchCalls: any[] = [];

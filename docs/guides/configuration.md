@@ -59,6 +59,12 @@ You can generate a starter config skeleton with the `manage` tool:
 - `manage({ command: "init", mode: "apply" })` → writes `.kairo/config/*` (and minimal `.mcp-config.json`)
 - `manage({ command: "doctor" })` → diagnoses missing/misplaced settings and suggests fixes
 
+Common `doctor` scopes:
+
+- `manage({ command: "doctor", scope: "languages" })` → extension/languageId mapping issues
+- `manage({ command: "doctor", scope: "parity" })` → query packs + WASM grammar availability (policy-aware)
+- `manage({ command: "doctor", scope: "contracts" })` → `.kairo/contracts` health (missing/invalid/stale)
+
 By default, `init` targets Kairo config files only. Pass `targets: ["vscode"]` to get a suggested `.vscode/mcp.json` patch.
 
 ## Documents / parsers

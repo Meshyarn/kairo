@@ -19,7 +19,7 @@ describe('EditHandlers', () => {
   beforeEach(async () => {
     testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'edit-handler-test-'));
     fs.mkdirSync(path.join(testRoot, 'src'), { recursive: true });
-    fs.writeFileSync(path.join(testRoot, 'src', 'file.ts'), 'original content');
+    fs.writeFileSync(path.join(testRoot, 'src', 'file.ts'), 'export const value = "original";\n');
     
     server = new SmartContextServer(testRoot);
   });
@@ -34,14 +34,14 @@ describe('EditHandlers', () => {
     const result = await runTool(server, 'edit_apply', {
       edits: [{
         filePath: relPath,
-        targetString: 'original content',
-        replacementString: 'new content'
+        targetString: 'export const value = "original";',
+        replacementString: 'export const value = "new";'
       }],
       dryRun: false
     });
 
     expect(result.success).toBe(true);
-    expect(fs.readFileSync(path.join(testRoot, relPath), 'utf-8')).toBe('new content');
+    expect(fs.readFileSync(path.join(testRoot, relPath), 'utf-8')).toBe('export const value = "new";\n');
   });
 
   it('handles edit_transaction tool via orchestration', async () => {
@@ -49,13 +49,13 @@ describe('EditHandlers', () => {
     const result = await runTool(server, 'edit_transaction', {
       filePath: relPath,
       edits: [{
-        targetString: 'original content',
-        replacementString: 'coordinated content'
+        targetString: 'export const value = "original";',
+        replacementString: 'export const value = "coordinated";'
       }],
       dryRun: false
     });
 
     expect(result.success).toBe(true);
-    expect(fs.readFileSync(path.join(testRoot, relPath), 'utf-8')).toBe('coordinated content');
+    expect(fs.readFileSync(path.join(testRoot, relPath), 'utf-8')).toBe('export const value = "coordinated";\n');
   });
 });

@@ -5,8 +5,14 @@ import {
     SupportLevel
 } from "../src/config/LanguageSupportLevels.js";
 import { BUILTIN_LANGUAGE_MAPPINGS } from "../src/config/LanguageConfig.js";
+import { LANGUAGE_PARITY_MATRIX } from "../src/config/LanguageParityMatrix.js";
 
-type ValidationMessage = { level: "error" | "warn"; message: string };
+type ValidationMessage = {
+    level: "error" | "warn";
+    code: string;
+    message: string;
+    languageId?: string;
+};
 
 const root = process.cwd();
 const queriesRoot = path.join(root, "src", "queries");
@@ -31,9 +37,10 @@ const requiredExtensions = [".cs", ".sql"];
 const optionalExtensions = [".h", ".hpp"];
 
 const messages: ValidationMessage[] = [];
+const requiredQueries = ["imports", "exports", "symbols", "skeleton"];
 
-function record(level: ValidationMessage["level"], message: string) {
-    messages.push({ level, message });
+function record(level: ValidationMessage["level"], code: string, message: string, languageId?: string) {
+    messages.push({ level, code, message, languageId });
 }
 
 function resolveQueryDir(languageId: string): string {
@@ -65,13 +72,42 @@ for (const [ext, mapping] of Object.entries(BUILTIN_LANGUAGE_MAPPINGS)) {
 
 for (const extension of requiredExtensions) {
     if (!BUILTIN_LANGUAGE_MAPPINGS[extension]) {
-        record("error", `Missing LanguageConfig mapping for ${extension}.`);
+        record("error", "LANGUAGE_SUPPORT_GAP", `Missing LanguageConfig mapping for ${extension}.`);
     }
 }
 
 for (const extension of optionalExtensions) {
     if (!BUILTIN_LANGUAGE_MAPPINGS[extension]) {
-        record("warn", `Optional LanguageConfig mapping missing for ${extension}.`);
+        record("warn", "LANGUAGE_SUPPORT_GAP", `Optional LanguageConfig mapping missing for ${extension}.`);
+    }
+}
+
+const mappedLanguageIds = new Set(
+    Object.values(BUILTIN_LANGUAGE_MAPPINGS)
+        .map((mapping) => mapping.languageId)
+        .filter((id): id is string => typeof id === "string")
+);
+
+for (const entry of LANGUAGE_PARITY_MATRIX.languages) {
+    const severity = entry.supportLevel === "L3" ? "error" : "warn";
+    if (!mappedLanguageIds.has(entry.languageId)) {
+        record(severity, "LANGUAGE_SUPPORT_GAP", `No LanguageConfig mapping for "${entry.languageId}".`, entry.languageId);
+    }
+
+    if (entry.requiredQueryPack) {
+        for (const queryName of requiredQueries) {
+            const filePath = queryFilePath(entry.languageId, queryName);
+            if (!fs.existsSync(filePath)) {
+                record(severity, "MISSING_QUERY_PACK", `Missing query pack: ${filePath}`, entry.languageId);
+            }
+        }
+    }
+
+    if (entry.requiredWasmGrammar) {
+        const hasWasm = hasWasmAsset(entry.languageId);
+        if (!hasWasm) {
+            record(severity, "MISSING_WASM_GRAMMAR", `Missing tree-sitter WASM for "${entry.languageId}".`, entry.languageId);
+        }
     }
 }
 
@@ -82,25 +118,25 @@ for (const [languageId, spec] of Object.entries(DEFAULT_LANGUAGE_SUPPORT_LEVELS)
 
     if (!hasMapping) {
         const message = `No LanguageConfig extension mapped to languageId "${languageId}".`;
-        record(level === SupportLevel.L3 ? "error" : "warn", message);
+        record(level === SupportLevel.L3 ? "error" : "warn", "LANGUAGE_SUPPORT_GAP", message, languageId);
     }
 
     if (requiresQueries.length > 0) {
         for (const queryName of requiresQueries) {
             const filePath = queryFilePath(languageId, queryName);
             if (!fs.existsSync(filePath)) {
-                record("error", `Missing query pack: ${filePath}`);
+                record("error", "MISSING_QUERY_PACK", `Missing query pack: ${filePath}`, languageId);
             }
         }
     } else if (!hasQueryDir(languageId)) {
-        record("warn", `No query pack directory found for "${languageId}".`);
+        record("warn", "MISSING_QUERY_PACK", `No query pack directory found for "${languageId}".`, languageId);
     }
 
     if (spec.editPolicy.requireSyntaxValidation) {
         const hasWasm = hasWasmAsset(languageId);
         if (!hasWasm) {
             const message = `Missing tree-sitter WASM for "${languageId}".`;
-            record(level === SupportLevel.L3 ? "error" : "warn", message);
+            record(level === SupportLevel.L3 ? "error" : "warn", "MISSING_WASM_GRAMMAR", message, languageId);
         }
     }
 }
@@ -111,14 +147,16 @@ const warnings = messages.filter((item) => item.level === "warn");
 if (warnings.length > 0) {
     console.warn("Language support validation warnings:");
     for (const warn of warnings) {
-        console.warn(`- ${warn.message}`);
+        const suffix = warn.languageId ? ` [${warn.languageId}]` : "";
+        console.warn(`- ${warn.code}${suffix}: ${warn.message}`);
     }
 }
 
 if (errors.length > 0) {
     console.error("Language support validation errors:");
     for (const error of errors) {
-        console.error(`- ${error.message}`);
+        const suffix = error.languageId ? ` [${error.languageId}]` : "";
+        console.error(`- ${error.code}${suffix}: ${error.message}`);
     }
     process.exit(1);
 }

@@ -18,6 +18,11 @@ export function buildUnderstandResponse(args: {
   degraded: boolean;
   degradedReasons?: string[];
   degradedReasonDetails?: DegradedReason[];
+  fallbackGraph?: {
+    mode: "l2";
+    edges: Array<{ from: string; to: string; confidence: "low"; reason?: string }>;
+    evidence?: string[];
+  };
   refinementReason?: string;
   budget: any;
   allowGraphs: boolean;
@@ -42,8 +47,9 @@ export function buildUnderstandResponse(args: {
     integrityReport,
     includeCalls,
     degraded,
-    degradedReasons,
-    degradedReasonDetails,
+  degradedReasons,
+  degradedReasonDetails,
+  fallbackGraph,
     refinementReason,
     budget,
     allowGraphs,
@@ -118,6 +124,7 @@ export function buildUnderstandResponse(args: {
     degraded,
     reasons: degradedReasons,
     degradedReasons: degradedReasonDetails,
+    fallbackGraph,
     budget,
     refinement: {
       stage: allowGraphs ? "graph" : "skeleton",

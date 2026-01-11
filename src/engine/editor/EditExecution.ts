@@ -31,6 +31,7 @@ import { SyntaxValidator } from "../validators/syntax-validator.js";
 import { SyntaxValidationError } from "../../errors/SyntaxValidationError.js";
 import { SemanticValidator } from "../validators/semantic-validator.js";
 import { TextNormalizer } from "../../utils/textNormalization.js";
+import { getSupportForFilePath, SupportLevel } from "../../config/LanguageSupportLevels.js";
 
 interface EditExecutorOptions {
     rootPath: string;
@@ -183,8 +184,9 @@ export class EditExecutor {
         newContent += originalContent.substring(lastCursor);
 
         const operation = buildEditOperation(filePath, edits, inverseEdits);
-        const syntaxValidation = await this.runSyntaxValidation(filePath, newContent);
-        if (syntaxValidation && this.syntaxValidationMode === "error" && !syntaxValidation.result.success) {
+        const syntaxMode = this.resolveSyntaxMode(filePath);
+        const syntaxValidation = await this.runSyntaxValidation(filePath, newContent, syntaxMode);
+        if (syntaxValidation && syntaxMode === "error" && !syntaxValidation.result.success) {
             const error = new SyntaxValidationError(
                 "Edit would introduce syntax errors.",
                 syntaxValidation.summary.blockingErrors
@@ -287,20 +289,44 @@ export class EditExecutor {
         };
     }
 
+    private resolveSyntaxMode(filePath: string): ValidationMode {
+        if (this.syntaxValidationMode === "off") {
+            return "off";
+        }
+        const support = getSupportForFilePath(filePath);
+        if (support?.level === SupportLevel.L3 && support.editPolicy.requireSyntaxValidation) {
+            return "error";
+        }
+        return this.syntaxValidationMode;
+    }
+
     private async runSyntaxValidation(
         filePath: string,
-        content: string
+        content: string,
+        mode: ValidationMode
     ): Promise<{ result: ValidationResult; summary: ValidationSummary } | undefined> {
-        if (!this.syntaxValidator || this.syntaxValidationMode === "off") {
+        if (!this.syntaxValidator || mode === "off") {
             return undefined;
         }
 
-        const result = await this.syntaxValidator.validate(filePath, content);
-        const summary = this.buildValidationSummary(result, this.syntaxValidationMode, {
+        let result = await this.syntaxValidator.validate(filePath, content);
+        if (!result.success && this.hasSyntaxLanguageUnavailable(result)) {
+            result = {
+                ...result,
+                success: true,
+                warnings: [...(result.warnings ?? []), ...(result.blockingErrors ?? [])],
+                blockingErrors: []
+            };
+        }
+        const summary = this.buildValidationSummary(result, mode, {
             syntaxChecked: true,
             semanticChecked: false
         });
         return { result, summary };
+    }
+
+    private hasSyntaxLanguageUnavailable(result: ValidationResult): boolean {
+        return (result.blockingErrors ?? []).some((error) => error.code === "SYNTAX_LANGUAGE_UNAVAILABLE");
     }
 
     private async runSemanticValidation(
