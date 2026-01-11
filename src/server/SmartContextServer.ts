@@ -39,6 +39,7 @@ import { ConfigurationManager } from "../config/ConfigurationManager.js";
 import { RepoRegistry } from "../config/RepoRegistry.js";
 import { PackageAliasMap } from "../config/PackageAliasMap.js";
 import { PropertyAccessIndex } from "../ast/PropertyAccessIndex.js";
+import { FieldAccessIndex } from "../ast/FieldAccessIndex.js";
 import { FeatureFlags, FeatureFlagContext } from "../config/FeatureFlags.js";
 import { RolloutController } from "../config/RolloutController.js";
 import { ModularRolloutController } from "../config/ModularRolloutController.js";
@@ -211,7 +212,8 @@ export class SmartContextServer {
         this.typeDependencyTracker = new TypeDependencyTracker(this.rootPath, this.symbolIndex);
         this.dataFlowTracer = new DataFlowTracer(this.rootPath, this.symbolIndex, this.fileSystem);
         const propertyAccessIndex = new PropertyAccessIndex(this.rootPath);
-        this.impactAnalyzer = new ImpactAnalyzer(this.dependencyGraph, this.callGraphBuilder, this.symbolIndex, undefined, propertyAccessIndex);
+        const fieldAccessIndex = new FieldAccessIndex(this.rootPath, { propertyAccessIndex });
+        this.impactAnalyzer = new ImpactAnalyzer(this.dependencyGraph, this.callGraphBuilder, this.symbolIndex, undefined, fieldAccessIndex);
         this.hotSpotDetector = new HotSpotDetector(this.symbolIndex, this.dependencyGraph);
         this.referenceFinder = new ReferenceFinder(
             this.rootPath,
