@@ -59,6 +59,7 @@ The entries below cover all ADRs from the project history. Items marked “retou
 - ADR-053-C (summary): Managed config bootstrap (`manage init/doctor`) → `docs/adr/ADR-053-C-managed-config-bootstrap.md`
 - ADR-054 (summary): Cross-language contract awareness (boundary adapters baseline) → `docs/adr/ADR-054-cross-language-contract-awareness.md`
 - ADR-054-H (summary): Contract hardening & bootstrap alignment (NAPI) → `docs/adr/ADR-054-H-contract-hardening-and-bootstrap.md`
+- ADR-055 (summary): Universal parity & standardization program → `docs/adr/ADR-055-universal-parity-and-standardization.md`
 - ADR-033: “Six Pillars” precursor to ADR-040; introduced orchestration primitives and earlier public surface.
 - ADR-019/020: Toolset consolidation strategy (historical); led to the eventual Pillars surface.
 
@@ -82,6 +83,8 @@ The entries below cover all ADRs from the project history. Items marked “retou
 - ADR-053-H: Universal hybrid architecture + multi-engine framework → `docs/adr/ADR-053-H-universal-hybrid-architecture.md`
 - ADR-053-L (summary): Language support levels (L2/L3) + target matrix → `docs/adr/ADR-053-L-language-support-levels.md`
 - ADR-054 (NAPI baseline): Cross-language contract awareness (boundary adapters + field-level impact) → `docs/adr/ADR-054-cross-language-contract-awareness.md`
+- ADR-054-H: ADR-054 hardening (bootstrap + deep linking; NAPI Rust ↔ TS/JS)
+- ADR-055 (summary): Universal parity & standardization program (schemas + parity gates + adapter expansion) → `docs/adr/ADR-055-universal-parity-and-standardization.md`
 - ADR-022: Scalable memory architecture (on-disk/lazy/streaming baseline ideas).
 - ADR-028: Performance + accuracy enhancements (historical deep dive).
 - ADR-029: Production readiness / system maturity (historical).

@@ -258,6 +258,8 @@ What do you need?
 - `manage({ command: "init", mode: "plan" })` to generate a safe config plan
 - `manage({ command: "init", mode: "apply" })` to write config files
 - `manage({ command: "doctor" })` to diagnose missing/misplaced settings
+- `manage({ command: "doctor", scope: "parity" })` to check query packs + WASM grammar availability
+- `manage({ command: "doctor", scope: "contracts" })` to check `.kairo/contracts` health
 
 ---
 

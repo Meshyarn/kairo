@@ -27,6 +27,7 @@ L2: C/C++, C#, Docs (Markdown and similar document formats)
 3) Provide a tree-sitter WASM at `wasm/tree-sitter-<languageId>.wasm` (or set `KAIRO_WASM_DIR`).
 4) Register support level in `src/config/LanguageSupportLevels.ts`.
 5) Run `npm run validate:languages`.
+6) Run `npm run validate:parity` and (recommended) `npm test -- LanguageParity`.
 
 ## Promotion to L3
 
@@ -40,3 +41,8 @@ Move an L2 language to L3 once:
 - Parser fails to load: ensure `wasm/tree-sitter-<languageId>.wasm` exists or set `KAIRO_WASM_DIR`.
 - Query pack missing: confirm `src/queries/<languageId>/` includes `imports/exports/symbols/skeleton`.
 - Validation degraded: check `npm run validate:languages` for missing assets.
+
+## Useful diagnostics
+
+- `manage({ command: "doctor", scope: "languages" })`: languageId/extension mapping issues
+- `manage({ command: "doctor", scope: "parity" })`: query packs + WASM grammar availability (policy-aware)
