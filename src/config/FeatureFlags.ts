@@ -12,6 +12,7 @@ export interface FeatureFlagContext {
  * Flags can be controlled via environment variables or runtime config.
  */
 export class FeatureFlags {
+    private static explicitFlags: Set<string> = new Set();
     private static flags: Map<string, boolean> = new Map();
     private static modes: Map<string, RolloutMode> = new Map();
     private static canaryUsers: Set<string> = new Set();
@@ -82,6 +83,48 @@ export class FeatureFlags {
      */
     static WRITERS_FLOW_REVIEW_DEFAULTS = 'writers_flow_review_defaults';
 
+    /**
+     * Enables the Rust core engine.
+     * Default: true
+     * Env var: KAIRO_RUST_CORE_ENABLED
+     */
+    static RUST_CORE_ENABLED = 'rust_core_enabled';
+
+    /**
+     * Enables Rust chunking capability.
+     * Default: true (when core enabled)
+     * Env var: KAIRO_RUST_CHUNKING_ENABLED
+     */
+    static RUST_CHUNKING_ENABLED = 'rust_chunking_enabled';
+
+    /**
+     * Enables Rust diffing capability.
+     * Default: true (when core enabled)
+     * Env var: KAIRO_RUST_DIFF_ENABLED
+     */
+    static RUST_DIFF_ENABLED = 'rust_diff_enabled';
+
+    /**
+     * Enables Rust syntax validation capability.
+     * Default: true (when core enabled)
+     * Env var: KAIRO_RUST_SYNTAX_ENABLED
+     */
+    static RUST_SYNTAX_ENABLED = 'rust_syntax_enabled';
+
+    /**
+     * Enables Rust vector math capability.
+     * Default: true (when core enabled)
+     * Env var: KAIRO_RUST_VECTOR_ENABLED
+     */
+    static RUST_VECTOR_ENABLED = 'rust_vector_enabled';
+
+    /**
+     * Enables WASM chunking provider.
+     * Default: false
+     * Env var: KAIRO_WASM_CHUNKING_ENABLED
+     */
+    static WASM_CHUNKING_ENABLED = 'wasm_chunking_enabled';
+
     
     static initialize(): void {
         this.canaryUsers = this.parseCanaryUsers(process.env.KAIRO_CANARY_USERS);
@@ -96,6 +139,12 @@ export class FeatureFlags {
         this.applyEnvFlag(this.PILLAR_DECOMPOSITION_ENABLED, process.env.KAIRO_PILLAR_DECOMPOSITION_ENABLED);
         this.applyEnvFlag(this.WRITERS_FLOW_DEFAULT_DRYRUN, process.env.KAIRO_WRITERS_FLOW_DEFAULT_DRYRUN);
         this.applyEnvFlag(this.WRITERS_FLOW_REVIEW_DEFAULTS, process.env.KAIRO_WRITERS_FLOW_REVIEW_DEFAULTS);
+        this.applyEnvFlag(this.RUST_CORE_ENABLED, process.env.KAIRO_RUST_CORE_ENABLED);
+        this.applyEnvFlag(this.RUST_CHUNKING_ENABLED, process.env.KAIRO_RUST_CHUNKING_ENABLED);
+        this.applyEnvFlag(this.RUST_DIFF_ENABLED, process.env.KAIRO_RUST_DIFF_ENABLED);
+        this.applyEnvFlag(this.RUST_SYNTAX_ENABLED, process.env.KAIRO_RUST_SYNTAX_ENABLED);
+        this.applyEnvFlag(this.RUST_VECTOR_ENABLED, process.env.KAIRO_RUST_VECTOR_ENABLED);
+        this.applyEnvFlag(this.WASM_CHUNKING_ENABLED, process.env.KAIRO_WASM_CHUNKING_ENABLED);
         const modularPercent = process.env.KAIRO_MODULAR_ROLLOUT_PERCENT;
         if (!process.env.KAIRO_MODULAR_HANDLERS_ENABLED && modularPercent === undefined) {
             this.set(this.MODULAR_HANDLERS_ENABLED, true, 'on');
@@ -105,6 +154,22 @@ export class FeatureFlags {
         }
         if (!process.env.KAIRO_PILLAR_DECOMPOSITION_ENABLED && modularPercent === undefined) {
             this.set(this.PILLAR_DECOMPOSITION_ENABLED, true, 'on');
+        }
+
+        if (!this.isExplicit(this.RUST_CORE_ENABLED)) {
+            this.set(this.RUST_CORE_ENABLED, true, 'on');
+        }
+        if (!this.isExplicit(this.RUST_CHUNKING_ENABLED)) {
+            this.set(this.RUST_CHUNKING_ENABLED, true, 'on');
+        }
+        if (!this.isExplicit(this.RUST_DIFF_ENABLED)) {
+            this.set(this.RUST_DIFF_ENABLED, true, 'on');
+        }
+        if (!this.isExplicit(this.RUST_SYNTAX_ENABLED)) {
+            this.set(this.RUST_SYNTAX_ENABLED, true, 'on');
+        }
+        if (!this.isExplicit(this.RUST_VECTOR_ENABLED)) {
+            this.set(this.RUST_VECTOR_ENABLED, true, 'on');
         }
 
         console.log('[FeatureFlags] Initialized:', this.debugState());
@@ -153,10 +218,31 @@ export class FeatureFlags {
         return this.modes.get(flag) ?? 'off';
     }
 
+    static resetForTesting(): void {
+        this.flags.clear();
+        this.modes.clear();
+        this.explicitFlags.clear();
+        this.canaryUsers.clear();
+        this.betaPercent = 10;
+        this.betaPercentByFlag.clear();
+    }
+
+    static setExplicit(flag: string, enabled: boolean, mode?: RolloutMode): void {
+        this.set(flag, enabled, mode);
+        this.explicitFlags.add(flag);
+    }
+
+    static isExplicit(flag: string): boolean {
+        return this.explicitFlags.has(flag);
+    }
+
     private static applyEnvFlag(flag: string, rawValue: string | undefined): void {
         const { enabled, mode } = this.parseFlagState(rawValue);
         this.flags.set(flag, enabled);
         this.modes.set(flag, mode);
+        if (rawValue !== undefined) {
+            this.explicitFlags.add(flag);
+        }
     }
 
     private static parseFlagState(rawValue: string | undefined): { enabled: boolean; mode: RolloutMode } {
@@ -238,14 +324,6 @@ export class FeatureFlags {
     static setBetaPercentForFlag(flag: string, percent: number): void {
         if (!Number.isFinite(percent)) return;
         this.betaPercentByFlag.set(flag, Math.max(0, Math.min(100, percent)));
-    }
-
-    static resetForTesting(): void {
-        this.flags.clear();
-        this.modes.clear();
-        this.canaryUsers.clear();
-        this.betaPercent = 10;
-        this.betaPercentByFlag.clear();
     }
 
     private static debugState(): Record<string, { enabled: boolean; mode: RolloutMode }> {

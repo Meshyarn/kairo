@@ -1,5 +1,9 @@
-import { describe, it, expect } from "@jest/globals";
+import { describe, it, expect, jest } from "@jest/globals";
 import { HeadingChunker } from "../../documents/chunking/HeadingChunker.js";
+import { EngineManager } from "../../orchestration/capabilities/EngineManager.js";
+import { CAP_CHUNKING_TOKENS } from "../../orchestration/capabilities/CapabilityIds.js";
+import type { CapabilityProvider } from "../../orchestration/capabilities/EngineManager.js";
+import type { ITokenChunkingProvider } from "../../orchestration/capabilities/Chunking.js";
 import { DocumentSection } from "../../types.js";
 
 const content = `# Title
@@ -149,5 +153,132 @@ describe("HeadingChunker", () => {
             minSectionChars: 50
         });
         expect(chunks).toHaveLength(1);
+    });
+
+    it("maps token chunk byte offsets to line ranges", () => {
+        EngineManager.resetForTesting();
+        const lines = [
+            "# Title",
+            "",
+            "First line here.",
+            "Second line here.",
+            "Third line here."
+        ];
+        const tokenContent = lines.join("\n");
+        const lineCount = lines.length;
+        const outlineAll: DocumentSection[] = [
+            {
+                id: "section-1",
+                filePath: "docs/token.md",
+                kind: "markdown",
+                title: "Title",
+                level: 1,
+                path: ["Title"],
+                range: { startLine: 1, endLine: lineCount, startByte: 0, endByte: tokenContent.length }
+            }
+        ];
+        const line3 = "First line here.";
+        const line4 = "Second line here.";
+        const line3Start = tokenContent.indexOf(line3);
+        const line4Start = tokenContent.indexOf(line4);
+        const line3End = line3Start + line3.length;
+        const line4End = line4Start + line4.length;
+        const mockProvider: CapabilityProvider<ITokenChunkingProvider> = {
+            meta: { id: "TestChunker", tier: "native", priority: 999 },
+            isAvailable: () => true,
+            get: () => ({
+                chunk: () => [
+                    { text: line3, startByte: line3Start, endByte: line3End, startToken: 0, endToken: 5 },
+                    { text: line4, startByte: line4Start, endByte: line4End, startToken: 5, endToken: 10 }
+                ]
+            })
+        };
+        EngineManager.registerProvider(CAP_CHUNKING_TOKENS, mockProvider);
+        const chunker = new HeadingChunker();
+        const chunks = chunker.chunk("docs/token.md", "markdown", outlineAll, tokenContent, {
+            chunkStrategy: "structural",
+            chunkProfile: "fast"
+        });
+        EngineManager.resetForTesting();
+
+        expect(chunks).toHaveLength(2);
+        expect(chunks[0].range.startLine).toBe(3);
+        expect(chunks[0].range.endLine).toBe(3);
+        expect(chunks[0].range.startByte).toBe(line3Start);
+        expect(chunks[0].range.endByte).toBe(line3End);
+        expect(chunks[1].range.startLine).toBe(4);
+        expect(chunks[1].range.endLine).toBe(4);
+        expect(chunks[1].range.startByte).toBe(line4Start);
+        expect(chunks[1].range.endByte).toBe(line4End);
+    });
+
+    it("passes profile-based token limits to the chunker", () => {
+        EngineManager.resetForTesting();
+        const tokenContent = [
+            "# Title",
+            "",
+            "First line here.",
+            "Second line here."
+        ].join("\n");
+        const outlineAll: DocumentSection[] = [
+            {
+                id: "section-1",
+                filePath: "docs/token.md",
+                kind: "markdown",
+                title: "Title",
+                level: 1,
+                path: ["Title"],
+                range: { startLine: 1, endLine: 4, startByte: 0, endByte: tokenContent.length }
+            }
+        ];
+        const chunkMock = jest.fn(() => [
+            { text: tokenContent, startByte: 0, endByte: tokenContent.length, startToken: 0, endToken: 1 }
+        ]);
+        const mockProvider: CapabilityProvider<ITokenChunkingProvider> = {
+            meta: { id: "TestChunker", tier: "native", priority: 999 },
+            isAvailable: () => true,
+            get: () => ({ chunk: chunkMock })
+        };
+        EngineManager.registerProvider(CAP_CHUNKING_TOKENS, mockProvider);
+        const chunker = new HeadingChunker();
+        chunker.chunk("docs/token.md", "markdown", outlineAll, tokenContent, {
+            chunkStrategy: "structural",
+            chunkProfile: "deep"
+        });
+
+        expect(chunkMock).toHaveBeenCalled();
+        const args = chunkMock.mock.calls[0] as unknown as [string, number, number];
+        expect(args[1]).toBe(768);
+        expect(args[2]).toBe(128);
+        EngineManager.resetForTesting();
+    });
+
+    it("falls back to character chunking when token options are absent", () => {
+        EngineManager.resetForTesting();
+        const tokenContent = [
+            "# Title",
+            "",
+            "First line here.",
+            "Second line here.",
+            "Third line here."
+        ].join("\n");
+        const outlineAll: DocumentSection[] = [
+            {
+                id: "section-1",
+                filePath: "docs/token.md",
+                kind: "markdown",
+                title: "Title",
+                level: 1,
+                path: ["Title"],
+                range: { startLine: 1, endLine: 5, startByte: 0, endByte: tokenContent.length }
+            }
+        ];
+        const chunker = new HeadingChunker();
+        const chunks = chunker.chunk("docs/token.md", "markdown", outlineAll, tokenContent, {
+            chunkStrategy: "structural",
+            maxBlockChars: 40
+        });
+        EngineManager.resetForTesting();
+        expect(chunks.length).toBeGreaterThan(1);
     });
 });

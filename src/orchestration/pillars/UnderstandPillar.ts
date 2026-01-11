@@ -24,6 +24,7 @@ import {
 import { buildUnderstandResponse } from './understand/ReportGenerator.js';
 import { resolveProgressState, logProgress, logToolStart, logToolEnd, ProgressState } from '../../utils/ProgressLogger.js';
 import { OptionResolver } from '../options/OptionResolver.js';
+import { checkSkeletonSupport } from '../../ast/LanguageSupportSignals.js';
 
 
 export class UnderstandPillar {
@@ -151,6 +152,9 @@ export class UnderstandPillar {
     let docReferences: any = undefined;
     let relatedCode: any[] | undefined = undefined;
     let mentionMatches: any[] | undefined = undefined;
+    let degraded = false;
+    const degradedReasons: string[] = [];
+    let refinementReason: string | undefined = undefined;
     if (isDocument) {
       const docAnalysis = await this.runTool(context, 'document_analyze', { filePath }, progress);
       skeleton = docAnalysis?.skeleton ?? '';
@@ -164,6 +168,11 @@ export class UnderstandPillar {
         relatedCode = mergeRelatedCode(relatedCode, mentionMatches);
       }
     } else {
+      const support = await checkSkeletonSupport(filePath);
+      if (support.degraded && support.reason) {
+        degraded = true;
+        degradedReasons.push(support.reason);
+      }
       skeleton = await this.runTool(context, 'code_read', { filePath, view: 'skeleton' }, progress);
     }
     const profile = await this.runTool(context, 'file_profile', { filePath }, progress);
@@ -171,8 +180,6 @@ export class UnderstandPillar {
     let calls: any = null;
     let deps: any = null;
     let hotSpots: any = [];
-    let degraded = false;
-    let refinementReason: string | undefined = undefined;
 
     const allowGraphs = !isDocument && isStrongQuery(metrics) && (budget.profile !== 'safe' || includeCalls || includeDependencies || include.hotSpots === true);
     if (isDocument && (includeCalls || includeDependencies || include.hotSpots === true)) {
@@ -292,6 +299,7 @@ export class UnderstandPillar {
       integrityReport,
       includeCalls,
       degraded,
+      degradedReasons: degradedReasons.length > 0 ? degradedReasons : undefined,
       refinementReason,
       budget,
       allowGraphs,

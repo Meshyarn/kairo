@@ -2,6 +2,9 @@ import * as path from "path";
 import { ConfigurationManager } from "../../config/ConfigurationManager.js";
 import { MyersDiff } from "../Diff.js";
 import { PatienceDiff } from "../PatienceDiff.js";
+import { EngineManager } from "../../orchestration/capabilities/EngineManager.js";
+import { CAP_DIFF_UNIFIED } from "../../orchestration/capabilities/CapabilityIds.js";
+import type { IDiffingProvider } from "../../orchestration/capabilities/Diffing.js";
 import type {
     DiffMode,
     Edit,
@@ -222,14 +225,22 @@ export class EditExecutor {
             let semanticSummary: SemanticDiffSummary | undefined;
 
             if (diffMode === "semantic") {
-                const hunks = PatienceDiff.diff(originalContent, newContent, {
-                    contextLines: 3,
-                    semantic: true
-                });
-                const summary = PatienceDiff.summarize(hunks);
-                diffText = PatienceDiff.formatUnified(hunks);
-                added = summary.added;
-                removed = summary.removed;
+                const diffProvider = EngineManager.getProvider<IDiffingProvider>(CAP_DIFF_UNIFIED);
+                if (diffProvider) {
+                    const result = diffProvider.diffUnified(originalContent, newContent, 3);
+                    diffText = result.diff;
+                    added = result.added;
+                    removed = result.removed;
+                } else {
+                    const hunks = PatienceDiff.diff(originalContent, newContent, {
+                        contextLines: 3,
+                        semantic: true
+                    });
+                    const summary = PatienceDiff.summarize(hunks);
+                    diffText = PatienceDiff.formatUnified(hunks);
+                    added = summary.added;
+                    removed = summary.removed;
+                }
                 if (this.semanticDiffProvider) {
                     semanticSummary = await this.semanticDiffProvider.diff(filePath, originalContent, newContent);
                 }

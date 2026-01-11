@@ -42,6 +42,27 @@ describe("OptionResolver", () => {
     expect(explicit.effective.dryRun).toBe(false);
   });
 
+  it("maps profiles to chunking token limits", () => {
+    expect(OptionResolver.resolveChunkingOptions("fast")).toEqual({
+        params: { maxTokens: 384, overlapTokens: 32 },
+        preferredTier: "native"
+    });
+    expect(OptionResolver.resolveChunkingOptions("balanced")).toEqual({
+        params: { maxTokens: 512, overlapTokens: 64 }
+    });
+    expect(OptionResolver.resolveChunkingOptions("deep")).toEqual({
+        params: { maxTokens: 768, overlapTokens: 128 },
+        preferredTier: "native"
+    });
+  });
+
+  it("maps profiles to diff modes for change/write", () => {
+    expect(OptionResolver.resolveChangeOptions({ profile: "fast" } as any).effective.diffMode).toBe("myers");
+    expect(OptionResolver.resolveChangeOptions({ profile: "balanced" } as any).effective.diffMode).toBe("semantic");
+    expect(OptionResolver.resolveChangeOptions({ profile: "deep" } as any).effective.diffMode).toBe("semantic");
+    expect(OptionResolver.resolveChangeOptions({} as any).effective.diffMode).toBeUndefined();
+  });
+
   it("applies session policy when no explicit overrides", () => {
     const result = OptionResolver.resolveExploreOptions({} as any, {
       sources: "docs",

@@ -1,0 +1,36 @@
+name: core-rs prebuild release
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+jobs:
+  prebuild:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install core-rs deps
+        run: npm install
+        working-directory: crates/core-rs
+      - name: Build prebuilds
+        run: npm run prepublishOnly
+        working-directory: crates/core-rs
+      - name: Publish package
+        if: github.event_name == 'release'
+        run: npm publish --access public
+        working-directory: crates/core-rs
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

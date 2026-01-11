@@ -3,6 +3,10 @@ import * as path from "path";
 import { DocumentKind, DocumentOutlineOptions, DocumentSection } from "../../types.js";
 import { StoredDocumentChunk } from "../../indexing/DocumentChunkRepository.js";
 import { applyMdxPlaceholders } from "../DocumentProfiler.js";
+import { OptionResolver, ToolProfile } from "../../orchestration/options/OptionResolver.js";
+import { EngineManager } from "../../orchestration/capabilities/EngineManager.js";
+import { CAP_CHUNKING_TOKENS } from "../../orchestration/capabilities/CapabilityIds.js";
+import type { ITokenChunkingProvider } from "../../orchestration/capabilities/Chunking.js";
 
 export class HeadingChunker {
     public chunk(
@@ -17,6 +21,13 @@ export class HeadingChunker {
         const lineOffsets = computeLineOffsets(normalizedContent);
         const strategy = options.chunkStrategy ?? "structural";
         const chunks: StoredDocumentChunk[] = [];
+        const chunkProfile = resolveChunkProfile(options);
+        const tokenOptions = resolveTokenOptions(options, chunkProfile);
+        const tokenChunker = EngineManager.getProvider<ITokenChunkingProvider>(
+            CAP_CHUNKING_TOKENS,
+            tokenOptions?.preferredTier ? { preferredTier: tokenOptions.preferredTier } : undefined
+        );
+        const useTokenChunker = tokenChunker !== null && tokenOptions !== null;
         const effectiveOutline = outline.length === 0
             ? [{
                 filePath,
@@ -61,19 +72,64 @@ export class HeadingChunker {
             let ordinal = 0;
             for (const segment of segments) {
                 if (!segment.text.trim()) continue;
-                chunks.push(this.buildChunk({
-                    filePath,
-                    kind,
-                    sectionPath: section.path,
-                    heading: section.title,
-                    headingLevel: section.level,
-                    startLine: segment.startLine,
-                    endLine: segment.endLine,
-                    lines,
-                    lineOffsets,
-                    ordinal
-                }));
-                ordinal += 1;
+                if (useTokenChunker && tokenOptions) {
+                    const segmentStartByte = lineOffsets[segment.startLine - 1] ?? 0;
+                    const tokenChunks = tokenChunker.chunk(
+                        segment.text,
+                        tokenOptions.params.maxTokens,
+                        tokenOptions.params.overlapTokens
+                    );
+                    if (tokenChunks.length === 0) {
+                        chunks.push(this.buildChunk({
+                            filePath,
+                            kind,
+                            sectionPath: section.path,
+                            heading: section.title,
+                            headingLevel: section.level,
+                            startLine: segment.startLine,
+                            endLine: segment.endLine,
+                            lines,
+                            lineOffsets,
+                            ordinal
+                        }));
+                        ordinal += 1;
+                        continue;
+                    }
+                    for (const tokenChunk of tokenChunks) {
+                        const startByte = segmentStartByte + tokenChunk.startByte;
+                        const endByte = segmentStartByte + tokenChunk.endByte;
+                        const startLine = findLineForByte(startByte, lineOffsets);
+                        const endLine = findLineForByte(Math.max(endByte - 1, startByte), lineOffsets);
+                        chunks.push(this.buildChunkFromText({
+                            filePath,
+                            kind,
+                            sectionPath: section.path,
+                            heading: section.title,
+                            headingLevel: section.level,
+                            startLine,
+                            endLine,
+                            startByte,
+                            endByte,
+                            text: tokenChunk.text,
+                            ordinal
+                        }));
+                        ordinal += 1;
+                    }
+                } else {
+                    chunks.push(this.buildChunk({
+                        filePath,
+                        kind,
+                        sectionPath: section.path,
+                        heading: section.title,
+                        headingLevel: section.level,
+                        startLine: segment.startLine,
+                        endLine: segment.endLine,
+                        lines,
+                        lineOffsets,
+                        ordinal
+                    }));
+                    ordinal += 1;
+                }
             }
         }
 
@@ -111,6 +167,84 @@ export class HeadingChunker {
             updatedAt: Date.now()
         };
     }
+
+    private buildChunkFromText(args: {
+        filePath: string;
+        kind: DocumentKind;
+        sectionPath: string[];
+        heading: string | null;
+        headingLevel: number | null;
+        startLine: number;
+        endLine: number;
+        startByte: number;
+        endByte: number;
+        text: string;
+        ordinal: number;
+    }): StoredDocumentChunk {
+        const text = args.text;
+        return {
+            id: hash(`${args.filePath}\n${args.sectionPath.join(" > ")}\n${args.startLine}:${args.endLine}\n${args.ordinal}`),
+            filePath: args.filePath,
+            kind: args.kind,
+            sectionPath: args.sectionPath,
+            heading: args.heading,
+            headingLevel: args.headingLevel,
+            range: {
+                startLine: args.startLine,
+                endLine: args.endLine,
+                startByte: args.startByte,
+                endByte: args.endByte
+            },
+            text,
+            contentHash: hash(text),
+            updatedAt: Date.now()
+        };
+    }
+}
+
+function resolveChunkProfile(options: DocumentOutlineOptions): ToolProfile | undefined {
+    if (options.chunkProfile === "fast" || options.chunkProfile === "balanced" || options.chunkProfile === "deep") {
+        return options.chunkProfile;
+    }
+    const envProfile = process.env.KAIRO_DOC_CHUNK_PROFILE;
+    if (envProfile === "fast" || envProfile === "balanced" || envProfile === "deep") {
+        return envProfile;
+    }
+    return undefined;
+}
+
+function resolveTokenOptions(
+    options: DocumentOutlineOptions,
+    profile?: ToolProfile
+): { params: { maxTokens: number; overlapTokens: number }; preferredTier?: "native" | "wasm" | "js" } | null {
+    if (options.targetChunkTokens != null && options.overlapTokens != null) {
+        return {
+            params: {
+                maxTokens: options.targetChunkTokens,
+                overlapTokens: options.overlapTokens
+            }
+        };
+    }
+    if (profile) {
+        return OptionResolver.resolveChunkingOptions(profile);
+    }
+    return null;
+}
+
+function findLineForByte(byteOffset: number, lineOffsets: number[]): number {
+    if (lineOffsets.length === 0) return 1;
+    if (byteOffset <= 0) return 1;
+    let low = 0;
+    let high = lineOffsets.length - 1;
+    while (low <= high) {
+        const mid = Math.floor((low + high) / 2);
+        if (lineOffsets[mid] <= byteOffset) {
+            low = mid + 1;
+        } else {
+            high = mid - 1;
+        }
+    }
+    return Math.max(1, high + 1);
 }
 
 function splitStructuralSegments(

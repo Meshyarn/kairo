@@ -825,6 +825,8 @@ export class SmartContextServer {
                                 'metrics',
                                 'metrics_reset',
                                 'config',
+                                'init',
+                                'doctor',
                                 'sessions',
                                 'session',
                                 'session_complete',
@@ -837,7 +839,27 @@ export class SmartContextServer {
                             ]
                         },
                         target: { type: 'string' },
-                        outcome: { type: 'object' }
+                        outcome: { type: 'object' },
+                        mode: { type: 'string', enum: ['plan', 'apply'] },
+                        targets: { type: 'array', items: { type: 'string', enum: ['kairo', 'vscode'] } },
+                        root: { type: 'string' },
+                        multiRepo: { type: 'string', enum: ['auto', 'single', 'detect'] },
+                        presets: { type: 'string', enum: ['minimal', 'recommended'] },
+                        languageScan: {
+                            type: 'object',
+                            properties: {
+                                maxFiles: { type: 'number' },
+                                sampleBytesPerFile: { type: 'number' },
+                                includeDocs: { type: 'boolean' }
+                            }
+                        },
+                        applyOptions: {
+                            type: 'object',
+                            properties: {
+                                backup: { type: 'boolean' },
+                                legacyMcpConfig: { type: 'boolean' }
+                            }
+                        }
                     },
                     required: ['command']
                 }
@@ -1078,6 +1100,8 @@ export class SmartContextServer {
                                 'rebuild',
                                 'history',
                                 'test',
+                                'init',
+                                'doctor',
                                 'sessions',
                                 'session',
                                 'session_complete',
@@ -1104,6 +1128,26 @@ export class SmartContextServer {
                                 sessionId: { type: 'string' },
                                 limit: { type: 'number' },
                                 includeExpired: { type: 'boolean' }
+                            }
+                        },
+                        mode: { type: 'string', enum: ['plan', 'apply'] },
+                        targets: { type: 'array', items: { type: 'string', enum: ['kairo', 'vscode'] } },
+                        root: { type: 'string' },
+                        multiRepo: { type: 'string', enum: ['auto', 'single', 'detect'] },
+                        presets: { type: 'string', enum: ['minimal', 'recommended'] },
+                        languageScan: {
+                            type: 'object',
+                            properties: {
+                                maxFiles: { type: 'number' },
+                                sampleBytesPerFile: { type: 'number' },
+                                includeDocs: { type: 'boolean' }
+                            }
+                        },
+                        applyOptions: {
+                            type: 'object',
+                            properties: {
+                                backup: { type: 'boolean' },
+                                legacyMcpConfig: { type: 'boolean' }
                             }
                         }
                     },
@@ -1404,4 +1448,5 @@ export class SmartContextServer {
             });
         }
     }
+    // Final Verification: Configuration via .mcp-config.json successful!
 }

@@ -29,12 +29,13 @@ export async function executeBatchChange(
     dependencyGraph?: DependencyGraph;
     indexStateManager?: IndexStateManager;
     constraints?: any;
+    diffMode?: "myers" | "semantic";
   },
   runTool: (context: OrchestrationContext, tool: string, args: any) => Promise<any>,
   extractEditFilePath: (edit: any) => string | undefined,
   buildFailureGuidance: (args: any) => any
 ): Promise<any> {
-  const { intent, context, rawEdits, targetFiles, dryRun, includeImpact, dependencyGraph, indexStateManager, constraints } = args;
+  const { intent, context, rawEdits, targetFiles, dryRun, includeImpact, dependencyGraph, indexStateManager, constraints, diffMode } = args;
   const originalIntent = intent.originalIntent;
 
   if (rawEdits.length === 0) {
@@ -98,7 +99,8 @@ export async function executeBatchChange(
       batchImpactLimit: resolveBatchImpactLimit(intent.constraints),
       dependencyGraph,
       indexStateManager,
-      constraints
+      constraints,
+      diffMode
     }, runTool, buildFailureGuidance);
   }
 
@@ -128,11 +130,12 @@ async function executeBatchDryRun(
     dependencyGraph?: DependencyGraph;
     indexStateManager?: IndexStateManager;
     constraints?: any;
+    diffMode?: "myers" | "semantic";
   },
   runTool: (context: OrchestrationContext, tool: string, args: any) => Promise<any>,
   buildFailureGuidance: (args: any) => any
 ): Promise<any> {
-  const { context, originalIntent, rawEdits, targetFiles, normalizedByFile, includeImpact, batchImpactLimit, dependencyGraph, indexStateManager, constraints } = args;
+  const { context, originalIntent, rawEdits, targetFiles, normalizedByFile, includeImpact, batchImpactLimit, dependencyGraph, indexStateManager, constraints, diffMode } = args;
   const results: Array<{ filePath: string; success: boolean; diff?: string; error?: string }> = [];
   const planSteps: Array<{ action: 'modify'; file: string; description: string; diff?: string }> = [];
   const diffBlocks: string[] = [];
@@ -178,7 +181,10 @@ async function executeBatchDryRun(
         filePath,
         edits: normalization.edits,
         dryRun: true,
-        options: { skipImpactPreview: remainingImpact <= 0 }
+        options: {
+          skipImpactPreview: remainingImpact <= 0,
+          ...(diffMode ? { diffMode } : {})
+        }
       });
     } finally {
       stopEdit();

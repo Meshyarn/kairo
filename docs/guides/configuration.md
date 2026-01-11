@@ -51,11 +51,36 @@ Create `.kairo/config/languages.json` to extend or override built-ins:
 }
 ```
 
+### Config bootstrap (manage init/doctor)
+
+You can generate a starter config skeleton with the `manage` tool:
+
+- `manage({ command: "init", mode: "plan" })` → returns a plan (no files written)
+- `manage({ command: "init", mode: "apply" })` → writes `.kairo/config/*` (and minimal `.mcp-config.json`)
+- `manage({ command: "doctor" })` → diagnoses missing/misplaced settings and suggests fixes
+
+By default, `init` targets Kairo config files only. Pass `targets: ["vscode"]` to get a suggested `.vscode/mcp.json` patch.
+
 ## Documents / parsers
 
 | Variable | Purpose |
 |---|---|
-| `KAIRO_WASM_DIR` | Where tree-sitter WASM assets are resolved (including custom Markdown WASM). |
+| `KAIRO_WASM_DIR` | Where tree-sitter WASM assets are resolved (including Markdown/SQL WASM). |
+
+## Native engine toggles (ADR-053-H)
+
+| Variable | Purpose | Notes |
+|---|---|---|
+| `KAIRO_RUST_CORE_ENABLED` | Enable Rust core globally. | `on/off` (default: on). |
+| `KAIRO_RUST_CHUNKING_ENABLED` | Enable Rust chunking. | `on/off` (default: on). |
+| `KAIRO_RUST_DIFF_ENABLED` | Enable Rust diffing. | `on/off` (default: on). |
+| `KAIRO_RUST_SYNTAX_ENABLED` | Enable Rust syntax validation. | `on/off` (default: on). |
+| `KAIRO_RUST_VECTOR_ENABLED` | Enable Rust vector math. | `on/off` (default: on). |
+| `KAIRO_WASM_CHUNKING_ENABLED` | Enable WASM chunking provider. | `on/off` (default: off). |
+| `KAIRO_RUST_CHUNKING` | Legacy Rust chunking toggle. | Backward-compat; prefer `KAIRO_RUST_CHUNKING_ENABLED`. |
+| `KAIRO_TOKENIZER_PATH` | Absolute path to `tokenizer.json`. | Optional; Kairo automatically discovers this in standard cache/model paths. |
+| `KAIRO_DOC_CHUNK_PROFILE` | Default token chunk profile for indexing. | `fast/balanced/deep` (only used when outlineOptions don’t override). |
+
 
 ## Skeleton (large files)
 

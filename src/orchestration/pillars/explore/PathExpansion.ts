@@ -4,6 +4,7 @@ import { OrchestrationContext } from "../../OrchestrationContext.js";
 import { InternalToolRegistry } from "../../InternalToolRegistry.js";
 import { UnifiedContextGraph } from "../../context/UnifiedContextGraph.js";
 import { AstManager } from "../../../ast/AstManager.js";
+import { checkSkeletonSupport } from "../../../ast/LanguageSupportSignals.js";
 import { TopologyInfo } from "../../../types.js";
 import { ExploreItem, truncate } from "./ResultFormatter.js";
 import { isDocPath, isGlob } from "./FilteringStrategy.js";
@@ -203,6 +204,7 @@ export async function buildItemForPath(
         };
     }
 
+    const support = await checkSkeletonSupport(filePath);
     const content = await runTool(context, "code_read", { filePath, view: "skeleton" });
     const preview = safePreview(typeof content === "string" ? content : "");
     return {
@@ -211,6 +213,8 @@ export async function buildItemForPath(
             filePath,
             preview,
             why: ["code_read"]
-        }
+        },
+        degraded: support.degraded,
+        reason: support.reason
     };
 }

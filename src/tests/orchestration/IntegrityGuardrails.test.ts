@@ -8,6 +8,10 @@ describe("IntegrityGuardrails", () => {
       newContent: "console.log('oops');",
       constraints: {
         integrityGuardrails: {
+          protocolProtection: {
+            files: ["src/utils/StdoutGuard.ts"],
+            forbiddenTokens: ["process.stdout", "process.stderr", "console.log"]
+          },
           publicSurfaceMonitor: { enabled: false },
           languageParity: { mode: "permissive", fallbackConfidence: "low" }
         }

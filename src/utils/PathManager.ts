@@ -107,5 +107,5 @@ export class PathManager {
      */
     static getTestRunDir(id: string = Date.now().toString()) {
         return path.join(this.getTestRootDir(), `run_${id}`);
-    }
+    }
 }

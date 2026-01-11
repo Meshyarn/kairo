@@ -1,0 +1,6 @@
+{
+  "imports": ["App\\Utils\\Helper"],
+  "exports": ["Foo", "baz"],
+  "symbols": ["Foo", "bar"],
+  "skeletonIncludes": ["class Foo"]
+}

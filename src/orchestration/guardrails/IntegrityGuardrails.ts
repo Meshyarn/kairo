@@ -12,6 +12,7 @@ import { TextNormalizer } from "../../utils/textNormalization.js";
 import type { ImportInfo, ExportInfo } from "../../indexing/ProjectIndex.js";
 import { normalizePath, toRelativePath } from "../../utils/PathHelpers.js";
 import { AstDiffEngine, type AstChange } from "../../ast/AstDiffEngine.js";
+import { getSupportForFilePath } from "../../config/LanguageSupportLevels.js";
 
 type GuardrailStatus = "pass" | "warn" | "block";
 type LanguageParityMode = "strict" | "balanced" | "permissive";
@@ -179,6 +180,27 @@ export async function evaluateIntegrityGuardrails(args: GuardrailContext): Promi
 
     const astManager = AstManager.getInstance();
     const languageId = astManager.getLanguageId(args.targetPath);
+    const support = getSupportForFilePath(args.targetPath);
+    if (support?.editPolicy?.warnOnEdit) {
+        warnings.push({
+            type: "language_support_degraded",
+            severity: "medium",
+            message: `${languageId} is L2 (understand-grade). Edit safety is best-effort.`,
+            details: { languageId, supportLevel: support.level }
+        });
+    }
+    if (support?.level === "edit-safe" && Array.isArray(support.editPolicy.requireQueries)) {
+        for (const queryName of support.editPolicy.requireQueries) {
+            const availability = await resolveParityAvailability(astManager, args.targetPath, languageId, queryName);
+            if (!availability.available) {
+                status = "block";
+                blockedReason = "language_parity_missing";
+                errorCode = "LANGUAGE_PARITY_MISSING";
+                blockingErrors.push("LANGUAGE_PARITY_MISSING");
+                break;
+            }
+        }
+    }
     const moduleResolver = new ModuleResolver(process.cwd());
     const extractor = new UnifiedExtractor(astManager.getQueryProvider(), {
         moduleResolver

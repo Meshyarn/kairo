@@ -51,6 +51,9 @@ export interface DocumentOutlineOptions {
     chunkStrategy?: "heading" | "structural" | "fixed";
     targetChunkChars?: number;
     maxBlockChars?: number;
+    chunkProfile?: "fast" | "balanced" | "deep";
+    targetChunkTokens?: number;
+    overlapTokens?: number;
 }
 
 export interface SmartFileProfile {
