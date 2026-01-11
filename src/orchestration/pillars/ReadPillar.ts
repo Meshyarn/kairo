@@ -8,6 +8,7 @@ import { checkQuerySupport } from '../../ast/LanguageSupportSignals.js';
 import { SyntaxValidator } from '../../engine/validators/syntax-validator.js';
 import { AstManager } from '../../ast/AstManager.js';
 import { getSupportForFilePath, SupportLevel } from '../../config/LanguageSupportLevels.js';
+import { applyTokenBudget } from '../TokenBudget.js';
 
 export class ReadPillar {
   constructor(private readonly registry: InternalToolRegistry) {}
@@ -23,11 +24,25 @@ export class ReadPillar {
     const sectionId = constraints.sectionId;
     const headingPath = constraints.headingPath;
     const isDocument = this.isDocumentPath(resolvedPath);
+    const envMaxTokens = Number.parseInt(process.env.KAIRO_READ_MAX_TOKENS ?? process.env.KAIRO_DEFAULT_MAX_TOKENS ?? "", 10);
+    const limits = constraints.limits ?? {};
+    const maxTokens = Number.isFinite(limits.maxTokens) && limits.maxTokens! > 0
+      ? limits.maxTokens
+      : (Number.isFinite(envMaxTokens) && envMaxTokens > 0 ? envMaxTokens : undefined);
 
     let content: string = '';
     let documentOutline: any = undefined;
     let contentSource: any = undefined;
     const reasons: string[] = [];
+    let compression: {
+      applied: boolean;
+      mode: "none" | "truncate";
+      elasticWindowPct?: number;
+      maxTokens?: number;
+      estimatedTokens?: number;
+      maxChars?: number;
+      usedChars?: number;
+    } | undefined;
 
     if (!isDocument && view !== 'full') {
       const supportSpec = getSupportForFilePath(resolvedPath);
@@ -152,6 +167,24 @@ export class ReadPillar {
       language: profile?.metadata?.language ?? null
     };
 
+    const tokenBudget = applyTokenBudget(content, {
+      maxTokens,
+      maxChars: typeof constraints.maxChars === 'number' ? constraints.maxChars : undefined
+    });
+    if (tokenBudget.applied) {
+      content = tokenBudget.text;
+      reasons.push('budget_exceeded');
+      compression = {
+        applied: true,
+        mode: tokenBudget.mode,
+        elasticWindowPct: tokenBudget.elasticWindowPct,
+        maxTokens: tokenBudget.maxTokens,
+        estimatedTokens: tokenBudget.estimatedTokens,
+        maxChars: tokenBudget.maxChars,
+        usedChars: tokenBudget.usedChars
+      };
+    }
+
     const degradedReasons = buildDegradedReasons(reasons.length > 0 ? reasons : undefined, {
       filePath: metadata.filePath,
       languageId: metadata.language ?? undefined
@@ -165,8 +198,9 @@ export class ReadPillar {
       profile: includeProfile ? (profile ?? undefined) : undefined,
       skeleton: typeof skeleton === 'string' ? skeleton : undefined,
       document: documentOutline ? { outline: documentOutline } : undefined,
-      degraded: Boolean(contentSource?.degraded),
+      degraded: Boolean(contentSource?.degraded) || Boolean(tokenBudget.applied),
       degradedReasons,
+      compression,
       guidance: {
         message: view === 'full'
           ? 'Full content loaded.'

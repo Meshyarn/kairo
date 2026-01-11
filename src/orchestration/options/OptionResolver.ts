@@ -15,6 +15,7 @@ type ExploreEffective = {
   limits: {
     maxResults?: number;
     maxChars?: number;
+    maxTokens?: number;
     maxItemChars?: number;
     maxBytes?: number;
     maxFiles?: number;

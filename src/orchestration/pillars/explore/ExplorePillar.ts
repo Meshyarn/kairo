@@ -16,6 +16,7 @@ import type { ResearchPack } from "../../../types/flow-artifacts.js";
 import type { FlowArtifactManager } from "../../flow-artifact-manager.js";
 import { OptionResolver } from "../../options/OptionResolver.js";
 import { buildDegradedReasons } from "../../DegradedReasonMapper.js";
+import { applyTokenBudget, estimateTokens } from "../../TokenBudget.js";
 
 import { 
     ExploreItem, 
@@ -96,6 +97,7 @@ export class ExplorePillar {
         const limits = resolvedOptions.effective.limits as {
             maxResults?: number;
             maxChars?: number;
+            maxTokens?: number;
             maxItemChars?: number;
             maxBytes?: number;
             maxFiles?: number;
@@ -150,9 +152,14 @@ export class ExplorePillar {
         const maxChars = Number.isFinite(limits.maxChars) && limits.maxChars! > 0
             ? limits.maxChars!
             : (view === "full" ? DEFAULT_MAX_FULL_CHARS : DEFAULT_MAX_CHARS);
+        const envMaxTokens = Number.parseInt(process.env.KAIRO_EXPLORE_MAX_TOKENS ?? process.env.KAIRO_DEFAULT_MAX_TOKENS ?? "", 10);
+        const maxTokens = Number.isFinite(limits.maxTokens) && limits.maxTokens! > 0
+            ? limits.maxTokens!
+            : (Number.isFinite(envMaxTokens) && envMaxTokens > 0 ? envMaxTokens : undefined);
         const maxItemChars = Number.isFinite(limits.maxItemChars) && limits.maxItemChars! > 0
             ? limits.maxItemChars!
             : Math.max(400, Math.floor(maxChars / Math.max(1, maxResults)));
+        const maxItemTokens = maxTokens ? Math.max(128, Math.floor(maxTokens / Math.max(1, maxResults))) : undefined;
         const maxBytes = Number.isFinite(limits.maxBytes) && limits.maxBytes! > 0
             ? limits.maxBytes!
             : Number.parseInt(process.env.KAIRO_READ_FILE_MAX_BYTES ?? "0", 10) || undefined;
@@ -255,7 +262,31 @@ export class ExplorePillar {
 
         const reasons: string[] = [];
         let degraded = false;
+        let budgetExceeded = false;
         let totalChars = 0;
+        let totalTokens = 0;
+        let compressionEstimatedTokens = 0;
+        let compressionUsedChars = 0;
+
+        const applyBudgetToItem = (item: ExploreItem, isFullContent: boolean): ExploreItem => {
+            const text = isFullContent ? item.content : item.preview;
+            if (!text) return item;
+            const budget = applyTokenBudget(text, {
+                maxTokens: maxItemTokens,
+                maxChars: isFullContent ? maxChars : maxItemChars
+            });
+            compressionEstimatedTokens += budget.estimatedTokens ?? 0;
+            compressionUsedChars += budget.usedChars;
+            if (budget.applied) {
+                budgetExceeded = true;
+            }
+            if (isFullContent) {
+                item.content = budget.text;
+            } else {
+                item.preview = budget.text;
+            }
+            return item;
+        };
 
         if (query) {
             const cursorState = parseItemsCursor(constraints.cursor?.items);
@@ -270,15 +301,15 @@ export class ExplorePillar {
                     const sliced = slicePack(cachedPack, contentCursorState, maxResults, includeDocs, includeCode, includeComments, includeLogs);
                     const expandedDocs = await Promise.all(sliced.docs.map((item) => this.expandDocContent(item, maxChars, context)));
                     const expandedCode = await Promise.all(sliced.code.map((item) => this.expandCodeContent(item, maxChars, context)));
-                    response.data.docs = expandedDocs;
-                    response.data.code = expandedCode;
+                    response.data.docs = expandedDocs.map((item) => applyBudgetToItem(item, true));
+                    response.data.code = expandedCode.map((item) => applyBudgetToItem(item, true));
                     if (sliced.nextCursor) {
                         response.next = { contentCursor: sliced.nextCursor };
                     }
                 } else {
                     const sliced = slicePack(cachedPack, cursorState, maxResults, includeDocs, includeCode, includeComments, includeLogs);
-                    response.data.docs = sliced.docs;
-                    response.data.code = sliced.code;
+                    response.data.docs = sliced.docs.map((item) => applyBudgetToItem(item, false));
+                    response.data.code = sliced.code.map((item) => applyBudgetToItem(item, false));
                     if (sliced.nextCursor) {
                         response.next = { itemsCursor: sliced.nextCursor };
                     }
@@ -341,7 +372,7 @@ export class ExplorePillar {
                     }));
 
                     codeForPack = codeItems;
-                    response.data.code = codeItems.slice(0, maxResults);
+                    response.data.code = codeItems.slice(0, maxResults).map((item) => applyBudgetToItem(item, false));
                     if (codeResults?.degraded) {
                         degraded = true;
                         if (codeResults?.reason) {
@@ -408,7 +439,7 @@ export class ExplorePillar {
                         why: ["document_search"]
                     }));
                     docsForPack = docs;
-                    response.data.docs = docs.slice(0, maxResults);
+                    response.data.docs = docs.slice(0, maxResults).map((item: ExploreItem) => applyBudgetToItem(item, false));
                     if (docResults?.degraded) {
                         degraded = true;
                         if (Array.isArray(docResults?.reasons)) {
@@ -526,7 +557,29 @@ export class ExplorePillar {
                 const payloadItem = item.value;
                 if (!payloadItem) continue;
 
-                const contentLength = (payloadItem.content ?? payloadItem.preview ?? "").length;
+                const isFullContent = typeof payloadItem.content === "string";
+                applyBudgetToItem(payloadItem, isFullContent);
+
+                const contentText = payloadItem.content ?? payloadItem.preview ?? "";
+                const contentLength = contentText.length;
+                const itemTokens = estimateTokens(contentText);
+                if (maxTokens) {
+                    if (view === "full") {
+                        if (totalTokens + itemTokens > maxTokens) {
+                            return {
+                                success: false,
+                                status: "blocked",
+                                message: "Full read blocked by maxTokens. Increase limits.maxTokens and retry.",
+                                data: { docs: [], code: [] },
+                                sessionId: resolvedSessionId
+                            };
+                        }
+                    } else if (totalTokens + itemTokens > maxTokens) {
+                        degraded = true;
+                        reasons.push("budget_exceeded");
+                        break;
+                    }
+                }
                 if (view === "full") {
                     if (totalChars + contentLength > maxChars) {
                         return {
@@ -545,6 +598,7 @@ export class ExplorePillar {
                     }
                 }
                 totalChars += contentLength;
+                totalTokens += itemTokens;
 
                 if (isDocPath(entry.path)) {
                     response.data.docs.push(payloadItem);
@@ -557,6 +611,20 @@ export class ExplorePillar {
         if (response.data.docs.length === 0 && response.data.code.length === 0) {
             response.status = "no_results";
             response.message = "No results found.";
+        }
+
+        if (budgetExceeded) {
+            degraded = true;
+            reasons.push("budget_exceeded");
+            response.compression = {
+                applied: true,
+                mode: "truncate",
+                elasticWindowPct: maxTokens ? 0.05 : undefined,
+                maxTokens,
+                estimatedTokens: compressionEstimatedTokens > 0 ? compressionEstimatedTokens : undefined,
+                maxChars,
+                usedChars: compressionUsedChars > 0 ? compressionUsedChars : undefined
+            };
         }
 
         if (degraded) {

@@ -27,6 +27,15 @@ export type ExploreResponse = {
     degraded?: boolean;
     reasons?: string[];
     degradedReasons?: DegradedReason[];
+    compression?: {
+        applied: boolean;
+        mode: "none" | "truncate";
+        elasticWindowPct?: number;
+        maxTokens?: number;
+        estimatedTokens?: number;
+        maxChars?: number;
+        usedChars?: number;
+    };
     stats?: Record<string, unknown>;
     researchPack?: ResearchPack;
     insights?: Array<{
