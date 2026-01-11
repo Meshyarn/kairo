@@ -7,7 +7,9 @@ import type {
     ArtifactType,
     FlowArtifact,
     FlowSession,
-    FlowSessionOutcome
+    FlowSessionOutcome,
+    FlowSessionStatus,
+    StylePack
 } from "../types/flow-artifacts.js";
 
 export interface FlowArtifactManagerOptions {
@@ -17,10 +19,32 @@ export interface FlowArtifactManagerOptions {
     autoPersist?: boolean;
 }
 
+interface FlowArtifactIndexEntry {
+    type: ArtifactType;
+    path?: string;
+    sessionId?: string;
+    createdAt?: number;
+}
+
+interface FlowSessionIndexEntry {
+    path?: string;
+    status?: FlowSessionStatus;
+    updatedAt?: number;
+}
+
+interface FlowArtifactIndex {
+    version: number;
+    updatedAt: number;
+    artifacts: Record<string, FlowArtifactIndexEntry>;
+    sessions: Record<string, FlowSessionIndexEntry>;
+}
+
 export class FlowArtifactManager {
     private readonly cache: LRUCache<ArtifactId, FlowArtifact>;
     private readonly persistPath: string;
+    private readonly indexPath: string;
     private readonly sessions: Map<string, FlowSession>;
+    private index: FlowArtifactIndex;
 
     constructor(private readonly options: FlowArtifactManagerOptions = {}) {
         this.cache = new LRUCache({
@@ -28,12 +52,20 @@ export class FlowArtifactManager {
             ttl: options.defaultTTL ?? 30 * 60 * 1000
         });
         this.persistPath = options.persistPath ?? path.resolve(process.cwd(), ".kairo", "flow-artifacts");
+        this.indexPath = path.join(this.persistPath, "index.json");
         this.sessions = new Map<string, FlowSession>();
+        this.index = {
+            version: 1,
+            updatedAt: 0,
+            artifacts: {},
+            sessions: {}
+        };
     }
 
     store<T extends FlowArtifact>(artifact: T): ArtifactId {
         const stored = { ...artifact };
         this.cache.set(stored.id, stored);
+        this.updateIndexForArtifact(stored);
         if (stored.sessionId) {
             this.attachToSession(stored.sessionId, stored, stored.metadata?.intent as string | undefined);
         }
@@ -60,6 +92,39 @@ export class FlowArtifactManager {
     getBySession(sessionId: string): FlowArtifact[] {
         return Array.from(this.cache.values())
             .filter((artifact) => artifact.sessionId === sessionId);
+    }
+
+    getLatestStylePack(sessionId: string): StylePack | undefined {
+        const latest = this.getBySession(sessionId)
+            .filter((artifact) => artifact.type === "style")
+            .sort((a, b) => b.createdAt - a.createdAt)[0];
+        return latest && "pack" in latest ? (latest.pack as StylePack) : undefined;
+    }
+
+    getSessionSummary(sessionId: string): { session: FlowSession; summary: { counts: Record<ArtifactType, number>; lastUpdatedAt: number; latestIds: Record<string, string | undefined> } } | undefined {
+        const session = this.sessions.get(sessionId);
+        if (!session) return undefined;
+        const artifacts = this.getBySession(sessionId);
+        const rawCounts = this.countByType(artifacts);
+        const counts = {
+            research: rawCounts.research ?? 0,
+            analysis: rawCounts.analysis ?? 0,
+            style: rawCounts.style ?? 0,
+            draft: rawCounts.draft ?? 0,
+            review: rawCounts.review ?? 0
+        };
+        const lastUpdatedAt = Math.max(
+            session.updatedAt ?? session.startedAt,
+            ...(artifacts.map((artifact) => artifact.createdAt))
+        );
+        const latestIds: Record<string, string | undefined> = {
+            research: session.artifacts.research,
+            analysis: session.artifacts.analysis,
+            style: session.artifacts.style,
+            draft: session.artifacts.drafts.slice(-1)[0],
+            review: session.artifacts.reviews.slice(-1)[0]
+        };
+        return { session, summary: { counts, lastUpdatedAt, latestIds } };
     }
 
     resolveSessionId(rawSessionId: string | undefined, intent: string): string | undefined {
@@ -92,6 +157,7 @@ export class FlowArtifactManager {
         session.status = "completed";
         session.outcome = outcome;
         session.updatedAt = Date.now();
+        this.updateIndexForSession(session);
         if (this.options.autoPersist) {
             void this.persistSession(session);
         }
@@ -105,6 +171,7 @@ export class FlowArtifactManager {
         if (artifact?.sessionId) {
             this.detachFromSession(artifact.sessionId, artifact);
         }
+        this.removeIndexEntry(id);
         void this.removePersisted(id);
         return existed;
     }
@@ -129,6 +196,8 @@ export class FlowArtifactManager {
     async persist(id: ArtifactId, artifact: FlowArtifact): Promise<string> {
         const target = await this.resolvePersistPath(id, artifact.type, true);
         await fs.writeFile(target, JSON.stringify(artifact, null, 2), "utf-8");
+        this.updateIndexForArtifact(artifact, target);
+        await this.persistIndex();
         return target;
     }
 
@@ -138,6 +207,7 @@ export class FlowArtifactManager {
             const raw = await fs.readFile(filePath, "utf-8");
             const artifact = JSON.parse(raw) as FlowArtifact;
             this.store(artifact);
+            this.updateIndexForArtifact(artifact, filePath);
             return artifact;
         } catch {
             return undefined;
@@ -149,6 +219,7 @@ export class FlowArtifactManager {
             const raw = await fs.readFile(filePath, "utf-8");
             const artifact = JSON.parse(raw) as FlowArtifact;
             this.store(artifact);
+            this.updateIndexForArtifact(artifact, filePath);
             return artifact;
         } catch {
             return undefined;
@@ -156,6 +227,10 @@ export class FlowArtifactManager {
     }
 
     async restoreAll(): Promise<number> {
+        const restoredFromIndex = await this.restoreFromIndex();
+        if (restoredFromIndex >= 0) {
+            return restoredFromIndex;
+        }
         try {
             const entries = await fs.readdir(this.persistPath, { withFileTypes: true });
             let restored = 0;
@@ -186,6 +261,8 @@ export class FlowArtifactManager {
         await fs.mkdir(sessionDir, { recursive: true });
         const target = path.join(sessionDir, `${session.id}.json`);
         await fs.writeFile(target, JSON.stringify(session, null, 2), "utf-8");
+        this.updateIndexForSession(session, target);
+        await this.persistIndex();
         return target;
     }
 
@@ -196,6 +273,7 @@ export class FlowArtifactManager {
             const raw = await fs.readFile(filePath, "utf-8");
             const session = JSON.parse(raw) as FlowSession;
             this.sessions.set(session.id, session);
+            this.updateIndexForSession(session, filePath);
             return session;
         } catch {
             return undefined;
@@ -209,6 +287,126 @@ export class FlowArtifactManager {
         } catch {
             // ignore
         }
+    }
+
+    private updateIndexForArtifact(artifact: FlowArtifact, filePath?: string): void {
+        const entry: FlowArtifactIndexEntry = {
+            type: artifact.type,
+            sessionId: artifact.sessionId,
+            createdAt: artifact.createdAt
+        };
+        if (filePath) {
+            entry.path = this.toRelativePersistPath(filePath);
+        }
+        this.index.artifacts[artifact.id] = {
+            ...this.index.artifacts[artifact.id],
+            ...entry
+        };
+        this.touchIndex();
+        if (this.options.autoPersist) {
+            void this.persistIndex();
+        }
+    }
+
+    private updateIndexForSession(session: FlowSession, filePath?: string): void {
+        const entry: FlowSessionIndexEntry = {
+            status: session.status,
+            updatedAt: session.updatedAt ?? session.startedAt
+        };
+        if (filePath) {
+            entry.path = this.toRelativePersistPath(filePath);
+        }
+        this.index.sessions[session.id] = {
+            ...this.index.sessions[session.id],
+            ...entry
+        };
+        this.touchIndex();
+        if (this.options.autoPersist) {
+            void this.persistIndex();
+        }
+    }
+
+    private removeIndexEntry(id: ArtifactId): void {
+        if (this.index.artifacts[id]) {
+            delete this.index.artifacts[id];
+            this.touchIndex();
+            if (this.options.autoPersist) {
+                void this.persistIndex();
+            }
+        }
+    }
+
+    private touchIndex(): void {
+        this.index.updatedAt = Date.now();
+    }
+
+    private async persistIndex(): Promise<void> {
+        await fs.mkdir(this.persistPath, { recursive: true });
+        await fs.writeFile(this.indexPath, JSON.stringify(this.index, null, 2), "utf-8");
+    }
+
+    private async restoreFromIndex(): Promise<number> {
+        const index = await this.readIndex();
+        if (!index) return -1;
+        this.index = index;
+        let restored = 0;
+        const sessionEntries = Object.entries(index.sessions ?? {});
+        for (const [sessionId, entry] of sessionEntries) {
+            if (entry?.path) {
+                const sessionPath = this.toAbsolutePersistPath(entry.path);
+                await this.restoreSessionFromPath(sessionId, sessionPath);
+            } else {
+                await this.restoreSession(sessionId);
+            }
+        }
+        const artifactEntries = Object.entries(index.artifacts ?? {});
+        for (const [artifactId, entry] of artifactEntries) {
+            const type = entry?.type as ArtifactType | undefined;
+            const pathOverride = entry?.path ? this.toAbsolutePersistPath(entry.path) : undefined;
+            const filePath = pathOverride ?? await this.resolvePersistPath(artifactId as ArtifactId, type);
+            const artifact = await this.importFromPath(filePath);
+            if (artifact) restored += 1;
+        }
+        return restored;
+    }
+
+    private async restoreSessionFromPath(sessionId: string, filePath: string): Promise<FlowSession | undefined> {
+        try {
+            const raw = await fs.readFile(filePath, "utf-8");
+            const session = JSON.parse(raw) as FlowSession;
+            if (session.id !== sessionId) {
+                session.id = sessionId;
+            }
+            this.sessions.set(session.id, session);
+            this.updateIndexForSession(session, filePath);
+            return session;
+        } catch {
+            return undefined;
+        }
+    }
+
+    private async readIndex(): Promise<FlowArtifactIndex | null> {
+        try {
+            const raw = await fs.readFile(this.indexPath, "utf-8");
+            const parsed = JSON.parse(raw) as FlowArtifactIndex;
+            if (!parsed || typeof parsed !== "object") return null;
+            return {
+                version: parsed.version ?? 1,
+                updatedAt: parsed.updatedAt ?? 0,
+                artifacts: parsed.artifacts ?? {},
+                sessions: parsed.sessions ?? {}
+            };
+        } catch {
+            return null;
+        }
+    }
+
+    private toRelativePersistPath(filePath: string): string {
+        return path.relative(this.persistPath, filePath);
+    }
+
+    private toAbsolutePersistPath(relativePath: string): string {
+        return path.join(this.persistPath, relativePath);
     }
 
     private async resolvePersistPath(id: ArtifactId, type?: ArtifactType, ensureDir?: boolean): Promise<string> {
@@ -282,6 +480,7 @@ export class FlowArtifactManager {
             }
         };
         this.sessions.set(session.id, session);
+        this.updateIndexForSession(session);
         if (this.options.autoPersist) {
             void this.persistSession(session);
         }
@@ -314,6 +513,7 @@ export class FlowArtifactManager {
                 break;
         }
         session.updatedAt = Date.now();
+        this.updateIndexForSession(session);
         if (this.options.autoPersist) {
             void this.persistSession(session);
         }
@@ -356,6 +556,7 @@ export class FlowArtifactManager {
                 break;
         }
         session.updatedAt = Date.now();
+        this.updateIndexForSession(session);
         if (this.options.autoPersist) {
             void this.persistSession(session);
         }

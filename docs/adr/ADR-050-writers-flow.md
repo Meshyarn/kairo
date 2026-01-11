@@ -30,7 +30,7 @@ Writer’s Flow is a **workflow contract** that sequences existing pillars:
 
 ## What is already implemented vs planned
 
-This ADR is a **workflow contract**. In `0.2.0`, treat it as guidance: the system contains the workflow artifacts and session chaining, but the flow is not “enforced” end-to-end.
+This ADR is a **workflow contract**. In `0.2.x`, treat it as guidance: the system contains the workflow artifacts and session chaining, but the flow is not “enforced” end-to-end.
 
 Already implemented (workflow artifacts + session chaining):
 

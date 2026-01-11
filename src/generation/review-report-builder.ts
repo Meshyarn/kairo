@@ -10,6 +10,8 @@ import type {
     VibeAlignmentValidation,
     Verdict
 } from "../types/flow-artifacts.js";
+import { scoreVibeAlignment } from "./vibe-alignment-scorer.js";
+import type { StylePack } from "../types/flow-artifacts.js";
 
 export interface ReviewReportBuilderOptions {
     strictness?: "strict" | "balanced" | "permissive";
@@ -35,6 +37,7 @@ export class ReviewReportBuilder {
         oldContent?: string;
         guardrailResult?: any;
         constraints?: any;
+        stylePack?: StylePack;
     }): Promise<ReviewReport> {
         const syntax = this.options.enableSyntax === false
             ? undefined
@@ -46,7 +49,7 @@ export class ReviewReportBuilder {
 
         const vibeAlignment = this.options.enableVibe === false
             ? undefined
-            : this.validateVibeAlignment();
+            : this.validateVibeAlignment(input);
 
         const verdict = this.computeVerdict([syntax, guardrails, vibeAlignment].filter(Boolean) as Array<{ verdict: Verdict }>);
 
@@ -121,19 +124,17 @@ export class ReviewReportBuilder {
         };
     }
 
-    private validateVibeAlignment(): VibeAlignmentValidation {
-        return {
-            verdict: "pass",
-            score: 1.0,
-            breakdown: {
-                formatting: { score: 1.0, issues: [] },
-                naming: { score: 1.0, issues: [] },
-                imports: { score: 1.0, issues: [] },
-                patterns: { score: 1.0, issues: [] }
-            },
-            deviations: [],
-            summary: "Vibe alignment check not yet implemented."
-        };
+    private validateVibeAlignment(input: {
+        filePath: string;
+        content: string;
+        stylePack?: StylePack;
+    }): VibeAlignmentValidation {
+        return scoreVibeAlignment({
+            filePath: input.filePath,
+            content: input.content,
+            stylePack: input.stylePack,
+            strictness: this.options.strictness
+        });
     }
 
     private computeVerdict(validations: Array<{ verdict: Verdict }>): Verdict {

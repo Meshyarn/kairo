@@ -34,6 +34,29 @@ change({ intent: "Add domain whitelist", options: { dryRun: true } })
 change({ intent: "Add domain whitelist" })
 ```
 
+### 1.5 Writer's Flow (best review quality)
+
+```typescript
+// Step 0: Start a session
+const { sessionId } = await explore({ query: "auth flow", research: { sketch: true }, sessionId: "new" })
+
+// Step 1: Build session artifacts once
+await understand({
+  goal: "src/auth",
+  sessionId,
+  vibe: { extract: true, scope: "src/**/*.ts" },
+  analysis: { clusters: true }
+})
+
+// Step 2: Plan first (dry-run)
+const plan = await change({ intent: "Tighten JWT validation", targetFiles: ["src/auth/jwt.ts"], options: { dryRun: true }, sessionId })
+
+// Step 3: Apply
+await change({ ...plan, options: { dryRun: false }, sessionId })
+```
+
+Tip: `workflowMeta` + `workflowWarnings` make missing session artifacts visible without breaking legacy calls.
+
 ### 2. Search → Deep Dive
 ```typescript
 // Step 1: Find

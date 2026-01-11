@@ -100,6 +100,8 @@ Plan/apply safe edits with impact analysis.
 | `targetFiles` | `string[]` |  | Constrain the blast radius. |
 | `edits` | `object[]` |  | Structured edits (advanced). |
 | `options.dryRun` | `boolean` |  | Default behavior is dry-run planning. |
+| `draftId` | `string` |  | Continue a refinement loop from a prior DraftPack. |
+| `refinement` | `string` |  | Extra guidance when refining a prior draft. |
 | `draftOptions.skeletonOnly` | `boolean` |  | Skeleton-only DraftPack output. |
 | `draftOptions.includeImpact` | `boolean` |  | Include impact signals in DraftPack. |
 | `reviewOptions.preApply` | `boolean` |  | Run pre-apply review. |
@@ -107,12 +109,20 @@ Plan/apply safe edits with impact analysis.
 | `reviewOptions.strictness` | `"strict" \| "balanced" \| "permissive"` |  | Review policy. |
 | `reviewOptions.blockOn` | `("syntax" \| "semantic" \| "guardrails" \| "vibe")[]` |  | Blocking criteria. |
 | `sessionId` | `string` |  | Flow session id (`"new"` to start). |
+| `stylePack` | `string \| object` |  | Override StylePack (artifact id or inline pack). |
 | `options.includeImpact` | `boolean` |  | Include impact report when enabled. |
 | `options.includeSymbolImpact` | `boolean` |  | Include symbol-level impact signals (when available). |
 | `options.autoRollback` | `boolean` |  | Reserved (implementation-dependent). |
 | `options.batchMode` | `boolean` |  | Reserved (implementation-dependent). |
 | `options.suggestDocs` | `boolean` |  | Enable doc update suggestions on successful apply. |
 | `options.batchImpactLimit` | `number` |  | Max files to include in batch impact preview. |
+
+**Workflow output**
+
+When using sessions (Writer's Flow), `change` also returns:
+
+- `workflowMeta` — confidence + workflowStatus (hasResearch/hasAnalysis/hasStylePack/dryRunUsed)
+- `workflowWarnings` — actionable guidance for missing flow artifacts (optional; only present when needed)
 
 **Output (v2 / resolver path)**
 
@@ -146,6 +156,8 @@ Create or scaffold files.
 | `template` | `string` |  | Template name/path (if supported). |
 | `content` | `string` |  | Explicit content overrides generation. |
 | `dryRun` | `boolean` |  | Generate DraftPack only. |
+| `draftId` | `string` |  | Continue a refinement loop from a prior DraftPack. |
+| `refinement` | `string` |  | Extra guidance when refining a prior draft. |
 | `draftOptions.skeletonOnly` | `boolean` |  | Skeleton-only DraftPack output. |
 | `draftOptions.includeImpact` | `boolean` |  | Include impact signals in DraftPack. |
 | `reviewOptions.preApply` | `boolean` |  | Run pre-apply review. |
@@ -153,10 +165,18 @@ Create or scaffold files.
 | `reviewOptions.strictness` | `"strict" \| "balanced" \| "permissive"` |  | Review policy. |
 | `reviewOptions.blockOn` | `("syntax" \| "semantic" \| "guardrails" \| "vibe")[]` |  | Blocking criteria. |
 | `sessionId` | `string` |  | Flow session id (`"new"` to start). |
+| `stylePack` | `string \| object` |  | Override StylePack (artifact id or inline pack). |
 | `options.safeWrite` | `boolean` |  | Use transactional write path (undo/rollback support when available). |
 | `options.quickGenerate` | `boolean` |  | Generate content from intent when `content` is not provided. |
 | `options.smartWrite` | `boolean` |  | Pattern-aware generation using similar files (when possible). |
 | `options.styleReference` | `string[]` |  | Optional explicit reference files for pattern extraction. |
+
+**Workflow output**
+
+When using sessions (Writer's Flow), `write` also returns:
+
+- `workflowMeta` — confidence + workflowStatus (hasResearch/hasAnalysis/hasStylePack/dryRunUsed)
+- `workflowWarnings` — actionable guidance for missing flow artifacts (optional; only present when needed)
 
 **Output (safeWrite mode)**
 
@@ -178,10 +198,12 @@ Project/session state utilities.
 
 | Field | Type | Required | Notes |
 |---|---|---:|---|
-| `command` | `"status" \| "undo" \| "redo" \| "reindex" \| "rebuild" \| "history" \| "test" \| "sessions" \| "session" \| "artifacts" \| "artifact" \| "discard" \| "prune" \| "export" \| "import"` | ✓ | `rebuild` maps to `reindex`. |
+| `command` | `"status" \| "undo" \| "redo" \| "reindex" \| "rebuild" \| "history" \| "test" \| "sessions" \| "session" \| "session_complete" \| "artifacts" \| "artifact" \| "discard" \| "prune" \| "export" \| "import"` | ✓ | `rebuild` maps to `reindex`. |
 | `scope` | `"file" \| "transaction" \| "project"` |  | Mainly used by `test`. |
 | `target` | `string` |  | Mainly used by `test`. |
 | `limit` | `number` |  | Max items for list commands (sessions). |
+| `sessionId` | `string` |  | Session id for `session` / `session_complete`. |
+| `outcome` | `object` |  | Used by `session_complete` (e.g. `{ summary, status, nextSteps }`). |
 | `artifactOptions.type` | `string` |  | Filter artifacts by type. |
 | `artifactOptions.sessionId` | `string` |  | Filter artifacts by session. |
 | `artifactOptions.limit` | `number` |  | Max artifacts to return. |

@@ -5,6 +5,7 @@ import { OrchestrationContext } from '../OrchestrationContext.js';
 import { ParsedIntent } from '../IntentRouter.js';
 import { metrics } from '../../utils/MetricsCollector.js';
 import { type TemplateType, type TemplateContext } from '../../generation/SimpleTemplateGenerator.js';
+import { FeatureFlags } from '../../config/FeatureFlags.js';
 
 import {
     smartWriteCode,
@@ -18,7 +19,7 @@ import {
 } from "../guardrails/IntegrityGuardrails.js";
 import type { DependencyGraph } from "../../ast/DependencyGraph.js";
 import type { IndexStateManager } from "../../indexing/IndexStateManager.js";
-import type { DraftPack } from "../../types/flow-artifacts.js";
+import type { DraftPack, StylePack, WorkflowMeta } from "../../types/flow-artifacts.js";
 import { DraftPackBuilder } from "../../generation/draft-pack-builder.js";
 import { ReviewReportBuilder } from "../../generation/review-report-builder.js";
 import type { FlowArtifactManager } from "../flow-artifact-manager.js";
@@ -44,14 +45,39 @@ export class WritePillar {
       const quickGenerate = Boolean((constraints as any).quickGenerate);
       const smartWrite = Boolean((constraints as any).smartWrite);
       const styleReference = (constraints as any).styleReference as string[] | undefined;
-      const dryRun = Boolean((constraints as any).dryRun);
-      const draftOptions = (constraints as any).draftOptions as { skeletonOnly?: boolean } | undefined;
-      const reviewOptions = (constraints as any).reviewOptions ?? {};
       const rawSessionId = typeof (constraints as any).sessionId === "string" ? (constraints as any).sessionId : undefined;
+      const dryRun = this.resolveDryRun(constraints, rawSessionId);
+      const draftOptions = (constraints as any).draftOptions as { skeletonOnly?: boolean } | undefined;
+      const reviewOptions = this.resolveReviewOptions((constraints as any).reviewOptions, Boolean(rawSessionId));
+      const draftId = typeof (constraints as any).draftId === "string" ? (constraints as any).draftId : undefined;
+      const refinement = typeof (constraints as any).refinement === "string" ? (constraints as any).refinement : undefined;
       const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
       const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, originalIntent);
-      const attachSession = <T extends Record<string, any>>(payload: T): T & { sessionId?: string } =>
-        resolvedSessionId ? { ...payload, sessionId: resolvedSessionId } : payload;
+      const stylePackOverride = this.resolveStylePack((constraints as any).stylePack, artifactManager);
+      const sessionStylePack = stylePackOverride
+        ?? (resolvedSessionId && artifactManager
+          ? artifactManager.getLatestStylePack(resolvedSessionId)
+          : undefined);
+      const draftArtifact = draftId ? artifactManager?.get(draftId) : undefined;
+      const draftPack = draftArtifact?.type === "draft" ? (draftArtifact as any).pack : undefined;
+      const draftContent = draftPack?.phantomFiles?.[0]?.content as string | undefined;
+      const workflowMeta = this.buildWorkflowMeta({
+        sessionId: resolvedSessionId,
+        dryRun,
+        stylePack: sessionStylePack,
+        artifactManager
+      });
+      const workflowWarnings = this.buildWorkflowWarnings(workflowMeta, Boolean(resolvedSessionId));
+      const attachSession = <T extends Record<string, any>>(payload: T): T & { sessionId?: string; workflowMeta: WorkflowMeta; workflowWarnings?: string[] } => {
+        const next = {
+          ...payload,
+          workflowMeta
+        } as T & { sessionId?: string; workflowMeta: WorkflowMeta; workflowWarnings?: string[] };
+        if (workflowWarnings.length > 0) {
+          next.workflowWarnings = workflowWarnings;
+        }
+        return resolvedSessionId ? { ...next, sessionId: resolvedSessionId } : next;
+      };
 
       if (!targetPath) {
         return attachSession({
@@ -69,11 +95,15 @@ export class WritePillar {
       const resolvedPath = await this.resolveTargetPath(targetPath);
 
       if (dryRun) {
+        const refinedIntent = refinement ? `${originalIntent}\nRefinement: ${refinement}` : originalIntent;
+        if (!hasExplicitContent && draftContent) {
+          content = draftContent;
+        }
         if (smartWrite && !hasExplicitContent) {
           try {
             const generated = await smartWriteCode(
               resolvedPath,
-              originalIntent,
+              refinedIntent,
               constraints,
               context,
               (ctx, tool, args) => this.runTool(ctx, tool, args),
@@ -90,7 +120,7 @@ export class WritePillar {
 
         if ((quickGenerate || smartWrite) && !hasExplicitContent && content === '') {
           try {
-            const generated = await quickGenerateCode(resolvedPath, originalIntent, (i, p) => this.parseGenerationIntent(i, p));
+            const generated = await quickGenerateCode(resolvedPath, refinedIntent, (i, p) => this.parseGenerationIntent(i, p));
             if (generated) {
               content = generated.code;
             }
@@ -103,7 +133,7 @@ export class WritePillar {
           const templated = await resolveTemplateContent(
             template,
             resolvedPath,
-            originalIntent,
+            refinedIntent,
             context,
             (ctx, tool, args) => this.runTool(ctx, tool, args),
             (v) => this.toPascalCase(v),
@@ -126,11 +156,12 @@ export class WritePillar {
           includePhantomDiff: true
         });
         const draftPack: DraftPack = await builder.buildForWrite({
-          intent: originalIntent,
+          intent: refinedIntent,
           targetPath: resolvedPath,
           content,
           existingContent
         });
+        draftPack.workflowMeta = workflowMeta;
 
         const preApplyReview = (reviewOptions?.preApply ?? true)
           ? await new ReviewReportBuilder(
@@ -143,7 +174,8 @@ export class WritePillar {
               filePath: resolvedPath,
               content,
               oldContent: existingContent ?? "",
-              constraints
+              constraints,
+              stylePack: sessionStylePack
             })
           : undefined;
         if (artifactManager) {
@@ -153,6 +185,7 @@ export class WritePillar {
             createdAt: draftPack.createdAt,
             pack: draftPack,
             sessionId: resolvedSessionId,
+            parentId: draftId,
             metadata: { intent: originalIntent }
           });
           if (preApplyReview) {
@@ -196,7 +229,19 @@ export class WritePillar {
           
           if (generated) {
             content = generated.code;
-            return await this.writeGeneratedCode(resolvedPath, content, originalIntent, context, generated.templateType, generated.imports, constraints, resolvedSessionId);
+            const result = await this.writeGeneratedCode(
+              resolvedPath,
+              content,
+              originalIntent,
+              context,
+              generated.templateType,
+              generated.imports,
+              constraints,
+              resolvedSessionId,
+              reviewOptions,
+              sessionStylePack
+            );
+            return attachSession(result);
           }
         } catch (error: any) {
           stopSmartWrite();
@@ -211,7 +256,19 @@ export class WritePillar {
           stopGenerate();
           if (generated) {
             content = generated.code;
-            return await this.writeGeneratedCode(resolvedPath, content, originalIntent, context, generated.templateType, undefined, constraints, resolvedSessionId);
+            const result = await this.writeGeneratedCode(
+              resolvedPath,
+              content,
+              originalIntent,
+              context,
+              generated.templateType,
+              undefined,
+              constraints,
+              resolvedSessionId,
+              reviewOptions,
+              sessionStylePack
+            );
+            return attachSession(result);
           }
         } catch (error: any) {
           stopGenerate();
@@ -264,6 +321,33 @@ export class WritePillar {
               warnings: guardrailResult.warnings,
               guidance: {
                 message: guardrailResult.violations?.[0]?.message ?? 'Write blocked by integrity guardrails.'
+              }
+            });
+          }
+          const reviewBlock = await this.checkReviewBlock({
+            filePath: resolvedPath,
+            content,
+            oldContent: existingContent,
+            guardrailResult,
+            constraints,
+            reviewOptions,
+            stylePack: sessionStylePack
+          });
+          if (reviewBlock.blocked) {
+            stopSafePatch();
+            return attachSession({
+              success: false,
+              status: 'blocked',
+              createdFiles: [],
+              transactionId: '',
+              rollbackAvailable: false,
+              writeMode: 'safe',
+              blockedReason: 'review_blocked',
+              review: reviewBlock.review,
+              reviewBlockReasons: reviewBlock.reasons,
+              guidance: {
+                message: reviewBlock.message ?? 'Write blocked by review policy.',
+                reviewBlockReasons: reviewBlock.reasons
               }
             });
           }
@@ -349,6 +433,32 @@ export class WritePillar {
             warnings: guardrailResult.warnings,
             guidance: {
               message: guardrailResult.violations?.[0]?.message ?? 'Write blocked by integrity guardrails.'
+            }
+          });
+        }
+        const reviewBlock = await this.checkReviewBlock({
+          filePath: resolvedPath,
+          content,
+          oldContent: existingContent,
+          guardrailResult,
+          constraints,
+          reviewOptions,
+          stylePack: sessionStylePack
+        });
+        if (reviewBlock.blocked) {
+          return attachSession({
+            success: false,
+            status: 'blocked',
+            createdFiles: [],
+            transactionId: '',
+            rollbackAvailable: false,
+            writeMode: 'fast',
+            blockedReason: 'review_blocked',
+            review: reviewBlock.review,
+            reviewBlockReasons: reviewBlock.reasons,
+            guidance: {
+              message: reviewBlock.message ?? 'Write blocked by review policy.',
+              reviewBlockReasons: reviewBlock.reasons
             }
           });
         }
@@ -456,6 +566,32 @@ export class WritePillar {
           }
         });
       }
+      const reviewBlock = await this.checkReviewBlock({
+        filePath: resolvedPath,
+        content,
+        oldContent: existingContent ?? '',
+        guardrailResult,
+        constraints,
+        reviewOptions,
+        stylePack: sessionStylePack
+      });
+      if (reviewBlock.blocked) {
+        return attachSession({
+          success: false,
+          status: 'blocked',
+          createdFiles: [],
+          transactionId: '',
+          rollbackAvailable: false,
+          writeMode: 'safe',
+          blockedReason: 'review_blocked',
+          review: reviewBlock.review,
+          reviewBlockReasons: reviewBlock.reasons,
+          guidance: {
+            message: reviewBlock.message ?? 'Write blocked by review policy.',
+            reviewBlockReasons: reviewBlock.reasons
+          }
+        });
+      }
 
       const editResult = await this.runTool(context, 'edit_transaction', {
         filePath: resolvedPath,
@@ -495,6 +631,104 @@ export class WritePillar {
     return targetPath;
   }
 
+  private resolveDryRun(constraints: any, sessionId?: string): boolean {
+    const raw = constraints?.dryRun;
+    if (typeof raw === "boolean") return raw;
+    if (sessionId && FeatureFlags.isEnabled(FeatureFlags.WRITERS_FLOW_DEFAULT_DRYRUN)) {
+      return true;
+    }
+    return false;
+  }
+
+  private resolveReviewOptions(raw: any, hasSession: boolean): any {
+    const reviewOptions = raw ?? {};
+    if (!FeatureFlags.isEnabled(FeatureFlags.WRITERS_FLOW_REVIEW_DEFAULTS)) {
+      return reviewOptions;
+    }
+    const defaults = hasSession
+      ? { preApply: true, postApply: false, strictness: "balanced", blockOn: ["syntax", "guardrails", "vibe"] }
+      : { preApply: true, postApply: false, strictness: "permissive", blockOn: ["syntax"] };
+    const hasBlockOn = Array.isArray(reviewOptions?.blockOn);
+    return {
+      ...defaults,
+      ...reviewOptions,
+      blockOn: hasBlockOn ? reviewOptions.blockOn : defaults.blockOn
+    };
+  }
+
+  private resolveStylePack(input: any, artifactManager?: FlowArtifactManager): StylePack | undefined {
+    if (!input) return undefined;
+    if (typeof input === "string") {
+      const artifact = artifactManager?.get(input);
+      if (artifact?.type === "style" && "pack" in artifact) {
+        return artifact.pack as StylePack;
+      }
+      return undefined;
+    }
+    if (input && typeof input === "object") {
+      if ("profile" in input && "createdAt" in input) {
+        return input as StylePack;
+      }
+      if (input?.type === "style" && input?.pack) {
+        return input.pack as StylePack;
+      }
+    }
+    return undefined;
+  }
+
+  private buildWorkflowMeta(args: {
+    sessionId?: string;
+    dryRun: boolean;
+    stylePack?: StylePack;
+    artifactManager?: FlowArtifactManager;
+  }): WorkflowMeta {
+    const sessionArtifacts = args.sessionId && args.artifactManager
+      ? args.artifactManager.getBySession(args.sessionId)
+      : [];
+    const hasResearch = sessionArtifacts.some((artifact) => artifact.type === "research");
+    const hasAnalysis = sessionArtifacts.some((artifact) => artifact.type === "analysis");
+    const hasStylePack = Boolean(args.stylePack);
+    const dryRunUsed = args.dryRun;
+    const confidence: WorkflowMeta["confidence"] =
+      hasResearch && hasAnalysis && hasStylePack && dryRunUsed
+        ? "high"
+        : (hasStylePack || hasAnalysis || dryRunUsed)
+          ? "medium"
+          : "low";
+    const reasons: string[] = [];
+    if (!hasResearch) reasons.push("missing_research");
+    if (!hasAnalysis) reasons.push("missing_analysis");
+    if (!hasStylePack) reasons.push("missing_style_pack");
+    if (!dryRunUsed) reasons.push("dry_run_disabled");
+    return {
+      confidence,
+      reasons,
+      workflowStatus: {
+        hasResearch,
+        hasAnalysis,
+        hasStylePack,
+        dryRunUsed
+      }
+    };
+  }
+
+  private buildWorkflowWarnings(meta: WorkflowMeta, hasSession: boolean): string[] {
+    const warnings: string[] = [];
+    if (hasSession && !meta.workflowStatus.hasStylePack) {
+      warnings.push("No StylePack found in session. Consider running understand({ vibe: { extract: true } }).");
+    }
+    if (hasSession && !meta.workflowStatus.hasAnalysis) {
+      warnings.push("No AnalysisPack found in session. Consider running understand({ analysis: { clusters: true } }).");
+    }
+    if (hasSession && !meta.workflowStatus.hasResearch) {
+      warnings.push("No ResearchPack found in session. Consider running explore({ research: { sketch: true } }).");
+    }
+    if (!meta.workflowStatus.dryRunUsed) {
+      warnings.push("Applied changes without dryRun; review is recommended before apply.");
+    }
+    return warnings;
+  }
+
   private looksLikePath(value: string): boolean {
     return /[\\/]/.test(value) || /\.[a-z0-9]+$/i.test(value);
   }
@@ -528,6 +762,47 @@ export class WritePillar {
       runTool: (tool, args) => this.runTool(context, tool, args),
       applyMode: true
     });
+  }
+
+  private async checkReviewBlock(params: {
+    filePath: string;
+    content: string;
+    oldContent: string;
+    guardrailResult?: any;
+    constraints?: any;
+    reviewOptions: any;
+    stylePack?: any;
+  }): Promise<{ blocked: boolean; review?: any; message?: string; reasons?: Array<{ kind: string; verdict: string }> }> {
+    const blockOn = Array.isArray(params.reviewOptions?.blockOn) ? params.reviewOptions.blockOn : [];
+    if (blockOn.length === 0) {
+      return { blocked: false };
+    }
+
+    const review = await new ReviewReportBuilder(
+      {
+        dependencyGraph: this.registry.getMetadata<DependencyGraph>("dependencyGraph"),
+        indexStateManager: this.registry.getMetadata<IndexStateManager>("indexStateManager")
+      },
+      { strictness: params.reviewOptions?.strictness }
+    ).review({
+      filePath: params.filePath,
+      content: params.content,
+      oldContent: params.oldContent,
+      guardrailResult: params.guardrailResult,
+      constraints: params.constraints,
+      stylePack: params.stylePack
+    });
+
+    const reasons = collectBlockReasons(review, blockOn);
+    if (reasons.length === 0) {
+      return { blocked: false, review, reasons };
+    }
+    return {
+      blocked: true,
+      review,
+      reasons,
+      message: `Review blocked by ${reasons.map((item) => `${item.kind}(${item.verdict})`).join(", ")}.`
+    };
   }
 
   private async runTool(context: OrchestrationContext, tool: string, args: any) {
@@ -637,7 +912,9 @@ export class WritePillar {
     templateType: TemplateType,
     imports?: string[],
     constraints?: any,
-    sessionId?: string
+    sessionId?: string,
+    reviewOptions?: any,
+    stylePack?: StylePack
   ): Promise<any> {
     try {
       let finalContent = content;
@@ -683,6 +960,36 @@ export class WritePillar {
           }
         };
       }
+      const reviewBlock = await this.checkReviewBlock({
+        filePath,
+        content: finalContent,
+        oldContent: existingContent,
+        guardrailResult,
+        constraints,
+        reviewOptions: reviewOptions ?? this.resolveReviewOptions(constraints?.reviewOptions, Boolean(sessionId)),
+        stylePack: stylePack ?? (sessionId
+          ? this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager")?.getLatestStylePack(sessionId)
+          : undefined)
+      });
+      if (reviewBlock.blocked) {
+        return {
+          success: false,
+          status: 'blocked',
+          createdFiles: [],
+          transactionId: '',
+          rollbackAvailable: false,
+          writeMode: 'quickGenerate',
+          templateType,
+          blockedReason: 'review_blocked',
+          review: reviewBlock.review,
+          reviewBlockReasons: reviewBlock.reasons,
+          sessionId,
+          guidance: {
+            message: reviewBlock.message ?? 'Write blocked by review policy.',
+            reviewBlockReasons: reviewBlock.reasons
+          }
+        };
+      }
       const edit = { targetString: existingContent, replacementString: finalContent, indexRange: { start: 0, end: existingContent.length }, expectedHash: existingContent ? this.computeHash(existingContent) : undefined };
       const result = await this.runTool(context, 'edit_transaction', { filePath, edits: [edit], dryRun: false });
       return {
@@ -711,4 +1018,43 @@ export class WritePillar {
       return { success: false, status: 'failure', createdFiles: [], transactionId: '', rollbackAvailable: false, writeMode: 'quickGenerate', sessionId, guidance: { message: `Quick generate failed: ${error.message}`, suggestedActions: [] } };
     }
   }
+}
+
+function collectBlockReasons(
+  report: {
+    syntax?: { verdict?: string };
+    semantic?: { verdict?: string };
+    guardrails?: { verdict?: string };
+    vibeAlignment?: { verdict?: string };
+  },
+  blockOn: string[]
+): Array<{ kind: string; verdict: string }> {
+  const reasons: Array<{ kind: string; verdict: string }> = [];
+  for (const kind of blockOn) {
+    switch (kind) {
+      case "syntax": {
+        const verdict = report.syntax?.verdict;
+        if (verdict && verdict !== "pass") reasons.push({ kind, verdict });
+        break;
+      }
+      case "semantic": {
+        const verdict = report.semantic?.verdict;
+        if (verdict && verdict !== "pass") reasons.push({ kind, verdict });
+        break;
+      }
+      case "guardrails": {
+        const verdict = report.guardrails?.verdict;
+        if (verdict && verdict !== "pass") reasons.push({ kind, verdict });
+        break;
+      }
+      case "vibe": {
+        const verdict = report.vibeAlignment?.verdict;
+        if (verdict && verdict !== "pass") reasons.push({ kind, verdict });
+        break;
+      }
+      default:
+        break;
+    }
+  }
+  return reasons;
 }

@@ -18,6 +18,7 @@ export function resolveEmbeddingConfigFromEnv(): EmbeddingConfig {
     const localModelRaw = process.env.KAIRO_EMBEDDING_MODEL ?? process.env.KAIRO_LOCAL_EMBEDDING_MODEL;
     const localModel = normalizeLocalModel(providerRaw, localModelRaw) ?? DEFAULT_LOCAL_MODEL;
     const localDims = parseOptionalInt(process.env.KAIRO_LOCAL_EMBEDDING_DIMS) ?? DEFAULT_LOCAL_DIMS;
+    const localQuantized = process.env.KAIRO_EMBEDDING_QUANTIZED !== "false";
 
     return {
         provider,
@@ -30,7 +31,8 @@ export function resolveEmbeddingConfigFromEnv(): EmbeddingConfig {
         modelDir,
         local: {
             model: localModel,
-            dims: localDims
+            dims: localDims,
+            quantized: localQuantized
         }
     };
 }
@@ -40,6 +42,7 @@ function normalizeProvider(value: string | undefined): EmbeddingConfig["provider
     const normalized = value.trim().toLowerCase();
     if (normalized === "auto") return "auto";
     if (normalized === "local") return "local";
+    if (normalized === "remote") return "remote";
     if (normalized === "hash") return "local";
     if (normalized === "disabled") return "disabled";
     return "auto";
@@ -54,6 +57,7 @@ function parseOptionalInt(value: string | undefined): number | undefined {
 export function resolveEmbeddingProviderEnv(config: EmbeddingConfig): { provider: EmbeddingProvider; apiKey?: string } {
     const provider = (config.provider ?? "auto") as EmbeddingConfig["provider"];
     if (provider === "disabled") return { provider: "disabled" };
+    if (provider === "remote") return { provider: "remote" };
     return { provider: "local" };
 }
 

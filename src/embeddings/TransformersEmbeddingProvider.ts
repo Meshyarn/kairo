@@ -7,18 +7,23 @@ import url from "url";
 type TransformersPipeline = (inputs: string[] | string, options?: Record<string, unknown>) => Promise<any>;
 
 export class TransformersEmbeddingProvider implements EmbeddingProviderClient {
-    public readonly provider: EmbeddingProvider = "local";
+    public readonly provider: EmbeddingProvider;
     public readonly model: string;
     public dims: number;
     public readonly normalize: boolean;
 
     private pipelinePromise?: Promise<TransformersPipeline>;
+    private readonly allowRemote: boolean;
+    private readonly quantized: boolean;
     private readonly timeoutMs?: number;
     private readonly queue?: EmbeddingQueue;
     private readonly modelCacheDir?: string;
     private readonly modelDir?: string;
 
-    constructor(options: { model: string; dims?: number; normalize: boolean; timeoutMs?: number; queue?: EmbeddingQueue; modelCacheDir?: string; modelDir?: string }) {
+    constructor(options: { provider?: EmbeddingProvider; allowRemote?: boolean; quantized?: boolean; model: string; dims?: number; normalize: boolean; timeoutMs?: number; queue?: EmbeddingQueue; modelCacheDir?: string; modelDir?: string }) {
+        this.provider = options.provider ?? "local";
+        this.allowRemote = options.allowRemote ?? false;
+        this.quantized = options.quantized ?? true;
         this.model = options.model;
         this.dims = options.dims ?? 0;
         this.normalize = options.normalize;
@@ -33,7 +38,7 @@ export class TransformersEmbeddingProvider implements EmbeddingProviderClient {
         const run = async () => pipeline(texts, {
             pooling: "mean",
             normalize: this.normalize,
-            quantized: true
+            quantized: this.quantized
         });
         const output = this.queue
             ? await this.queue.run(run, { timeoutMs: this.timeoutMs, label: "transformers.embed" })
@@ -79,7 +84,7 @@ export class TransformersEmbeddingProvider implements EmbeddingProviderClient {
     private applyBundledModelEnv(module: any): void {
         const env = module?.env ?? module?.default?.env;
         if (!env) return;
-        env.allowRemoteModels = false;
+        env.allowRemoteModels = this.allowRemote;
         env.allowLocalModels = true;
         const modelDir = this.resolveModelDir();
         if (modelDir) {

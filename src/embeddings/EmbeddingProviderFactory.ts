@@ -23,7 +23,7 @@ export class EmbeddingProviderFactory {
         if (this.cached) return this.cached;
         const resolved = resolveEmbeddingProviderEnv(this.config);
 
-        if (resolved.provider === "local") {
+        if (resolved.provider === "local" || resolved.provider === "remote") {
             const model = this.config.local?.model ?? "multilingual-e5-small";
             if (isHashModel(model)) {
                 const dims = this.config.local?.dims ?? 384;
@@ -35,6 +35,9 @@ export class EmbeddingProviderFactory {
             } else {
                 const queue = this.getQueue();
                 const primary = new TransformersEmbeddingProvider({
+                    provider: resolved.provider,
+                    allowRemote: resolved.provider === "remote",
+                    quantized: this.config.local?.quantized,
                     model,
                     dims: this.config.local?.dims,
                     normalize: this.config.normalize !== false,

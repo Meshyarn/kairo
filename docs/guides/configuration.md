@@ -67,7 +67,8 @@ Create `.kairo/config/languages.json` to extend or override built-ins:
 
 | Variable | Purpose |
 |---|---|
-| `KAIRO_EMBEDDING_PROVIDER` | Select embedding backend (`local`, `hash`, `disabled`). |
+| `KAIRO_EMBEDDING_PROVIDER` | Select embedding backend (`local`, `remote`, `hash`, `disabled`). | `remote` allows downloading models from HuggingFace. |
+| `KAIRO_EMBEDDING_QUANTIZED` | Use quantized model (`true`/`false`). | Default: `true` (int8/q8). Set `false` for full precision (fp32/fp16). |
 | `KAIRO_EMBEDDING_MODEL` | Bundled/local model identifier (default: `multilingual-e5-small`). |
 | `KAIRO_MODEL_DIR` | Bundled model directory override (no remote downloads). |
 | `KAIRO_MODEL_CACHE_DIR` | Local model cache directory override. |
@@ -146,6 +147,20 @@ When `KAIRO_VECTOR_INDEX_REBUILD=manual`, use the CLI `kairo-build-vector-index`
 | `KAIRO_PILLAR_DECOMPOSITION_ENABLED` | Toggle decomposed pillar modules. | `true/false` overrides percent. |
 | `KAIRO_MODULAR_ROLLOUT_PERCENT` | Percentage rollout for the modular flags. | `0-100`; uses rollout user hashing. |
 | `KAIRO_ROLLOUT_USER` | Default user ID for rollout hashing. | Use if the host does not pass a user ID. |
+
+## Writer's flow defaults (ADR-051)
+
+| Variable | Purpose | Notes |
+|---|---|---|
+| `KAIRO_WRITERS_FLOW_DEFAULT_DRYRUN` | Default dry-run for writer flow when sessionId is present. | `on|off|beta|canary` |
+| `KAIRO_WRITERS_FLOW_REVIEW_DEFAULTS` | Enable session-based reviewOptions defaults. | `on|off|beta|canary` |
+
+## StylePack cache (ADR-051)
+
+| Variable | Purpose | Notes |
+|---|---|---|
+| `KAIRO_STYLE_PACK_TTL_MS` | Cache TTL for StylePack reuse across sessions. | Default: `1800000` (30 min). |
+| `KAIRO_STYLE_PACK_CACHE_SIZE` | Max cached StylePacks. | Default: `50`. |
 
 ## Full list (source of truth)
 

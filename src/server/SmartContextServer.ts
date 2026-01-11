@@ -813,8 +813,31 @@ export class SmartContextServer {
                 inputSchema: {
                     type: 'object',
                     properties: {
-                        command: { type: 'string', enum: ['status', 'undo', 'redo', 'reindex', 'history', 'test'] },
-                        target: { type: 'string' }
+                        command: {
+                            type: 'string',
+                            enum: [
+                                'status',
+                                'undo',
+                                'redo',
+                                'reindex',
+                                'history',
+                                'test',
+                                'metrics',
+                                'metrics_reset',
+                                'config',
+                                'sessions',
+                                'session',
+                                'session_complete',
+                                'artifacts',
+                                'artifact',
+                                'discard',
+                                'prune',
+                                'export',
+                                'import'
+                            ]
+                        },
+                        target: { type: 'string' },
+                        outcome: { type: 'object' }
                     },
                     required: ['command']
                 }
@@ -948,6 +971,7 @@ export class SmartContextServer {
                         targetFiles: { type: 'array', items: { type: 'string' } },
                         edits: { type: 'array', items: { type: 'object' } },
                         sessionId: { type: 'string' },
+                        stylePack: { anyOf: [{ type: 'string' }, { type: 'object' }] },
                         draftOptions: {
                             type: 'object',
                             properties: {
@@ -955,6 +979,8 @@ export class SmartContextServer {
                                 includeImpact: { type: 'boolean' }
                             }
                         },
+                        draftId: { type: 'string' },
+                        refinement: { type: 'string' },
                         reviewOptions: {
                             type: 'object',
                             properties: {
@@ -992,6 +1018,7 @@ export class SmartContextServer {
                         content: { type: 'string' },
                         dryRun: { type: 'boolean' },
                         sessionId: { type: 'string' },
+                        stylePack: { anyOf: [{ type: 'string' }, { type: 'object' }] },
                         draftOptions: {
                             type: 'object',
                             properties: {
@@ -999,6 +1026,8 @@ export class SmartContextServer {
                                 includeImpact: { type: 'boolean' }
                             }
                         },
+                        draftId: { type: 'string' },
+                        refinement: { type: 'string' },
                         reviewOptions: {
                             type: 'object',
                             properties: {
@@ -1039,6 +1068,7 @@ export class SmartContextServer {
                                 'test',
                                 'sessions',
                                 'session',
+                                'session_complete',
                                 'artifacts',
                                 'artifact',
                                 'discard',
@@ -1050,6 +1080,7 @@ export class SmartContextServer {
                         scope: { type: 'string', enum: ['file', 'transaction', 'project'] },
                         target: { type: 'string' },
                         limit: { type: 'number' },
+                        outcome: { type: 'object' },
                         artifactOptions: {
                             type: 'object',
                             properties: {

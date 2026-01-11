@@ -77,11 +77,14 @@ export class ManageHandlers extends BaseHandler {
                         );
                         const indexSnapshot = await this.context.indexStateManager.getSnapshot();
                         const indexActivity = this.context.indexStateManager.getActivity();
+                        const embeddingStatus = await this.context.documentSearchEngine.getEmbeddingStatus();
+
                         if (includePerFile) {
                             return {
                                 success: true,
                                 output: "Index status",
                                 status,
+                                embedding: embeddingStatus,
                                 indexSnapshot,
                                 activity: {
                                     reindexInProgress: this.reindexInProgress,
@@ -105,6 +108,7 @@ export class ManageHandlers extends BaseHandler {
                                 global: status.global,
                                 unresolvedSample
                             },
+                            embedding: embeddingStatus,
                             indexSnapshot,
                             activity: {
                                 reindexInProgress: this.reindexInProgress,
@@ -267,11 +271,29 @@ export class ManageHandlers extends BaseHandler {
                     if (!target) {
                         return { success: false, output: "Missing target session id." };
                     }
-                    const session = this.context.flowArtifactManager.getSession(target);
+                    const summary = this.context.flowArtifactManager.getSessionSummary(target);
+                    const session = summary?.session;
                     return {
                         success: Boolean(session),
                         output: session ? "Session retrieved." : "Session not found.",
-                        session
+                        session,
+                        summary: summary?.summary
+                    };
+                }
+            case 'session_complete':
+                {
+                    const target = args?.target ?? args?.sessionId ?? args?.artifactOptions?.sessionId;
+                    if (!target) {
+                        return { success: false, output: "Missing target session id." };
+                    }
+                    const outcome = args?.outcome;
+                    const completed = this.context.flowArtifactManager.completeSession(target, outcome);
+                    const summary = completed ? this.context.flowArtifactManager.getSessionSummary(target) : undefined;
+                    return {
+                        success: Boolean(completed),
+                        output: completed ? "Session completed." : "Session not found.",
+                        session: completed,
+                        summary: summary?.summary
                     };
                 }
             case 'artifacts':

@@ -1,7 +1,11 @@
 import { describe, it, expect, jest, beforeEach } from "@jest/globals";
+import { promises as fs } from "fs";
+import os from "os";
+import path from "path";
 import { ChangePillar } from "../../orchestration/pillars/change/ChangePillar.js";
 import { InternalToolRegistry } from "../../orchestration/InternalToolRegistry.js";
 import { OrchestrationContext } from "../../orchestration/OrchestrationContext.js";
+import { FlowArtifactManager } from "../../orchestration/flow-artifact-manager.js";
 
 describe("ChangePillar Branches", () => {
   let pillar: ChangePillar;
@@ -67,5 +71,92 @@ describe("ChangePillar Branches", () => {
     const result = await pillar.execute(intent as any, context);
     expect(result.success).toBe(false);
     expect(result.message).toBe("hard failure");
+  });
+
+  it("chains draftId and refinement in dryRun drafts", async () => {
+    const manager = new FlowArtifactManager();
+    registry.setMetadata("flowArtifactManager", manager);
+    jest.spyOn(registry, "execute").mockImplementation(async (tool) => {
+      if (tool === "edit_transaction") {
+        return {
+          success: true,
+          diff: "diff",
+          impactPreview: { riskLevel: "low", summary: { impactedFiles: [] } }
+        } as any;
+      }
+      if (tool === "relationship_analyze") return { nodes: [], edges: [] } as any;
+      if (tool === "hotspot_detect") return [] as any;
+      return { success: true } as any;
+    });
+
+    const intent = {
+      targets: ["src/demo.ts"],
+      constraints: {
+        dryRun: true,
+        edits: [{ targetString: "a", replacementString: "b" }],
+        draftId: "draft_seed",
+        refinement: "add error handling"
+      },
+      originalIntent: "update demo"
+    };
+
+    const result = await pillar.execute(intent as any, context);
+    expect(result.success).toBe(true);
+    expect(result.draftPack.intent).toContain("Refinement: add error handling");
+    const drafts = manager.getByType("draft");
+    expect(drafts[0]?.parentId).toBe("draft_seed");
+  });
+
+  it("applies draftId when edits are missing", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "kairo-change-draft-"));
+    const filePath = path.join(tempDir, "demo.ts");
+    try {
+      await fs.writeFile(filePath, "export const value = 1;\n");
+      const manager = new FlowArtifactManager();
+      const draftId = "draft_seed_apply";
+      manager.store({
+        id: draftId,
+        type: "draft",
+        createdAt: Date.now(),
+        pack: {
+          id: draftId,
+          intent: "apply draft",
+          skeleton: { content: "", signatures: [], structure: { imports: [], exports: [], dependencies: [] }, placeholders: [] },
+          phantomFiles: [{
+            path: filePath,
+            content: "export const value = 2;\n",
+            isNew: false,
+            language: "ts"
+          }],
+          preflightCheck: { syntaxValid: true, typesResolvable: true, guardrailsPassed: true, warnings: [] },
+          createdAt: Date.now(),
+          status: "pending"
+        }
+      } as any);
+      registry.setMetadata("flowArtifactManager", manager);
+
+      const editCalls: any[] = [];
+      jest.spyOn(registry, "execute").mockImplementation(async (tool, args) => {
+        if (tool === "edit_transaction") {
+          editCalls.push(args);
+          return { success: true, diff: "diff" } as any;
+        }
+        if (tool === "impact_analyze") return { riskLevel: "low" } as any;
+        if (tool === "relationship_analyze") return { nodes: [], edges: [] } as any;
+        if (tool === "hotspot_detect") return [] as any;
+        return { success: true } as any;
+      });
+
+      const result = await pillar.execute({
+        targets: [],
+        constraints: { dryRun: false, draftId, targetPath: filePath },
+        originalIntent: "apply draft"
+      } as any, context);
+
+      expect(result.success).toBe(true);
+      expect(editCalls[0].edits[0].replacementString).toBe("export const value = 2;\n");
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
   });
 });
