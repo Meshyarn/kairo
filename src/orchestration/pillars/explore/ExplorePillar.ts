@@ -141,7 +141,8 @@ export class ExplorePillar {
                 success: false,
                 status: "invalid_args",
                 message: "Missing query or paths.",
-                data: { docs: [], code: [] }
+                data: { docs: [], code: [] },
+                sessionId: resolvedSessionId
             };
         }
 
@@ -455,7 +456,8 @@ export class ExplorePillar {
                     success: false,
                     status: "invalid_args",
                     message: expanded.message ?? "Invalid paths.",
-                    data: { docs: [], code: [] }
+                    data: { docs: [], code: [] },
+                    sessionId: resolvedSessionId
                 };
             }
 
@@ -469,13 +471,31 @@ export class ExplorePillar {
                 const wantsFull = view === "full" && (fullPaths.length === 0 || fullPathSet.has(entry.path));
                 if (wantsFull) {
                     if (!allowSensitive && isSensitivePath(entry.path)) {
-                        return { success: false, status: "blocked", message: `Full read blocked for sensitive path: ${entry.path}`, data: { docs: [], code: [] } };
+                        return {
+                            success: false,
+                            status: "blocked",
+                            message: `Full read blocked for sensitive path: ${entry.path}`,
+                            data: { docs: [], code: [] },
+                            sessionId: resolvedSessionId
+                        };
                     }
                     if (!allowBinary && isBinaryPath(entry.path)) {
-                        return { success: false, status: "blocked", message: `Full read blocked for binary path: ${entry.path}`, data: { docs: [], code: [] } };
+                        return {
+                            success: false,
+                            status: "blocked",
+                            message: `Full read blocked for binary path: ${entry.path}`,
+                            data: { docs: [], code: [] },
+                            sessionId: resolvedSessionId
+                        };
                     }
                     if (typeof maxBytes === "number" && entry.size && entry.size > maxBytes) {
-                        return { success: false, status: "blocked", message: `Full read blocked by maxBytes for ${entry.path}.`, data: { docs: [], code: [] } };
+                        return {
+                            success: false,
+                            status: "blocked",
+                            message: `Full read blocked by maxBytes for ${entry.path}.`,
+                            data: { docs: [], code: [] },
+                            sessionId: resolvedSessionId
+                        };
                     }
                 }
 
@@ -493,7 +513,8 @@ export class ExplorePillar {
                         message: item.message ?? "Full read blocked.",
                         data: { docs: [], code: [] },
                         reasons,
-                        degradedReasons
+                        degradedReasons,
+                        sessionId: resolvedSessionId
                     };
                 }
 
@@ -508,7 +529,13 @@ export class ExplorePillar {
                 const contentLength = (payloadItem.content ?? payloadItem.preview ?? "").length;
                 if (view === "full") {
                     if (totalChars + contentLength > maxChars) {
-                        return { success: false, status: "blocked", message: "Full read blocked by maxChars. Increase limits.maxChars and retry.", data: { docs: [], code: [] } };
+                        return {
+                            success: false,
+                            status: "blocked",
+                            message: "Full read blocked by maxChars. Increase limits.maxChars and retry.",
+                            data: { docs: [], code: [] },
+                            sessionId: resolvedSessionId
+                        };
                     }
                 } else {
                     if (totalChars + contentLength > maxChars) {

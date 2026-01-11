@@ -299,16 +299,18 @@ export class EditPlanner {
 
         switch (level) {
             case "line-endings":
-                return str.replace(/\r\n/g, "\n");
+                return str.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
             case "trailing":
                 return str
                     .replace(/\r\n/g, "\n")
+                    .replace(/\r/g, "\n")
                     .split("\n")
                     .map(line => line.replace(/\s+$/g, ""))
                     .join("\n");
             case "indentation":
                 return str
                     .replace(/\r\n/g, "\n")
+                    .replace(/\r/g, "\n")
                     .split("\n")
                     .map(line => {
                         const match = line.match(/^(\s*)(.*)$/);
@@ -321,6 +323,7 @@ export class EditPlanner {
             case "whitespace":
                 return str
                     .replace(/\r\n/g, "\n")
+                    .replace(/\r/g, "\n")
                     .split("\n")
                     .map(line => {
                         const match = line.match(/^(\s*)(.*)$/);
@@ -337,6 +340,7 @@ export class EditPlanner {
             case "structural":
                 return str
                     .replace(/\r\n/g, "\n")
+                    .replace(/\r/g, "\n")
                     .split("\n")
                     .map(line => line.trim())
                     .filter(line => line.length > 0)
@@ -382,13 +386,13 @@ export class EditPlanner {
             case "line-endings": {
                 // Split by newlines, escape each part, then rejoin with flexible line ending pattern
                 const parts = normalizedTarget.split("\n").map(part => this.escapeRegExp(part));
-                const pattern = parts.join("\\r?\\n");
+                const pattern = parts.join("(\\r\\n|\\r|\\n)");
                 return new RegExp(pattern, "g");
             }
             case "trailing": {
                 // Split by newlines, escape each part, allow trailing whitespace after each line
                 const parts = normalizedTarget.split("\n").map(part => this.escapeRegExp(part));
-                const pattern = parts.join("\\s*\\r?\\n\\s*");
+                const pattern = parts.join("\\s*(\\r\\n|\\r|\\n)\\s*");
                 return new RegExp(`${pattern}\\s*`, "g");
             }
             case "indentation": {
@@ -402,7 +406,7 @@ export class EditPlanner {
                         const indentPattern = match && match[1].length > 0 ? "\\s*" : "";
                         return `${indentPattern}${escapedContent}`;
                     })
-                    .join("\\s*\\r?\\n");
+                    .join("\\s*(\\r\\n|\\r|\\n)");
                 return new RegExp(pattern, "g");
             }
             case "whitespace": {
@@ -414,7 +418,7 @@ export class EditPlanner {
                         // Replace single spaces with \s+ to match one or more spaces
                         return escaped.replace(/ /g, "\\s+");
                     });
-                const pattern = parts.join("\\s*\\r?\\n\\s*");
+                const pattern = parts.join("\\s*(\\r\\n|\\r|\\n)\\s*");
                 return new RegExp(pattern, "g");
             }
             case "structural":

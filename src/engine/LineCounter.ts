@@ -4,13 +4,20 @@ export class LineCounter {
     constructor(content: string) {
         this.lineStarts = [0];
         for (let i = 0; i < content.length; i++) {
-            if (content[i] === '\n') {
+            const char = content[i];
+            if (char === '\n') {
                 this.lineStarts.push(i + 1);
+            } else if (char === '\r') {
+                if (content[i + 1] === '\n') {
+                    this.lineStarts.push(i + 2);
+                    i++; // Skip the
+
+                } else {
+                    this.lineStarts.push(i + 1);
+                }
             }
         }
-    }
-
-    /**
+    }/**
      * Returns the 1-based line number for a given 0-based character position.
      * Uses binary search for O(log N) performance.
      */

@@ -309,12 +309,24 @@ export class EditExecutor {
             return undefined;
         }
 
-        const result = await this.syntaxValidator.validate(filePath, content);
+        let result = await this.syntaxValidator.validate(filePath, content);
+        if (!result.success && this.hasSyntaxLanguageUnavailable(result)) {
+            result = {
+                ...result,
+                success: true,
+                warnings: [...(result.warnings ?? []), ...(result.blockingErrors ?? [])],
+                blockingErrors: []
+            };
+        }
         const summary = this.buildValidationSummary(result, mode, {
             syntaxChecked: true,
             semanticChecked: false
         });
         return { result, summary };
+    }
+
+    private hasSyntaxLanguageUnavailable(result: ValidationResult): boolean {
+        return (result.blockingErrors ?? []).some((error) => error.code === "SYNTAX_LANGUAGE_UNAVAILABLE");
     }
 
     private async runSemanticValidation(
