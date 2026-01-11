@@ -72,6 +72,7 @@ import { IntentRouter } from "../orchestration/IntentRouter.js";
 import { WorkflowPlanner } from "../orchestration/WorkflowPlanner.js";
 import { InternalToolRegistry } from "../orchestration/InternalToolRegistry.js";
 import { CachingStrategy } from "../orchestration/CachingStrategy.js";
+import { FlowArtifactManager } from "../orchestration/flow-artifact-manager.js";
 
 // Handler Imports
 import { SearchHandlers } from "../handlers/SearchHandlers.js";
@@ -88,6 +89,7 @@ export class SmartContextServer {
     private server: Server;
     private rootPath: string;
     private fileSystem: NodeFileSystem;
+    private flowArtifactManager: FlowArtifactManager;
     private orchestrationEngine: OrchestrationEngine;
     private internalRegistry: InternalToolRegistry;
     private incrementalIndexer?: IncrementalIndexer;
@@ -294,6 +296,7 @@ export class SmartContextServer {
 
         // Orchestration Layer
         this.internalRegistry = new InternalToolRegistry();
+        this.flowArtifactManager = new FlowArtifactManager();
         this.orchestrationEngine = new OrchestrationEngine(
             new IntentRouter(),
             new WorkflowPlanner(),
@@ -306,6 +309,7 @@ export class SmartContextServer {
         this.internalRegistry.setMetadata('searchEngine', this.searchEngine);
         this.internalRegistry.setMetadata('indexStateManager', this.indexStateManager);
         this.internalRegistry.setMetadata('dependencyGraph', this.dependencyGraph);
+        this.internalRegistry.setMetadata('flowArtifactManager', this.flowArtifactManager);
         
         this.setupHandlers();
         this.initializeModularHandlers();
@@ -346,6 +350,7 @@ export class SmartContextServer {
             documentIndexer: this.documentIndexer,
             indexDatabase: this.indexDatabase,
             historyEngine: this.historyEngine,
+            flowArtifactManager: this.flowArtifactManager,
             isTestEnv: () => this.isTestEnv()
         });
         this.searchHandlers = new SearchHandlers(handlerContext);
@@ -844,6 +849,23 @@ export class SmartContextServer {
                                 dependencies: { type: 'boolean' }
                             }
                         },
+                        sessionId: { type: 'string' },
+                        vibe: {
+                            type: 'object',
+                            properties: {
+                                extract: { type: 'boolean' },
+                                scope: { type: 'string' },
+                                includeNorms: { type: 'boolean' }
+                            }
+                        },
+                        analysis: {
+                            type: 'object',
+                            properties: {
+                                clusters: { type: 'boolean' },
+                                maxClusters: { type: 'number' },
+                                maxFilesPerCluster: { type: 'number' }
+                            }
+                        },
                         limits: {
                             type: 'object',
                             properties: {
@@ -870,6 +892,15 @@ export class SmartContextServer {
                                 code: { type: 'boolean' },
                                 comments: { type: 'boolean' },
                                 logs: { type: 'boolean' }
+                            }
+                        },
+                        sessionId: { type: 'string' },
+                        research: {
+                            type: 'object',
+                            properties: {
+                                sketch: { type: 'boolean' },
+                                topN: { type: 'number' },
+                                format: { type: 'string', enum: ['ascii', 'mermaid', 'both'] }
                             }
                         },
                         section: {
@@ -916,6 +947,23 @@ export class SmartContextServer {
                         target: { type: 'string' },
                         targetFiles: { type: 'array', items: { type: 'string' } },
                         edits: { type: 'array', items: { type: 'object' } },
+                        sessionId: { type: 'string' },
+                        draftOptions: {
+                            type: 'object',
+                            properties: {
+                                skeletonOnly: { type: 'boolean' },
+                                includeImpact: { type: 'boolean' }
+                            }
+                        },
+                        reviewOptions: {
+                            type: 'object',
+                            properties: {
+                                preApply: { type: 'boolean' },
+                                postApply: { type: 'boolean' },
+                                strictness: { type: 'string', enum: ['strict', 'balanced', 'permissive'] },
+                                blockOn: { type: 'array', items: { type: 'string', enum: ['syntax', 'semantic', 'guardrails', 'vibe'] } }
+                            }
+                        },
                         options: {
                             type: 'object',
                             properties: {
@@ -942,6 +990,24 @@ export class SmartContextServer {
                         targetPath: { type: 'string' },
                         template: { type: 'string' },
                         content: { type: 'string' },
+                        dryRun: { type: 'boolean' },
+                        sessionId: { type: 'string' },
+                        draftOptions: {
+                            type: 'object',
+                            properties: {
+                                skeletonOnly: { type: 'boolean' },
+                                includeImpact: { type: 'boolean' }
+                            }
+                        },
+                        reviewOptions: {
+                            type: 'object',
+                            properties: {
+                                preApply: { type: 'boolean' },
+                                postApply: { type: 'boolean' },
+                                strictness: { type: 'string', enum: ['strict', 'balanced', 'permissive'] },
+                                blockOn: { type: 'array', items: { type: 'string', enum: ['syntax', 'semantic', 'guardrails', 'vibe'] } }
+                            }
+                        },
                         options: {
                             type: 'object',
                             properties: {
@@ -963,10 +1029,36 @@ export class SmartContextServer {
                     properties: {
                         command: {
                             type: 'string',
-                            enum: ['status', 'undo', 'redo', 'reindex', 'rebuild', 'history', 'test']
+                            enum: [
+                                'status',
+                                'undo',
+                                'redo',
+                                'reindex',
+                                'rebuild',
+                                'history',
+                                'test',
+                                'sessions',
+                                'session',
+                                'artifacts',
+                                'artifact',
+                                'discard',
+                                'prune',
+                                'export',
+                                'import'
+                            ]
                         },
                         scope: { type: 'string', enum: ['file', 'transaction', 'project'] },
-                        target: { type: 'string' }
+                        target: { type: 'string' },
+                        limit: { type: 'number' },
+                        artifactOptions: {
+                            type: 'object',
+                            properties: {
+                                type: { type: 'string' },
+                                sessionId: { type: 'string' },
+                                limit: { type: 'number' },
+                                includeExpired: { type: 'boolean' }
+                            }
+                        }
                     },
                     required: ['command']
                 }

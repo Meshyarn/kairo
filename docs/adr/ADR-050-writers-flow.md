@@ -1,6 +1,6 @@
 # ADR-050: Writer’s Flow (Research → Analyze → Skeleton → Write → Review → Manage)
 
-**Status:** Accepted (curated; not yet fully rolled out)  
+**Status:** Accepted (curated; workflow contract implemented, not enforced end-to-end)  
 **Intent:** Provide a repeatable “vibe coding” workflow on top of the Five Pillars without adding new public tools.
 
 ## Summary
@@ -30,18 +30,24 @@ Writer’s Flow is a **workflow contract** that sequences existing pillars:
 
 ## What is already implemented vs planned
 
-This ADR is a **workflow contract**. In `0.1.0`, treat it as guidance: the system contains many building blocks, but the flow is not “enforced” end-to-end.
+This ADR is a **workflow contract**. In `0.2.0`, treat it as guidance: the system contains the workflow artifacts and session chaining, but the flow is not “enforced” end-to-end.
 
-Already implemented (building blocks exist):
+Already implemented (workflow artifacts + session chaining):
 
 - Dry-run-first edits and transactional operations (change/write paths)
 - Guardrails + integrity checks integrated into apply paths
 - Style inference + pattern extraction + template generation for write flows
+- ResearchPack (`explore.research`)
+- AnalysisPack (`understand.analysis`)
+- StylePack (`understand.vibe`)
+- DraftPack (`write/change` dryRun)
+- ReviewReport (`change/write` reviewOptions)
+- Artifact lifecycle + session grouping (`manage artifacts`, `manage sessions`)
 
 Planned/iterative (to make the contract explicit end-to-end, without new public tools):
 
-- richer “review report” structures returned by `change` / `write`
-- more explicit “style pack” output from `understand` for reuse across a session
+- enforce flow guidance end-to-end (optional, non-breaking)
+- richer vibe alignment scoring beyond placeholders
 
 ## Practical guidance
 

@@ -34,6 +34,10 @@ Unified search + read interface for docs and code.
 | `include.code` | `boolean` |  | Include code results. |
 | `include.comments` | `boolean` |  | Include code-comment corpus (doc search). |
 | `include.logs` | `boolean` |  | Include `.log` documents. |
+| `sessionId` | `string` |  | Flow session id (`"new"` to start). |
+| `research.sketch` | `boolean` |  | Include ResearchPack sketch. |
+| `research.topN` | `number` |  | Limit top modules for the sketch. |
+| `research.format` | `"ascii" \| "mermaid" \| "both"` |  | Sketch output format. |
 | `packId` | `string` |  | Evidence pack reuse. |
 | `cursor.items` | `string` |  | Page through results (items). |
 | `cursor.content` | `string` |  | Expand content from a pack without re-search. |
@@ -53,6 +57,7 @@ Unified search + read interface for docs and code.
 - `explore({ query: "AuthService" })`
 - `explore({ paths: ["src/auth/AuthService.ts"], view: "full" })`
 - `explore({ query: "refund", packId, cursor: { items } })`
+- `explore({ research: { sketch: true }, sessionId: "new" })`
 
 ---
 
@@ -71,6 +76,13 @@ Deep analysis of structure and relationships (opt-in includes).
 | `include.dependencies` | `boolean` |  | Include dependency edges. |
 | `include.hotSpots` | `boolean` |  | Include hotspot signals. |
 | `include.pageRank` | `boolean` |  | Include architectural importance signals. |
+| `sessionId` | `string` |  | Flow session id (`"new"` to start). |
+| `vibe.extract` | `boolean` |  | Produce a StylePack. |
+| `vibe.scope` | `string` |  | Glob scope for style sampling. |
+| `vibe.includeNorms` | `boolean` |  | Include norms from ADR/README. |
+| `analysis.clusters` | `boolean` |  | Produce an AnalysisPack. |
+| `analysis.maxClusters` | `number` |  | Max cluster count. |
+| `analysis.maxFilesPerCluster` | `number` |  | Max files per cluster. |
 | `limits.timeoutMs` | `number` |  | Per-call timeout budget (best-effort). |
 
 ---
@@ -88,6 +100,13 @@ Plan/apply safe edits with impact analysis.
 | `targetFiles` | `string[]` |  | Constrain the blast radius. |
 | `edits` | `object[]` |  | Structured edits (advanced). |
 | `options.dryRun` | `boolean` |  | Default behavior is dry-run planning. |
+| `draftOptions.skeletonOnly` | `boolean` |  | Skeleton-only DraftPack output. |
+| `draftOptions.includeImpact` | `boolean` |  | Include impact signals in DraftPack. |
+| `reviewOptions.preApply` | `boolean` |  | Run pre-apply review. |
+| `reviewOptions.postApply` | `boolean` |  | Run post-apply review. |
+| `reviewOptions.strictness` | `"strict" \| "balanced" \| "permissive"` |  | Review policy. |
+| `reviewOptions.blockOn` | `("syntax" \| "semantic" \| "guardrails" \| "vibe")[]` |  | Blocking criteria. |
+| `sessionId` | `string` |  | Flow session id (`"new"` to start). |
 | `options.includeImpact` | `boolean` |  | Include impact report when enabled. |
 | `options.includeSymbolImpact` | `boolean` |  | Include symbol-level impact signals (when available). |
 | `options.autoRollback` | `boolean` |  | Reserved (implementation-dependent). |
@@ -126,6 +145,14 @@ Create or scaffold files.
 | `targetPath` | `string` |  | Where to create it. |
 | `template` | `string` |  | Template name/path (if supported). |
 | `content` | `string` |  | Explicit content overrides generation. |
+| `dryRun` | `boolean` |  | Generate DraftPack only. |
+| `draftOptions.skeletonOnly` | `boolean` |  | Skeleton-only DraftPack output. |
+| `draftOptions.includeImpact` | `boolean` |  | Include impact signals in DraftPack. |
+| `reviewOptions.preApply` | `boolean` |  | Run pre-apply review. |
+| `reviewOptions.postApply` | `boolean` |  | Run post-apply review. |
+| `reviewOptions.strictness` | `"strict" \| "balanced" \| "permissive"` |  | Review policy. |
+| `reviewOptions.blockOn` | `("syntax" \| "semantic" \| "guardrails" \| "vibe")[]` |  | Blocking criteria. |
+| `sessionId` | `string` |  | Flow session id (`"new"` to start). |
 | `options.safeWrite` | `boolean` |  | Use transactional write path (undo/rollback support when available). |
 | `options.quickGenerate` | `boolean` |  | Generate content from intent when `content` is not provided. |
 | `options.smartWrite` | `boolean` |  | Pattern-aware generation using similar files (when possible). |
@@ -151,9 +178,14 @@ Project/session state utilities.
 
 | Field | Type | Required | Notes |
 |---|---|---:|---|
-| `command` | `"status" \| "undo" \| "redo" \| "reindex" \| "rebuild" \| "history" \| "test"` | ✓ | `rebuild` maps to `reindex`. |
+| `command` | `"status" \| "undo" \| "redo" \| "reindex" \| "rebuild" \| "history" \| "test" \| "sessions" \| "session" \| "artifacts" \| "artifact" \| "discard" \| "prune" \| "export" \| "import"` | ✓ | `rebuild` maps to `reindex`. |
 | `scope` | `"file" \| "transaction" \| "project"` |  | Mainly used by `test`. |
 | `target` | `string` |  | Mainly used by `test`. |
+| `limit` | `number` |  | Max items for list commands (sessions). |
+| `artifactOptions.type` | `string` |  | Filter artifacts by type. |
+| `artifactOptions.sessionId` | `string` |  | Filter artifacts by session. |
+| `artifactOptions.limit` | `number` |  | Max artifacts to return. |
+| `artifactOptions.includeExpired` | `boolean` |  | Include expired artifacts. |
 
 ---
 

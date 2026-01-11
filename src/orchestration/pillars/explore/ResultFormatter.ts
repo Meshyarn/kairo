@@ -1,5 +1,6 @@
 import type { IntegrityReport } from "../../../integrity/IntegrityTypes.js";
 import type { IndexSnapshot } from "../../../indexing/IndexStateManager.js";
+import type { ResearchPack } from "../../../types/flow-artifacts.js";
 
 export type ExploreItem = {
     kind: "document_section" | "file_preview" | "file_full" | "symbol" | "directory";
@@ -25,6 +26,7 @@ export type ExploreResponse = {
     degraded?: boolean;
     reasons?: string[];
     stats?: Record<string, unknown>;
+    researchPack?: ResearchPack;
     insights?: Array<{
         type: "info" | "warning" | "error";
         message: string;
@@ -32,6 +34,7 @@ export type ExploreResponse = {
         suggestedAction?: string;
     }>;
     indexSnapshot?: IndexSnapshot;
+    sessionId?: string;
 };
 
 const DEFAULT_MAX_CHARS = 8000;

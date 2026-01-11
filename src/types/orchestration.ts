@@ -62,7 +62,21 @@ export interface ReconstructInterfaceResult {
     message: string;
 }
 
-export type ManageProjectCommand = "undo" | "redo" | "guidance" | "status" | "metrics" | "reindex";
+export type ManageProjectCommand =
+    | "undo"
+    | "redo"
+    | "guidance"
+    | "status"
+    | "metrics"
+    | "reindex"
+    | "sessions"
+    | "session"
+    | "artifacts"
+    | "artifact"
+    | "discard"
+    | "prune"
+    | "export"
+    | "import";
 
 export interface ManageProjectArgs {
     command: ManageProjectCommand;

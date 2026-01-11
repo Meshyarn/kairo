@@ -39,6 +39,9 @@ import {
     normalizeGuardrailContent,
     resolveGuardrailTargetPath
 } from "../../guardrails/IntegrityGuardrails.js";
+import { DraftPackBuilder } from "../../../generation/draft-pack-builder.js";
+import { ReviewReportBuilder } from "../../../generation/review-report-builder.js";
+import type { FlowArtifactManager } from "../../flow-artifact-manager.js";
 import {
     executeBatchChange,
     executeV2BatchChange
@@ -70,6 +73,10 @@ export class ChangePillar {
       const { dryRun = true, includeImpact = false, includeSymbolImpact = false } = constraints;
       const integrityOptions = IntegrityEngine.resolveOptions(constraints.integrity, "change");
       const ucg = context.getState<UnifiedContextGraph>('ucg');
+      const reviewOptions = constraints.reviewOptions ?? {};
+      const rawSessionId = typeof constraints.sessionId === "string" ? constraints.sessionId : undefined;
+      const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
+      const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, originalIntent);
 
       const rawEdits = Array.isArray(constraints.edits) ? constraints.edits : [];
       const targetFiles = this.resolveTargetFiles(constraints, targets);
@@ -188,6 +195,8 @@ export class ChangePillar {
       const dependencyGraph = this.registry.getMetadata<DependencyGraph>("dependencyGraph");
       const indexStateManager = this.registry.getMetadata<IndexStateManager>("indexStateManager");
       let guardrailResult: any = undefined;
+      let reviewOriginalContent = "";
+      let reviewNextContent = "";
       if (targetPath) {
         const guardrailTargetPath = resolveGuardrailTargetPath(targetPath);
         let originalContent = "";
@@ -202,6 +211,8 @@ export class ChangePillar {
         } catch {
           nextContent = originalContent;
         }
+        reviewOriginalContent = originalContent;
+        reviewNextContent = nextContent;
         guardrailResult = await evaluateIntegrityGuardrails({
           targetPath: guardrailTargetPath,
           oldContent: normalizeGuardrailContent(originalContent),
@@ -384,6 +395,88 @@ export class ChangePillar {
         ? `${finalResult.diff.slice(0, budget.maxDiffBytes)}\n... (diff truncated)`
         : finalResult.diff;
 
+      let draftPack: any = undefined;
+      if (dryRun && targetPath) {
+        const originalContent = reviewOriginalContent ?? "";
+        const nextContent = reviewNextContent ?? originalContent;
+        const builder = new DraftPackBuilder({
+          skeletonOnly: constraints?.draftOptions?.skeletonOnly !== false,
+          includePhantomDiff: true
+        });
+        draftPack = await builder.buildForChange({
+          intent: originalIntent,
+          targetPath,
+          oldContent: originalContent,
+          newContent: nextContent
+        });
+      }
+
+      const preApplyReview = (reviewOptions?.preApply ?? dryRun) && targetPath
+        ? await new ReviewReportBuilder(
+            { dependencyGraph, indexStateManager },
+            { strictness: reviewOptions?.strictness }
+          ).review({
+            filePath: targetPath,
+            content: reviewNextContent ?? reviewOriginalContent ?? "",
+            oldContent: reviewOriginalContent,
+            guardrailResult,
+            constraints
+          })
+        : undefined;
+
+      let postReview: any = undefined;
+      if (!dryRun && reviewOptions?.postApply && targetPath && finalResult.success) {
+        let currentContent = "";
+        try {
+          currentContent = await this.fileSystem.readFile(targetPath);
+        } catch {
+          currentContent = reviewNextContent ?? "";
+        }
+        postReview = await new ReviewReportBuilder(
+          { dependencyGraph, indexStateManager },
+          { strictness: reviewOptions?.strictness }
+        ).review({
+          filePath: targetPath,
+          content: currentContent,
+          oldContent: reviewOriginalContent,
+          constraints
+        });
+      }
+      if (artifactManager) {
+        if (draftPack) {
+          artifactManager.store({
+            id: draftPack.id,
+            type: "draft",
+            createdAt: draftPack.createdAt,
+            pack: draftPack,
+            sessionId: resolvedSessionId,
+            metadata: { intent: originalIntent }
+          });
+        }
+        if (preApplyReview) {
+          artifactManager.store({
+            id: preApplyReview.id,
+            type: "review",
+            createdAt: preApplyReview.reviewedAt,
+            report: preApplyReview,
+            sessionId: resolvedSessionId,
+            parentId: draftPack?.id,
+            metadata: { intent: originalIntent }
+          });
+        }
+        if (postReview) {
+          artifactManager.store({
+            id: postReview.id,
+            type: "review",
+            createdAt: postReview.reviewedAt,
+            report: postReview,
+            sessionId: resolvedSessionId,
+            parentId: draftPack?.id,
+            metadata: { intent: originalIntent }
+          });
+        }
+      }
+
       let relatedDocs: Array<any> | undefined;
       if (!dryRun && finalResult.success && shouldSuggestDocs(constraints)) {
         const packId = constraints?.evidencePack ?? constraints?.evidencePackId ?? constraints?.packId;
@@ -415,6 +508,9 @@ export class ChangePillar {
         targetFile: targetPath,
         diff: truncatedDiff,
         plan,
+        draftPack,
+        review: preApplyReview,
+        postReview,
         impactReport,
         architecturalRisk,
         architecturalWarnings: architecturalWarnings.length > 0 ? architecturalWarnings : undefined,
@@ -432,6 +528,7 @@ export class ChangePillar {
         autoCorrected,
         autoCorrectionAttempts: autoCorrectionAttempts.length > 0 ? autoCorrectionAttempts : undefined,
         guidance: failureGuidance ?? successGuidance,
+        sessionId: resolvedSessionId,
         relatedDocs,
         integrity: integrityReport,
         degraded: !finalResult.success && autoCorrectionAttempts.length === 0,

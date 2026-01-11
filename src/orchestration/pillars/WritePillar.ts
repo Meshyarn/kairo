@@ -18,6 +18,10 @@ import {
 } from "../guardrails/IntegrityGuardrails.js";
 import type { DependencyGraph } from "../../ast/DependencyGraph.js";
 import type { IndexStateManager } from "../../indexing/IndexStateManager.js";
+import type { DraftPack } from "../../types/flow-artifacts.js";
+import { DraftPackBuilder } from "../../generation/draft-pack-builder.js";
+import { ReviewReportBuilder } from "../../generation/review-report-builder.js";
+import type { FlowArtifactManager } from "../flow-artifact-manager.js";
 
 export class WritePillar {
   constructor(private readonly registry: InternalToolRegistry) {}
@@ -37,13 +41,20 @@ export class WritePillar {
       let content = constraints.content ?? '';
       const hasExplicitContent = constraints.content !== undefined;
       const safeWrite = Boolean((constraints as any).safeWrite);
-      
       const quickGenerate = Boolean((constraints as any).quickGenerate);
       const smartWrite = Boolean((constraints as any).smartWrite);
       const styleReference = (constraints as any).styleReference as string[] | undefined;
+      const dryRun = Boolean((constraints as any).dryRun);
+      const draftOptions = (constraints as any).draftOptions as { skeletonOnly?: boolean } | undefined;
+      const reviewOptions = (constraints as any).reviewOptions ?? {};
+      const rawSessionId = typeof (constraints as any).sessionId === "string" ? (constraints as any).sessionId : undefined;
+      const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
+      const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, originalIntent);
+      const attachSession = <T extends Record<string, any>>(payload: T): T & { sessionId?: string } =>
+        resolvedSessionId ? { ...payload, sessionId: resolvedSessionId } : payload;
 
       if (!targetPath) {
-        return {
+        return attachSession({
           success: false,
           status: 'failure',
           createdFiles: [],
@@ -52,10 +63,122 @@ export class WritePillar {
             message: 'Missing targetPath. Provide a file path to create.',
             suggestedActions: []
           }
-        };
+        });
       }
 
       const resolvedPath = await this.resolveTargetPath(targetPath);
+
+      if (dryRun) {
+        if (smartWrite && !hasExplicitContent) {
+          try {
+            const generated = await smartWriteCode(
+              resolvedPath,
+              originalIntent,
+              constraints,
+              context,
+              (ctx, tool, args) => this.runTool(ctx, tool, args),
+              (i, p) => this.parseGenerationIntent(i, p),
+              styleReference
+            );
+            if (generated) {
+              content = generated.code;
+            }
+          } catch (error: any) {
+            console.warn(`Smart write (dry-run) failed: ${error.message}`);
+          }
+        }
+
+        if ((quickGenerate || smartWrite) && !hasExplicitContent && content === '') {
+          try {
+            const generated = await quickGenerateCode(resolvedPath, originalIntent, (i, p) => this.parseGenerationIntent(i, p));
+            if (generated) {
+              content = generated.code;
+            }
+          } catch (error: any) {
+            console.warn(`Quick generate (dry-run) failed: ${error.message}`);
+          }
+        }
+
+        if (content === '' && template) {
+          const templated = await resolveTemplateContent(
+            template,
+            resolvedPath,
+            originalIntent,
+            context,
+            (ctx, tool, args) => this.runTool(ctx, tool, args),
+            (v) => this.toPascalCase(v),
+            (v) => this.looksLikePath(v)
+          );
+          if (typeof templated === 'string') {
+            content = templated;
+          }
+        }
+
+        let existingContent: string | null = null;
+        try {
+          existingContent = await this.runTool(context, 'code_read', { filePath: resolvedPath, view: 'full' });
+        } catch {
+          existingContent = null;
+        }
+
+        const builder = new DraftPackBuilder({
+          skeletonOnly: draftOptions?.skeletonOnly !== false,
+          includePhantomDiff: true
+        });
+        const draftPack: DraftPack = await builder.buildForWrite({
+          intent: originalIntent,
+          targetPath: resolvedPath,
+          content,
+          existingContent
+        });
+
+        const preApplyReview = (reviewOptions?.preApply ?? true)
+          ? await new ReviewReportBuilder(
+              {
+                dependencyGraph: this.registry.getMetadata<DependencyGraph>("dependencyGraph"),
+                indexStateManager: this.registry.getMetadata<IndexStateManager>("indexStateManager")
+              },
+              { strictness: reviewOptions?.strictness }
+            ).review({
+              filePath: resolvedPath,
+              content,
+              oldContent: existingContent ?? "",
+              constraints
+            })
+          : undefined;
+        if (artifactManager) {
+          artifactManager.store({
+            id: draftPack.id,
+            type: "draft",
+            createdAt: draftPack.createdAt,
+            pack: draftPack,
+            sessionId: resolvedSessionId,
+            metadata: { intent: originalIntent }
+          });
+          if (preApplyReview) {
+            artifactManager.store({
+              id: preApplyReview.id,
+              type: "review",
+              createdAt: preApplyReview.reviewedAt,
+              report: preApplyReview,
+              sessionId: resolvedSessionId,
+              parentId: draftPack.id,
+              metadata: { intent: originalIntent }
+            });
+          }
+        }
+
+        return attachSession({
+          success: true,
+          status: 'draft',
+          draftPack,
+          review: preApplyReview,
+          guidance: {
+            message: 'DraftPack generated. Review skeleton and phantom diff before applying.',
+            suggestedActions: []
+          }
+        });
+      }
 
       if (smartWrite && !hasExplicitContent) {
         const stopSmartWrite = metrics.startTimer("write.smart_write_ms");
@@ -73,7 +196,7 @@ export class WritePillar {
           
           if (generated) {
             content = generated.code;
-            return await this.writeGeneratedCode(resolvedPath, content, originalIntent, context, generated.templateType, generated.imports, constraints);
+            return await this.writeGeneratedCode(resolvedPath, content, originalIntent, context, generated.templateType, generated.imports, constraints, resolvedSessionId);
           }
         } catch (error: any) {
           stopSmartWrite();
@@ -88,7 +211,7 @@ export class WritePillar {
           stopGenerate();
           if (generated) {
             content = generated.code;
-            return await this.writeGeneratedCode(resolvedPath, content, originalIntent, context, generated.templateType, undefined, constraints);
+            return await this.writeGeneratedCode(resolvedPath, content, originalIntent, context, generated.templateType, undefined, constraints, resolvedSessionId);
           }
         } catch (error: any) {
           stopGenerate();
@@ -124,7 +247,7 @@ export class WritePillar {
           );
           if (guardrailResult?.status === 'block') {
             stopSafePatch();
-            return {
+            return attachSession({
               success: false,
               status: 'blocked',
               createdFiles: [],
@@ -142,7 +265,7 @@ export class WritePillar {
               guidance: {
                 message: guardrailResult.violations?.[0]?.message ?? 'Write blocked by integrity guardrails.'
               }
-            };
+            });
           }
 
           const edit = {
@@ -160,7 +283,7 @@ export class WritePillar {
 
           stopSafePatch();
 
-          return {
+          return attachSession({
             success: result.success ?? true,
             status: result.success === false ? 'failure' : 'success',
             createdFiles: result.success ? [{ path: resolvedPath, description: `Written (safe mode) from intent: ${originalIntent}` }] : [],
@@ -179,10 +302,10 @@ export class WritePillar {
               message: result.success ? 'File written with undo support.' : `Write failed: ${result.message || 'Unknown error'}`,
               suggestedActions: result.success ? [{ pillar: 'read', action: 'view_full', target: resolvedPath }] : []
             }
-          };
+          });
         } catch (error: any) {
           stopSafePatch();
-          return {
+          return attachSession({
             success: false,
             status: 'failure',
             createdFiles: [],
@@ -190,7 +313,7 @@ export class WritePillar {
             rollbackAvailable: false,
             writeMode: 'safe',
             guidance: { message: `Safe write failed: ${error.message}`, suggestedActions: [] }
-          };
+          });
         }
       }
 
@@ -209,7 +332,7 @@ export class WritePillar {
           constraints
         );
         if (guardrailResult?.status === 'block') {
-          return {
+          return attachSession({
             success: false,
             status: 'blocked',
             createdFiles: [],
@@ -227,7 +350,7 @@ export class WritePillar {
             guidance: {
               message: guardrailResult.violations?.[0]?.message ?? 'Write blocked by integrity guardrails.'
             }
-          };
+          });
         }
 
         try {
@@ -240,7 +363,7 @@ export class WritePillar {
           });
         }
 
-        return {
+        return attachSession({
           success: true,
           status: 'success',
           createdFiles: [{ path: resolvedPath, description: `Written from intent: ${originalIntent}` }],
@@ -259,7 +382,7 @@ export class WritePillar {
             message: 'File written (fast mode, no undo).',
             suggestedActions: [{ pillar: 'read', action: 'view_full', target: resolvedPath }]
           }
-        };
+        });
       }
 
       let existingContent: string | null = null;
@@ -289,7 +412,7 @@ export class WritePillar {
       }
 
       if (content === '' && existingContent === null) {
-        return {
+        return attachSession({
           success: true,
           status: 'success',
           createdFiles: [{ path: resolvedPath, description: `Created from intent: ${originalIntent}` }],
@@ -298,7 +421,7 @@ export class WritePillar {
             message: 'Empty file created.',
             suggestedActions: [{ pillar: 'read', action: 'view_full', target: resolvedPath }]
           }
-        };
+        });
       }
 
       const edit = existingContent === null
@@ -313,7 +436,7 @@ export class WritePillar {
         constraints
       );
       if (guardrailResult?.status === 'block') {
-        return {
+        return attachSession({
           success: false,
           status: 'blocked',
           createdFiles: [],
@@ -331,7 +454,7 @@ export class WritePillar {
           guidance: {
             message: guardrailResult.violations?.[0]?.message ?? 'Write blocked by integrity guardrails.'
           }
-        };
+        });
       }
 
       const editResult = await this.runTool(context, 'edit_transaction', {
@@ -340,7 +463,7 @@ export class WritePillar {
         dryRun: false
       });
 
-      return {
+      return attachSession({
         success: editResult.success ?? true,
         status: editResult.success === false ? 'failure' : 'success',
         createdFiles: [{ path: resolvedPath, description: `Written from intent: ${originalIntent}` }],
@@ -357,7 +480,7 @@ export class WritePillar {
           message: editResult.success ? 'File written.' : 'File write failed.',
           suggestedActions: editResult.success ? [{ pillar: 'read', action: 'view_full', target: resolvedPath }] : []
         }
-      };
+      });
     } finally {
       stopTotal();
     }
@@ -513,7 +636,8 @@ export class WritePillar {
     context: OrchestrationContext,
     templateType: TemplateType,
     imports?: string[],
-    constraints?: any
+    constraints?: any,
+    sessionId?: string
   ): Promise<any> {
     try {
       let finalContent = content;
@@ -553,6 +677,7 @@ export class WritePillar {
           blockedReason: guardrailResult.blockedReason ?? 'architectural_violation',
           violations: guardrailResult.violations,
           warnings: guardrailResult.warnings,
+          sessionId,
           guidance: {
             message: guardrailResult.violations?.[0]?.message ?? 'Write blocked by integrity guardrails.'
           }
@@ -576,13 +701,14 @@ export class WritePillar {
         blockedReason: guardrailResult?.blockedReason,
         violations: guardrailResult?.violations,
         warnings: guardrailResult?.warnings,
+        sessionId,
         guidance: {
           message: result.success ? `Generated ${templateType} with project style. Use 'manage undo' to rollback.` : `Generation failed: ${result.message || 'Unknown error'}`,
           suggestedActions: result.success ? [{ pillar: 'read', action: 'view_full', target: filePath }] : []
         }
       };
     } catch (error: any) {
-      return { success: false, status: 'failure', createdFiles: [], transactionId: '', rollbackAvailable: false, writeMode: 'quickGenerate', guidance: { message: `Quick generate failed: ${error.message}`, suggestedActions: [] } };
+      return { success: false, status: 'failure', createdFiles: [], transactionId: '', rollbackAvailable: false, writeMode: 'quickGenerate', sessionId, guidance: { message: `Quick generate failed: ${error.message}`, suggestedActions: [] } };
     }
   }
 }

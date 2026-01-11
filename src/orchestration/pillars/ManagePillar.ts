@@ -11,13 +11,23 @@ export class ManagePillar {
     const { action, targets, constraints } = intent;
     const target = targets[0];
     const scope = constraints.scope;
+    const artifactOptions = constraints.artifactOptions;
+    const limit = constraints.limit;
+    const sessionId = constraints.sessionId;
     const execute = async (command: string) => {
       const started = Date.now();
-      const output = await this.registry.execute('project_manage', { command, target, scope });
+      const output = await this.registry.execute('project_manage', {
+        command,
+        target,
+        scope,
+        artifactOptions,
+        limit,
+        sessionId
+      });
       context.addStep({
         id: `${command}_${context.getFullHistory().length + 1}`,
         tool: 'project_manage',
-        args: { command, target, scope },
+        args: { command, target, scope, artifactOptions, limit, sessionId },
         output,
         status: output?.success === false || output?.isError ? 'failure' : 'success',
         duration: Date.now() - started
@@ -38,6 +48,22 @@ export class ManagePillar {
         return this.wrapResponse(await execute('history'));
       case 'test':
         return this.wrapResponse(await execute('test'));
+      case 'artifacts':
+        return this.wrapResponse(await execute('artifacts'));
+      case 'artifact':
+        return this.wrapResponse(await execute('artifact'));
+      case 'discard':
+        return this.wrapResponse(await execute('discard'));
+      case 'prune':
+        return this.wrapResponse(await execute('prune'));
+      case 'export':
+        return this.wrapResponse(await execute('export'));
+      case 'import':
+        return this.wrapResponse(await execute('import'));
+      case 'sessions':
+        return this.wrapResponse(await execute('sessions'));
+      case 'session':
+        return this.wrapResponse(await execute('session'));
       default:
         // Check intent directly if action mapping is imprecise
         if (intent.originalIntent.includes('undo')) return this.wrapResponse(await execute('undo'));
@@ -50,6 +76,12 @@ export class ManagePillar {
         }
         if (intent.originalIntent.includes('test')) {
           return this.wrapResponse(await execute('test'));
+        }
+        if (intent.originalIntent.includes('session')) {
+          return this.wrapResponse(await execute('sessions'));
+        }
+        if (intent.originalIntent.includes('artifact')) {
+          return this.wrapResponse(await execute('artifacts'));
         }
         return this.wrapResponse(await execute('status'));
     }
@@ -65,5 +97,3 @@ export class ManagePillar {
     };
   }
 }
-
-

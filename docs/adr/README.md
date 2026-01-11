@@ -11,7 +11,7 @@ If you only read one thing, start with:
 
 - `docs/adr/ADR-040-five-pillars-toolset.md` (public tool surface)
 - `docs/adr/ADR-041-integrity-audit-and-guardrails.md` (safety model)
-- `docs/adr/ADR-050-writers-flow.md` (workflow contract; rollout pending in `0.1.0`)
+- `docs/adr/ADR-050-writers-flow.md` (workflow contract; artifacts/session support in `0.2.0`)
 
 ## Retouched ADRs (canonical for OSS)
 

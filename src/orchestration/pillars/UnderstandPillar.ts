@@ -1,4 +1,5 @@
 
+import { LRUCache } from "lru-cache";
 import { InternalToolRegistry } from '../InternalToolRegistry.js';
 import { OrchestrationContext } from '../OrchestrationContext.js';
 import { ParsedIntent } from '../IntentRouter.js';
@@ -7,6 +8,10 @@ import { analyzeQuery, isStrongQuery } from '../../engine/search/QueryMetrics.js
 import { IntegrityEngine } from '../../integrity/IntegrityEngine.js';
 import { UnifiedContextGraph } from '../context/UnifiedContextGraph.js';
 import type { IndexStateManager } from '../../indexing/IndexStateManager.js';
+import type { AnalysisPack, StylePack } from '../../types/flow-artifacts.js';
+import { VibeProfileBuilder } from '../../generation/vibe-profile-builder.js';
+import { AnalysisPackBuilder } from '../../generation/analysis-pack-builder.js';
+import type { FlowArtifactManager } from '../flow-artifact-manager.js';
 import { extractSymbol, fetchCallGraph } from './understand/CallGraphAnalysis.js';
 import {
   categorizeDocLinks,
@@ -21,6 +26,13 @@ import { resolveProgressState, logProgress, logToolStart, logToolEnd, ProgressSt
 
 
 export class UnderstandPillar {
+  private static readonly styleCacheTtlMs =
+    Number.parseInt(process.env.KAIRO_STYLE_PACK_TTL_MS ?? "1800000", 10) || 1800000;
+  private static styleCache = new LRUCache<string, StylePack>({
+    max: Number.parseInt(process.env.KAIRO_STYLE_PACK_CACHE_SIZE ?? "50", 10) || 50,
+    ttl: UnderstandPillar.styleCacheTtlMs
+  });
+
   constructor(private readonly registry: InternalToolRegistry) {}
 
   public async execute(intent: ParsedIntent, context: OrchestrationContext): Promise<any> {
@@ -28,6 +40,11 @@ export class UnderstandPillar {
     const subject = constraints.goal || targets[0] || originalIntent;
     const depth = constraints.depth || 'standard';
     const include = constraints.include ?? {};
+    const vibe = constraints.vibe as { extract?: boolean; scope?: string; includeNorms?: boolean } | undefined;
+    const wantsVibe = vibe?.extract === true;
+    const analysis = constraints.analysis as { clusters?: boolean; maxClusters?: number; maxFilesPerCluster?: number } | undefined;
+    const wantsAnalysis = analysis?.clusters === true;
+    const rawSessionId = typeof constraints.sessionId === "string" ? constraints.sessionId : undefined;
     const includeDependencies = include.dependencies === true || include.pageRank === true;
     const includeCalls = include.callGraph === true;
     const explicitPath = this.extractPath(subject) ?? (typeof originalIntent === 'string' ? this.extractPath(originalIntent) : null);
@@ -213,6 +230,34 @@ export class UnderstandPillar {
       : undefined;
     const indexStateManager = this.registry.getMetadata<IndexStateManager>("indexStateManager");
     const indexSnapshot = indexStateManager ? await indexStateManager.getSnapshot().catch(() => undefined) : undefined;
+    const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
+    const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, subject);
+
+    const analysisPack = wantsAnalysis
+      ? this.buildAnalysisPack({
+          goal: subject,
+          primaryFile: filePath,
+          searchResults: searchResult?.results,
+          dependencyEdges: deps?.edges,
+          hotSpots,
+          degraded,
+          analysis
+        })
+      : undefined;
+
+    if (analysisPack) {
+      if (artifactManager) {
+        artifactManager.store({
+          id: analysisPack.id,
+          type: "analysis",
+          createdAt: analysisPack.createdAt,
+          pack: analysisPack,
+          sessionId: resolvedSessionId,
+          metadata: { intent: subject }
+        });
+      }
+    }
+
     return buildUnderstandResponse({
       subject,
       filePath,
@@ -232,9 +277,111 @@ export class UnderstandPillar {
       refinementReason,
       budget,
       allowGraphs,
-      indexSnapshot
+      indexSnapshot,
+      stylePack: wantsVibe ? await this.buildStylePack(filePath, vibe, indexSnapshot, resolvedSessionId, subject) : undefined,
+      analysisPack,
+      sessionId: resolvedSessionId
     });
 
+  }
+
+  private async buildStylePack(
+    filePath: string,
+    vibe: { scope?: string; includeNorms?: boolean } | undefined,
+    indexSnapshot?: { epoch?: number; dirtyFileCount?: number },
+    sessionId?: string,
+    intent?: string
+  ): Promise<StylePack | undefined> {
+    const cacheKey = this.getStyleCacheKey(vibe, indexSnapshot);
+    if (cacheKey) {
+      const cached = UnderstandPillar.styleCache.get(cacheKey);
+      if (cached) {
+        if (sessionId) {
+          const derived: StylePack = {
+            ...cached,
+            id: this.generateStylePackId(),
+            createdAt: Date.now(),
+            expiresAt: Date.now() + UnderstandPillar.styleCacheTtlMs
+          };
+          const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
+          if (artifactManager) {
+            artifactManager.store({
+              id: derived.id,
+              type: "style",
+              createdAt: derived.createdAt,
+              expiresAt: derived.expiresAt,
+              pack: derived,
+              sessionId,
+              metadata: intent ? { intent } : undefined
+            });
+          }
+          return derived;
+        }
+        return cached;
+      }
+    }
+    const builder = VibeProfileBuilder.create(process.cwd(), {
+      includeNorms: vibe?.includeNorms !== false,
+      scopeGlob: vibe?.scope
+    });
+    const pack = await builder.build(filePath);
+    const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
+    if (artifactManager) {
+      artifactManager.store({
+        id: pack.id,
+        type: "style",
+        createdAt: pack.createdAt,
+        expiresAt: pack.expiresAt,
+        pack,
+        sessionId,
+        metadata: intent ? { intent } : undefined
+      });
+    }
+    if (cacheKey) {
+      UnderstandPillar.styleCache.set(cacheKey, pack);
+    }
+    return pack;
+  }
+
+  private buildAnalysisPack(input: {
+    goal: string;
+    primaryFile?: string;
+    searchResults?: Array<{ path?: string; score?: number; reason?: string }>;
+    dependencyEdges?: Array<{ from: string; to: string; type?: string }>;
+    hotSpots?: Array<{ path?: string; score?: number; reason?: string }>;
+    degraded: boolean;
+    analysis?: { maxClusters?: number; maxFilesPerCluster?: number };
+  }): AnalysisPack {
+    const builder = new AnalysisPackBuilder({
+      maxClusters: input.analysis?.maxClusters,
+      maxFilesPerCluster: input.analysis?.maxFilesPerCluster
+    });
+    return builder.build({
+      goal: input.goal,
+      primaryFile: input.primaryFile,
+      searchResults: input.searchResults,
+      dependencyEdges: input.dependencyEdges,
+      hotSpots: input.hotSpots,
+      degraded: input.degraded
+    });
+  }
+
+  private getStyleCacheKey(
+    vibe: { scope?: string; includeNorms?: boolean } | undefined,
+    indexSnapshot?: { epoch?: number; dirtyFileCount?: number }
+  ): string | undefined {
+    if (indexSnapshot?.dirtyFileCount && indexSnapshot.dirtyFileCount > 0) {
+      return undefined;
+    }
+    const scope = vibe?.scope ?? "**/*";
+    const includeNorms = vibe?.includeNorms !== false ? "norms" : "no-norms";
+    const epoch = indexSnapshot?.epoch ?? 0;
+    return `style:${scope}:${includeNorms}:epoch:${epoch}`;
+  }
+
+  private generateStylePackId(): string {
+    const suffix = Math.random().toString(36).slice(2, 8);
+    return `style_${Date.now().toString(36)}_${suffix}`;
   }
 
   private extractPath(text: string): string | null {

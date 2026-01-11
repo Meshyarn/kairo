@@ -37,6 +37,16 @@ export interface IntentConstraints {
     pageRank?: boolean;
     dependencies?: boolean;
   };
+  vibe?: {
+    extract?: boolean;
+    scope?: string;
+    includeNorms?: boolean;
+  };
+  analysis?: {
+    clusters?: boolean;
+    maxClusters?: number;
+    maxFilesPerCluster?: number;
+  };
   query?: string;
   paths?: string[];
   intent?: string;
@@ -61,12 +71,30 @@ export interface IntentConstraints {
   allowSensitive?: boolean;
   allowBinary?: boolean;
   allowGlobs?: boolean;
+  sessionId?: string;
   integrity?: IntegrityOptions;
   // ADR-042-006: Layer 3 AI-Enhanced Features
   smartMatch?: boolean;        // Phase 1: Enable embedding-based symbol search
   quickGenerate?: boolean;      // Phase 2.5: Enable quick code generation
   smartWrite?: boolean;         // Phase 3: Enable full code generation with pattern extraction
   styleReference?: string[];    // Phase 3: Explicit reference files for pattern extraction
+  draftId?: string;
+  draftOptions?: {
+    skeletonOnly?: boolean;
+    includeImpact?: boolean;
+  };
+  reviewOptions?: {
+    preApply?: boolean;
+    postApply?: boolean;
+    strictness?: "strict" | "balanced" | "permissive";
+    blockOn?: Array<"syntax" | "semantic" | "guardrails" | "vibe">;
+  };
+  artifactOptions?: {
+    type?: string;
+    sessionId?: string;
+    limit?: number;
+    includeExpired?: boolean;
+  };
 }
 
 

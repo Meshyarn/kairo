@@ -251,6 +251,114 @@ export class ManageHandlers extends BaseHandler {
                         suggestedTests: report?.suggestedTests ?? []
                     };
                 }
+            case 'sessions':
+                {
+                    const limit = typeof args?.limit === "number" ? args.limit : (args?.artifactOptions?.limit ?? 10);
+                    const sessions = this.context.flowArtifactManager.listSessions(limit);
+                    return {
+                        success: true,
+                        output: "Sessions listed.",
+                        sessions
+                    };
+                }
+            case 'session':
+                {
+                    const target = args?.target ?? args?.sessionId ?? args?.artifactOptions?.sessionId;
+                    if (!target) {
+                        return { success: false, output: "Missing target session id." };
+                    }
+                    const session = this.context.flowArtifactManager.getSession(target);
+                    return {
+                        success: Boolean(session),
+                        output: session ? "Session retrieved." : "Session not found.",
+                        session
+                    };
+                }
+            case 'artifacts':
+                {
+                    const options = args?.artifactOptions ?? {};
+                    const limit = typeof options.limit === "number" ? options.limit : 10;
+                    let artifacts = this.context.flowArtifactManager.getRecent(limit);
+                    if (options.type) {
+                        artifacts = artifacts.filter((artifact) => artifact.type === options.type);
+                    }
+                    if (options.sessionId) {
+                        artifacts = artifacts.filter((artifact) => artifact.sessionId === options.sessionId);
+                    }
+                    if (options.includeExpired !== true) {
+                        const now = Date.now();
+                        artifacts = artifacts.filter((artifact) => !artifact.expiresAt || artifact.expiresAt > now);
+                    }
+                    return {
+                        success: true,
+                        output: "Artifacts listed.",
+                        artifacts
+                    };
+                }
+            case 'artifact':
+                {
+                    const target = args?.target;
+                    if (!target) {
+                        return { success: false, output: "Missing target artifact id." };
+                    }
+                    const artifact = this.context.flowArtifactManager.get(target);
+                    return {
+                        success: Boolean(artifact),
+                        output: artifact ? "Artifact retrieved." : "Artifact not found.",
+                        artifact
+                    };
+                }
+            case 'discard':
+                {
+                    const target = args?.target;
+                    if (!target) {
+                        return { success: false, output: "Missing target artifact id." };
+                    }
+                    const discarded = this.context.flowArtifactManager.discard(target);
+                    return {
+                        success: discarded,
+                        output: discarded ? "Artifact discarded." : "Artifact not found."
+                    };
+                }
+            case 'prune':
+                {
+                    const pruned = this.context.flowArtifactManager.prune();
+                    return {
+                        success: true,
+                        output: "Expired artifacts pruned.",
+                        pruned
+                    };
+                }
+            case 'export':
+                {
+                    const target = args?.target;
+                    if (!target) {
+                        return { success: false, output: "Missing target artifact id." };
+                    }
+                    const artifact = this.context.flowArtifactManager.get(target);
+                    if (!artifact) {
+                        return { success: false, output: "Artifact not found." };
+                    }
+                    const filePath = await this.context.flowArtifactManager.persist(target, artifact);
+                    return {
+                        success: true,
+                        output: "Artifact exported.",
+                        path: filePath
+                    };
+                }
+            case 'import':
+                {
+                    const target = args?.target;
+                    if (!target) {
+                        return { success: false, output: "Missing artifact file path." };
+                    }
+                    const artifact = await this.context.flowArtifactManager.importFromPath(target);
+                    return {
+                        success: Boolean(artifact),
+                        output: artifact ? "Artifact imported." : "Artifact import failed.",
+                        artifact
+                    };
+                }
             default:
                 return { success: false, output: `Unknown project_manage command: ${command}` };
         }

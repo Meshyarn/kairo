@@ -9,6 +9,10 @@ import type { QueryMetrics } from "../../../engine/search/QueryMetrics.js";
 import { IntegrityEngine } from "../../../integrity/IntegrityEngine.js";
 import { UnifiedContextGraph } from "../../context/UnifiedContextGraph.js";
 import type { IndexStateManager } from "../../../indexing/IndexStateManager.js";
+import type { DependencyGraph } from "../../../ast/DependencyGraph.js";
+import { ProjectSketchBuilder } from "../../../generation/project-sketch-builder.js";
+import type { ResearchPack } from "../../../types/flow-artifacts.js";
+import type { FlowArtifactManager } from "../../flow-artifact-manager.js";
 
 import { 
     ExploreItem, 
@@ -42,11 +46,17 @@ const DEFAULT_MAX_FILES = 200;
 const DEFAULT_PACK_RESULTS = Number.parseInt(process.env.KAIRO_MAX_RESULTS ?? "25", 10) || 25;
 const DEFAULT_PACK_TTL_MS = Number.parseInt(process.env.KAIRO_EXPLORE_PACK_TTL_MS ?? "600000", 10) || 600000;
 const DEFAULT_PACK_CACHE_SIZE = Number.parseInt(process.env.KAIRO_EXPLORE_PACK_CACHE_SIZE ?? "100", 10) || 100;
+const DEFAULT_RESEARCH_TTL_MS = Number.parseInt(process.env.KAIRO_RESEARCH_PACK_TTL_MS ?? "1800000", 10) || 1800000;
+const DEFAULT_RESEARCH_CACHE_SIZE = Number.parseInt(process.env.KAIRO_RESEARCH_PACK_CACHE_SIZE ?? "50", 10) || 50;
 
 export class ExplorePillar {
     private static packCache = new LRUCache<string, ExplorePack>({
         max: DEFAULT_PACK_CACHE_SIZE,
         ttl: DEFAULT_PACK_TTL_MS
+    });
+    private static researchCache = new LRUCache<string, ResearchPack>({
+        max: DEFAULT_RESEARCH_CACHE_SIZE,
+        ttl: DEFAULT_RESEARCH_TTL_MS
     });
 
     constructor(private readonly registry: InternalToolRegistry) {}
@@ -60,6 +70,13 @@ export class ExplorePillar {
         const include = (constraints.include ?? {}) as { docs?: boolean; code?: boolean; comments?: boolean; logs?: boolean };
         const includeExplicit = !!constraints.include && typeof constraints.include === "object" && !Array.isArray(constraints.include)
             && Object.keys(constraints.include).length > 0;
+        const research = constraints.research as {
+            sketch?: boolean;
+            topN?: number;
+            format?: "ascii" | "mermaid" | "both";
+        } | undefined;
+        const rawSessionId = typeof constraints.sessionId === "string" ? constraints.sessionId : undefined;
+        const researchRequested = !!research && research?.sketch !== false;
         const limits = (constraints.limits ?? {}) as {
             maxResults?: number;
             maxChars?: number;
@@ -109,7 +126,7 @@ export class ExplorePillar {
             searchBudget.maxParseTimeMs = Math.min(searchBudget.maxParseTimeMs, timeoutMs!);
         }
 
-        if (!query && paths.length === 0) {
+        if (!query && paths.length === 0 && !researchRequested) {
             return {
                 success: false,
                 status: "invalid_args",
@@ -156,12 +173,34 @@ export class ExplorePillar {
             }))
             : undefined;
 
+        const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
+        const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, intent.originalIntent ?? query ?? "explore");
+
         const response: ExploreResponse = {
             success: true,
             status: "ok",
             query,
-            data: { docs: [], code: [] }
+            data: { docs: [], code: [] },
+            sessionId: resolvedSessionId
         };
+
+        if (researchRequested) {
+            response.researchPack = await this.buildResearchPack(research, resolvedSessionId, intent.originalIntent).catch(() => undefined);
+            if (!response.researchPack) {
+                response.insights = response.insights || [];
+                response.insights.push({
+                    type: "warning",
+                    message: "Research pack generation failed. Ensure dependency graph indexing is available.",
+                    relatedSymbols: []
+                });
+            }
+        }
+
+        if (!query && paths.length === 0) {
+            this.addIndexStatusInsights(response);
+            await this.attachIndexSnapshot(response);
+            return response;
+        }
         if (integrityOptions && integrityOptions.mode !== "off") {
             const integrityQuery = query ?? (paths.length > 0 ? path.basename(paths[0]) : undefined);
             const integrityResult = await IntegrityEngine.run(
@@ -477,6 +516,103 @@ export class ExplorePillar {
         } catch {
             // Optional metadata
         }
+    }
+
+    private async buildResearchPack(
+        research?: {
+        sketch?: boolean;
+        topN?: number;
+        format?: "ascii" | "mermaid" | "both";
+        },
+        sessionId?: string,
+        intent?: string
+    ): Promise<ResearchPack | undefined> {
+        if (research?.sketch === false) {
+            return undefined;
+        }
+        const dependencyGraph = this.registry.getMetadata<DependencyGraph>("dependencyGraph");
+        if (!dependencyGraph) {
+            return undefined;
+        }
+        const indexState = this.registry.getMetadata<IndexStateManager>("indexStateManager");
+        const indexSnapshot = indexState
+            ? await indexState.getSnapshot().catch(() => undefined)
+            : undefined;
+        const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
+        const cacheKey = this.getResearchCacheKey(research, indexSnapshot);
+        if (cacheKey) {
+            const cached = ExplorePillar.researchCache.get(cacheKey);
+            if (cached) {
+                if (sessionId && artifactManager) {
+                    const derived = {
+                        ...cached,
+                        id: this.generateResearchPackId(),
+                        createdAt: Date.now(),
+                        expiresAt: Date.now() + DEFAULT_RESEARCH_TTL_MS
+                    };
+                    artifactManager.store({
+                        id: derived.id,
+                        type: "research",
+                        createdAt: derived.createdAt,
+                        expiresAt: derived.expiresAt,
+                        pack: derived,
+                        sessionId,
+                        metadata: intent ? { intent } : undefined
+                    });
+                    return derived;
+                }
+                return cached;
+            }
+        }
+        const format = research?.format ?? "both";
+        const includeAscii = format === "both" || format === "ascii";
+        const includeMermaid = format === "both" || format === "mermaid";
+        const builder = new ProjectSketchBuilder(dependencyGraph, indexState, {
+            maxTopModules: research?.topN,
+            includeAscii,
+            includeMermaid
+        });
+        const sketch = await builder.build();
+        const now = Date.now();
+        const pack: ResearchPack = {
+            id: this.generateResearchPackId(),
+            sketch,
+            createdAt: now,
+            expiresAt: now + DEFAULT_RESEARCH_TTL_MS
+        };
+        if (artifactManager) {
+            artifactManager.store({
+                id: pack.id,
+                type: "research",
+                createdAt: pack.createdAt,
+                expiresAt: pack.expiresAt,
+                pack,
+                sessionId,
+                metadata: intent ? { intent } : undefined
+            });
+        }
+        if (cacheKey) {
+            ExplorePillar.researchCache.set(cacheKey, pack);
+        }
+        return pack;
+    }
+
+    private getResearchCacheKey(
+        research: { topN?: number; format?: "ascii" | "mermaid" | "both" } | undefined,
+        snapshot?: { epoch?: number; dirtyFileCount?: number; staleRisk?: string }
+    ): string | undefined {
+        if (snapshot && snapshot.dirtyFileCount && snapshot.dirtyFileCount > 0) {
+            return undefined;
+        }
+        const format = research?.format ?? "both";
+        const topN = research?.topN ?? "default";
+        const epoch = snapshot?.epoch ?? 0;
+        return `research:${format}:${topN}:epoch:${epoch}`;
+    }
+
+    private generateResearchPackId(): string {
+        const suffix = Math.random().toString(36).slice(2, 8);
+        return `rp_${Date.now().toString(36)}_${suffix}`;
     }
 
     private async expandDocContent(item: ExploreItem, maxChars: number, context: OrchestrationContext): Promise<ExploreItem> {
