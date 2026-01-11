@@ -6,6 +6,7 @@ import { createRequire } from "module";
 import { fileURLToPath } from "url";
 import { LanguageConfigLoader } from "./LanguageConfig.js";
 import { getSupportForLanguageId, SupportLevel } from "./LanguageSupportLevels.js";
+import { ContractManifestLoader } from "../contracts/ContractManifestLoader.js";
 
 export type BootstrapMode = "plan" | "apply";
 export type BootstrapTarget = "kairo" | "vscode";
@@ -85,7 +86,7 @@ export type ManageInitArgs = {
 
 export type ManageDoctorArgs = {
     mode?: BootstrapMode;
-    scope?: "project" | "config" | "languages" | "wasm" | "host";
+    scope?: "project" | "config" | "languages" | "wasm" | "host" | "contracts";
     root?: string;
 };
 
@@ -216,6 +217,10 @@ export class ConfigBootstrapper {
         if (wasm.missing.length > 0) {
             hints.push(`Missing WASM assets for: ${wasm.missing.join(", ")}. Consider setting KAIRO_WASM_DIR=${wasm.suggestedWasmDir ?? path.join(rootPath, "wasm")}`);
         }
+
+        const contractSignals = this.buildContractFindings(rootPath, repos);
+        findings.push(...contractSignals.findings);
+        hints.push(...contractSignals.hints);
 
         const plan: ConfigWriteOp[] = [];
         if (targets.includes("kairo")) {
@@ -1063,6 +1068,8 @@ export class ConfigBootstrapper {
                 return code === "HOST_CONFIG_MISSING" || code === "HOST_CONFIG_PATCH";
             case "config":
                 return code === "CONFIG_PARSE_ERROR" || code === "MIGRATION_NEEDED" || code === "CONFIG_CONFLICT";
+            case "contracts":
+                return code.startsWith("CONTRACT");
             case "project":
                 return true;
             default:
@@ -1087,6 +1094,9 @@ export class ConfigBootstrapper {
                 || normalized.endsWith("/.kairo/config/mcp-config.json")
                 || normalized.endsWith("/.kairo/config/languages.json");
         }
+        if (scope === "contracts") {
+            return filePath.replace(/\\\\/g, "/").includes("/.kairo/contracts/");
+        }
         return true;
     }
 
@@ -1104,7 +1114,161 @@ export class ConfigBootstrapper {
         if (scope === "config") {
             return hint.includes(".mcp-config") || hint.includes(".kairo/config");
         }
+        if (scope === "contracts") {
+            return hint.includes(".kairo/contracts") || hint.includes("contracts");
+        }
         return true;
+    }
+
+    private buildContractFindings(rootPath: string, repos: RepoSummary[]): { findings: ConfigFinding[]; hints: string[] } {
+        const findings: ConfigFinding[] = [];
+        const hints: string[] = [];
+        const contractsDir = path.join(rootPath, ".kairo", "contracts");
+        if (!fs.existsSync(contractsDir)) {
+            findings.push({
+                code: "CONTRACTS_DIR_MISSING",
+                severity: "warn",
+                message: "Contracts directory is missing (.kairo/contracts).",
+                action: "init_contracts",
+                evidence: { path: contractsDir }
+            });
+            hints.push(`Create ${contractsDir} or run a build step that generates contract manifests.`);
+            return { findings, hints };
+        }
+
+        const entries = fs.readdirSync(contractsDir, { withFileTypes: true });
+        const hasManifest = entries.some((entry) => entry.isDirectory() || entry.isFile());
+        if (!hasManifest) {
+            findings.push({
+                code: "CONTRACTS_EMPTY",
+                severity: "warn",
+                message: "Contracts directory exists but no manifests were found.",
+                action: "generate_contracts",
+                evidence: { path: contractsDir }
+            });
+            hints.push("Generate contract manifests (e.g. NAPI d.ts manifest) to enable cross-language impact.");
+        }
+
+        const linkedRepos = repos.filter((repo) => repo.type === "linked");
+        const manifestLoader = new ContractManifestLoader(rootPath);
+        for (const repo of linkedRepos) {
+            const repoPath = path.resolve(rootPath, repo.path);
+            const packageJsonPath = path.join(repoPath, "package.json");
+            if (!fs.existsSync(packageJsonPath)) {
+                findings.push({
+                    code: "CONTRACT_ALIAS_MISSING",
+                    severity: "warn",
+                    message: `Linked repo "${repo.id}" is missing package.json; cannot map package alias.`,
+                    action: "add_package_name",
+                    evidence: { path: repoPath, repoId: repo.id }
+                });
+                hints.push(`Add package.json with name field in ${repoPath} to enable alias mapping.`);
+                continue;
+            }
+
+            let pkg: { name?: string; types?: string; typings?: string; main?: string } | undefined;
+            try {
+                pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
+            } catch {
+                findings.push({
+                    code: "CONTRACT_ALIAS_INVALID",
+                    severity: "warn",
+                    message: `Linked repo "${repo.id}" has invalid package.json; cannot map package alias.`,
+                    action: "fix_package_json",
+                    evidence: { path: packageJsonPath, repoId: repo.id }
+                });
+                continue;
+            }
+
+            if (!pkg?.name) {
+                findings.push({
+                    code: "CONTRACT_ALIAS_INVALID",
+                    severity: "warn",
+                    message: `Linked repo "${repo.id}" package.json is missing name; cannot map package alias.`,
+                    action: "add_package_name",
+                    evidence: { path: packageJsonPath, repoId: repo.id }
+                });
+            }
+
+            if (pkg?.name) {
+                const manifestResult = manifestLoader.loadManifest(pkg.name, "ffi_napi");
+                if (manifestResult.reason === "contract_manifest_missing") {
+                    findings.push({
+                        code: "CONTRACT_MANIFEST_MISSING",
+                        severity: "warn",
+                        message: `Contract manifest for "${pkg.name}" not found.`,
+                        action: "generate_contracts",
+                        evidence: { packageName: pkg.name, repoId: repo.id }
+                    });
+                    hints.push(`Generate contract manifest for ${pkg.name} (e.g. run build in ${repoPath}).`);
+                } else if (manifestResult.reason === "contract_manifest_invalid") {
+                    findings.push({
+                        code: "CONTRACT_MANIFEST_INVALID",
+                        severity: "warn",
+                        message: `Contract manifest for "${pkg.name}" is invalid.`,
+                        action: "regenerate_contracts",
+                        evidence: { packageName: pkg.name, repoId: repo.id }
+                    });
+                    hints.push(`Regenerate contract manifest for ${pkg.name} to fix invalid schema.`);
+                } else if (manifestResult.stale) {
+                    findings.push({
+                        code: "CONTRACT_MANIFEST_STALE",
+                        severity: "warn",
+                        message: `Contract manifest for "${pkg.name}" is stale.`,
+                        action: "regenerate_contracts",
+                        evidence: { packageName: pkg.name, repoId: repo.id }
+                    });
+                    hints.push(`Regenerate contract manifest for ${pkg.name} to pick up recent changes.`);
+                }
+            }
+
+            if (!pkg) {
+                continue;
+            }
+
+            const entry = this.resolvePackageEntry(repoPath, pkg);
+            if (!entry) {
+                findings.push({
+                    code: "CONTRACT_ALIAS_ENTRY_MISSING",
+                    severity: "warn",
+                    message: `Linked repo "${repo.id}" has no resolvable entry file for alias mapping.`,
+                    action: "add_entry_file",
+                    evidence: { path: packageJsonPath, repoId: repo.id }
+                });
+                hints.push(`Add types/main or index.d.ts for ${repoPath} to enable cross-language alias mapping.`);
+            }
+        }
+
+        return { findings, hints };
+    }
+
+    private resolvePackageEntry(
+        repoPath: string,
+        pkg: { types?: string; typings?: string; main?: string }
+    ): string | undefined {
+        const candidates = [pkg.types, pkg.typings, pkg.main].filter(Boolean) as string[];
+        for (const candidate of candidates) {
+            const resolved = this.resolvePackageEntryCandidate(repoPath, candidate);
+            if (resolved) return resolved;
+        }
+        return this.resolvePackageEntryCandidate(repoPath, "index");
+    }
+
+    private resolvePackageEntryCandidate(repoPath: string, candidate: string): string | undefined {
+        const absolute = path.isAbsolute(candidate) ? candidate : path.resolve(repoPath, candidate);
+        if (fs.existsSync(absolute)) {
+            const stat = fs.statSync(absolute);
+            if (stat.isFile()) return absolute;
+            if (stat.isDirectory()) {
+                return this.resolvePackageEntryCandidate(absolute, "index");
+            }
+        }
+        const extensions = [".d.ts", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
+        for (const ext of extensions) {
+            const resolved = `${absolute}${ext}`;
+            if (fs.existsSync(resolved)) return resolved;
+        }
+        return undefined;
     }
 
     private async applyPlan(plan: ConfigWriteOp[], options?: ManageInitArgs["applyOptions"]): Promise<BootstrapApplyResult[]> {

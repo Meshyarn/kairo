@@ -1,6 +1,7 @@
 import type { IntegrityReport } from "../../../integrity/IntegrityTypes.js";
 import type { IndexSnapshot } from "../../../indexing/IndexStateManager.js";
 import type { ResearchPack } from "../../../types/flow-artifacts.js";
+import type { DegradedReason } from "../../../types/tool-responses.js";
 
 export type ExploreItem = {
     kind: "document_section" | "file_preview" | "file_full" | "symbol" | "directory";
@@ -25,6 +26,7 @@ export type ExploreResponse = {
     integrity?: IntegrityReport;
     degraded?: boolean;
     reasons?: string[];
+    degradedReasons?: DegradedReason[];
     stats?: Record<string, unknown>;
     researchPack?: ResearchPack;
     insights?: Array<{

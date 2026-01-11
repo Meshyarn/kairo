@@ -25,6 +25,7 @@ import { buildUnderstandResponse } from './understand/ReportGenerator.js';
 import { resolveProgressState, logProgress, logToolStart, logToolEnd, ProgressState } from '../../utils/ProgressLogger.js';
 import { OptionResolver } from '../options/OptionResolver.js';
 import { checkSkeletonSupport } from '../../ast/LanguageSupportSignals.js';
+import { buildDegradedReasons } from '../DegradedReasonMapper.js';
 
 
 export class UnderstandPillar {
@@ -300,6 +301,7 @@ export class UnderstandPillar {
       includeCalls,
       degraded,
       degradedReasons: degradedReasons.length > 0 ? degradedReasons : undefined,
+      degradedReasonDetails: buildDegradedReasons(degradedReasons),
       refinementReason,
       budget,
       allowGraphs,

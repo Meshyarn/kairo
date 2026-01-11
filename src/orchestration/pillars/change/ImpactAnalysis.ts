@@ -10,7 +10,7 @@ import { AstDiffEngine } from "../../../ast/AstDiffEngine.js";
 import { SymbolImpactAnalyzer, type SymbolImpactRequest, type SymbolImpactResult } from "../../../engine/SymbolImpactAnalyzer.js";
 import { AutoRepairSuggester } from "../../../engine/AutoRepairSuggester.js";
 
-export function toImpactReport(impact: any, deps: any, targetPath: string, hotSpots: any) {
+export function toImpactReport(impact: any, deps: any, targetPath: string, hotSpots: any, crossLangImpact?: any) {
   if (!impact) return undefined;
   const suggestedTests = Array.isArray(impact.suggestedTests) ? impact.suggestedTests : [];
   const testPriority = new Map(suggestedTests.map((t: string) => [t, 'important' as const]));
@@ -26,7 +26,8 @@ export function toImpactReport(impact: any, deps: any, targetPath: string, hotSp
     pageRankDelta,
     breakingChangeRisk: impact.riskLevel ?? 'low',
     suggestedTests,
-    testPriority
+    testPriority,
+    crossLangImpact
   };
 }
 

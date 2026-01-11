@@ -1,3 +1,5 @@
+import type { DegradedReason } from "../../../types/tool-responses.js";
+
 export function buildUnderstandResponse(args: {
   subject: string;
   filePath: string;
@@ -15,6 +17,7 @@ export function buildUnderstandResponse(args: {
   includeCalls: boolean;
   degraded: boolean;
   degradedReasons?: string[];
+  degradedReasonDetails?: DegradedReason[];
   refinementReason?: string;
   budget: any;
   allowGraphs: boolean;
@@ -40,6 +43,7 @@ export function buildUnderstandResponse(args: {
     includeCalls,
     degraded,
     degradedReasons,
+    degradedReasonDetails,
     refinementReason,
     budget,
     allowGraphs,
@@ -113,6 +117,7 @@ export function buildUnderstandResponse(args: {
     },
     degraded,
     reasons: degradedReasons,
+    degradedReasons: degradedReasonDetails,
     budget,
     refinement: {
       stage: allowGraphs ? "graph" : "skeleton",

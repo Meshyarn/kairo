@@ -299,6 +299,21 @@ export class GuidanceGenerator {
       });
     }
 
+    const degradedReasons = this.extractDegradedReasons(context.lastResult);
+    if (this.hasContractDegradedReason(degradedReasons)) {
+      const alreadySuggested = suggestedActions.some((action) => action.pillar === 'manage' && action.action === 'verify_contracts');
+      if (!alreadySuggested) {
+        suggestedActions.push({
+          priority: 2,
+          pillar: 'manage',
+          action: 'verify_contracts',
+          description: 'Verify contract manifests for cross-language boundaries.',
+          rationale: 'Contract evidence is missing or degraded; doctor can show setup gaps.',
+          toolCall: { tool: 'manage', args: { command: 'doctor', scope: 'contracts' } }
+        });
+      }
+    }
+
     const recoveryStrategies = context.error ? this.buildRecoveryStrategies(context.error) : undefined;
     const meta: GuidanceMeta = {
       generatedAt: new Date().toISOString(),
@@ -356,6 +371,29 @@ export class GuidanceGenerator {
     if (context.error) return 0.5;
     if (context.insights.length === 0) return 0.6;
     return 0.8;
+  }
+
+  private extractDegradedReasons(lastResult: any): string[] {
+    const reasons: string[] = [];
+    if (Array.isArray(lastResult?.reasons)) {
+      reasons.push(...lastResult.reasons);
+    }
+    if (Array.isArray(lastResult?.degradedReasons)) {
+      for (const entry of lastResult.degradedReasons) {
+        if (typeof entry === "string") {
+          reasons.push(entry);
+          continue;
+        }
+        if (entry && typeof entry.type === "string") {
+          reasons.push(entry.type);
+        }
+      }
+    }
+    return reasons.filter((reason) => typeof reason === "string");
+  }
+
+  private hasContractDegradedReason(reasons: string[]): boolean {
+    return reasons.some((reason) => reason.startsWith("contract_") || reason.startsWith("cross_lang_contract_"));
   }
 
   private detectTestContext(history: Array<{ tool: string; args?: any; output?: any }>): boolean {
@@ -419,4 +457,3 @@ export class GuidanceGenerator {
     return unique.length > 0 ? unique.slice(0, 3) : undefined;
   }
 }
-

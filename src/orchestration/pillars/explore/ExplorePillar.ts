@@ -14,6 +14,7 @@ import { ProjectSketchBuilder } from "../../../generation/project-sketch-builder
 import type { ResearchPack } from "../../../types/flow-artifacts.js";
 import type { FlowArtifactManager } from "../../flow-artifact-manager.js";
 import { OptionResolver } from "../../options/OptionResolver.js";
+import { buildDegradedReasons } from "../../DegradedReasonMapper.js";
 
 import { 
     ExploreItem, 
@@ -521,6 +522,7 @@ export class ExplorePillar {
         if (degraded) {
             response.degraded = true;
             response.reasons = Array.from(new Set(reasons));
+            response.degradedReasons = buildDegradedReasons(response.reasons);
         }
 
         if (traceEnabled) {

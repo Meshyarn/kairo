@@ -112,4 +112,32 @@ describe("ManageHandlers config bootstrap", () => {
         const repoPlan = result.plan.find((entry: any) => entry.path.endsWith(path.join(".kairo", "config", "mcp-config.json")));
         expect(repoPlan?.op).toBe("noop");
     });
+
+    it("flags missing package alias details in contract scope", async () => {
+        const root = makeTempDir();
+        const configDir = path.join(root, ".kairo", "config");
+        fs.mkdirSync(configDir, { recursive: true });
+        fs.mkdirSync(path.join(root, ".kairo", "contracts", "ffi_napi"), { recursive: true });
+        fs.writeFileSync(path.join(root, ".kairo", "contracts", "ffi_napi", "placeholder.json"), "{}", "utf-8");
+
+        const config = {
+            version: "1.0",
+            repositories: {
+                main: { path: ".", name: "Main", type: "primary", languages: ["typescript"] },
+                "core-rs": { path: "crates/core-rs", name: "core-rs", type: "linked", languages: ["rust"] }
+            },
+            defaultRepo: "main"
+        };
+        fs.writeFileSync(path.join(configDir, "mcp-config.json"), JSON.stringify(config, null, 2));
+        const coreRoot = path.join(root, "crates", "core-rs");
+        fs.mkdirSync(coreRoot, { recursive: true });
+        fs.writeFileSync(path.join(coreRoot, "Cargo.toml"), "[package]\nname = \"core-rs\"\nversion = \"0.1.0\"\n");
+
+        const handler = new ManageHandlers(makeContext(root) as any);
+        const raw = (handler as any).manageProjectRaw.bind(handler);
+        const result = await raw({ command: "doctor", mode: "plan", scope: "contracts" });
+
+        const codes = result.findings.map((finding: any) => finding.code);
+        expect(codes).toContain("CONTRACT_ALIAS_MISSING");
+    });
 });
