@@ -73,6 +73,18 @@ By default, `init` targets Kairo config files only. Pass `targets: ["vscode"]` t
 |---|---|
 | `KAIRO_WASM_DIR` | Where tree-sitter WASM assets are resolved (including Markdown/SQL WASM). |
 
+## Token budgets (ADR-056)
+
+Kairo can cap responses using `limits.maxTokens` (token-first) in addition to `limits.maxChars` (character caps).
+
+| Variable | Purpose | Notes |
+|---|---|---|
+| `KAIRO_DEFAULT_MAX_TOKENS` | Default token budget (server-side). | Used when a pillar does not specify its own default and the call does not pass `limits.maxTokens`. |
+| `KAIRO_EXPLORE_MAX_TOKENS` | Default token budget for `explore`. | Overrides `KAIRO_DEFAULT_MAX_TOKENS`. |
+| `KAIRO_UNDERSTAND_MAX_TOKENS` | Default token budget for `understand`. | Overrides `KAIRO_DEFAULT_MAX_TOKENS`. |
+| `KAIRO_READ_MAX_TOKENS` | Default token budget for `read`. | Overrides `KAIRO_DEFAULT_MAX_TOKENS`. |
+| `KAIRO_TOKEN_ESTIMATOR` | Token estimator mode. | `whitespace` (default) or `chars`. |
+
 ## Native engine toggles (ADR-053-H)
 
 | Variable | Purpose | Notes |

@@ -45,6 +45,7 @@ Unified search + read interface for docs and code.
 | `cursor.content` | `string` |  | Expand content from a pack without re-search. |
 | `limits.maxResults` | `number` |  | Per-group result cap. |
 | `limits.maxChars` | `number` |  | Total content budget. |
+| `limits.maxTokens` | `number` |  | Token-first budget cap (may distill results; emits `budget_exceeded` + `compression`). |
 | `limits.maxItemChars` | `number` |  | Per-item cap. |
 | `limits.maxBytes` | `number` |  | Hard cap for full reads. |
 | `limits.maxFiles` | `number` |  | Cap the number of files scanned/considered. |
@@ -90,6 +91,7 @@ Deep analysis of structure and relationships (opt-in includes).
 | `analysis.maxClusters` | `number` |  | Max cluster count. |
 | `analysis.maxFilesPerCluster` | `number` |  | Max files per cluster. |
 | `limits.timeoutMs` | `number` |  | Per-call timeout budget (best-effort). |
+| `limits.maxTokens` | `number` |  | Token-first cap for structure payloads (may distill skeleton; emits `budget_exceeded` + `compression`). |
 | `trace` | `boolean` |  | Return `effectiveOptions` + `decisionTrace`. |
 
 ---

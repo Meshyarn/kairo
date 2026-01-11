@@ -37,4 +37,33 @@ describe("buildUnderstandResponse", () => {
 
     expect(response.guidance.message).toContain("Document structure analyzed");
   });
+
+  it("exposes compression metadata when provided", () => {
+    const response = buildUnderstandResponse({
+      subject: "foo",
+      filePath: "src/foo.ts",
+      symbolName: "foo",
+      skeleton: "function foo() {}",
+      profile: { metadata: { lineCount: 10 } },
+      isDocument: false,
+      includeCalls: false,
+      degraded: true,
+      budget: {},
+      allowGraphs: false,
+      compression: {
+        applied: true,
+        mode: "distill",
+        maxTokens: 100,
+        estimatedTokens: 120,
+        usedChars: 42,
+        decisions: [
+          { item: "src/foo.ts", from: "skeleton", to: "summary", reason: "budget_exceeded" }
+        ]
+      }
+    });
+
+    expect(response.compression?.applied).toBe(true);
+    expect(response.compression?.mode).toBe("distill");
+    expect(response.compression?.decisions?.length).toBe(1);
+  });
 });

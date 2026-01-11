@@ -28,6 +28,7 @@ import { checkSkeletonSupport } from '../../ast/LanguageSupportSignals.js';
 import { buildDegradedReasons } from '../DegradedReasonMapper.js';
 import { UniversalFallbackExtractor } from '../../ast/extraction/UniversalFallbackExtractor.js';
 import { AstManager } from '../../ast/AstManager.js';
+import { applyTokenBudget } from '../TokenBudget.js';
 
 
 export class UnderstandPillar {
@@ -63,6 +64,11 @@ export class UnderstandPillar {
     const progress = resolveProgressState('Understand', constraints);
     const startedAt = Date.now();
     const integrityOptions = IntegrityEngine.resolveOptions(constraints.integrity, "understand");
+    const envMaxTokens = Number.parseInt(process.env.KAIRO_UNDERSTAND_MAX_TOKENS ?? process.env.KAIRO_DEFAULT_MAX_TOKENS ?? "", 10);
+    const limits = constraints.limits ?? {};
+    const maxTokens = Number.isFinite(limits.maxTokens) && limits.maxTokens! > 0
+      ? limits.maxTokens
+      : (Number.isFinite(envMaxTokens) && envMaxTokens > 0 ? envMaxTokens : undefined);
 
     const metrics = analyzeQuery(subject);
     const initialProjectStats = context.getState<any>("project_profile");
@@ -231,6 +237,38 @@ export class UnderstandPillar {
       fallbackGraph = await this.buildFallbackGraph(filePath);
     }
 
+    const compression = applyTokenBudget(typeof skeleton === "string" ? skeleton : String(skeleton ?? ""), {
+      maxTokens,
+      maxChars: undefined,
+      languageId: AstManager.getInstance().getLanguageId(filePath)
+    });
+    const compressionDecisions: Array<{
+      item: string;
+      from: "full" | "skeleton" | "reference" | "summary";
+      to: "full" | "skeleton" | "reference" | "summary";
+      reason: "budget_exceeded" | "low_score" | "distance";
+    }> = [];
+    let compressionMode: "truncate" | "distill" = "truncate";
+    if (compression.applied && typeof skeleton === "string") {
+      const digest = this.buildSkeletonDigest(profile);
+      if (digest) {
+        skeleton = digest;
+        compressionMode = "distill";
+        compressionDecisions.push({
+          item: filePath,
+          from: "skeleton",
+          to: "summary",
+          reason: "budget_exceeded"
+        });
+      } else {
+        skeleton = compression.text;
+      }
+      degraded = true;
+      if (!degradedReasons.includes("budget_exceeded")) {
+        degradedReasons.push("budget_exceeded");
+      }
+    }
+
 
         // 3. Synthesize Response (Advanced synthesis in Phase 3)
     const status = includeCalls && !symbolName ? 'partial_success' : (degraded ? 'partial_success' : 'ok');
@@ -316,7 +354,19 @@ export class UnderstandPillar {
       indexSnapshot,
       stylePack: wantsVibe ? await this.buildStylePack(filePath, vibe, indexSnapshot, resolvedSessionId, subject) : undefined,
       analysisPack,
-      sessionId: resolvedSessionId
+      sessionId: resolvedSessionId,
+      compression: compression.applied
+        ? {
+            applied: true,
+            mode: compressionMode,
+            elasticWindowPct: compression.elasticWindowPct,
+            maxTokens: compression.maxTokens,
+            estimatedTokens: compression.estimatedTokens,
+            maxChars: compression.maxChars,
+            usedChars: compression.usedChars,
+            decisions: compressionDecisions.length > 0 ? compressionDecisions : undefined
+          }
+        : undefined
     });
     if (traceEnabled) {
       response.effectiveOptions = {
@@ -390,6 +440,18 @@ export class UnderstandPillar {
       UnderstandPillar.styleCache.set(cacheKey, pack);
     }
     return pack;
+  }
+
+  private buildSkeletonDigest(profile: any): string | undefined {
+    const symbols = profile?.structure?.symbols;
+    if (!Array.isArray(symbols) || symbols.length === 0) return undefined;
+    const lines = symbols.slice(0, 20).map((symbol: any) => {
+      const type = symbol?.type ?? "symbol";
+      const name = symbol?.name ?? symbol?.text ?? "unknown";
+      const signature = symbol?.signature ? ` ${symbol.signature}` : "";
+      return `- ${type} ${name}${signature}`;
+    });
+    return ["// Digest (symbols)", ...lines].join("\n");
   }
 
   private buildAnalysisPack(input: {

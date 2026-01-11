@@ -257,6 +257,47 @@ describe("ExplorePillar", () => {
     expect(second.data.docs[0]?.content).toContain("Expanded content");
   });
 
+  it("records compression metadata when token budget distills expanded content", async () => {
+    const registry = new InternalToolRegistry();
+    registry.register("document_search", async () => ({
+      results: [
+        {
+          filePath: "docs/guide.md",
+          preview: "Guide preview",
+          sectionPath: ["Guide"],
+          scores: { final: 0.9 }
+        }
+      ]
+    }));
+    registry.register("project_search", async () => ({ results: [] }));
+    registry.register("document_section", async () => ({
+      content: "Expanded content ".repeat(50)
+    }));
+
+    const pillar = new ExplorePillar(registry);
+    const first = await pillar.execute(
+      makeIntent({ query: "guide", limits: { maxResults: 1 } }) as any,
+      new OrchestrationContext()
+    );
+
+    const second = await pillar.execute(
+      makeIntent({
+        query: "guide",
+        packId: first.pack?.packId,
+        cursor: { content: JSON.stringify({ docs: 0, code: 0 }) },
+        limits: { maxResults: 1, maxTokens: 150 }
+      }) as any,
+      new OrchestrationContext()
+    );
+
+    expect(second.degraded).toBe(true);
+    expect(second.reasons).toContain("budget_exceeded");
+    expect(second.compression?.mode).toBe("distill");
+    expect(second.compression?.decisions?.length).toBeGreaterThan(0);
+    expect(second.data.docs[0]?.content).toBeUndefined();
+    expect(second.data.docs[0]?.preview).toBeTruthy();
+  });
+
   it("skips document_search for symbol-like queries unless include is explicit", async () => {
     const registry = new InternalToolRegistry();
     let docCalls = 0;
