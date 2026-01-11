@@ -13,7 +13,8 @@
     "postbuild": "node scripts/generate-contract-manifest.js"
   },
   "devDependencies": {
-    "@napi-rs/cli": "^2.18.0"
+    "@napi-rs/cli": "^2.18.0",
+    "typescript": "^5.9.3"
   },
   "license": "MIT"
 }
