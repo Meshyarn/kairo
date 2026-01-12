@@ -1,6 +1,13 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ListToolsRequestSchema, CallToolRequestSchema, McpError, ErrorCode } from "@modelcontextprotocol/sdk/types.js";
+import {
+    buildContractMeta,
+    getToolSchemaMode,
+    normalizeArgs,
+    validateArgs
+} from "./tools/ToolArgs.js";
+import { createDefaultToolSpecRegistry, type ToolSpec } from "./tools/ToolSpecRegistry.js";
 import * as fs from "fs";
 import * as path from "path";
 import ignore from "ignore";
@@ -143,6 +150,7 @@ export class SmartContextServer {
     private shutdownTimer?: NodeJS.Timeout;
     private metricsReporter?: AdaptiveFlowReporter;
     private alertDispatcher?: AlertDispatcher;
+    private toolSpecRegistry = createDefaultToolSpecRegistry();
 
     private searchHandlers!: SearchHandlers;
     private codeHandlers!: CodeHandlers;
@@ -695,536 +703,47 @@ export class SmartContextServer {
     }
 
     private listIntentTools(): any[] {
-        const internalTools = [
-            {
-                name: 'code_read',
-                description: 'Read file content in full, skeleton, or fragment modes.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        filePath: { type: 'string' },
-                        view: { type: 'string', enum: ['full', 'skeleton', 'fragment'] },
-                        lineRange: { type: 'string' }
-                    },
-                    required: ['filePath']
-                }
-            },
-            {
-                name: 'project_search',
-                description: 'Search for symbols, files, or content across the project.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        query: { type: 'string' },
-                        type: { type: 'string', enum: ['auto', 'file', 'symbol', 'directory', 'filename'] },
-                        maxResults: { type: 'number' }
-                    },
-                    required: ['query']
-                }
-            },
-            {
-                name: 'document_search',
-                description: 'Search project documents (md/mdx/txt/html/css + well-known text files) with hybrid ranking (BM25 + vector). Optionally include code comments as a separate corpus (kind="code_comment").',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        query: { type: 'string' },
-                        scope: { type: 'string', enum: ['all', 'docs', 'project'] },
-                        output: { type: 'string', enum: ['full', 'compact', 'pack_only'] },
-                        packId: { type: 'string' },
-                        maxResults: { type: 'number' },
-                        maxCandidates: { type: 'number' },
-                        maxChunkCandidates: { type: 'number' },
-                        maxVectorCandidates: { type: 'number' },
-                        maxEvidenceSections: { type: 'number' },
-                        maxEvidenceChars: { type: 'number' },
-                        includeEvidence: { type: 'boolean' },
-                        snippetLength: { type: 'number' },
-                        rrfK: { type: 'number' },
-                        rrfDepth: { type: 'number' },
-                        useMmr: { type: 'boolean' },
-                        mmrLambda: { type: 'number' },
-                        maxChunksEmbeddedPerRequest: { type: 'number' },
-                        maxEmbeddingTimeMs: { type: 'number' },
-                        includeComments: { type: 'boolean' },
-                        includeLogs: { type: 'boolean' },
-                        includeMetrics: { type: 'boolean' },
-                        embedding: {
-                            type: 'object',
-                            properties: {
-                                provider: { type: 'string', enum: ['auto', 'local', 'hash', 'disabled'] },
-                                normalize: { type: 'boolean' },
-                                batchSize: { type: 'number' },
-                                modelDir: { type: 'string' },
-                                local: {
-                                    type: 'object',
-                                    properties: {
-                                        model: { type: 'string' },
-                                        dims: { type: 'number' }
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    required: ['query']
-                }
-            },
-            {
-                name: 'document_references',
-                description: 'List resolved references (links) found in a markdown/MDX document.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        filePath: { type: 'string' }
-                    },
-                    required: ['filePath']
-                }
-            },
-            {
-                name: 'relationship_analyze',
-                description: 'Analyze dependencies, call graphs, data flow, or impact.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        target: { type: 'string' },
-                        mode: { type: 'string', enum: ['impact', 'dependencies', 'calls', 'data_flow', 'types'] },
-                        direction: { type: 'string', enum: ['upstream', 'downstream', 'both'] },
-                        contextPath: { type: 'string' },
-                        maxDepth: { type: 'number' },
-                        fromLine: { type: 'number' }
-                    },
-                    required: ['target', 'mode']
-                }
-            },
-            {
-                name: 'edit_apply',
-                description: 'Apply structured edits to files with optional dry-run.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        edits: { type: 'array', items: { type: 'object' } },
-                        dryRun: { type: 'boolean' },
-                        diffMode: { type: 'string', enum: ['myers', 'semantic'] }
-                    },
-                    required: ['edits']
-                }
-            },
-            {
-                name: 'edit_guidance',
-                description: 'Suggests batch edit groupings and companion changes.',
-                inputSchema: {
-                    type: 'object',
-                    properties: { filePaths: { type: 'array', items: { type: 'string' } }, pattern: { type: 'string' } },
-                    required: ['filePaths']
-                }
-            },
-            {
-                name: 'project_manage',
-                description: 'Manage project state (status, undo, redo, reindex).',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        command: {
-                            type: 'string',
-                            enum: [
-                                'status',
-                                'undo',
-                                'redo',
-                                'reindex',
-                                'history',
-                                'test',
-                                'metrics',
-                                'metrics_reset',
-                                'config',
-                                'init',
-                                'doctor',
-                                'sessions',
-                                'session',
-                                'session_complete',
-                                'artifacts',
-                                'artifact',
-                                'discard',
-                                'prune',
-                                'export',
-                                'import'
-                            ]
-                        },
-                        target: { type: 'string' },
-                        outcome: { type: 'object' },
-                        mode: { type: 'string', enum: ['plan', 'apply'] },
-                        targets: { type: 'array', items: { type: 'string', enum: ['kairo', 'vscode'] } },
-                        root: { type: 'string' },
-                        multiRepo: { type: 'string', enum: ['auto', 'single', 'detect'] },
-                        presets: { type: 'string', enum: ['minimal', 'recommended'] },
-                        languageScan: {
-                            type: 'object',
-                            properties: {
-                                maxFiles: { type: 'number' },
-                                sampleBytesPerFile: { type: 'number' },
-                                includeDocs: { type: 'boolean' }
-                            }
-                        },
-                        applyOptions: {
-                            type: 'object',
-                            properties: {
-                                backup: { type: 'boolean' },
-                                legacyMcpConfig: { type: 'boolean' }
-                            }
-                        }
-                    },
-                    required: ['command']
-                }
-            },
-            {
-                name: 'interface_reconstruct',
-                description: 'Reconstruct a ghost interface based on observed call sites.',
-                inputSchema: {
-                    type: 'object',
-                    properties: { symbolName: { type: 'string' } },
-                    required: ['symbolName']
-                }
-            }
-        ];
-
-        const pillarTools = [
-            {
-                name: 'understand',
-                description: 'Deeply analyzes code structure and architecture.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        goal: { type: 'string' },
-                        profile: { type: 'string', enum: ['fast', 'balanced', 'deep'] },
-                        sources: { type: 'string', enum: ['code', 'docs', 'both'] },
-                        depth: { type: 'string', enum: ['shallow', 'standard', 'deep'] },
-                        scope: { type: 'string', enum: ['symbol', 'file', 'module', 'project'] },
-                        include: {
-                            type: 'object',
-                            properties: {
-                                callGraph: { type: 'boolean' },
-                                hotSpots: { type: 'boolean' },
-                                pageRank: { type: 'boolean' },
-                                dependencies: { type: 'boolean' }
-                            }
-                        },
-                        sessionId: { type: 'string' },
-                        trace: { type: 'boolean' },
-                        vibe: {
-                            type: 'object',
-                            properties: {
-                                extract: { type: 'boolean' },
-                                scope: { type: 'string' },
-                                includeNorms: { type: 'boolean' }
-                            }
-                        },
-                        analysis: {
-                            type: 'object',
-                            properties: {
-                                clusters: { type: 'boolean' },
-                                maxClusters: { type: 'number' },
-                                maxFilesPerCluster: { type: 'number' }
-                            }
-                        },
-                        limits: {
-                            type: 'object',
-                            properties: {
-                                timeoutMs: { type: 'number' }
-                            }
-                        }
-                    },
-                    required: ['goal']
-                }
-            },
-            {
-                name: 'explore',
-                description: 'Unified discovery for docs/code with previews, sections, and controlled full reads.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        query: { type: 'string' },
-                        paths: { type: 'array', items: { type: 'string' } },
-                        profile: { type: 'string', enum: ['fast', 'balanced', 'deep'] },
-                        sources: { type: 'string', enum: ['code', 'docs', 'both'] },
-                        view: { type: 'string', enum: ['auto', 'preview', 'section', 'full'] },
-                        include: {
-                            type: 'object',
-                            properties: {
-                                docs: { type: 'boolean' },
-                                code: { type: 'boolean' },
-                                comments: { type: 'boolean' },
-                                logs: { type: 'boolean' }
-                            }
-                        },
-                        sessionId: { type: 'string' },
-                        trace: { type: 'boolean' },
-                        research: {
-                            type: 'object',
-                            properties: {
-                                sketch: { type: 'boolean' },
-                                topN: { type: 'number' },
-                                format: { type: 'string', enum: ['ascii', 'mermaid', 'both'] }
-                            }
-                        },
-                        section: {
-                            type: 'object',
-                            properties: {
-                                sectionId: { type: 'string' },
-                                headingPath: { type: 'array', items: { type: 'string' } },
-                                includeSubsections: { type: 'boolean' }
-                            }
-                        },
-                        packId: { type: 'string' },
-                        cursor: {
-                            type: 'object',
-                            properties: {
-                                items: { type: 'string' },
-                                content: { type: 'string' }
-                            }
-                        },
-                        limits: {
-                            type: 'object',
-                            properties: {
-                                maxResults: { type: 'number' },
-                                maxChars: { type: 'number' },
-                                maxItemChars: { type: 'number' },
-                                maxBytes: { type: 'number' },
-                                maxFiles: { type: 'number' },
-                                timeoutMs: { type: 'number' }
-                            }
-                        },
-                        fullPaths: { type: 'array', items: { type: 'string' } },
-                        allowSensitive: { type: 'boolean' },
-                        allowBinary: { type: 'boolean' },
-                        allowGlobs: { type: 'boolean' }
-                    }
-                }
-            },
-            {
-                name: 'change',
-                description: 'Safely modifies code with impact analysis.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        intent: { type: 'string' },
-                        profile: { type: 'string', enum: ['fast', 'balanced', 'deep'] },
-                        safety: { type: 'string', enum: ['plan', 'apply'] },
-                        target: { type: 'string' },
-                        targetFiles: { type: 'array', items: { type: 'string' } },
-                        edits: { type: 'array', items: { type: 'object' } },
-                        sessionId: { type: 'string' },
-                        trace: { type: 'boolean' },
-                        stylePack: { anyOf: [{ type: 'string' }, { type: 'object' }] },
-                        draftOptions: {
-                            type: 'object',
-                            properties: {
-                                skeletonOnly: { type: 'boolean' },
-                                includeImpact: { type: 'boolean' }
-                            }
-                        },
-                        draftId: { type: 'string' },
-                        refinement: { type: 'string' },
-                        reviewOptions: {
-                            type: 'object',
-                            properties: {
-                                preApply: { type: 'boolean' },
-                                postApply: { type: 'boolean' },
-                                strictness: { type: 'string', enum: ['strict', 'balanced', 'permissive'] },
-                                blockOn: { type: 'array', items: { type: 'string', enum: ['syntax', 'semantic', 'guardrails', 'vibe'] } }
-                            }
-                        },
-                        options: {
-                            type: 'object',
-                            properties: {
-                                dryRun: { type: 'boolean' },
-                                includeImpact: { type: 'boolean' },
-                                includeSymbolImpact: { type: 'boolean' },
-                                autoRollback: { type: 'boolean' },
-                                batchMode: { type: 'boolean' },
-                                suggestDocs: { type: 'boolean' },
-                                batchImpactLimit: { type: 'number' }
-                            }
-                        }
-                    },
-                    required: ['intent']
-                }
-            },
-            {
-                name: 'write',
-                description: 'Creates new files or scaffolds content.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        intent: { type: 'string' },
-                        profile: { type: 'string', enum: ['fast', 'balanced', 'deep'] },
-                        safety: { type: 'string', enum: ['plan', 'apply'] },
-                        targetPath: { type: 'string' },
-                        template: { type: 'string' },
-                        content: { type: 'string' },
-                        dryRun: { type: 'boolean' },
-                        sessionId: { type: 'string' },
-                        trace: { type: 'boolean' },
-                        stylePack: { anyOf: [{ type: 'string' }, { type: 'object' }] },
-                        draftOptions: {
-                            type: 'object',
-                            properties: {
-                                skeletonOnly: { type: 'boolean' },
-                                includeImpact: { type: 'boolean' }
-                            }
-                        },
-                        draftId: { type: 'string' },
-                        refinement: { type: 'string' },
-                        reviewOptions: {
-                            type: 'object',
-                            properties: {
-                                preApply: { type: 'boolean' },
-                                postApply: { type: 'boolean' },
-                                strictness: { type: 'string', enum: ['strict', 'balanced', 'permissive'] },
-                                blockOn: { type: 'array', items: { type: 'string', enum: ['syntax', 'semantic', 'guardrails', 'vibe'] } }
-                            }
-                        },
-                        options: {
-                            type: 'object',
-                            properties: {
-                                safeWrite: { type: 'boolean' },
-                                quickGenerate: { type: 'boolean' },
-                                smartWrite: { type: 'boolean' },
-                                styleReference: { type: 'array', items: { type: 'string' } }
-                            }
-                        }
-                    },
-                    required: ['intent']
-                }
-            },
-            {
-                name: 'manage',
-                description: 'Manages project state and transactions.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        command: {
-                            type: 'string',
-                            enum: [
-                                'status',
-                                'undo',
-                                'redo',
-                                'reindex',
-                                'rebuild',
-                                'history',
-                                'test',
-                                'init',
-                                'doctor',
-                                'sessions',
-                                'session',
-                                'session_complete',
-                                'session_update',
-                                'artifacts',
-                                'artifact',
-                                'discard',
-                                'prune',
-                                'export',
-                                'import'
-                            ]
-                        },
-                        scope: { type: 'string', enum: ['file', 'transaction', 'project', 'config', 'languages', 'wasm', 'host', 'contracts'] },
-                        target: { type: 'string' },
-                        limit: { type: 'number' },
-                        outcome: { type: 'object' },
-                        sessionId: { type: 'string' },
-                        policy: { type: 'object' },
-                        policyMode: { type: 'string', enum: ['merge', 'replace'] },
-                        artifactOptions: {
-                            type: 'object',
-                            properties: {
-                                type: { type: 'string' },
-                                sessionId: { type: 'string' },
-                                limit: { type: 'number' },
-                                includeExpired: { type: 'boolean' }
-                            }
-                        },
-                        mode: { type: 'string', enum: ['plan', 'apply'] },
-                        targets: { type: 'array', items: { type: 'string', enum: ['kairo', 'vscode'] } },
-                        root: { type: 'string' },
-                        multiRepo: { type: 'string', enum: ['auto', 'single', 'detect'] },
-                        presets: { type: 'string', enum: ['minimal', 'recommended'] },
-                        languageScan: {
-                            type: 'object',
-                            properties: {
-                                maxFiles: { type: 'number' },
-                                sampleBytesPerFile: { type: 'number' },
-                                includeDocs: { type: 'boolean' }
-                            }
-                        },
-                        applyOptions: {
-                            type: 'object',
-                            properties: {
-                                backup: { type: 'boolean' },
-                                legacyMcpConfig: { type: 'boolean' }
-                            }
-                        }
-                    },
-                    required: ['command']
-                }
-            }
-        ];
-
-        const fileTools: any[] = [];
         const exposeInternalTools = process.env.KAIRO_EXPOSE_INTERNAL_TOOLS === "true"
             || process.env.KAIRO_EXPOSE_LEGACY_TOOLS === "true";
         const exposeFileTools = process.env.KAIRO_EXPOSE_FILE_TOOLS === "true"
             || process.env.KAIRO_EXPOSE_COMPAT_TOOLS === "true";
-        if (exposeFileTools) {
-            fileTools.push(
-                {
-                    name: 'file_read',
-                    description: 'Returns Smart File Profile or raw file content.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: { filePath: { type: 'string' }, full: { type: 'boolean' } },
-                        required: ['filePath']
-                    }
-                },
-                {
-                    name: 'file_write',
-                    description: 'Writes or creates a file with provided content.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: { filePath: { type: 'string' }, content: { type: 'string' } },
-                        required: ['filePath', 'content']
-                    }
-                },
-                {
-                    name: 'file_analyze',
-                    description: 'Analyze a single file and return summary metadata.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: { filePath: { type: 'string' } },
-                        required: ['filePath']
-                    }
-                }
-            );
-        }
-
-        return [
-            ...(exposeInternalTools ? internalTools : []),
-            ...pillarTools,
-            ...fileTools
-        ];
+        const tools = this.toolSpecRegistry.listTools({
+            exposeInternal: exposeInternalTools,
+            exposeCompat: exposeFileTools
+        });
+        return tools.map((tool: ToolSpec) => ({
+            name: tool.name,
+            description: tool.description,
+            inputSchema: tool.inputSchema
+        }));
     }
 
     private async handleCallTool(name: string, args: any): Promise<any> {
         const rolloutContext = this.buildRolloutContext(args);
         return FeatureFlags.withContext(rolloutContext, async () => {
             try {
+                const toolSpec = this.toolSpecRegistry.get(name);
+                const mode = getToolSchemaMode();
+                const normalized = toolSpec ? normalizeArgs(toolSpec, args, mode) : { args: args ?? {}, findings: [], droppedFields: [] };
+                if (toolSpec) {
+                    const validation = validateArgs(toolSpec, normalized.args, mode);
+                    if (validation.missing.length > 0) {
+                        return this.errorResponse("MissingParameter", `Missing required parameter(s): ${validation.missing.join(", ")}`);
+                    }
+                    if (validation.invalid.length > 0) {
+                        return this.errorResponse("InvalidArguments", "Invalid arguments.", { invalid: validation.invalid });
+                    }
+                }
                 const useModularHandlers = FeatureFlags.isEnabled(FeatureFlags.MODULAR_HANDLERS_ENABLED, rolloutContext);
                 if (useModularHandlers) {
-                    const result = await this.handlerRegistry.handle(name, args);
+                    const result = await this.handlerRegistry.handle(name, normalized.args);
                     if (result !== null) {
-                        return result;
+                        return this.attachContractMeta(result, toolSpec, mode, normalized);
                     }
                 } else {
-                    const legacyResult = await this.handleCallToolLegacy(name, args);
+                    const legacyResult = await this.handleCallToolLegacy(name, normalized.args);
                     if (legacyResult !== null) {
-                        return legacyResult;
+                        return this.attachContractMeta(legacyResult, toolSpec, mode, normalized);
                     }
                 }
 
@@ -1262,6 +781,46 @@ export class SmartContextServer {
         return this.jsonResponse(result);
     }
 
+    private attachContractMeta(
+        result: any,
+        toolSpec: ToolSpec | undefined,
+        mode: "compat" | "strict",
+        normalized: { args: Record<string, any>; findings: import("./tools/ToolArgs.js").CompatFinding[] }
+    ): any {
+        if (!toolSpec) return result;
+        if (!result || typeof result !== "object" || !Array.isArray(result.content)) {
+            return result;
+        }
+        const text = result.content?.[0]?.text;
+        if (typeof text !== "string") return result;
+        let payload: any;
+        try {
+            payload = JSON.parse(text);
+        } catch {
+            return result;
+        }
+        if (!payload || typeof payload !== "object") return result;
+        if (payload.isError) return result;
+
+        const contract = buildContractMeta(toolSpec, mode, normalized.findings, normalized.args);
+        payload.contract = contract;
+        if (Array.isArray(contract.findings) && contract.findings.length > 0 && payload.guidance) {
+            const warnings = contract.findings.map((finding) => ({
+                severity: finding.severity,
+                code: finding.code,
+                message: finding.message,
+                affectedTargets: undefined,
+                mitigation: undefined
+            }));
+            if (Array.isArray(payload.guidance.warnings)) {
+                payload.guidance.warnings.push(...warnings);
+            } else {
+                payload.guidance.warnings = warnings;
+            }
+        }
+        return this.jsonResponse(payload);
+    }
+
     private isPillarTool(name: string): boolean {
         return name === 'explore'
             || name === 'understand'
@@ -1272,27 +831,8 @@ export class SmartContextServer {
     }
 
     private validateRequiredArgs(toolName: string, args: any): string[] {
-        const requiredMap: Record<string, string[]> = {
-            code_read: ['filePath'],
-            project_search: ['query'],
-            file_search: [],
-            file_read: ['filePath'],
-            file_fragment_read: ['filePath'],
-            relationship_analyze: ['target', 'mode'],
-            edit_apply: ['edits'],
-            file_edit: ['filePath', 'edits'],
-            edit_guidance: ['filePaths'],
-            project_manage: ['command'],
-            interface_reconstruct: ['symbolName'],
-            file_write: ['filePath', 'content'],
-            file_analyze: ['filePath'],
-            understand: ['goal'],
-            explore: [],
-            change: ['intent'],
-            write: ['intent'],
-            manage: ['command']
-        };
-        const required = requiredMap[toolName] || [];
+        const toolSpec = this.toolSpecRegistry.get(toolName);
+        const required = Array.isArray(toolSpec?.inputSchema?.required) ? toolSpec?.inputSchema?.required ?? [] : [];
         const missing: string[] = [];
         for (const key of required) {
             if (args?.[key] === undefined || args?.[key] === null) {
