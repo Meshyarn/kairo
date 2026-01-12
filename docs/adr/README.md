@@ -61,6 +61,7 @@ The entries below cover all ADRs from the project history. Items marked “retou
 - ADR-054-H (summary): Contract hardening & bootstrap alignment (NAPI) → `docs/adr/ADR-054-H-contract-hardening-and-bootstrap.md`
 - ADR-055 (summary): Universal parity & standardization program → `docs/adr/ADR-055-universal-parity-and-standardization.md`
 - ADR-056 (summary): Token-aware dynamic context compression (maxTokens + distill) → `docs/adr/ADR-056-token-aware-dynamic-context-compression.md`
+- ADR-057: Unified degradedReasons + action guidance v1 → `docs/adr/ADR-057-unified-degraded-reasons-and-action-guidance-v1.md`
 - ADR-055-H: Adaptive trust policy (no curated summary)
 - ADR-055-L: Action guidance + Understand fallback graph (no curated summary)
 - ADR-033: “Six Pillars” precursor to ADR-040; introduced orchestration primitives and earlier public surface.
