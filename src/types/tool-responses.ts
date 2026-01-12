@@ -20,4 +20,6 @@ export type DegradedReason = {
   filePath?: string;
   message: string;
   action?: string;
+  actionToolCall?: { tool: string; args: Record<string, unknown> };
+  actionId?: string;
 };

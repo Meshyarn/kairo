@@ -12,14 +12,15 @@ describe("GuidanceGenerator action surfacing", () => {
           {
             type: "missing_query_pack",
             message: "Query pack is missing for this language.",
-            action: "manage doctor --scope=parity"
+            actionToolCall: { tool: "manage", args: { command: "doctor", scope: "parity" } },
+            actionId: "manage.doctor.parity"
           }
         ]
       },
       insights: []
     });
 
-    const match = guidance.suggestedActions.find((action) => action.action === "verify_parity");
+    const match = guidance.suggestedActions.find((action) => action.id === "manage.doctor.parity");
     expect(match?.toolCall?.args).toMatchObject({ command: "doctor", scope: "parity" });
   });
 });

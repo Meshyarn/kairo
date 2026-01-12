@@ -8,5 +8,6 @@ export * from "./storage.js";
 export * from "./mcp.js";
 export * from "./cluster.js";
 export * from "./validation.js";
+export * from "./guidance.js";
 export * from "./flow-artifacts.js";
 export * from "./tool-responses.js";

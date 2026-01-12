@@ -1,54 +1,11 @@
 
-import { IntentCategory } from './IntentRouter.js';
-
-
-export interface SuggestedAction {
-  priority: 1 | 2 | 3;
-  pillar: IntentCategory;
-  action: string;
-  description: string;
-  rationale: string;
-  toolCall: {
-    tool: string;
-    args: Record<string, unknown>;
-  };
-}
-
-export interface Warning {
-  severity: 'info' | 'warning' | 'critical';
-  code: string;
-  message: string;
-  affectedTargets?: string[];
-  mitigation?: string;
-}
-
-export interface RecoveryStrategy {
-  name: string;
-  description: string;
-  toolCall: {
-    tool: string;
-    args: Record<string, unknown>;
-  };
-}
-
-export interface GuidanceMeta {
-  generatedAt: string;
-  basedOn: {
-    hotSpotCount: number;
-    pageRankCoverage: number;
-    impactAnalysisIncluded: boolean;
-  };
-  confidence: number;
-}
-
-export interface GuidancePayload {
-  message: string;
-  contextSummary: string;
-  suggestedActions: SuggestedAction[];
-  warnings: Warning[];
-  recoveryStrategies?: RecoveryStrategy[];
-  meta: GuidanceMeta;
-}
+import type {
+  GuidanceMetaV1,
+  GuidanceV1,
+  RecoveryStrategyV1,
+  SuggestedActionV1,
+  WarningV1
+} from "../types/guidance.js";
 
 /**
  * GuidanceGenerator: Applies heuristic rules to guide the agent's next steps.
@@ -61,9 +18,9 @@ export class GuidanceGenerator {
     error?: any;
     history?: Array<{ tool: string; args?: any; output?: any; status?: string }>;
     synthesis?: { hotSpots?: any[]; pageRankCoverage?: number; impactIncluded?: boolean };
-  }): GuidancePayload {
-    const suggestedActions: SuggestedAction[] = [];
-    const warnings: Warning[] = [];
+  }): GuidanceV1 {
+    const suggestedActions: SuggestedActionV1[] = [];
+    const warnings: WarningV1[] = [];
     let message = 'Operation completed successfully.';
     const history = context.history ?? [];
     const hasTestContext = this.detectTestContext(history);
@@ -81,9 +38,8 @@ export class GuidanceGenerator {
 
       if (context.lastPillar === 'explore' && context.lastResult?.status === 'invalid_args') {
         suggestedActions.push({
+          id: 'explore.retry',
           priority: 1,
-          pillar: 'explore',
-          action: 'retry',
           description: 'Retry explore with a query or explicit paths.',
           rationale: 'The explore tool requires at least one of query or paths.',
           toolCall: {
@@ -98,9 +54,8 @@ export class GuidanceGenerator {
     if (context.lastPillar === 'understand' && context.lastResult.primaryFile) {
       message = `Codebase structure for "${context.lastResult.summary}" has been analyzed.`;
       suggestedActions.push({
+        id: 'explore.examine.primary',
         priority: 1,
-        pillar: 'explore',
-        action: 'examine',
         description: `Deep dive into "${context.lastResult.primaryFile}"`,
         rationale: 'Reviewing the actual implementation is the best next step before making changes.',
         toolCall: {
@@ -115,9 +70,8 @@ export class GuidanceGenerator {
       const target = context.lastResult.primaryFile ?? context.lastResult.target ?? context.lastResult.filePath;
       if (target) {
         suggestedActions.push({
+          id: 'explore.find_tests',
           priority: 2,
-          pillar: 'explore',
-          action: 'find_tests',
           description: 'Locate related tests for the analyzed module.',
           rationale: 'Reviewing tests reduces regression risk before changes.',
           toolCall: {
@@ -131,9 +85,8 @@ export class GuidanceGenerator {
     // Rule 1b: No results -> broaden explore
     if ((context.lastResult?.results?.length === 0 || context.lastResult?.locations?.length === 0)) {
       suggestedActions.push({
+        id: 'explore.retry.broaden',
         priority: 1,
-        pillar: 'explore',
-        action: 'retry',
         description: 'No results found. Broaden the search scope.',
         rationale: 'A wider search improves discovery when exact matches fail.',
         toolCall: {
@@ -150,9 +103,8 @@ export class GuidanceGenerator {
       const impactRisk = this.extractImpactRisk(context);
       if (!impactRisk || impactRisk.level !== 'high') {
         suggestedActions.push({
+          id: 'change.apply',
           priority: 1,
-          pillar: 'change',
-          action: 'apply',
           description: 'Apply these changes to the codebase.',
           rationale: 'The changes have been verified and impact is identified.',
           toolCall: {
@@ -162,9 +114,8 @@ export class GuidanceGenerator {
         });
       } else {
         suggestedActions.push({
+          id: 'explore.verify.risk',
           priority: 1,
-          pillar: 'explore',
-          action: 'verify',
           description: 'High risk detected. Review impacted files before applying.',
           rationale: 'Impact analysis suggests elevated risk.',
           toolCall: {
@@ -181,17 +132,15 @@ export class GuidanceGenerator {
       const target = context.lastResult.targetFile ?? context.lastResult.filePath;
       if (target) {
         suggestedActions.push({
+          id: 'explore.verify.file',
           priority: 1,
-          pillar: 'explore',
-          action: 'verify',
           description: 'Verify the updated file content.',
           rationale: 'Confirm the change was applied as intended.',
           toolCall: { tool: 'explore', args: { paths: [target], view: 'preview' } }
         });
         suggestedActions.push({
+          id: 'manage.test.target',
           priority: 2,
-          pillar: 'manage',
-          action: 'test',
           description: 'Run suggested tests for impacted areas.',
           rationale: 'Validate behavior in impacted regions.',
           toolCall: { tool: 'manage', args: { command: 'test', target } }
@@ -203,9 +152,8 @@ export class GuidanceGenerator {
     if (context.error) {
       message = `Operation failed: ${context.error.message}`;
       suggestedActions.push({
+        id: 'manage.status',
         priority: 1,
-        pillar: 'manage',
-        action: 'status',
         description: 'Check project index status.',
         rationale: 'Failures are often caused by stale indices.',
         toolCall: { tool: 'manage', args: { command: 'status' } }
@@ -271,9 +219,8 @@ export class GuidanceGenerator {
         affectedTargets: impactRisk.affectedFiles
       });
       suggestedActions.push({
+        id: 'manage.test.impact',
         priority: 1,
-        pillar: 'manage',
-        action: 'test',
         description: 'Run suggested tests for impacted areas.',
         rationale: 'Impact analysis detected elevated risk.',
         toolCall: {
@@ -287,9 +234,8 @@ export class GuidanceGenerator {
     const dependencyInsight = context.insights.find(i => i.type === 'dependency');
     if (dependencyInsight) {
       suggestedActions.push({
+        id: 'understand.analyze.dependencies',
         priority: 2,
-        pillar: 'understand',
-        action: 'analyze',
         description: 'Analyze dependency structure for cyclic risks.',
         rationale: 'Dependency insight suggests structural risks.',
         toolCall: {
@@ -315,7 +261,7 @@ export class GuidanceGenerator {
     }
 
     const recoveryStrategies = context.error ? this.buildRecoveryStrategies(context.error) : undefined;
-    const meta: GuidanceMeta = {
+    const meta: GuidanceMetaV1 = {
       generatedAt: new Date().toISOString(),
       basedOn: {
         hotSpotCount: context.synthesis?.hotSpots?.length ?? 0,
@@ -335,8 +281,8 @@ export class GuidanceGenerator {
     };
   }
 
-  private buildRecoveryStrategies(error: any): RecoveryStrategy[] {
-    const strategies: RecoveryStrategy[] = [];
+  private buildRecoveryStrategies(error: any): RecoveryStrategyV1[] {
+    const strategies: RecoveryStrategyV1[] = [];
     const code = error?.code ?? '';
 
     if (code === 'NO_MATCH' || /no match/i.test(error?.message ?? '')) {
@@ -409,6 +355,14 @@ export class GuidanceGenerator {
     if (Array.isArray(lastResult?.degradedReasons)) {
       for (const entry of lastResult.degradedReasons) {
         if (!entry || typeof entry !== "object") continue;
+        const toolCall = entry.actionToolCall;
+        if (toolCall && toolCall.tool === "manage" && toolCall.args) {
+          const args = toolCall.args as { command?: unknown; scope?: unknown };
+          if (args.command === "doctor" && typeof args.scope === "string") {
+            scopes.add(args.scope);
+            continue;
+          }
+        }
         const action = typeof entry.action === "string" ? entry.action.trim() : "";
         const parsed = this.parseManageDoctorAction(action);
         if (parsed) {
@@ -427,11 +381,9 @@ export class GuidanceGenerator {
     return match[1];
   }
 
-  private appendManageDoctorSuggestion(suggestedActions: SuggestedAction[], scope: string): void {
-    const actionId = `verify_${scope}`;
-    const alreadySuggested = suggestedActions.some(
-      (action) => action.pillar === 'manage' && action.action === actionId
-    );
+  private appendManageDoctorSuggestion(suggestedActions: SuggestedActionV1[], scope: string): void {
+    const actionId = `manage.doctor.${scope}`;
+    const alreadySuggested = suggestedActions.some((action) => action.id === actionId);
     if (alreadySuggested) return;
     const description = scope === "contracts"
       ? "Verify contract manifests for cross-language boundaries."
@@ -444,9 +396,8 @@ export class GuidanceGenerator {
         ? "Parity assets appear missing or degraded."
         : "Language support assets appear missing or degraded.");
     suggestedActions.push({
+      id: actionId,
       priority: 2,
-      pillar: 'manage',
-      action: actionId,
       description,
       rationale,
       toolCall: { tool: 'manage', args: { command: 'doctor', scope } }
