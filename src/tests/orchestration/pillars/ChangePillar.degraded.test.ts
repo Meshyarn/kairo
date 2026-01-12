@@ -65,7 +65,10 @@ describe("ChangePillar degraded blocking", () => {
     );
 
     expect(response.status).toBe("blocked");
-    expect(response.degradedReasons?.some((reason: any) => reason.type === "missing_query_pack")).toBe(true);
+    const reason = response.degradedReasons?.find((entry: any) => entry.type === "missing_query_pack");
+    expect(reason).toBeDefined();
+    expect(reason?.actionId).toBe("manage.doctor.parity");
+    expect(reason?.actionToolCall).toMatchObject({ tool: "manage", args: { command: "doctor", scope: "parity" } });
     expect(editCalls.length).toBe(0);
   });
 

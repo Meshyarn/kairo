@@ -360,25 +360,11 @@ export class GuidanceGenerator {
           const args = toolCall.args as { command?: unknown; scope?: unknown };
           if (args.command === "doctor" && typeof args.scope === "string") {
             scopes.add(args.scope);
-            continue;
           }
-        }
-        const action = typeof entry.action === "string" ? entry.action.trim() : "";
-        const parsed = this.parseManageDoctorAction(action);
-        if (parsed) {
-          scopes.add(parsed);
         }
       }
     }
     return Array.from(scopes);
-  }
-
-  private parseManageDoctorAction(action: string): string | null {
-    if (!action) return null;
-    const cleaned = action.replace(/^run\s+/i, "").trim();
-    const match = cleaned.match(/^manage\s+doctor\s+--scope=([a-z_]+)$/i);
-    if (!match) return null;
-    return match[1];
   }
 
   private appendManageDoctorSuggestion(suggestedActions: SuggestedActionV1[], scope: string): void {

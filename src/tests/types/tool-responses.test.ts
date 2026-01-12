@@ -28,4 +28,16 @@ describe("tool-responses degraded reasons", () => {
     expect(reason.type).toBe("missing_query_pack");
     expect(reason.languageId).toBe("typescript");
   });
+
+  it("supports action tool call metadata", () => {
+    const reason: DegradedReason = {
+      type: "missing_query_pack",
+      message: "Query pack is missing.",
+      actionId: "manage.doctor.parity",
+      actionToolCall: { tool: "manage", args: { command: "doctor", scope: "parity" } }
+    };
+
+    expect(reason.actionId).toBe("manage.doctor.parity");
+    expect(reason.actionToolCall?.tool).toBe("manage");
+  });
 });

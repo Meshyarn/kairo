@@ -11,7 +11,6 @@ import { WritePillar } from './pillars/WritePillar.js';
 import { ExplorePillar } from './pillars/explore/ExplorePillar.js';
 import { ManagePillar } from './pillars/ManagePillar.js';
 import { InsightSynthesizer } from './InsightSynthesizer.js';
-import type { SuggestedActionV1 } from '../types/guidance.js';
 import { GuidanceGenerator } from './GuidanceGenerator.js';
 import { AutoCorrectionStrategy } from './AutoCorrectionStrategy.js';
 import { EagerLoadingStrategy } from './EagerLoadingStrategy.js';
@@ -125,7 +124,7 @@ export class OrchestrationEngine {
           ...generatedGuidance,
           ...result.guidance,
           suggestedActions: result.guidance?.suggestedActions?.length
-            ? this.normalizeSuggestedActions(result.guidance.suggestedActions)
+            ? result.guidance.suggestedActions
             : generatedGuidance.suggestedActions
         }
       : generatedGuidance;
@@ -439,54 +438,6 @@ export class OrchestrationEngine {
     return { skeletons, calls, dependencies, hotSpots, impactPreviews };
   }
 
-  private normalizeSuggestedActions(actions: Array<any>): SuggestedActionV1[] {
-    return actions
-      .map((action, index) => this.normalizeSuggestedAction(action, index))
-      .filter((action): action is SuggestedActionV1 => Boolean(action));
-  }
-
-  private normalizeSuggestedAction(action: any, index: number): SuggestedActionV1 | null {
-    if (!action || typeof action !== 'object') return null;
-    if (action.toolCall && action.id && typeof action.priority === 'number') {
-      return action as SuggestedActionV1;
-    }
-
-    const priority = this.normalizePriority(action.priority);
-    const tool = action.toolCall?.tool ?? action.pillar ?? action.tool;
-    if (!tool || typeof tool !== 'string') return null;
-
-    const args: Record<string, unknown> = {
-      ...(action.toolCall?.args ?? action.args ?? {})
-    };
-    if (action.action) args.action = action.action;
-    if (action.target) args.target = action.target;
-    if (action.goal) args.goal = action.goal;
-    if (action.include) args.include = action.include;
-    if (action.options) args.options = action.options;
-
-    const description = action.description ?? action.reason ?? `Next step: ${tool}`;
-    const rationale = action.rationale ?? action.reason;
-    const idSuffix = action.action ? String(action.action) : `action_${index}`;
-
-    return {
-      id: action.id ?? `${tool}.${idSuffix}`,
-      priority,
-      description,
-      rationale,
-      toolCall: { tool, args }
-    };
-  }
-
-  private normalizePriority(priority: any): 1 | 2 | 3 {
-    if (priority === 1 || priority === 2 || priority === 3) return priority;
-    if (typeof priority === 'string') {
-      const normalized = priority.toLowerCase();
-      if (normalized === 'high') return 1;
-      if (normalized === 'medium') return 2;
-      if (normalized === 'low') return 3;
-    }
-    return 2;
-  }
 
   private isCacheable(category: string, args: any): boolean {
     if (!args || typeof args !== 'object') return false;

@@ -120,7 +120,6 @@ export class AttributeAccessIndex {
             type: "missing_query_pack",
             languageId,
             message: `Missing field access query pack for ${languageId}.`,
-            action: "manage doctor --scope=parity",
             actionToolCall: { tool: "manage", args: { command: "doctor", scope: "parity" } },
             actionId: "manage.doctor.parity"
         };
@@ -131,7 +130,6 @@ export class AttributeAccessIndex {
             type: "unsupported_language",
             languageId,
             message: `Failed to parse ${languageId} file for field access.`,
-            action: "manage doctor --scope=languages",
             actionToolCall: { tool: "manage", args: { command: "doctor", scope: "languages" } },
             actionId: "manage.doctor.languages"
         };

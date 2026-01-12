@@ -2,7 +2,7 @@ import { describe, it, expect } from "@jest/globals";
 import { GuidanceGenerator } from "../../orchestration/GuidanceGenerator.js";
 
 describe("GuidanceGenerator action surfacing", () => {
-  it("converts degradedReasons.action into manage doctor suggestedActions", () => {
+  it("converts degradedReasons.actionToolCall into manage doctor suggestedActions", () => {
     const generator = new GuidanceGenerator();
     const guidance = generator.generate({
       lastPillar: "explore",
