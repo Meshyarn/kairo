@@ -134,8 +134,23 @@ export function buildUnderstandResponse(args: {
     guidance: {
       message: guidanceMessage,
       suggestedActions: [
-        { pillar: "read", action: "view_full", target: filePath },
-        { pillar: "understand", action: "expand", goal: filePath, include: { callGraph: true, dependencies: true, hotSpots: true, pageRank: true } }
+        {
+          id: "read.view_full",
+          priority: 1,
+          description: "Load full content for this file.",
+          rationale: "Full content provides complete context.",
+          toolCall: { tool: "read", args: { action: "view_full", target: filePath } }
+        },
+        {
+          id: "understand.expand",
+          priority: 2,
+          description: "Expand analysis with call graph and dependencies.",
+          rationale: "Deeper analysis improves confidence in changes.",
+          toolCall: {
+            tool: "understand",
+            args: { action: "expand", goal: filePath, include: { callGraph: true, dependencies: true, hotSpots: true, pageRank: true } }
+          }
+        }
       ]
     },
     degraded,

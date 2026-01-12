@@ -209,8 +209,23 @@ export class ReadPillar {
         suggestedActions: view === 'full'
           ? []
           : [
-              { pillar: 'read', action: 'view_full', target: resolvedPath },
-              { pillar: 'read', action: 'include_profile', target: resolvedPath, options: { includeProfile: true } }
+              {
+                id: 'read.view_full',
+                priority: 1,
+                description: 'Load full content for this file.',
+                rationale: 'Full content provides complete context.',
+                toolCall: { tool: 'read', args: { action: 'view_full', target: resolvedPath } }
+              },
+              {
+                id: 'read.include_profile',
+                priority: 2,
+                description: 'Include file profile metadata.',
+                rationale: 'Profile metadata helps guide deeper analysis.',
+                toolCall: {
+                  tool: 'read',
+                  args: { action: 'include_profile', target: resolvedPath, options: { includeProfile: true } }
+                }
+              }
             ]
       }
     };

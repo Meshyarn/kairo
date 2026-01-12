@@ -422,7 +422,17 @@ export class WritePillar {
             warnings: guardrailResult?.warnings,
             guidance: {
               message: result.success ? 'File written with undo support.' : `Write failed: ${result.message || 'Unknown error'}`,
-              suggestedActions: result.success ? [{ pillar: 'read', action: 'view_full', target: resolvedPath }] : []
+              suggestedActions: result.success
+                ? [
+                    {
+                      id: 'read.view_full',
+                      priority: 1,
+                      description: 'Review the updated file content.',
+                      rationale: 'Verify the write applied as intended.',
+                      toolCall: { tool: 'read', args: { action: 'view_full', target: resolvedPath } }
+                    }
+                  ]
+                : []
             }
           });
         } catch (error: any) {
@@ -528,7 +538,15 @@ export class WritePillar {
           warnings: guardrailResult?.warnings,
           guidance: {
             message: 'File written (fast mode, no undo).',
-            suggestedActions: [{ pillar: 'read', action: 'view_full', target: resolvedPath }]
+            suggestedActions: [
+              {
+                id: 'read.view_full',
+                priority: 1,
+                description: 'Review the updated file content.',
+                rationale: 'Verify the write applied as intended.',
+                toolCall: { tool: 'read', args: { action: 'view_full', target: resolvedPath } }
+              }
+            ]
           }
         });
       }
@@ -567,7 +585,15 @@ export class WritePillar {
           transactionId: null,
           guidance: {
             message: 'Empty file created.',
-            suggestedActions: [{ pillar: 'read', action: 'view_full', target: resolvedPath }]
+            suggestedActions: [
+              {
+                id: 'read.view_full',
+                priority: 1,
+                description: 'Review the updated file content.',
+                rationale: 'Verify the write applied as intended.',
+                toolCall: { tool: 'read', args: { action: 'view_full', target: resolvedPath } }
+              }
+            ]
           }
         });
       }
@@ -659,7 +685,17 @@ export class WritePillar {
         degradedReasons,
         guidance: {
           message: editResult.success ? 'File written.' : 'File write failed.',
-          suggestedActions: editResult.success ? [{ pillar: 'read', action: 'view_full', target: resolvedPath }] : []
+          suggestedActions: editResult.success
+            ? [
+                {
+                  id: 'read.view_full',
+                  priority: 1,
+                  description: 'Review the updated file content.',
+                  rationale: 'Verify the write applied as intended.',
+                  toolCall: { tool: 'read', args: { action: 'view_full', target: resolvedPath } }
+                }
+              ]
+            : []
         }
       });
     } finally {
@@ -1056,7 +1092,17 @@ export class WritePillar {
         sessionId,
         guidance: {
           message: result.success ? `Generated ${templateType} with project style. Use 'manage undo' to rollback.` : `Generation failed: ${result.message || 'Unknown error'}`,
-          suggestedActions: result.success ? [{ pillar: 'read', action: 'view_full', target: filePath }] : []
+          suggestedActions: result.success
+            ? [
+                {
+                  id: 'read.view_full',
+                  priority: 1,
+                  description: 'Review the updated file content.',
+                  rationale: 'Verify the write applied as intended.',
+                  toolCall: { tool: 'read', args: { action: 'view_full', target: filePath } }
+                }
+              ]
+            : []
         }
       };
     } catch (error: any) {

@@ -79,8 +79,20 @@ export async function executeBatchChange(
         guidance: {
           message: `Use read to copy exact text or provide a shorter targetString for ${filePath}.`,
           suggestedActions: [
-            { pillar: 'read', action: 'view_fragment', target: filePath },
-            { pillar: 'change', action: 'retry', intent: originalIntent, target: filePath }
+            {
+              id: 'read.view_fragment',
+              priority: 1,
+              description: 'View the exact target fragment.',
+              rationale: 'Accurate target text prevents edit mismatches.',
+              toolCall: { tool: 'read', args: { action: 'view_fragment', target: filePath } }
+            },
+            {
+              id: 'change.retry',
+              priority: 2,
+              description: 'Retry change with updated target text.',
+              rationale: 'Retry after verifying the current content.',
+              toolCall: { tool: 'change', args: { action: 'retry', intent: originalIntent, target: filePath } }
+            }
           ]
         }
       };
@@ -230,12 +242,14 @@ async function executeBatchDryRun(
     message: "Batch change plan generated. Review the diffs before applying.",
     suggestedActions: [
       {
-        pillar: "change",
-        action: "apply",
-        intent: originalIntent,
-        targetFiles,
-        edits: rawEdits,
-        options: { dryRun: false, batchMode: true }
+        id: "change.apply",
+        priority: 1,
+        description: "Apply the batch change plan.",
+        rationale: "Plan completed successfully; apply to update files.",
+        toolCall: {
+          tool: "change",
+          args: { action: "apply", intent: originalIntent, targetFiles, edits: rawEdits, options: { dryRun: false, batchMode: true } }
+        }
       }
     ]
   };
@@ -347,12 +361,26 @@ async function executeBatchApply(
   const guidance = success
     ? {
         message: "Batch changes successfully applied.",
-        suggestedActions: [{ pillar: "manage", action: "test" }]
+        suggestedActions: [
+          {
+            id: "manage.test",
+            priority: 1,
+            description: "Run tests for impacted areas.",
+            rationale: "Validate behavior after batch changes.",
+            toolCall: { tool: "manage", args: { command: "test" } }
+          }
+        ]
       }
     : {
         message: message ?? "Batch apply failed.",
         suggestedActions: [
-          { pillar: "change", action: "retry", intent: originalIntent, targetFiles, edits: rawEdits }
+          {
+            id: "change.retry",
+            priority: 1,
+            description: "Retry batch change.",
+            rationale: "Retry after addressing apply failures.",
+            toolCall: { tool: "change", args: { action: "retry", intent: originalIntent, targetFiles, edits: rawEdits } }
+          }
         ]
       };
 
