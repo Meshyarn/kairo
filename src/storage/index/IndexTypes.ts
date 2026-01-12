@@ -132,9 +132,15 @@ export interface IndexStore {
     upsertEvidencePack(packId: string, payload: unknown): void;
     getEvidencePack(packId: string): unknown | null;
     deleteEvidencePack(packId: string): void;
+    iterateEvidencePacks(visitor: (packId: string, payload: unknown) => void): void;
+    compactEvidencePacks(): void;
 
     getChunkSummary(chunkId: string, style: "preview" | "summary"): { summary: string; contentHash?: string } | null;
     upsertChunkSummary(chunkId: string, style: "preview" | "summary", summary: string, contentHash?: string): void;
+    deleteChunkSummary(chunkId: string, style: "preview" | "summary"): void;
+    deleteChunkSummaries(chunkId: string): void;
+    iterateChunkSummaries(visitor: (chunkId: string, styles: Record<"preview" | "summary", { summary: string; contentHash?: string }>) => void): void;
+    compactChunkSummaries(): void;
 
     upsertPendingTransaction(entry: TransactionLogEntry): void;
     listPendingTransactions(): TransactionLogEntry[];

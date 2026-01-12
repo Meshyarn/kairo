@@ -373,6 +373,16 @@ export class MemoryIndexStore implements IndexStore {
         this.evidencePacks.delete(packId);
     }
 
+    public iterateEvidencePacks(visitor: (packId: string, payload: unknown) => void): void {
+        for (const [packId, payload] of this.evidencePacks.entries()) {
+            visitor(packId, payload);
+        }
+    }
+
+    public compactEvidencePacks(): void {
+        // No-op for in-memory store.
+    }
+
     public getChunkSummary(chunkId: string, style: "preview" | "summary"): { summary: string; contentHash?: string } | null {
         const entry = this.chunkSummaries.get(chunkId)?.get(style);
         if (!entry) return null;
@@ -384,6 +394,36 @@ export class MemoryIndexStore implements IndexStore {
             this.chunkSummaries.set(chunkId, new Map());
         }
         this.chunkSummaries.get(chunkId)!.set(style, { summary, contentHash });
+    }
+
+    public deleteChunkSummary(chunkId: string, style: "preview" | "summary"): void {
+        const styles = this.chunkSummaries.get(chunkId);
+        if (!styles) return;
+        styles.delete(style);
+        if (styles.size === 0) {
+            this.chunkSummaries.delete(chunkId);
+        }
+    }
+
+    public deleteChunkSummaries(chunkId: string): void {
+        this.chunkSummaries.delete(chunkId);
+    }
+
+    public iterateChunkSummaries(
+        visitor: (chunkId: string, styles: Record<"preview" | "summary", { summary: string; contentHash?: string }>) => void
+    ): void {
+        for (const [chunkId, styles] of this.chunkSummaries.entries()) {
+            const payload: Record<"preview" | "summary", { summary: string; contentHash?: string }> = {} as any;
+            for (const [style, value] of styles.entries()) {
+                if (style !== "preview" && style !== "summary") continue;
+                payload[style as "preview" | "summary"] = { ...value };
+            }
+            visitor(chunkId, payload);
+        }
+    }
+
+    public compactChunkSummaries(): void {
+        // No-op for in-memory store.
     }
 
     public upsertPendingTransaction(entry: TransactionLogEntry): void {
@@ -639,8 +679,26 @@ export class FileIndexStore extends MemoryIndexStore {
         this.persistPacks();
     }
 
+    public override compactEvidencePacks(): void {
+        this.persistPacks();
+    }
+
     public override upsertChunkSummary(chunkId: string, style: "preview" | "summary", summary: string, contentHash?: string): void {
         super.upsertChunkSummary(chunkId, style, summary, contentHash);
+        this.persistSummaries();
+    }
+
+    public override deleteChunkSummary(chunkId: string, style: "preview" | "summary"): void {
+        super.deleteChunkSummary(chunkId, style);
+        this.persistSummaries();
+    }
+
+    public override deleteChunkSummaries(chunkId: string): void {
+        super.deleteChunkSummaries(chunkId);
+        this.persistSummaries();
+    }
+
+    public override compactChunkSummaries(): void {
         this.persistSummaries();
     }
 

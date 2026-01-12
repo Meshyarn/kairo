@@ -1,0 +1,458 @@
+import type { StoredEvidencePack } from "./EvidencePackRepository.js";
+import type { IndexDatabase } from "./IndexDatabase.js";
+import type { DocumentSearchEngine } from "../documents/search/DocumentSearchEngine.js";
+import type { FlowArtifactManager } from "../orchestration/flow-artifact-manager.js";
+import type { WarningV1 } from "../types/guidance.js";
+import { metrics } from "../utils/MetricsCollector.js";
+
+export type StoragePruneMode = "plan" | "apply";
+export type StoragePruneTarget = "evidence_packs" | "chunk_summaries" | "flow_artifacts";
+
+export type StoragePruneOptions = {
+    mode?: StoragePruneMode;
+    targets?: StoragePruneTarget[];
+    includeExpired?: boolean;
+    includeStale?: boolean;
+    enforceCaps?: boolean;
+    compact?: boolean;
+    limits?: {
+        maxPacks?: number;
+        maxPackBytes?: number;
+        maxSummaryChunks?: number;
+        maxSummaryBytes?: number;
+    };
+    flowArtifacts?: {
+        removeOrphans?: boolean;
+    };
+};
+
+export type EvidencePackPruneReport = {
+    beforeCount: number;
+    afterCount: number;
+    deleted: Record<string, number>;
+    bytesBefore?: number;
+    bytesAfter?: number;
+    sample?: string[];
+};
+
+export type SummaryPruneReport = {
+    beforeChunks: number;
+    afterChunks: number;
+    deleted: Record<string, number>;
+    bytesBefore?: number;
+    bytesAfter?: number;
+};
+
+export type FlowArtifactPruneReport = {
+    prunedInMemory: number;
+    deletedFiles?: number;
+    fixedIndexEntries?: number;
+    removedSessions?: number;
+};
+
+export type StoragePruneReport = {
+    startedAt: string;
+    finishedAt: string;
+    targets: StoragePruneTarget[];
+    evidencePacks?: EvidencePackPruneReport;
+    summaries?: SummaryPruneReport;
+    flowArtifacts?: FlowArtifactPruneReport;
+};
+
+export type StoragePruneResult = {
+    success: boolean;
+    output: string;
+    mode: StoragePruneMode;
+    report: StoragePruneReport;
+    warnings?: WarningV1[];
+};
+
+type PackEntry = {
+    packId: string;
+    pack: StoredEvidencePack | null;
+    sizeBytes: number;
+    createdAt: number;
+    expiresAt?: number;
+    corrupt?: boolean;
+};
+
+type SummaryEntry = {
+    chunkId: string;
+    styles: Record<"preview" | "summary", { summary: string; contentHash?: string }>;
+    sizeBytes: number;
+    updatedAt: number;
+    orphan?: boolean;
+    stale?: boolean;
+    corrupt?: boolean;
+};
+
+export class StorageMaintenanceService {
+    constructor(
+        private readonly indexDb: IndexDatabase,
+        private readonly documentSearchEngine?: DocumentSearchEngine,
+        private readonly flowArtifactManager?: FlowArtifactManager
+    ) {}
+
+    public async prune(options: StoragePruneOptions = {}): Promise<StoragePruneResult> {
+        const mode: StoragePruneMode = options.mode === "plan" ? "plan" : "apply";
+        const targets: StoragePruneTarget[] = (options.targets && options.targets.length > 0)
+            ? options.targets
+            : ["evidence_packs", "chunk_summaries", "flow_artifacts"];
+        const report: StoragePruneReport = {
+            startedAt: new Date().toISOString(),
+            finishedAt: "",
+            targets
+        };
+        const warnings: WarningV1[] = [];
+
+        if (targets.includes("evidence_packs")) {
+            report.evidencePacks = this.pruneEvidencePacks(options, mode, warnings);
+        }
+        if (targets.includes("chunk_summaries")) {
+            report.summaries = this.pruneSummaries(options, mode, warnings);
+        }
+        if (targets.includes("flow_artifacts")) {
+            report.flowArtifacts = await this.pruneFlowArtifacts(options, mode, warnings);
+        }
+
+        report.finishedAt = new Date().toISOString();
+
+        return {
+            success: true,
+            output: mode === "plan" ? "Prune plan generated." : "Prune completed.",
+            mode,
+            report,
+            warnings: warnings.length > 0 ? warnings : undefined
+        };
+    }
+
+    private pruneEvidencePacks(options: StoragePruneOptions, mode: StoragePruneMode, warnings: WarningV1[]): EvidencePackPruneReport {
+        const includeExpired = options.includeExpired !== false;
+        const includeStale = options.includeStale !== false;
+        const enforceCaps = options.enforceCaps !== false;
+        const maxPacks = resolveLimit(options.limits?.maxPacks, "KAIRO_EVIDENCE_PACK_MAX_COUNT", 300);
+        const maxBytes = resolveLimit(options.limits?.maxPackBytes, "KAIRO_EVIDENCE_PACK_MAX_BYTES", 100 * 1024 * 1024);
+        const staleCheckLimit = resolveLimit(undefined, "KAIRO_EVIDENCE_PACK_STALE_CHECK_MAX_ITEMS", 24);
+        const now = Date.now();
+
+        const entries: PackEntry[] = [];
+        this.indexDb.iterateEvidencePacks((packId, payload) => {
+            const sizeBytes = estimateBytes(payload);
+            const pack = coerceEvidencePack(payload);
+            if (!pack) {
+                warnings.push({
+                    severity: "warning",
+                    code: "storage_corrupt_pack",
+                    message: `Corrupt evidence pack payload for ${packId}; pruning will drop it.`,
+                    affectedTargets: [packId]
+                });
+                entries.push({
+                    packId,
+                    pack: null,
+                    sizeBytes,
+                    createdAt: 0,
+                    corrupt: true
+                });
+                return;
+            }
+            entries.push({
+                packId: packId || pack.packId,
+                pack,
+                sizeBytes,
+                createdAt: Number.isFinite(pack.createdAt) ? pack.createdAt : 0,
+                expiresAt: pack.expiresAt
+            });
+        });
+
+        const deletedByReason: Record<string, number> = {};
+        const deletedIds = new Set<string>();
+        const deleteReason = (reason: string) => {
+            deletedByReason[reason] = (deletedByReason[reason] ?? 0) + 1;
+        };
+
+        for (const entry of entries) {
+            if (!entry.pack || entry.corrupt) {
+                deletedIds.add(entry.packId);
+                deleteReason("corrupt");
+                continue;
+            }
+            if (includeExpired && entry.expiresAt && entry.expiresAt <= now) {
+                deletedIds.add(entry.packId);
+                deleteReason("expired");
+                continue;
+            }
+            if (includeStale && isPackStale(this.indexDb, entry.pack, staleCheckLimit)) {
+                deletedIds.add(entry.packId);
+                deleteReason("stale");
+            }
+        }
+
+        let remaining = entries.filter(entry => !deletedIds.has(entry.packId));
+
+        if (enforceCaps && maxPacks > 0 && remaining.length > maxPacks) {
+            remaining = applyCap(
+                remaining,
+                maxPacks,
+                (entry) => entry.createdAt,
+                (entry) => entry.packId,
+                deletedIds,
+                deleteReason,
+                "cap"
+            );
+        }
+
+        if (enforceCaps && maxBytes > 0) {
+            let totalBytes = remaining.reduce((sum, entry) => sum + entry.sizeBytes, 0);
+            if (totalBytes > maxBytes) {
+                const sorted = [...remaining].sort((a, b) => a.createdAt - b.createdAt);
+                for (const entry of sorted) {
+                    if (totalBytes <= maxBytes) break;
+                    if (deletedIds.has(entry.packId)) continue;
+                    deletedIds.add(entry.packId);
+                    deleteReason("cap_bytes");
+                    totalBytes -= entry.sizeBytes;
+                }
+                remaining = remaining.filter(entry => !deletedIds.has(entry.packId));
+            }
+        }
+
+        if (mode === "apply") {
+            for (const packId of deletedIds) {
+                this.indexDb.deleteEvidencePack(packId);
+            }
+            if (options.compact) {
+                this.indexDb.compactEvidencePacks();
+            }
+            if (deletedIds.size > 0) {
+                this.documentSearchEngine?.evictPackCache(Array.from(deletedIds));
+            }
+            metrics.gauge("storage.packs.count", remaining.length);
+            metrics.inc("storage.packs.pruned_total", deletedIds.size);
+        }
+
+        const bytesBefore = entries.reduce((sum, entry) => sum + entry.sizeBytes, 0);
+        const bytesAfter = remaining.reduce((sum, entry) => sum + entry.sizeBytes, 0);
+
+        return {
+            beforeCount: entries.length,
+            afterCount: remaining.length,
+            deleted: deletedByReason,
+            bytesBefore,
+            bytesAfter,
+            sample: Array.from(deletedIds).slice(0, 10)
+        };
+    }
+
+    private pruneSummaries(options: StoragePruneOptions, mode: StoragePruneMode, warnings: WarningV1[]): SummaryPruneReport {
+        const includeStale = options.includeStale !== false;
+        const enforceCaps = options.enforceCaps !== false;
+        const maxChunks = resolveLimit(options.limits?.maxSummaryChunks, "KAIRO_CHUNK_SUMMARY_MAX_CHUNKS", 20000);
+        const maxBytes = resolveLimit(options.limits?.maxSummaryBytes, "KAIRO_CHUNK_SUMMARY_MAX_BYTES", 100 * 1024 * 1024);
+
+        const entries: SummaryEntry[] = [];
+        this.indexDb.iterateChunkSummaries((chunkId, styles) => {
+            const chunk = this.indexDb.getDocumentChunk(chunkId);
+            const sizeBytes = estimateBytes(styles);
+            if (!styles || Object.keys(styles).length === 0) {
+                warnings.push({
+                    severity: "warning",
+                    code: "storage_corrupt_summary",
+                    message: `Empty summary payload for ${chunkId}; pruning will drop it.`,
+                    affectedTargets: [chunkId]
+                });
+                entries.push({ chunkId, styles, sizeBytes, updatedAt: 0, corrupt: true });
+                return;
+            }
+            if (!chunk) {
+                entries.push({ chunkId, styles, sizeBytes, updatedAt: 0, orphan: true });
+                return;
+            }
+            const stale = includeStale ? isSummaryStale(chunk.contentHash, styles) : false;
+            entries.push({
+                chunkId,
+                styles,
+                sizeBytes,
+                updatedAt: chunk.updatedAt ?? 0,
+                stale
+            });
+        });
+
+        const deletedByReason: Record<string, number> = {};
+        const deletedIds = new Set<string>();
+        const deleteReason = (reason: string) => {
+            deletedByReason[reason] = (deletedByReason[reason] ?? 0) + 1;
+        };
+
+        for (const entry of entries) {
+            if (entry.corrupt) {
+                deletedIds.add(entry.chunkId);
+                deleteReason("corrupt");
+                continue;
+            }
+            if (entry.orphan) {
+                deletedIds.add(entry.chunkId);
+                deleteReason("orphan");
+                continue;
+            }
+            if (entry.stale) {
+                deletedIds.add(entry.chunkId);
+                deleteReason("stale");
+            }
+        }
+
+        let remaining = entries.filter(entry => !deletedIds.has(entry.chunkId));
+
+        if (enforceCaps && maxChunks > 0 && remaining.length > maxChunks) {
+            remaining = applyCap(
+                remaining,
+                maxChunks,
+                (entry) => entry.updatedAt,
+                (entry) => entry.chunkId,
+                deletedIds,
+                deleteReason,
+                "cap"
+            );
+        }
+
+        if (enforceCaps && maxBytes > 0) {
+            let totalBytes = remaining.reduce((sum, entry) => sum + entry.sizeBytes, 0);
+            if (totalBytes > maxBytes) {
+                const sorted = [...remaining].sort((a, b) => a.updatedAt - b.updatedAt);
+                for (const entry of sorted) {
+                    if (totalBytes <= maxBytes) break;
+                    if (deletedIds.has(entry.chunkId)) continue;
+                    deletedIds.add(entry.chunkId);
+                    deleteReason("cap_bytes");
+                    totalBytes -= entry.sizeBytes;
+                }
+                remaining = remaining.filter(entry => !deletedIds.has(entry.chunkId));
+            }
+        }
+
+        if (mode === "apply") {
+            for (const chunkId of deletedIds) {
+                this.indexDb.deleteChunkSummaries(chunkId);
+            }
+            if (options.compact) {
+                this.indexDb.compactChunkSummaries();
+            }
+            metrics.gauge("storage.summaries.chunks", remaining.length);
+            metrics.inc("storage.summaries.pruned_total", deletedIds.size);
+        }
+
+        const bytesBefore = entries.reduce((sum, entry) => sum + entry.sizeBytes, 0);
+        const bytesAfter = remaining.reduce((sum, entry) => sum + entry.sizeBytes, 0);
+
+        return {
+            beforeChunks: entries.length,
+            afterChunks: remaining.length,
+            deleted: deletedByReason,
+            bytesBefore,
+            bytesAfter
+        };
+    }
+
+    private async pruneFlowArtifacts(
+        options: StoragePruneOptions,
+        mode: StoragePruneMode,
+        warnings: WarningV1[]
+    ): Promise<FlowArtifactPruneReport> {
+        if (!this.flowArtifactManager) {
+            return { prunedInMemory: 0 };
+        }
+        if (mode === "plan") {
+            warnings.push({
+                severity: "info",
+                code: "flow_artifacts_plan_unsupported",
+                message: "Flow artifact pruning is applied directly; plan mode reports are approximate."
+            });
+            return { prunedInMemory: 0 };
+        }
+        const prunedInMemory = this.flowArtifactManager.prune();
+        const persisted = await this.flowArtifactManager.prunePersisted({
+            removeOrphans: options.flowArtifacts?.removeOrphans !== false
+        });
+        return {
+            prunedInMemory,
+            deletedFiles: persisted.deletedFiles,
+            fixedIndexEntries: persisted.fixedIndexEntries,
+            removedSessions: persisted.removedSessions
+        };
+    }
+}
+
+function resolveLimit(explicit: number | undefined, envKey: string, fallback: number): number {
+    if (Number.isFinite(explicit)) {
+        return Math.max(0, Math.floor(explicit as number));
+    }
+    const raw = process.env[envKey];
+    const parsed = Number.parseInt(raw ?? "", 10);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+        return parsed;
+    }
+    return fallback;
+}
+
+function estimateBytes(payload: unknown): number {
+    try {
+        return Buffer.byteLength(JSON.stringify(payload ?? {}), "utf8");
+    } catch {
+        return 0;
+    }
+}
+
+function coerceEvidencePack(payload: unknown): StoredEvidencePack | null {
+    if (!payload || typeof payload !== "object") return null;
+    const pack = payload as StoredEvidencePack;
+    if (!Array.isArray(pack.items)) return null;
+    return pack;
+}
+
+function isPackStale(indexDb: IndexDatabase, pack: StoredEvidencePack, maxItems: number): boolean {
+    const items = Array.isArray(pack.items) ? pack.items : [];
+    const slice = items.slice(0, Math.max(1, maxItems));
+    for (const item of slice) {
+        const snapshotHash = item.snapshot?.contentHash;
+        if (!snapshotHash) continue;
+        const currentHash = indexDb.getChunkContentHash(item.chunkId);
+        if (!currentHash || currentHash !== snapshotHash) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function isSummaryStale(
+    contentHash: string,
+    styles: Record<"preview" | "summary", { summary: string; contentHash?: string }>
+): boolean {
+    for (const entry of Object.values(styles)) {
+        if (!entry) return true;
+        if (!entry.contentHash) {
+            return true;
+        }
+        if (contentHash && entry.contentHash !== contentHash) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function applyCap<T>(
+    entries: T[],
+    maxCount: number,
+    sortKey: (entry: T) => number,
+    idKey: (entry: T) => string,
+    deletedIds: Set<string>,
+    deleteReason: (reason: string) => void,
+    reason: string
+): T[] {
+    const sorted = [...entries].sort((a, b) => sortKey(a) - sortKey(b));
+    const over = Math.max(0, sorted.length - maxCount);
+    for (let i = 0; i < over; i += 1) {
+        const id = idKey(sorted[i]);
+        deletedIds.add(id);
+        deleteReason(reason);
+    }
+    return entries.filter(entry => !deletedIds.has(idKey(entry)));
+}

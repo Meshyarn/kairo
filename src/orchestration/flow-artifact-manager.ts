@@ -1,4 +1,5 @@
 import path from "path";
+import type { Dirent } from "fs";
 import { promises as fs } from "fs";
 import { LRUCache } from "lru-cache";
 import type {
@@ -18,6 +19,15 @@ export interface FlowArtifactManagerOptions {
     defaultTTL?: number;
     persistPath?: string;
     autoPersist?: boolean;
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+    try {
+        await fs.access(filePath);
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 interface FlowArtifactIndexEntry {
@@ -207,6 +217,54 @@ export class FlowArtifactManager {
         return before - this.cache.size;
     }
 
+    async prunePersisted(options: { removeOrphans?: boolean } = {}): Promise<{ deletedFiles: number; fixedIndexEntries: number; removedSessions: number }> {
+        const removeOrphans = options.removeOrphans !== false;
+        const index = await this.readIndex();
+        if (!index) {
+            return { deletedFiles: 0, fixedIndexEntries: 0, removedSessions: 0 };
+        }
+        this.index = index;
+        let fixedIndexEntries = 0;
+        let deletedFiles = 0;
+        let removedSessions = 0;
+        let updated = false;
+
+        const artifactEntries = Object.entries(this.index.artifacts ?? {});
+        for (const [id, entry] of artifactEntries) {
+            const absPath = entry.path
+                ? this.toAbsolutePersistPath(entry.path)
+                : await this.resolvePersistPath(id as ArtifactId, entry.type);
+            if (!await fileExists(absPath)) {
+                delete this.index.artifacts[id];
+                fixedIndexEntries += 1;
+                updated = true;
+            }
+        }
+
+        const sessionEntries = Object.entries(this.index.sessions ?? {});
+        for (const [sessionId, entry] of sessionEntries) {
+            if (!entry?.path) continue;
+            const absPath = this.toAbsolutePersistPath(entry.path);
+            if (!await fileExists(absPath)) {
+                delete this.index.sessions[sessionId];
+                removedSessions += 1;
+                updated = true;
+            }
+        }
+
+        if (removeOrphans) {
+            deletedFiles += await this.removeOrphanedArtifacts();
+            deletedFiles += await this.removeOrphanedSessions();
+        }
+
+        if (updated || deletedFiles > 0) {
+            this.touchIndex();
+            await this.persistIndex();
+        }
+
+        return { deletedFiles, fixedIndexEntries, removedSessions };
+    }
+
     status(): ArtifactManagerStatus {
         const artifacts = Array.from(this.cache.values());
         return {
@@ -363,6 +421,49 @@ export class FlowArtifactManager {
 
     private touchIndex(): void {
         this.index.updatedAt = Date.now();
+    }
+
+    private async removeOrphanedArtifacts(): Promise<number> {
+        let deleted = 0;
+        const entries = await this.safeReadDir(this.persistPath);
+        for (const entry of entries) {
+            if (!entry.isDirectory()) continue;
+            if (entry.name === "sessions") continue;
+            const dirPath = path.join(this.persistPath, entry.name);
+            const files = await this.safeReadDir(dirPath);
+            for (const file of files) {
+                if (!file.isFile() || !file.name.endsWith(".json")) continue;
+                const artifactId = file.name.replace(/\.json$/, "");
+                if (!this.index.artifacts[artifactId]) {
+                    await fs.rm(path.join(dirPath, file.name), { force: true });
+                    deleted += 1;
+                }
+            }
+        }
+        return deleted;
+    }
+
+    private async removeOrphanedSessions(): Promise<number> {
+        let deleted = 0;
+        const sessionDir = path.join(this.persistPath, "sessions");
+        const entries = await this.safeReadDir(sessionDir);
+        for (const entry of entries) {
+            if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+            const sessionId = entry.name.replace(/\.json$/, "");
+            if (!this.index.sessions[sessionId]) {
+                await fs.rm(path.join(sessionDir, entry.name), { force: true });
+                deleted += 1;
+            }
+        }
+        return deleted;
+    }
+
+    private async safeReadDir(dirPath: string): Promise<Dirent[]> {
+        try {
+            return await fs.readdir(dirPath, { withFileTypes: true });
+        } catch {
+            return [];
+        }
     }
 
     private async persistIndex(): Promise<void> {

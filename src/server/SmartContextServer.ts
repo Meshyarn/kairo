@@ -41,6 +41,7 @@ import { IndexStateManager } from "../indexing/IndexStateManager.js";
 import { EmbeddingRepository } from "../indexing/EmbeddingRepository.js";
 import { DocumentChunkRepository } from "../indexing/DocumentChunkRepository.js";
 import { EvidencePackRepository } from "../indexing/EvidencePackRepository.js";
+import { StorageMaintenanceService, type StoragePruneTarget } from "../indexing/StorageMaintenanceService.js";
 import { TransactionLog } from "../engine/TransactionLog.js";
 import { ConfigurationManager } from "../config/ConfigurationManager.js";
 import { RepoRegistry } from "../config/RepoRegistry.js";
@@ -148,6 +149,8 @@ export class SmartContextServer {
     private heartbeatTimer?: NodeJS.Timeout;
     private shutdownRequested = false;
     private shutdownTimer?: NodeJS.Timeout;
+    private storagePruneTimer?: NodeJS.Timeout;
+    private storagePruneRunning = false;
     private metricsReporter?: AdaptiveFlowReporter;
     private alertDispatcher?: AlertDispatcher;
     private toolSpecRegistry = createDefaultToolSpecRegistry();
@@ -336,6 +339,7 @@ export class SmartContextServer {
 
         this.startHeartbeat();
         this.initMetricsReporter();
+        this.startStoragePrune();
     }
 
     private initializeModularHandlers(): void {
@@ -589,6 +593,55 @@ export class SmartContextServer {
         if (!this.heartbeatTimer) return;
         clearInterval(this.heartbeatTimer);
         this.heartbeatTimer = undefined;
+    }
+
+    private startStoragePrune(): void {
+        if (this.storagePruneTimer || this.isTestEnv()) return;
+        const intervalMs = Number(process.env.KAIRO_STORAGE_PRUNE_INTERVAL_MS ?? "");
+        if (!Number.isFinite(intervalMs) || intervalMs <= 0) return;
+        const includeOnStart = process.env.KAIRO_STORAGE_PRUNE_ON_START === "true";
+        const includeFlowArtifacts = process.env.KAIRO_STORAGE_PRUNE_FLOW_ARTIFACTS === "true";
+        const compact = process.env.KAIRO_STORAGE_PRUNE_COMPACT === "true";
+
+        const runPrune = async () => {
+            if (this.storagePruneRunning) return;
+            this.storagePruneRunning = true;
+            try {
+                const targets: StoragePruneTarget[] = includeFlowArtifacts
+                    ? ["evidence_packs", "chunk_summaries", "flow_artifacts"]
+                    : ["evidence_packs", "chunk_summaries"];
+                const service = new StorageMaintenanceService(
+                    this.indexDatabase,
+                    this.documentSearchEngine,
+                    this.flowArtifactManager
+                );
+                await service.prune({
+                    mode: "apply",
+                    targets,
+                    includeExpired: true,
+                    includeStale: true,
+                    enforceCaps: true,
+                    compact
+                });
+            } catch (error) {
+                console.warn("[SmartContextServer] Background storage prune failed:", error);
+            } finally {
+                this.storagePruneRunning = false;
+            }
+        };
+
+        this.storagePruneTimer = setInterval(runPrune, intervalMs);
+        if (includeOnStart) {
+            setImmediate(() => {
+                void runPrune();
+            });
+        }
+    }
+
+    private stopStoragePrune(): void {
+        if (!this.storagePruneTimer) return;
+        clearInterval(this.storagePruneTimer);
+        this.storagePruneTimer = undefined;
     }
 
     private shouldWarmupSearchIndex(): boolean {
@@ -958,6 +1011,7 @@ export class SmartContextServer {
 
     public async shutdown() {
         this.stopHeartbeat();
+        this.stopStoragePrune();
         await this.server.close();
         this.clusterSearchEngine.stopBackgroundTasks();
         if (this.incrementalIndexer) {
