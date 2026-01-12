@@ -33,6 +33,60 @@ describe("ReadPillar", () => {
     expect(result.metadata.filePath).toBe("src/orchestration/OrchestrationEngine.ts");
     expect(readCalls[0].filePath).toBe("src/orchestration/OrchestrationEngine.ts");
   });
+
+  it("returns budget_exceeded degraded reasons when token budget applies", async () => {
+    const registry = new InternalToolRegistry();
+    registry.register("code_read", async () => "const value = 1;\n".repeat(50));
+    registry.register("file_profile", async () => ({
+      metadata: { relativePath: "src/large.ts", lineCount: 50, language: "typescript" },
+      structure: { symbols: [] }
+    } as any));
+
+    const pillar = new ReadPillar(registry);
+    const result = await pillar.execute({
+      category: "read",
+      action: "view",
+      targets: ["src/large.ts"],
+      originalIntent: "read src/large.ts",
+      constraints: { view: "full", limits: { maxTokens: 1 } },
+      confidence: 1
+    } as any, new OrchestrationContext());
+
+    expect(result.degraded).toBe(true);
+    expect(result.degradedReasons?.some((reason: any) => reason.type === "budget_exceeded")).toBe(true);
+    expect(result.compression?.applied).toBe(true);
+  });
+
+  it("surfaces doc_search_skipped in degraded reasons for document skeleton reads", async () => {
+    const registry = new InternalToolRegistry();
+    registry.register("project_search", async () => ({
+      results: [{ path: "README.md" }]
+    } as any));
+    registry.register("document_skeleton", async () => ({
+      skeleton: "# Title\n",
+      outline: [],
+      reasons: ["doc_search_skipped"],
+      degraded: true
+    } as any));
+    registry.register("file_profile", async () => ({
+      metadata: { relativePath: "README.md", lineCount: 1, language: "markdown" },
+      structure: { symbols: [] }
+    } as any));
+
+    const pillar = new ReadPillar(registry);
+    const result = await pillar.execute({
+      category: "read",
+      action: "view",
+      targets: ["README.md"],
+      originalIntent: "read README.md",
+      constraints: { view: "skeleton" },
+      confidence: 1
+    } as any, new OrchestrationContext());
+
+    expect(result.degradedReasons?.some((reason: any) => reason.type === "doc_search_skipped")).toBe(true);
+    const actions = result.guidance?.suggestedActions ?? [];
+    expect(actions.find((action: any) => action.id === "read.view_full")).toBeDefined();
+  });
 });
 
 describe("WritePillar", () => {

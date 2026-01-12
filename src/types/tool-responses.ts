@@ -19,5 +19,6 @@ export type DegradedReason = {
   packageName?: string;
   filePath?: string;
   message: string;
-  action?: string;
+  actionToolCall?: { tool: string; args: Record<string, unknown> };
+  actionId?: string;
 };

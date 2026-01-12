@@ -60,7 +60,10 @@ describe("ExplorePillar degraded blocking", () => {
 
     expect(response.success).toBe(false);
     expect(response.status).toBe("blocked");
-    expect(response.degradedReasons?.some((reason: any) => reason.type === "missing_query_pack")).toBe(true);
+    const reason = response.degradedReasons?.find((entry: any) => entry.type === "missing_query_pack");
+    expect(reason).toBeDefined();
+    expect(reason?.actionId).toBe("manage.doctor.parity");
+    expect(reason?.actionToolCall).toMatchObject({ tool: "manage", args: { command: "doctor", scope: "parity" } });
   });
 
   it("blocks when L3 syntax validation fails", async () => {

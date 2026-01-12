@@ -110,7 +110,8 @@ export class MemberSelectIndex {
             type: "missing_query_pack",
             languageId,
             message: `Missing field access query pack for ${languageId}.`,
-            action: "add_query_pack"
+            actionToolCall: { tool: "manage", args: { command: "doctor", scope: "parity" } },
+            actionId: "manage.doctor.parity"
         };
     }
 
@@ -118,7 +119,9 @@ export class MemberSelectIndex {
         return {
             type: "unsupported_language",
             languageId,
-            message: `Failed to parse ${languageId} file for field access.`
+            message: `Failed to parse ${languageId} file for field access.`,
+            actionToolCall: { tool: "manage", args: { command: "doctor", scope: "languages" } },
+            actionId: "manage.doctor.languages"
         };
     }
 }

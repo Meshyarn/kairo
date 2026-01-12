@@ -13,7 +13,8 @@ describe("GuidanceGenerator cross-language contract guidance", () => {
             type: "cross_lang_contract_missing",
             packageName: "@kairo/core-rs",
             message: "Contract manifest is missing.",
-            action: "Run manage doctor --scope=contracts"
+            actionToolCall: { tool: "manage", args: { command: "doctor", scope: "contracts" } },
+            actionId: "manage.doctor.contracts"
           }
         ]
       },
@@ -21,7 +22,7 @@ describe("GuidanceGenerator cross-language contract guidance", () => {
     });
 
     const match = guidance.suggestedActions.find(
-      (action) => action.action === "verify_contracts"
+      (action) => action.id === "manage.doctor.contracts"
     );
     expect(match?.toolCall?.args).toMatchObject({ command: "doctor", scope: "contracts" });
   });

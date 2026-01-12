@@ -212,8 +212,20 @@ export class ChangePillar {
           guidance: {
             message: 'Provide a target file path or select a file via navigate/search.',
             suggestedActions: [
-              { pillar: 'navigate', action: 'find', target: originalIntent },
-              { pillar: 'change', action: 'retry', intent: originalIntent, target: '<filePath>' }
+              {
+                id: 'navigate.find',
+                priority: 1,
+                description: 'Find candidate files for this change.',
+                rationale: 'Selecting a concrete file path is required to proceed.',
+                toolCall: { tool: 'navigate', args: { action: 'find', target: originalIntent } }
+              },
+              {
+                id: 'change.retry',
+                priority: 2,
+                description: 'Retry change with an explicit target path.',
+                rationale: 'Providing a file path unblocks the change flow.',
+                toolCall: { tool: 'change', args: { action: 'retry', intent: originalIntent, target: '<filePath>' } }
+              }
             ]
           }
         });
@@ -229,7 +241,13 @@ export class ChangePillar {
           guidance: {
             message: 'Align targetPath with the draft file or regenerate the draft for the intended target.',
             suggestedActions: [
-              { pillar: 'change', action: 'retry', intent: originalIntent, target: draftTargetPath }
+              {
+                id: 'change.retry',
+                priority: 1,
+                description: 'Retry change against the draft target path.',
+                rationale: 'Draft content must align with the chosen target file.',
+                toolCall: { tool: 'change', args: { action: 'retry', intent: originalIntent, target: draftTargetPath } }
+              }
             ]
           },
           sessionId: resolvedSessionId
@@ -250,8 +268,20 @@ export class ChangePillar {
             guidance: {
               message: 'Use read to copy exact text or provide a shorter targetString.',
               suggestedActions: [
-                { pillar: 'read', action: 'view_fragment', target: targetPath },
-                { pillar: 'change', action: 'retry', intent: originalIntent, target: targetPath }
+                {
+                  id: 'read.view_fragment',
+                  priority: 1,
+                  description: 'View the exact target fragment.',
+                  rationale: 'Accurate target text prevents edit mismatches.',
+                  toolCall: { tool: 'read', args: { action: 'view_fragment', target: targetPath } }
+                },
+                {
+                  id: 'change.retry',
+                  priority: 2,
+                  description: 'Retry change with updated target text.',
+                  rationale: 'Retry with corrected target string.',
+                  toolCall: { tool: 'change', args: { action: 'retry', intent: originalIntent, target: targetPath } }
+                }
               ]
             },
             sessionId: resolvedSessionId
@@ -265,7 +295,13 @@ export class ChangePillar {
           guidance: {
             message: 'Re-run a dryRun to generate a DraftPack before applying.',
             suggestedActions: [
-              { pillar: 'change', action: 'plan', intent: originalIntent, target: targetPath }
+              {
+                id: 'change.plan',
+                priority: 1,
+                description: 'Generate a new plan (dryRun).',
+                rationale: 'Draft content is required to apply without edits.',
+                toolCall: { tool: 'change', args: { action: 'plan', intent: originalIntent, target: targetPath } }
+              }
             ]
           },
           sessionId: resolvedSessionId
@@ -446,7 +482,13 @@ export class ChangePillar {
               message,
               reviewBlockReasons: blockReasons,
               suggestedActions: [
-                { pillar: "change", action: "review", target: targetPath }
+                {
+                  id: "change.review",
+                  priority: 1,
+                  description: "Review findings before applying changes.",
+                  rationale: "Review is required to resolve blocking issues.",
+                  toolCall: { tool: "change", args: { action: "review", target: targetPath } }
+                }
               ]
             },
             sessionId: resolvedSessionId
@@ -623,23 +665,33 @@ export class ChangePillar {
         message: dryRun ? 'Change plan generated. Review the diff before applying.' : 'Changes successfully applied.',
         suggestedActions: dryRun ?
           [{
-            pillar: 'change',
-            action: 'apply',
-            intent: originalIntent,
-            target: targetPath,
-            edits,
-            options: { dryRun: false }
+            id: 'change.apply',
+            priority: 1,
+            description: 'Apply the planned changes.',
+            rationale: 'Plan completed successfully; apply to update files.',
+            toolCall: {
+              tool: 'change',
+              args: { action: 'apply', intent: originalIntent, target: targetPath, edits, options: { dryRun: false } }
+            }
           }] :
-          [{ pillar: 'manage', action: 'test' }]
+          [{
+            id: 'manage.test',
+            priority: 1,
+            description: 'Run tests for impacted areas.',
+            rationale: 'Validate behavior after applying changes.',
+            toolCall: { tool: 'manage', args: { command: 'test' } }
+          }]
       };
       if (dryRun && targetPath && !includeImpact && this.shouldSuggestImpact(targetPath, guardrailResult, edits)) {
         successGuidance.suggestedActions.push({
-          pillar: 'change',
-          action: 'plan',
-          intent: originalIntent,
-          target: targetPath,
-          edits,
-          options: { dryRun: true, includeImpact: true }
+          id: 'change.plan.impact',
+          priority: 2,
+          description: 'Generate a plan with impact analysis.',
+          rationale: 'Impact analysis helps validate risk before apply.',
+          toolCall: {
+            tool: 'change',
+            args: { action: 'plan', intent: originalIntent, target: targetPath, edits, options: { dryRun: true, includeImpact: true } }
+          }
         });
       }
 
@@ -748,10 +800,14 @@ export class ChangePillar {
           const top = relatedDocs[0];
           if (top?.filePath) {
             successGuidance.suggestedActions.push({
-              pillar: 'document_section',
-              action: 'preview',
-              target: top.filePath,
-              headingPath: top.sectionPath
+              id: 'document_section.preview',
+              priority: 2,
+              description: 'Preview related documentation section.',
+              rationale: 'Docs may need updates after code changes.',
+              toolCall: {
+                tool: 'document_section',
+                args: { action: 'preview', target: top.filePath, headingPath: top.sectionPath }
+              }
             });
           }
         }
@@ -962,8 +1018,20 @@ export class ChangePillar {
     return {
       message: args.failureMessage || 'Change failed.',
       suggestedActions: [
-        { pillar: 'read', action: 'view_fragment', target: args.targetPath },
-        { pillar: 'change', action: 'retry', intent: args.intent, target: args.targetPath }
+        {
+          id: 'read.view_fragment',
+          priority: 1,
+          description: 'View the exact target fragment.',
+          rationale: 'Confirm the current content before retrying.',
+          toolCall: { tool: 'read', args: { action: 'view_fragment', target: args.targetPath } }
+        },
+        {
+          id: 'change.retry',
+          priority: 2,
+          description: 'Retry change with updated target text.',
+          rationale: 'Retry after verifying the current content.',
+          toolCall: { tool: 'change', args: { action: 'retry', intent: args.intent, target: args.targetPath } }
+        }
       ]
     };
   }

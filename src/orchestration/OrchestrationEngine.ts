@@ -438,6 +438,7 @@ export class OrchestrationEngine {
     return { skeletons, calls, dependencies, hotSpots, impactPreviews };
   }
 
+
   private isCacheable(category: string, args: any): boolean {
     if (!args || typeof args !== 'object') return false;
     if (category === 'change' || category === 'write' || category === 'manage') return false;

@@ -1,3 +1,5 @@
+import type { SuggestedActionV1 } from "./guidance.js";
+
 export type ResearchPackId = string;
 
 export interface TopModule {
@@ -301,13 +303,7 @@ export interface VibeAlignmentValidation {
     summary: string;
 }
 
-export interface SuggestedAction {
-    pillar: "explore" | "understand" | "change" | "write" | "manage";
-    action: string;
-    args: Record<string, any>;
-    priority: "high" | "medium" | "low";
-    reason: string;
-}
+export type SuggestedAction = SuggestedActionV1;
 
 export type ReviewReportId = string;
 
