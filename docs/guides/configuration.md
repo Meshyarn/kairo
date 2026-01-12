@@ -17,6 +17,20 @@ Kairo is configured via environment variables. Most users only need a few.
 
 Timeouts are primarily controlled by your MCP host (per-request timeout). Some operations also accept per-call timeouts via `limits.timeoutMs` (see `docs/agent/TOOL_REFERENCE.md`).
 
+## Storage maintenance (ADR-059)
+
+| Variable | Purpose | Notes |
+|---|---|---|
+| `KAIRO_STORAGE_PRUNE_INTERVAL_MS` | Background prune interval (ms). | `0`/unset disables background prune. |
+| `KAIRO_STORAGE_PRUNE_ON_START` | Run prune once on startup. | `true` to enable. |
+| `KAIRO_STORAGE_PRUNE_FLOW_ARTIFACTS` | Include flow artifacts in prune. | `true` to enable. |
+| `KAIRO_STORAGE_PRUNE_COMPACT` | Run compact rewrite after prune. | `true` to enable. |
+| `KAIRO_EVIDENCE_PACK_MAX_COUNT` | Evidence pack max count cap. | Default ~300. |
+| `KAIRO_EVIDENCE_PACK_MAX_BYTES` | Evidence pack byte cap. | Default 100MB. |
+| `KAIRO_EVIDENCE_PACK_STALE_CHECK_MAX_ITEMS` | Evidence pack stale sampling limit. | Default 24 items. |
+| `KAIRO_CHUNK_SUMMARY_MAX_CHUNKS` | Chunk summary max chunk count. | Default 20k. |
+| `KAIRO_CHUNK_SUMMARY_MAX_BYTES` | Chunk summary byte cap. | Default 100MB. |
+
 ## Project config files (OSS essentials)
 
 These files live under `.kairo/` in the **target project root**.

@@ -260,6 +260,34 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
               backup: { type: "boolean" },
               legacyMcpConfig: { type: "boolean" }
             }
+          },
+          pruneOptions: {
+            type: "object",
+            properties: {
+              targets: {
+                type: "array",
+                items: { type: "string", enum: ["evidence_packs", "chunk_summaries", "flow_artifacts"] }
+              },
+              includeExpired: { type: "boolean" },
+              includeStale: { type: "boolean" },
+              enforceCaps: { type: "boolean" },
+              compact: { type: "boolean" },
+              limits: {
+                type: "object",
+                properties: {
+                  maxPacks: { type: "number" },
+                  maxPackBytes: { type: "number" },
+                  maxSummaryChunks: { type: "number" },
+                  maxSummaryBytes: { type: "number" }
+                }
+              },
+              flowArtifacts: {
+                type: "object",
+                properties: {
+                  removeOrphans: { type: "boolean" }
+                }
+              }
+            }
           }
         },
         required: ["command"],
@@ -863,6 +891,34 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
             properties: {
               backup: { type: "boolean" },
               legacyMcpConfig: { type: "boolean" }
+            }
+          },
+          pruneOptions: {
+            type: "object",
+            properties: {
+              targets: {
+                type: "array",
+                items: { type: "string", enum: ["evidence_packs", "chunk_summaries", "flow_artifacts"] }
+              },
+              includeExpired: { type: "boolean" },
+              includeStale: { type: "boolean" },
+              enforceCaps: { type: "boolean" },
+              compact: { type: "boolean" },
+              limits: {
+                type: "object",
+                properties: {
+                  maxPacks: { type: "number" },
+                  maxPackBytes: { type: "number" },
+                  maxSummaryChunks: { type: "number" },
+                  maxSummaryBytes: { type: "number" }
+                }
+              },
+              flowArtifacts: {
+                type: "object",
+                properties: {
+                  removeOrphans: { type: "boolean" }
+                }
+              }
             }
           }
         },

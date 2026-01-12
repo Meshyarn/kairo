@@ -3,6 +3,7 @@ import { HandlerContext } from "./HandlerContext.js";
 import { metrics } from "../utils/MetricsCollector.js";
 import { resolveEmbeddingConfigFromEnv } from "../embeddings/EmbeddingConfig.js";
 import { ConfigBootstrapper } from "../config/ConfigBootstrapper.js";
+import { StorageMaintenanceService } from "../indexing/StorageMaintenanceService.js";
 
 export class ManageHandlers extends BaseHandler {
     private reindexInProgress = false;
@@ -392,12 +393,22 @@ export class ManageHandlers extends BaseHandler {
                 }
             case 'prune':
                 {
-                    const pruned = this.context.flowArtifactManager.prune();
-                    return {
-                        success: true,
-                        output: "Expired artifacts pruned.",
-                        pruned
-                    };
+                    const mode = args?.mode === "plan" ? "plan" : "apply";
+                    const service = new StorageMaintenanceService(
+                        this.context.indexDatabase,
+                        this.context.documentSearchEngine,
+                        this.context.flowArtifactManager
+                    );
+                    return service.prune({
+                        mode,
+                        targets: args?.pruneOptions?.targets,
+                        includeExpired: args?.pruneOptions?.includeExpired,
+                        includeStale: args?.pruneOptions?.includeStale,
+                        enforceCaps: args?.pruneOptions?.enforceCaps,
+                        compact: args?.pruneOptions?.compact,
+                        limits: args?.pruneOptions?.limits,
+                        flowArtifacts: args?.pruneOptions?.flowArtifacts
+                    });
                 }
             case 'export':
                 {

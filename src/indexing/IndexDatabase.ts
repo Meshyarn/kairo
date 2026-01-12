@@ -182,12 +182,36 @@ export class IndexDatabase implements IndexStore {
         this.store.deleteEvidencePack(packId);
     }
 
+    public iterateEvidencePacks(visitor: (packId: string, payload: unknown) => void): void {
+        this.store.iterateEvidencePacks(visitor);
+    }
+
+    public compactEvidencePacks(): void {
+        this.store.compactEvidencePacks();
+    }
+
     public getChunkSummary(chunkId: string, style: "preview" | "summary"): { summary: string; contentHash?: string } | null {
         return this.store.getChunkSummary(chunkId, style);
     }
 
     public upsertChunkSummary(chunkId: string, style: "preview" | "summary", summary: string, contentHash?: string): void {
         this.store.upsertChunkSummary(chunkId, style, summary, contentHash);
+    }
+
+    public deleteChunkSummary(chunkId: string, style: "preview" | "summary"): void {
+        this.store.deleteChunkSummary(chunkId, style);
+    }
+
+    public deleteChunkSummaries(chunkId: string): void {
+        this.store.deleteChunkSummaries(chunkId);
+    }
+
+    public iterateChunkSummaries(visitor: (chunkId: string, styles: Record<"preview" | "summary", { summary: string; contentHash?: string }>) => void): void {
+        this.store.iterateChunkSummaries(visitor);
+    }
+
+    public compactChunkSummaries(): void {
+        this.store.compactChunkSummaries();
     }
 
     public upsertPendingTransaction(entry: TransactionLogEntry): void {

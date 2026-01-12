@@ -25,28 +25,30 @@ export class ManagePillar {
     const presets = (constraints as any).presets;
     const languageScan = (constraints as any).languageScan;
     const applyOptions = (constraints as any).applyOptions;
+    const pruneOptions = (constraints as any).pruneOptions;
     const apply = (constraints as any).apply;
     const execute = async (command: string) => {
       const started = Date.now();
-      const output = await this.registry.execute('project_manage', {
-        command,
-        target,
-        scope,
-        artifactOptions,
-        limit,
-        sessionId,
-        outcome,
-        policy,
-        policyMode,
-        mode,
-        targets: configTargets,
-        root,
-        multiRepo,
-        presets,
-        languageScan,
-        applyOptions,
-        apply
-      });
+        const output = await this.registry.execute('project_manage', {
+          command,
+          target,
+          scope,
+          artifactOptions,
+          limit,
+          sessionId,
+          outcome,
+          policy,
+          policyMode,
+          mode,
+          targets: configTargets,
+          root,
+          multiRepo,
+          presets,
+          languageScan,
+          applyOptions,
+          pruneOptions,
+          apply
+        });
       context.addStep({
         id: `${command}_${context.getFullHistory().length + 1}`,
         tool: 'project_manage',
@@ -67,6 +69,7 @@ export class ManagePillar {
           presets,
           languageScan,
           applyOptions,
+          pruneOptions,
           apply
         },
         output,

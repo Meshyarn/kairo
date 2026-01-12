@@ -225,6 +225,34 @@ Project/session state utilities.
 | `artifactOptions.sessionId` | `string` |  | Filter artifacts by session. |
 | `artifactOptions.limit` | `number` |  | Max artifacts to return. |
 | `artifactOptions.includeExpired` | `boolean` |  | Include expired artifacts. |
+| `mode` | `"plan" \| "apply"` |  | Used by `init`/`doctor`/`prune` to preview or apply. |
+| `targets` | `("kairo" \| "vscode")[]` |  | Used by `init` to decide which config to write. |
+| `root` | `string` |  | Config root override for `init`/`doctor`. |
+| `multiRepo` | `"auto" \| "single" \| "detect"` |  | Multi-repo config behavior for `init`. |
+| `presets` | `"minimal" \| "recommended"` |  | Config preset for `init`. |
+| `languageScan.maxFiles` | `number` |  | Max files scanned by `init`. |
+| `languageScan.sampleBytesPerFile` | `number` |  | Sample size per file for `init`. |
+| `languageScan.includeDocs` | `boolean` |  | Include docs in scan for `init`. |
+| `applyOptions.backup` | `boolean` |  | Keep backup when writing config. |
+| `applyOptions.legacyMcpConfig` | `boolean` |  | Write legacy `.mcp-config.json`. |
+| `pruneOptions` | `object` |  | Storage prune options (see below). |
+
+---
+
+**Prune options (`manage` command = `prune`)**
+
+| Field | Type | Notes |
+|---|---|---|
+| `pruneOptions.targets` | `("evidence_packs" \| "chunk_summaries" \| "flow_artifacts")[]` | Defaults to all. |
+| `pruneOptions.includeExpired` | `boolean` | Include expired entries (default true). |
+| `pruneOptions.includeStale` | `boolean` | Include stale entries (default true). |
+| `pruneOptions.enforceCaps` | `boolean` | Enforce max count/bytes caps (default true). |
+| `pruneOptions.compact` | `boolean` | Rewrite store after prune. |
+| `pruneOptions.limits.maxPacks` | `number` | Max evidence packs. |
+| `pruneOptions.limits.maxPackBytes` | `number` | Max evidence pack bytes. |
+| `pruneOptions.limits.maxSummaryChunks` | `number` | Max summary chunks. |
+| `pruneOptions.limits.maxSummaryBytes` | `number` | Max summary bytes. |
+| `pruneOptions.flowArtifacts.removeOrphans` | `boolean` | Remove orphaned artifact files. |
 
 ---
 

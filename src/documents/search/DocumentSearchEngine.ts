@@ -37,6 +37,16 @@ export class DocumentSearchEngine {
         this.packCache = new LRUCache({ max: Number.isFinite(max) && max > 0 ? max : 100 });
     }
 
+    public evictPackCache(packIds?: string[]): void {
+        if (!packIds || packIds.length === 0) {
+            this.packCache.clear();
+            return;
+        }
+        for (const packId of packIds) {
+            this.packCache.delete(packId);
+        }
+    }
+
     public async getEmbeddingStatus(): Promise<{ provider: string; model: string; dims: number } | null> {
         try {
             const provider = await this.embeddingFactory.getProvider();
