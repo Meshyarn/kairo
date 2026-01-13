@@ -1,4 +1,5 @@
 import type { SymbolInfo } from "./ast.js";
+import type { FileVersionInfo } from "./engine.js";
 
 export type DocumentKind = "markdown" | "mdx" | "html" | "css" | "text" | "code_comment" | "unknown";
 
@@ -95,4 +96,5 @@ export interface SmartFileProfile {
         readFragmentHint: string;
         skeletonSummaryNote?: string;
     };
+    versionInfo?: FileVersionInfo;
 }

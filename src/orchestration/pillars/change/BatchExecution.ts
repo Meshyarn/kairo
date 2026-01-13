@@ -30,12 +30,13 @@ export async function executeBatchChange(
     indexStateManager?: IndexStateManager;
     constraints?: any;
     diffMode?: "myers" | "semantic";
+    fileVersions?: Record<string, { expectedVersion?: number; expectedHash?: string }>;
   },
   runTool: (context: OrchestrationContext, tool: string, args: any) => Promise<any>,
   extractEditFilePath: (edit: any) => string | undefined,
   buildFailureGuidance: (args: any) => any
 ): Promise<any> {
-  const { intent, context, rawEdits, targetFiles, dryRun, includeImpact, dependencyGraph, indexStateManager, constraints, diffMode } = args;
+  const { intent, context, rawEdits, targetFiles, dryRun, includeImpact, dependencyGraph, indexStateManager, constraints, diffMode, fileVersions } = args;
   const originalIntent = intent.originalIntent;
 
   if (rawEdits.length === 0) {
@@ -112,7 +113,8 @@ export async function executeBatchChange(
       dependencyGraph,
       indexStateManager,
       constraints,
-      diffMode
+      diffMode,
+      fileVersions
     }, runTool, buildFailureGuidance);
   }
 
@@ -126,7 +128,8 @@ export async function executeBatchChange(
     batchImpactLimit: resolveBatchImpactLimit(intent.constraints),
     dependencyGraph,
     indexStateManager,
-    constraints
+    constraints,
+    fileVersions
   }, runTool, normalizedByFile);
 }
 
@@ -143,11 +146,12 @@ async function executeBatchDryRun(
     indexStateManager?: IndexStateManager;
     constraints?: any;
     diffMode?: "myers" | "semantic";
+    fileVersions?: Record<string, { expectedVersion?: number; expectedHash?: string }>;
   },
   runTool: (context: OrchestrationContext, tool: string, args: any) => Promise<any>,
   buildFailureGuidance: (args: any) => any
 ): Promise<any> {
-  const { context, originalIntent, rawEdits, targetFiles, normalizedByFile, includeImpact, batchImpactLimit, dependencyGraph, indexStateManager, constraints, diffMode } = args;
+  const { context, originalIntent, rawEdits, targetFiles, normalizedByFile, includeImpact, batchImpactLimit, dependencyGraph, indexStateManager, constraints, diffMode, fileVersions } = args;
   const results: Array<{ filePath: string; success: boolean; diff?: string; error?: string }> = [];
   const planSteps: Array<{ action: 'modify'; file: string; description: string; diff?: string }> = [];
   const diffBlocks: string[] = [];
@@ -248,7 +252,14 @@ async function executeBatchDryRun(
         rationale: "Plan completed successfully; apply to update files.",
         toolCall: {
           tool: "change",
-          args: { action: "apply", intent: originalIntent, targetFiles, edits: rawEdits, options: { dryRun: false, batchMode: true } }
+          args: {
+            action: "apply",
+            intent: originalIntent,
+            targetFiles,
+            edits: rawEdits,
+            options: { dryRun: false, batchMode: true },
+            ...(fileVersions ? { fileVersions } : {})
+          }
         }
       }
     ]
@@ -260,6 +271,7 @@ async function executeBatchDryRun(
     diff: diffBlocks.join("\n\n"),
     plan: { steps: planSteps },
     results,
+    fileVersions: fileVersions && Object.keys(fileVersions).length > 0 ? fileVersions : undefined,
     impactReports: impactReports.length > 0 ? impactReports : undefined,
     guardrailResults: guardrailResults.length > 0 ? guardrailResults : undefined,
     guidance: successGuidance
@@ -278,11 +290,12 @@ async function executeBatchApply(
     dependencyGraph?: DependencyGraph;
     indexStateManager?: IndexStateManager;
     constraints?: any;
+    fileVersions?: Record<string, { expectedVersion?: number; expectedHash?: string }>;
   },
   runTool: (context: OrchestrationContext, tool: string, args: any) => Promise<any>,
   normalizedByFile: Map<string, { edits: any[] }>
 ): Promise<any> {
-  const { context, originalIntent, rawEdits, targetFiles, includeImpact, batchImpactLimit, dependencyGraph, indexStateManager, constraints } = args;
+  const { context, originalIntent, rawEdits, targetFiles, includeImpact, batchImpactLimit, dependencyGraph, indexStateManager, constraints, fileVersions } = args;
   const batchEdits: any[] = [];
   for (const [filePath, normalization] of normalizedByFile.entries()) {
     for (const edit of normalization.edits) {
@@ -342,10 +355,40 @@ async function executeBatchApply(
   try {
     editResult = await runTool(context, "edit_apply", {
       edits: batchEdits,
-      dryRun: false
+      dryRun: false,
+      fileVersions
     });
   } finally {
     stopEditCode();
+  }
+  if (editResult?.errorCode === "FILE_VERSION_MISMATCH") {
+    return {
+      success: false,
+      status: "blocked",
+      message: "File version mismatch detected. Re-read the files before retrying the batch apply.",
+      errorCode: "FILE_VERSION_MISMATCH",
+      blockedReason: "file_version_mismatch",
+      currentFileStates: editResult.updatedFileStates,
+      guidance: {
+        message: "Files changed since the plan. Re-read and re-plan before applying.",
+        suggestedActions: [
+          {
+            id: "read.view_full",
+            priority: 1,
+            description: "Re-read the latest file content.",
+            rationale: "Refresh context before reapplying changes.",
+            toolCall: { tool: "read", args: { action: "view_full", target: targetFiles[0] ?? "" } }
+          },
+          {
+            id: "change.plan",
+            priority: 2,
+            description: "Re-plan the batch change.",
+            rationale: "Ensure edits match the latest file states.",
+            toolCall: { tool: "change", args: { action: "plan", intent: originalIntent, targetFiles } }
+          }
+        ]
+      }
+    };
   }
   const success = editResult?.success !== false;
   const results = Array.isArray(editResult?.results) ? editResult.results.map((entry: any) => ({

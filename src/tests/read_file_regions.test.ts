@@ -57,6 +57,7 @@ describe('SmartContextServer - file_fragment_read', () => {
         const result: ReadFragmentResult = JSON.parse(response.content[0].text);
         expect(result.content).toContain('Line 3: Target1');
         expect(result.content).not.toContain('Line 2: Context');
+        expect(result.versionInfo?.contentHash).toBeDefined();
     });
 
     it('should extract lines with context', async () => {

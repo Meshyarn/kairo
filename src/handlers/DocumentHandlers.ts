@@ -283,7 +283,6 @@ export class DocumentHandlers extends BaseHandler {
 
     private async docSearchRaw(args: any) {
         const query = args?.query ?? args?.text ?? args?.keywords?.join?.(" ") ?? "";
-        const repoScope = normalizeRepoScope(args ?? {}, this.context.repoRegistry, { defaultMode: "all" });
         const response = await this.context.documentSearchEngine.search(String(query), {
             scope: args?.scope,
             output: args?.output,
@@ -307,10 +306,17 @@ export class DocumentHandlers extends BaseHandler {
             includeLogs: args?.includeLogs === true,
             includeMetrics: args?.includeMetrics === true
         });
+        if (!this.context.repoRegistry || !this.context.pathNormalizer) {
+            return response;
+        }
+        const repoScope = normalizeRepoScope(args ?? {}, this.context.repoRegistry, { defaultMode: "all" });
         return this.applyRepoScopeToDocumentSearch(response, repoScope);
     }
 
     private applyRepoScopeToDocumentSearch(response: any, repoScope: ReturnType<typeof normalizeRepoScope>) {
+        if (!this.context.repoRegistry || !this.context.pathNormalizer) {
+            return response;
+        }
         const annotate = (section: any) => {
             const filePath = section?.filePath;
             if (!filePath || typeof filePath !== "string") return null;

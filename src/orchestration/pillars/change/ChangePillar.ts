@@ -58,6 +58,7 @@ import type { PackageAliasMap } from "../../../config/PackageAliasMap.js";
 import type { RepoRegistry } from "../../../config/RepoRegistry.js";
 import type { ImpactAnalyzer } from "../../../engine/ImpactAnalyzer.js";
 import type { CrossLangImpact } from "../../../types/engine.js";
+import type { FileVersionManager } from "../../../engine/FileVersionManager.js";
 import { buildDegradedReasons } from "../../DegradedReasonMapper.js";
 import { AstManager } from "../../../ast/AstManager.js";
 import type { PathNormalizer } from "../../../utils/PathNormalizer.js";
@@ -124,6 +125,7 @@ export class ChangePillar {
       const draftPhantom = draftPackFromId?.phantomFiles?.[0];
       const draftContent = typeof draftPhantom?.content === "string" ? draftPhantom.content : undefined;
       const draftTargetPath = typeof draftPhantom?.path === "string" ? draftPhantom.path : undefined;
+      const expectedFileVersions = (constraints as any).fileVersions ?? draftPackFromId?.fileVersions;
       const stylePackOverride = this.resolveStylePack((constraints as any).stylePack, artifactManager);
       const sessionStylePack = stylePackOverride
         ?? (resolvedSessionId && artifactManager
@@ -172,6 +174,7 @@ export class ChangePillar {
       const shouldBatch = this.shouldUseBatch(constraints, targetFiles, editPaths);
       const repoRegistry = this.registry.getMetadata<RepoRegistry>("repoRegistry");
       const pathNormalizer = this.registry.getMetadata<PathNormalizer>("pathNormalizer");
+      const fileVersionManager = this.registry.getMetadata<FileVersionManager>("fileVersionManager");
       const allowCrossRepoEdits = Boolean((constraints as any).allowCrossRepoEdits);
       const repoScopeParams = {
         repoScope: (constraints as any).repoScope,
@@ -231,8 +234,11 @@ export class ChangePillar {
       if (shouldBatch) {
         const dependencyGraph = this.registry.getMetadata<DependencyGraph>("dependencyGraph");
         const indexStateManager = this.registry.getMetadata<IndexStateManager>("indexStateManager");
+        const batchFileVersions = dryRun
+          ? await this.buildFileVersionsSnapshot(targetFiles, fileVersionManager, pathNormalizer)
+          : expectedFileVersions;
         const result = await executeBatchChange(
-          { intent, context, rawEdits, targetFiles, dryRun, includeImpact, dependencyGraph, indexStateManager, constraints, diffMode },
+          { intent, context, rawEdits, targetFiles, dryRun, includeImpact, dependencyGraph, indexStateManager, constraints, diffMode, fileVersions: batchFileVersions },
           (ctx, tool, args) => this.runTool(ctx, tool, args),
           (e) => this.extractEditFilePath(e),
           (args) => this.buildFailureGuidance(args)
@@ -293,6 +299,10 @@ export class ChangePillar {
           return blocked;
         }
       }
+
+      const fileVersionsSnapshot = dryRun
+        ? await this.buildFileVersionsSnapshot([targetPath], fileVersionManager, pathNormalizer)
+        : undefined;
 
       const useDraftApply = !dryRun && rawEdits.length === 0 && Boolean(draftContent);
       if (useDraftApply && draftTargetPath && draftTargetPath !== targetPath) {
@@ -583,6 +593,7 @@ export class ChangePillar {
         ? analyzeSymbolImpact(targetPath, edits, constraints, this.fileSystem)
         : Promise.resolve(null);
 
+      const fileVersions = !dryRun ? expectedFileVersions : undefined;
       const stopEdit = metrics.startTimer("change.edit_coordinator_ms");
       let editResult: any;
       try {
@@ -593,10 +604,45 @@ export class ChangePillar {
             options: {
               skipImpactPreview: dryRun && !allowImpactPreview,
               ...(diffMode ? { diffMode } : {})
-            }
+            },
+            fileVersions
           });
       } finally {
         stopEdit();
+      }
+
+      if (!editResult.success && editResult.errorCode === "FILE_VERSION_MISMATCH" && targetPath) {
+        const degradedReasons = buildDegradedReasons(["file_version_mismatch"], { filePath: targetPath });
+        return attachWorkflow({
+          success: false,
+          status: "blocked",
+          message: "File version mismatch detected. Re-read the file before retrying the change.",
+          targetFile: targetPath,
+          errorCode: "FILE_VERSION_MISMATCH",
+          blockedReason: "file_version_mismatch",
+          degradedReasons,
+          currentFileStates: editResult.updatedFileStates,
+          guidance: {
+            message: "The file changed since it was read. Re-read and re-plan before applying.",
+            suggestedActions: [
+              {
+                id: "read.view_full",
+                priority: 1,
+                description: "Re-read the latest file content.",
+                rationale: "Refresh context before reapplying changes.",
+                toolCall: { tool: "read", args: { action: "view_full", target: targetPath } }
+              },
+              {
+                id: "change.plan",
+                priority: 2,
+                description: "Re-plan the change using the latest content.",
+                rationale: "Ensure edits are based on the current file state.",
+                toolCall: { tool: "change", args: { action: "plan", intent: originalIntent, target: targetPath } }
+              }
+            ]
+          },
+          sessionId: resolvedSessionId
+        });
       }
 
       if (!editResult.success && editResult.errorCode === "SYNTAX_VALIDATION_FAILED" && targetPath) {
@@ -664,10 +710,44 @@ export class ChangePillar {
               filePath: targetPath,
               edits: attempt.edits,
               dryRun,
-              options: diffMode ? { diffMode } : undefined
+              options: diffMode ? { diffMode } : undefined,
+              fileVersions
             });
           } finally {
             stopCorrect();
+          }
+          if (!correctedResult.success && correctedResult.errorCode === "FILE_VERSION_MISMATCH" && targetPath) {
+            const degradedReasons = buildDegradedReasons(["file_version_mismatch"], { filePath: targetPath });
+            return attachWorkflow({
+              success: false,
+              status: "blocked",
+              message: "File version mismatch detected. Re-read the file before retrying the change.",
+              targetFile: targetPath,
+              errorCode: "FILE_VERSION_MISMATCH",
+              blockedReason: "file_version_mismatch",
+              degradedReasons,
+              currentFileStates: correctedResult.updatedFileStates,
+              guidance: {
+                message: "The file changed since it was read. Re-read and re-plan before applying.",
+                suggestedActions: [
+                  {
+                    id: "read.view_full",
+                    priority: 1,
+                    description: "Re-read the latest file content.",
+                    rationale: "Refresh context before reapplying changes.",
+                    toolCall: { tool: "read", args: { action: "view_full", target: targetPath } }
+                  },
+                  {
+                    id: "change.plan",
+                    priority: 2,
+                    description: "Re-plan the change using the latest content.",
+                    rationale: "Ensure edits are based on the current file state.",
+                    toolCall: { tool: "change", args: { action: "plan", intent: originalIntent, target: targetPath } }
+                  }
+                ]
+              },
+              sessionId: resolvedSessionId
+            });
           }
           if (correctedResult.success) {
             finalResult = correctedResult;
@@ -784,7 +864,18 @@ export class ChangePillar {
           oldContent: originalContent,
           newContent: nextContent
         });
+        if (fileVersionsSnapshot) {
+          draftPack.fileVersions = fileVersionsSnapshot;
+        }
         draftPack.workflowMeta = workflowMeta;
+        const applyAction = successGuidance?.suggestedActions?.find((action: any) => action?.id === "change.apply");
+        if (applyAction?.toolCall?.tool === "change" && applyAction.toolCall.args && typeof applyAction.toolCall.args === "object") {
+          applyAction.toolCall.args = {
+            ...applyAction.toolCall.args,
+            draftId: draftPack.id,
+            ...(draftPack.fileVersions ? { fileVersions: draftPack.fileVersions } : {})
+          };
+        }
       }
 
       if (!preApplyReviewComputed && (reviewOptions?.preApply ?? dryRun) && targetPath) {
@@ -1004,6 +1095,30 @@ export class ChangePillar {
       }
     }
     return undefined;
+  }
+
+  private async buildFileVersionsSnapshot(
+    filePaths: string[],
+    fileVersionManager?: FileVersionManager,
+    pathNormalizer?: PathNormalizer
+  ): Promise<Record<string, { expectedVersion?: number; expectedHash?: string }> | undefined> {
+    if (!fileVersionManager || !pathNormalizer) return undefined;
+    const snapshot: Record<string, { expectedVersion?: number; expectedHash?: string }> = {};
+    const uniquePaths = Array.from(new Set(filePaths.filter(Boolean)));
+    for (const filePath of uniquePaths) {
+      const relPath = pathNormalizer.normalize(filePath);
+      try {
+        const absPath = pathNormalizer.toAbsolute(relPath);
+        const versionInfo = await fileVersionManager.getVersion(absPath);
+        snapshot[relPath] = {
+          expectedVersion: versionInfo.version,
+          expectedHash: versionInfo.contentHash
+        };
+      } catch {
+        // skip missing files
+      }
+    }
+    return Object.keys(snapshot).length > 0 ? snapshot : undefined;
   }
 
   private buildWorkflowMeta(args: {

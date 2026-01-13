@@ -106,10 +106,11 @@ function doSomethingIsolated() {
 
             expect(payload.meta.maxBytes).toBe(32);
                         expect(payload.meta.truncated).toBe(true);
-            expect(payload.meta.bytesReturned).toBeLessThanOrEqual(32);
-            expect(typeof payload.content).toBe('string');
-            expect(payload.content.length).toBeGreaterThan(0);
-            expect(payload.content).not.toBe(fileA_Content);
+        expect(payload.meta.bytesReturned).toBeLessThanOrEqual(32);
+        expect(typeof payload.content).toBe('string');
+        expect(payload.content.length).toBeGreaterThan(0);
+        expect(payload.content).not.toBe(fileA_Content);
+        expect(payload.versionInfo?.contentHash).toBeDefined();
 
         } finally {
             if (prev === undefined) {
@@ -133,6 +134,7 @@ function doSomethingIsolated() {
         expect(profile.usage.incomingFiles).toEqual([]);
         expect(profile.structure.skeleton).toContain('class TestClassA');
         expect(profile.guidance.readFullHint.length).toBeGreaterThan(0);
+        expect(profile.versionInfo?.contentHash).toBeDefined();
     });
 
     it('should correctly display metadata in Smart File Profile', async () => {

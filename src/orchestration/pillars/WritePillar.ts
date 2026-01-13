@@ -25,6 +25,7 @@ import { ReviewReportBuilder } from "../../generation/review-report-builder.js";
 import type { FlowArtifactManager } from "../flow-artifact-manager.js";
 import { OptionResolver } from "../options/OptionResolver.js";
 import { buildDegradedReasons } from "../DegradedReasonMapper.js";
+import type { FileVersionManager } from "../../engine/FileVersionManager.js";
 import {
   evaluateLanguageParityGate,
   formatParityBlockMessage
@@ -88,6 +89,7 @@ export class WritePillar {
       const draftArtifact = draftId ? artifactManager?.get(draftId) : undefined;
       const draftPack = draftArtifact?.type === "draft" ? (draftArtifact as any).pack : undefined;
       const draftContent = draftPack?.phantomFiles?.[0]?.content as string | undefined;
+      const expectedFileVersions = (constraints as any).fileVersions ?? draftPack?.fileVersions;
       const workflowMeta = this.buildWorkflowMeta({
         sessionId: resolvedSessionId,
         dryRun,
@@ -97,6 +99,7 @@ export class WritePillar {
       const workflowWarnings = this.buildWorkflowWarnings(workflowMeta, Boolean(resolvedSessionId));
       const repoRegistry = this.registry.getMetadata<RepoRegistry>("repoRegistry");
       const pathNormalizer = this.registry.getMetadata<PathNormalizer>("pathNormalizer");
+      const fileVersionManager = this.registry.getMetadata<FileVersionManager>("fileVersionManager");
       const allowCrossRepoEdits = Boolean((constraints as any).allowCrossRepoEdits);
       const repoScopeParams = {
         repoScope: (constraints as any).repoScope,
@@ -217,6 +220,10 @@ export class WritePillar {
         });
       }
 
+      const fileVersionsSnapshot = dryRun
+        ? await this.buildFileVersionsSnapshot([resolvedPath], fileVersionManager, pathNormalizer)
+        : undefined;
+
       if (dryRun) {
         const refinedIntent = refinement ? `${originalIntent}\nRefinement: ${refinement}` : originalIntent;
         if (!hasExplicitContent && draftContent) {
@@ -284,6 +291,9 @@ export class WritePillar {
           content,
           existingContent
         });
+        if (fileVersionsSnapshot) {
+          draftPack.fileVersions = fileVersionsSnapshot;
+        }
         draftPack.workflowMeta = workflowMeta;
 
         const preApplyReview = (reviewOptions?.preApply ?? true)
@@ -331,10 +341,29 @@ export class WritePillar {
           review: preApplyReview,
           guidance: {
             message: 'DraftPack generated. Review skeleton and phantom diff before applying.',
-            suggestedActions: []
+            suggestedActions: [
+              {
+                id: "write.apply",
+                priority: 1,
+                description: "Apply this draft write.",
+                rationale: "Uses the draft snapshot (including fileVersions) to block stale applies.",
+                toolCall: {
+                  tool: "write",
+                  args: {
+                    intent: refinedIntent,
+                    targetPath: resolvedPath,
+                    dryRun: false,
+                    draftId: draftPack.id,
+                    ...(draftPack.fileVersions ? { fileVersions: draftPack.fileVersions } : {})
+                  }
+                }
+              }
+            ]
           }
         });
       }
+
+      const fileVersions = expectedFileVersions;
 
       if (smartWrite && !hasExplicitContent) {
         const stopSmartWrite = metrics.startTimer("write.smart_write_ms");
@@ -362,7 +391,8 @@ export class WritePillar {
               constraints,
               resolvedSessionId,
               reviewOptions,
-              sessionStylePack
+              sessionStylePack,
+              fileVersions
             );
             return attachResponse(result);
           }
@@ -389,7 +419,8 @@ export class WritePillar {
               constraints,
               resolvedSessionId,
               reviewOptions,
-              sessionStylePack
+              sessionStylePack,
+              fileVersions
             );
             return attachResponse(result);
           }
@@ -412,7 +443,8 @@ export class WritePillar {
               await this.runTool(context, 'edit_apply', {
                 edits: [{ filePath: resolvedPath, operation: 'create', replacementString: '' }],
                 dryRun: false,
-                createMissingDirectories: true
+                createMissingDirectories: true,
+                fileVersions
               });
             }
             existingContent = '';
@@ -485,10 +517,21 @@ export class WritePillar {
           const result = await this.runTool(context, 'edit_transaction', {
             filePath: resolvedPath,
             edits: [edit],
-            dryRun: false
+            dryRun: false,
+            fileVersions
           });
 
           stopSafePatch();
+
+          if (result?.errorCode === "FILE_VERSION_MISMATCH") {
+            return attachResponse(this.buildFileVersionMismatchResponse({
+              filePath: resolvedPath,
+              intent: originalIntent,
+              writeMode: "safe",
+              sessionId: resolvedSessionId,
+              currentFileStates: result.updatedFileStates
+            }));
+          }
 
           return attachResponse({
             success: result.success ?? true,
@@ -599,11 +642,21 @@ export class WritePillar {
         try {
           await this.runTool(context, 'file_write', { filePath: resolvedPath, content });
         } catch {
-          await this.runTool(context, 'edit_apply', {
+          const fallback = await this.runTool(context, 'edit_apply', {
             edits: [{ filePath: resolvedPath, operation: 'create', replacementString: content }],
             dryRun: false,
-            createMissingDirectories: true
+            createMissingDirectories: true,
+            fileVersions
           });
+          if (fallback?.errorCode === "FILE_VERSION_MISMATCH") {
+            return attachResponse(this.buildFileVersionMismatchResponse({
+              filePath: resolvedPath,
+              intent: originalIntent,
+              writeMode: "fast",
+              sessionId: resolvedSessionId,
+              currentFileStates: fallback.updatedFileStates
+            }));
+          }
         }
 
         return attachResponse({
@@ -647,11 +700,21 @@ export class WritePillar {
         try {
           await this.runTool(context, 'file_write', { filePath: resolvedPath, content: '' });
         } catch {
-          await this.runTool(context, 'edit_apply', {
+          const fallback = await this.runTool(context, 'edit_apply', {
             edits: [{ filePath: resolvedPath, operation: 'create', replacementString: '' }],
             dryRun: false,
-            createMissingDirectories: true
+            createMissingDirectories: true,
+            fileVersions
           });
+          if (fallback?.errorCode === "FILE_VERSION_MISMATCH") {
+            return attachResponse(this.buildFileVersionMismatchResponse({
+              filePath: resolvedPath,
+              intent: originalIntent,
+              writeMode: "safe",
+              sessionId: resolvedSessionId,
+              currentFileStates: fallback.updatedFileStates
+            }));
+          }
         }
       }
 
@@ -745,8 +808,19 @@ export class WritePillar {
       const editResult = await this.runTool(context, 'edit_transaction', {
         filePath: resolvedPath,
         edits: [edit],
-        dryRun: false
+        dryRun: false,
+        fileVersions
       });
+
+      if (editResult?.errorCode === "FILE_VERSION_MISMATCH") {
+        return attachResponse(this.buildFileVersionMismatchResponse({
+          filePath: resolvedPath,
+          intent: originalIntent,
+          writeMode: "safe",
+          sessionId: resolvedSessionId,
+          currentFileStates: editResult.updatedFileStates
+        }));
+      }
 
       const reasonCodes = Array.isArray(guardrailResult?.blockingErrors)
         ? guardrailResult.blockingErrors
@@ -795,6 +869,72 @@ export class WritePillar {
       if (filenameMatch?.results?.length > 0) return filenameMatch.results[0].path;
     }
     return targetPath;
+  }
+
+  private async buildFileVersionsSnapshot(
+    filePaths: string[],
+    fileVersionManager?: FileVersionManager,
+    pathNormalizer?: PathNormalizer
+  ): Promise<Record<string, { expectedVersion?: number; expectedHash?: string }> | undefined> {
+    if (!fileVersionManager || !pathNormalizer) return undefined;
+    const snapshot: Record<string, { expectedVersion?: number; expectedHash?: string }> = {};
+    const uniquePaths = Array.from(new Set(filePaths.filter(Boolean)));
+    for (const filePath of uniquePaths) {
+      const relPath = pathNormalizer.normalize(filePath);
+      try {
+        const absPath = pathNormalizer.toAbsolute(relPath);
+        const versionInfo = await fileVersionManager.getVersion(absPath);
+        snapshot[relPath] = {
+          expectedVersion: versionInfo.version,
+          expectedHash: versionInfo.contentHash
+        };
+      } catch {
+        // skip missing files
+      }
+    }
+    return Object.keys(snapshot).length > 0 ? snapshot : undefined;
+  }
+
+  private buildFileVersionMismatchResponse(args: {
+    filePath: string;
+    intent: string;
+    writeMode: string;
+    sessionId?: string;
+    currentFileStates?: Record<string, { newVersion: number; newHash: string }>;
+  }) {
+    const degradedReasons = buildDegradedReasons(["file_version_mismatch"], { filePath: args.filePath });
+    return {
+      success: false,
+      status: "blocked",
+      createdFiles: [],
+      transactionId: "",
+      rollbackAvailable: false,
+      writeMode: args.writeMode,
+      errorCode: "FILE_VERSION_MISMATCH",
+      blockedReason: "file_version_mismatch",
+      degradedReasons,
+      currentFileStates: args.currentFileStates,
+      guidance: {
+        message: "The file changed since it was read. Re-read and retry the write.",
+        suggestedActions: [
+          {
+            id: "read.view_full",
+            priority: 1,
+            description: "Re-read the latest file content.",
+            rationale: "Refresh context before reapplying the write.",
+            toolCall: { tool: "read", args: { action: "view_full", target: args.filePath } }
+          },
+          {
+            id: "write.plan",
+            priority: 2,
+            description: "Re-run the write in dry-run mode.",
+            rationale: "Validate the write against the current file state.",
+            toolCall: { tool: "write", args: { intent: args.intent, target: args.filePath, options: { dryRun: true } } }
+          }
+        ]
+      },
+      sessionId: args.sessionId
+    };
   }
 
   private resolveDryRun(constraints: any, sessionId?: string): boolean {
@@ -1080,7 +1220,8 @@ export class WritePillar {
     constraints?: any,
     sessionId?: string,
     reviewOptions?: any,
-    stylePack?: StylePack
+    stylePack?: StylePack,
+    fileVersions?: Record<string, { expectedVersion?: number; expectedHash?: string }>
   ): Promise<any> {
     try {
       let finalContent = content;
@@ -1092,7 +1233,12 @@ export class WritePillar {
         try {
           await this.runTool(context, 'file_write', { filePath, content: '' });
         } catch {
-          await this.runTool(context, 'edit_apply', { edits: [{ filePath, operation: 'create', replacementString: '' }], dryRun: false, createMissingDirectories: true });
+          await this.runTool(context, 'edit_apply', {
+            edits: [{ filePath, operation: 'create', replacementString: '' }],
+            dryRun: false,
+            createMissingDirectories: true,
+            fileVersions
+          });
         }
         existingContent = '';
       }
@@ -1157,7 +1303,16 @@ export class WritePillar {
         };
       }
       const edit = { targetString: existingContent, replacementString: finalContent, indexRange: { start: 0, end: existingContent.length }, expectedHash: existingContent ? this.computeHash(existingContent) : undefined };
-      const result = await this.runTool(context, 'edit_transaction', { filePath, edits: [edit], dryRun: false });
+      const result = await this.runTool(context, 'edit_transaction', { filePath, edits: [edit], dryRun: false, fileVersions });
+      if (result?.errorCode === "FILE_VERSION_MISMATCH") {
+        return this.buildFileVersionMismatchResponse({
+          filePath,
+          intent,
+          writeMode: "quickGenerate",
+          sessionId,
+          currentFileStates: result.updatedFileStates
+        });
+      }
       return {
         success: result.success ?? true,
         status: result.success === false ? 'failure' : 'success',
