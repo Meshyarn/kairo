@@ -214,9 +214,10 @@ Project/session state utilities.
 | Field | Type | Required | Notes |
 |---|---|---:|---|
 | `command` | `"status" \| "undo" \| "redo" \| "reindex" \| "rebuild" \| "history" \| "test" \| "sessions" \| "session" \| "session_complete" \| "session_update" \| "artifacts" \| "artifact" \| "discard" \| "prune" \| "export" \| "import"` | ✓ | `rebuild` maps to `reindex`. |
-| `scope` | `"file" \| "transaction" \| "project"` |  | Mainly used by `test`. |
+| `scope` | `"file" \| "transaction" \| "project" \| "config" \| "languages" \| "wasm" \| "host" \| "contracts" \| "parity" \| "capabilities"` |  | Used by `test`/`doctor`. |
 | `target` | `string` |  | Mainly used by `test`. |
 | `limit` | `number` |  | Max items for list commands (sessions). |
+| `detail` | `"summary" \| "full"` |  | Detail level for `status`/`doctor`. |
 | `sessionId` | `string` |  | Session id for `session` / `session_complete`. |
 | `outcome` | `object` |  | Used by `session_complete` (e.g. `{ summary, status, nextSteps }`). |
 | `policy` | `object` |  | SessionPolicy update for `session_update`. |
@@ -294,6 +295,7 @@ What do you need?
 - `manage({ command: "init", mode: "apply" })` to write config files
 - `manage({ command: "doctor" })` to diagnose missing/misplaced settings
 - `manage({ command: "doctor", scope: "parity" })` to check query packs + WASM grammar availability
+- `manage({ command: "doctor", scope: "capabilities" })` to inspect provider/tier diagnostics (native/wasm/js) and tokenizer hints
 - `manage({ command: "doctor", scope: "contracts" })` to check `.kairo/contracts` health
 
 ---

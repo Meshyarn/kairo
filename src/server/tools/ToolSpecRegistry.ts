@@ -986,9 +986,10 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
               "import"
             ]
           },
-          scope: { type: "string", enum: ["file", "transaction", "project", "config", "languages", "wasm", "host", "contracts"] },
+          scope: { type: "string", enum: ["file", "transaction", "project", "config", "languages", "wasm", "host", "contracts", "parity", "capabilities"] },
           target: { type: "string" },
           limit: { type: "number" },
+          detail: { type: "string", enum: ["summary", "full"] },
           outcome: { type: "object" },
           sessionId: { type: "string" },
           policy: { type: "object" },
