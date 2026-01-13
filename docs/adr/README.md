@@ -178,6 +178,7 @@ This list captures every ADR title from the project history and where it’s cov
 - ADR-048: Sync Feedback Loop & Architectural Safety Guardrails → summarized in this index (see “Safety”)
 - ADR-049: Integrity Engine Defensive Hardening → summarized in this index (see “Safety”)
 - ADR-050: Writer's Flow (Research → Analyze → Skeleton → Write → Review → Manage) → `docs/adr/ADR-050-writers-flow.md`
+- ADR-061: Language Parity Gates (L2/L3) & Silent-pass 제거 → `docs/adr/ADR-061-language-parity-gates-and-silent-pass-removal.md`
 
 ### Archive ADRs (historical)
 
