@@ -65,6 +65,7 @@ The entries below cover all ADRs from the project history. Items marked “retou
 - ADR-058: Tool schema contract + compatibility layer → `docs/adr/ADR-058-tool-schema-contract-and-compatibility-layer.md`
 - ADR-059: EvidencePack/Summaries lifecycle (prune/compact) → `docs/adr/ADR-059-evidence-pack-and-summaries-lifecycle-prune-compact.md`
 - ADR-060: Document tool parity (PDF/XLSX) → `docs/adr/ADR-060-document-tool-parity-pdf-xlsx.md`
+- ADR-062: Multi-repo E2E UX + safety boundaries → `docs/adr/ADR-062-multi-repo-e2e-ux-and-safety-boundaries.md`
 - ADR-055-H: Adaptive trust policy (no curated summary)
 - ADR-055-L: Action guidance + Understand fallback graph (no curated summary)
 - ADR-033: “Six Pillars” precursor to ADR-040; introduced orchestration primitives and earlier public surface.
@@ -112,6 +113,7 @@ The entries below cover all ADRs from the project history. Items marked “retou
 
 - ADR-044 (retouched): Universal language parity via Tree-sitter WASM + query packs → `docs/adr/ADR-044-universal-language-parity.md`
 - ADR-047 (retouched): Multi-repo + multi-language expansion → `docs/adr/ADR-047-multi-repo-multi-language.md`
+- ADR-062: Multi-repo E2E UX + safety boundaries → `docs/adr/ADR-062-multi-repo-e2e-ux-and-safety-boundaries.md`
 - ADR-023: Architectural gap remediation (historic analysis driving extraction/indexing cleanup).
 - ADR-031: Unified runtime/testing data layout (historical; influences `.kairo/` shape).
 
@@ -179,6 +181,7 @@ This list captures every ADR title from the project history and where it’s cov
 - ADR-049: Integrity Engine Defensive Hardening → summarized in this index (see “Safety”)
 - ADR-050: Writer's Flow (Research → Analyze → Skeleton → Write → Review → Manage) → `docs/adr/ADR-050-writers-flow.md`
 - ADR-061: Language Parity Gates (L2/L3) & Silent-pass 제거 → `docs/adr/ADR-061-language-parity-gates-and-silent-pass-removal.md`
+- ADR-062: Multi-Repo E2E UX & Safety Boundaries → `docs/adr/ADR-062-multi-repo-e2e-ux-and-safety-boundaries.md`
 
 ### Archive ADRs (historical)
 

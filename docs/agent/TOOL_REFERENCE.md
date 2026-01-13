@@ -280,6 +280,11 @@ What do you need?
 - Review output
 - `change(options.dryRun=false)` to apply
 
+### Multi-repo safety (default deny)
+- `project_search`/`document_search` accept `repoScope` to narrow results.
+- `explore` accepts `repoScope` to scope discovery results (passed through to underlying search tools).
+- `change`/`write` block cross-repo edits by default; require `allowCrossRepoEdits: true` plus repo config `allowCrossRepoEdits: true`.
+
 ### Recover
 - If edits go wrong: `manage({ command: "undo" })`
 - If results look stale: `manage({ command: "reindex" })`
