@@ -27,7 +27,7 @@ describe("Language support: Java", () => {
       const symbols = await backend.extractSymbols({ filePath: "Sample.java", content, languageId, doc });
       const skeleton = await manager.generateUniversalSkeleton("Sample.java", content);
 
-      expect(getSupportForLanguageId(languageId)?.level).toBe("edit-safe");
+      expect(getSupportForLanguageId(languageId)?.level).toBe("L3");
       expected.imports?.forEach((specifier) => {
         expect(imports.map((entry) => entry.specifier)).toContain(specifier);
       });

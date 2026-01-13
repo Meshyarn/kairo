@@ -84,6 +84,12 @@ const PARITY_REASON_MAP: Record<string, {
     actionToolCall: PARITY_ACTION_TOOLCALL,
     actionId: PARITY_ACTION_ID
   },
+  missing_syntax_validator: {
+    type: "missing_syntax_validator",
+    message: "Syntax validator is missing for this language.",
+    actionToolCall: PARITY_ACTION_TOOLCALL,
+    actionId: PARITY_ACTION_ID
+  },
   syntax_validation_failed: {
     type: "syntax_validation_failed",
     message: "Syntax validation failed for the target content."

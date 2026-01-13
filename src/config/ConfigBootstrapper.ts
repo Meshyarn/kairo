@@ -6,7 +6,7 @@ import { createRequire } from "module";
 import { fileURLToPath } from "url";
 import { LanguageConfigLoader, BUILTIN_LANGUAGE_MAPPINGS } from "./LanguageConfig.js";
 import { getSupportForLanguageId, SupportLevel } from "./LanguageSupportLevels.js";
-import { LANGUAGE_PARITY_MATRIX } from "./LanguageParityMatrix.js";
+import { LANGUAGE_PARITY_MATRIX, resolveRequiredQueries } from "./LanguageParityMatrix.js";
 import { ContractManifestLoader } from "../contracts/ContractManifestLoader.js";
 import { ContractManifestGenerator } from "../contracts/ContractManifestGenerator.js";
 
@@ -791,8 +791,6 @@ export class ConfigBootstrapper {
                 .filter((id): id is string => typeof id === "string")
         );
         const queriesRoot = this.resolveQueriesRoot();
-        const requiredQueries = ["imports", "exports", "symbols", "skeleton"];
-
         for (const entry of LANGUAGE_PARITY_MATRIX.languages) {
             const severity = entry.supportLevel === "L3" ? "error" : "warn";
             if (!mappedLanguageIds.has(entry.languageId)) {
@@ -808,6 +806,7 @@ export class ConfigBootstrapper {
             if (entry.requiredQueryPack) {
                 const missing: string[] = [];
                 const candidates = this.resolveQueryCandidates(entry.languageId);
+                const requiredQueries = resolveRequiredQueries(entry);
                 for (const query of requiredQueries) {
                     let found = false;
                     if (queriesRoot) {

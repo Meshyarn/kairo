@@ -347,7 +347,9 @@ export class GuidanceGenerator {
   }
 
   private hasParityDegradedReason(reasons: string[]): boolean {
-    return reasons.some((reason) => reason === "missing_query_pack" || reason === "missing_wasm_grammar");
+    return reasons.some((reason) =>
+      reason === "missing_query_pack" || reason === "missing_wasm_grammar" || reason === "missing_syntax_validator"
+    );
   }
 
   private extractManageDoctorScopes(lastResult: any): string[] {

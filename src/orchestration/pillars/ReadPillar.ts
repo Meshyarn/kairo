@@ -52,22 +52,7 @@ export class ReadPillar {
           const querySupport = await checkQuerySupport(resolvedPath, requiredQueries, { required: true });
           if (querySupport.degraded) {
             const languageId = AstManager.getInstance().getLanguageId(resolvedPath);
-            const missing = Array.isArray(querySupport.missing) ? querySupport.missing : [];
-            const missingSummary = missing.length > 0 ? ` (${missing.join(", ")})` : "";
-            const message = querySupport.reason === "language_parser_unavailable"
-              ? `Language parser unavailable for ${resolvedPath}.`
-              : `Missing query pack for ${languageId}${missingSummary}.`;
-            const degradedReasons = buildDegradedReasons([querySupport.reason ?? "language_query_missing"], {
-              filePath: resolvedPath,
-              languageId
-            });
-            return {
-              success: false,
-              status: 'blocked',
-              message,
-              reasons: [querySupport.reason ?? "language_query_missing"],
-              degradedReasons
-            };
+            reasons.push(querySupport.reason ?? "missing_query_pack");
           }
         }
 
@@ -93,7 +78,11 @@ export class ReadPillar {
           const validator = new SyntaxValidator();
           const validation = await validator.validate(resolvedPath, fullContent);
           if (!validation.success) {
-            const degradedReasons = buildDegradedReasons(["syntax_validation_failed"], {
+            const codes = (validation.blockingErrors ?? []).map((error) => error.code);
+            const reason = codes.includes("SYNTAX_VALIDATOR_UNAVAILABLE")
+              ? "missing_syntax_validator"
+              : (codes.includes("SYNTAX_LANGUAGE_UNAVAILABLE") ? "missing_wasm_grammar" : "syntax_validation_failed");
+            const degradedReasons = buildDegradedReasons([reason], {
               filePath: resolvedPath,
               languageId: validation.languageId
             });
@@ -101,7 +90,7 @@ export class ReadPillar {
               success: false,
               status: 'blocked',
               message: `Syntax validation failed for ${resolvedPath}.`,
-              reasons: ["syntax_validation_failed"],
+              reasons: [reason],
               degradedReasons
             };
           }

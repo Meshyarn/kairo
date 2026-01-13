@@ -1,9 +1,11 @@
 import path from "path";
 import { BUILTIN_LANGUAGE_MAPPINGS } from "./LanguageConfig.js";
+import { LANGUAGE_PARITY_MATRIX } from "./LanguageParityMatrix.js";
+import { resolveRequiredQueries } from "./LanguageParityMatrix.js";
 
 export enum SupportLevel {
-    L2 = "understand-grade",
-    L3 = "edit-safe"
+    L2 = "L2",
+    L3 = "L3"
 }
 
 export type LanguageSupportSpec = {
@@ -15,59 +17,35 @@ export type LanguageSupportSpec = {
     };
 };
 
-export const DEFAULT_LANGUAGE_SUPPORT_LEVELS: Record<string, LanguageSupportSpec> = {
-    typescript: {
-        level: SupportLevel.L3,
-        editPolicy: { requireSyntaxValidation: true, warnOnEdit: false, requireQueries: ["imports", "exports", "symbols", "skeleton"] }
-    },
-    tsx: {
-        level: SupportLevel.L3,
-        editPolicy: { requireSyntaxValidation: true, warnOnEdit: false, requireQueries: ["imports", "exports", "symbols", "skeleton"] }
-    },
-    python: {
-        level: SupportLevel.L3,
-        editPolicy: { requireSyntaxValidation: true, warnOnEdit: false, requireQueries: ["imports", "exports", "symbols", "skeleton"] }
-    },
-    go: {
-        level: SupportLevel.L3,
-        editPolicy: { requireSyntaxValidation: true, warnOnEdit: false, requireQueries: ["imports", "exports", "symbols", "skeleton"] }
-    },
-    rust: {
-        level: SupportLevel.L3,
-        editPolicy: { requireSyntaxValidation: true, warnOnEdit: false, requireQueries: ["imports", "exports", "symbols", "skeleton"] }
-    },
-    java: {
-        level: SupportLevel.L3,
-        editPolicy: { requireSyntaxValidation: true, warnOnEdit: false, requireQueries: ["imports", "exports", "symbols", "skeleton"] }
-    },
-    php: {
-        level: SupportLevel.L3,
-        editPolicy: { requireSyntaxValidation: true, warnOnEdit: false, requireQueries: ["imports", "exports", "symbols", "skeleton"] }
-    },
-    sql: {
-        level: SupportLevel.L3,
-        editPolicy: { requireSyntaxValidation: true, warnOnEdit: false, requireQueries: ["symbols", "skeleton"] }
-    },
-    markdown: {
-        level: SupportLevel.L2,
-        editPolicy: { requireSyntaxValidation: false, warnOnEdit: true }
-    },
-    c: {
-        level: SupportLevel.L2,
-        editPolicy: { requireSyntaxValidation: true, warnOnEdit: true }
-    },
-    cpp: {
-        level: SupportLevel.L2,
-        editPolicy: { requireSyntaxValidation: true, warnOnEdit: true }
-    },
-    c_sharp: {
-        level: SupportLevel.L2,
-        editPolicy: { requireSyntaxValidation: true, warnOnEdit: true }
+function buildSupportSpec(entry: (typeof LANGUAGE_PARITY_MATRIX.languages)[number]): LanguageSupportSpec {
+    const level = entry.supportLevel === "L3" ? SupportLevel.L3 : SupportLevel.L2;
+    const requireQueries = resolveRequiredQueries(entry);
+    return {
+        level,
+        editPolicy: {
+            requireSyntaxValidation: entry.requiredSyntaxValidator,
+            warnOnEdit: level === SupportLevel.L2,
+            requireQueries: requireQueries.length > 0 ? requireQueries : undefined
+        }
+    };
+}
+
+const supportLevels = new Map<string, LanguageSupportSpec>();
+for (const entry of LANGUAGE_PARITY_MATRIX.languages) {
+    const spec = buildSupportSpec(entry);
+    supportLevels.set(entry.languageId, spec);
+    if (Array.isArray(entry.aliases)) {
+        for (const alias of entry.aliases) {
+            supportLevels.set(alias, spec);
+        }
     }
-};
+}
+
+export const DEFAULT_LANGUAGE_SUPPORT_LEVELS: Record<string, LanguageSupportSpec> = Object.fromEntries(supportLevels);
 
 export function getSupportForLanguageId(languageId: string): LanguageSupportSpec | undefined {
-    return DEFAULT_LANGUAGE_SUPPORT_LEVELS[languageId];
+    const normalized = languageId.toLowerCase();
+    return DEFAULT_LANGUAGE_SUPPORT_LEVELS[normalized];
 }
 
 export function getSupportForFilePath(filePath: string): LanguageSupportSpec | undefined {

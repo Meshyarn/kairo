@@ -12,7 +12,7 @@ import { TextNormalizer } from "../../utils/textNormalization.js";
 import type { ImportInfo, ExportInfo } from "../../indexing/ProjectIndex.js";
 import { normalizePath, toRelativePath } from "../../utils/PathHelpers.js";
 import { AstDiffEngine, type AstChange } from "../../ast/AstDiffEngine.js";
-import { getSupportForFilePath } from "../../config/LanguageSupportLevels.js";
+import { getSupportForFilePath, SupportLevel } from "../../config/LanguageSupportLevels.js";
 
 type GuardrailStatus = "pass" | "warn" | "block";
 type LanguageParityMode = "strict" | "balanced" | "permissive";
@@ -189,7 +189,7 @@ export async function evaluateIntegrityGuardrails(args: GuardrailContext): Promi
             details: { languageId, supportLevel: support.level }
         });
     }
-    if (support?.level === "edit-safe" && Array.isArray(support.editPolicy.requireQueries)) {
+    if (support?.level === SupportLevel.L3 && Array.isArray(support.editPolicy.requireQueries)) {
         for (const queryName of support.editPolicy.requireQueries) {
             const availability = await resolveParityAvailability(astManager, args.targetPath, languageId, queryName);
             if (!availability.available) {
