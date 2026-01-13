@@ -1,15 +1,19 @@
 import { BaseHandler } from "./BaseHandler.js";
 import { HandlerContext } from "./HandlerContext.js";
 import { DocumentKind, DocumentSection } from "../types.js";
-import { extractDocxAsHtml } from "../documents/extractors/DocxExtractor.js";
 import { extractHtmlTextPreserveLines } from "../documents/html/HtmlTextExtractor.js";
 import { buildDeterministicPreview, buildDeterministicSummary } from "../documents/summary/DeterministicSummarizer.js";
+import { DocumentContentLoader, type DocumentExtractionLimits } from "../documents/DocumentContentLoader.js";
+import { buildDegradedReasons } from "../orchestration/DegradedReasonMapper.js";
 import * as path from "path";
 import * as crypto from "crypto";
 
 export class DocumentHandlers extends BaseHandler {
+    private readonly contentLoader: DocumentContentLoader;
+
     constructor(private context: HandlerContext) {
         super();
+        this.contentLoader = new DocumentContentLoader(context.rootPath, context.fileSystem);
     }
 
     async handle(name: string, args: any): Promise<any> {
@@ -52,110 +56,92 @@ export class DocumentHandlers extends BaseHandler {
         return this.context.pathNormalizer.normalize(inputPath);
     }
 
-    private resolveAbsolutePath(inputPath: string): string {
-        return this.context.pathNormalizer.toAbsolute(this.resolveRelativePath(inputPath));
-    }
-
-    private async readDocumentContentForProfile(
-        filePath: string
-    ): Promise<{ content: string; kind: DocumentKind; reasons: string[] }> {
-        const ext = path.extname(filePath).toLowerCase();
-        if (ext === ".docx") {
-            try {
-                const absPath = this.resolveAbsolutePath(filePath);
-                const extracted = await extractDocxAsHtml(absPath);
-                const reasons = extracted.warnings.length > 0 ? ["docx_warnings"] : [];
-                return { content: extracted.html ?? "", kind: "html", reasons };
-            } catch (error: any) {
-                const reasons = ["docx_extract_failed"];
-                return { content: "", kind: "html", reasons };
-            }
-        }
-        const content = await this.context.fileSystem.readFile(filePath);
-        const kind = this.inferDocumentKind(filePath);
-        return { content, kind, reasons: [] };
-    }
-
-    private inferDocumentKind(filePath: string): DocumentKind {
-        const ext = path.extname(filePath).toLowerCase();
-        if (ext === ".mdx") return "mdx";
-        if (ext === ".md") return "markdown";
-        if (ext === ".html" || ext === ".htm") return "html";
-        if (ext === ".css") return "css";
-        if (ext === ".txt" || ext === ".log") return "text";
-        return "unknown";
-    }
-
     private async docTocRaw(args: any) {
         const filePath = this.resolveRelativePath(args.filePath);
-        const extracted = await this.readDocumentContentForProfile(filePath);
+        const limits = this.normalizeLimits(args);
+        const extracted = await this.contentLoader.loadForTool(filePath, limits);
         const profile = await this.context.documentProfiler.profile({
             filePath,
-            content: extracted.content,
+            content: extracted.profileContent,
             kind: extracted.kind,
             options: args?.options
         });
         const degradation = this.buildDegradation([
             ...(profile.parser?.reason ? [profile.parser.reason] : []),
             ...extracted.reasons
-        ]);
+        ], filePath);
         return {
             filePath,
             kind: profile.kind,
             outline: profile.outline,
+            sourceFormat: extracted.sourceFormat,
+            extractor: extracted.extractor,
+            warnings: extracted.warnings,
+            stats: extracted.stats,
             ...degradation
         };
     }
 
     private async docSkeletonRaw(args: any) {
         const filePath = this.resolveRelativePath(args.filePath);
-        const extracted = await this.readDocumentContentForProfile(filePath);
+        const limits = this.normalizeLimits(args);
+        const extracted = await this.contentLoader.loadForTool(filePath, limits);
         const profile = await this.context.documentProfiler.profile({
             filePath,
-            content: extracted.content,
+            content: extracted.profileContent,
             kind: extracted.kind,
             options: args?.options
         });
         const degradation = this.buildDegradation([
             ...(profile.parser?.reason ? [profile.parser.reason] : []),
             ...extracted.reasons
-        ]);
+        ], filePath);
         return {
             filePath,
             kind: profile.kind,
             skeleton: this.context.documentProfiler.buildSkeleton(profile),
             outline: profile.outline,
+            sourceFormat: extracted.sourceFormat,
+            extractor: extracted.extractor,
+            warnings: extracted.warnings,
+            stats: extracted.stats,
             ...degradation
         };
     }
 
     private async docAnalyzeRaw(args: any) {
         const filePath = this.resolveRelativePath(args.filePath);
-        const extracted = await this.readDocumentContentForProfile(filePath);
+        const limits = this.normalizeLimits(args);
+        const extracted = await this.contentLoader.loadForTool(filePath, limits);
         const profile = await this.context.documentProfiler.profile({
             filePath,
-            content: extracted.content,
+            content: extracted.profileContent,
             kind: extracted.kind,
             options: args?.options
         });
         const degradation = this.buildDegradation([
             ...(profile.parser?.reason ? [profile.parser.reason] : []),
             ...extracted.reasons
-        ]);
+        ], filePath);
         return {
             filePath,
             profile,
             skeleton: this.context.documentProfiler.buildSkeleton(profile),
+            sourceFormat: extracted.sourceFormat,
+            extractor: extracted.extractor,
+            warnings: extracted.warnings,
+            stats: extracted.stats,
             ...degradation
         };
     }
 
     private async docReferencesRaw(args: any) {
         const filePath = this.resolveRelativePath(args.filePath);
-        const extracted = await this.readDocumentContentForProfile(filePath);
+        const limits = this.normalizeLimits(args);
+        const extracted = await this.contentLoader.loadForTool(filePath, limits);
         const profile = await this.context.documentProfiler.profile({
             filePath,
-            content: extracted.content,
+            content: extracted.profileContent,
             kind: extracted.kind,
             options: args?.options
         });
@@ -163,21 +149,26 @@ export class DocumentHandlers extends BaseHandler {
         const degradation = this.buildDegradation([
             ...(profile.parser?.reason ? [profile.parser.reason] : []),
             ...extracted.reasons
-        ]);
+        ], filePath);
         return {
             filePath,
             kind: profile.kind,
             references: links,
+            sourceFormat: extracted.sourceFormat,
+            extractor: extracted.extractor,
+            warnings: extracted.warnings,
+            stats: extracted.stats,
             ...degradation
         };
     }
 
     private async docSectionRaw(args: any) {
         const filePath = this.resolveRelativePath(args.filePath);
-        const extracted = await this.readDocumentContentForProfile(filePath);
+        const limits = this.normalizeLimits(args);
+        const extracted = await this.contentLoader.loadForTool(filePath, limits);
         const profile = await this.context.documentProfiler.profile({
             filePath,
-            content: extracted.content,
+            content: extracted.profileContent,
             kind: extracted.kind,
             options: args?.options
         });
@@ -186,14 +177,14 @@ export class DocumentHandlers extends BaseHandler {
         const headingPath = this.normalizeHeadingPath(args?.headingPath);
         const includeSubsections = args?.includeSubsections === true;
         const mode = (args?.mode ?? "preview") as "summary" | "preview" | "raw";
-        const maxChars = args?.maxChars ?? 4000;
+        const maxChars = limits?.maxChars ?? args?.maxChars ?? 4000;
         const queryHint = typeof args?.query === "string" ? args.query : undefined;
         const reasons: string[] = [...extracted.reasons];
         if (profile.parser?.reason) {
             reasons.push(profile.parser.reason);
         }
 
-        const lines = extracted.content.split(/\r?\n/);
+        const lines = extracted.profileContent.split(/\r?\n/);
         const wantsWholeDocument = !sectionId && (!headingPath || headingPath.length === 0);
         let section: DocumentSection | undefined;
         let range: { startLine: number; endLine: number };
@@ -206,9 +197,9 @@ export class DocumentHandlers extends BaseHandler {
                 kind: profile.kind,
                 title: profile.title,
                 totalLines: range.endLine,
-                content: extracted.content
+                content: extracted.profileContent
             });
-            rawSectionContent = extracted.content;
+            rawSectionContent = extracted.profileContent;
         } else {
             let sectionIndex = -1;
             if (sectionId) {
@@ -281,7 +272,11 @@ export class DocumentHandlers extends BaseHandler {
             mode,
             truncated: contentTruncated,
             content: contentOut,
-            ...this.buildDegradation(reasons)
+            sourceFormat: extracted.sourceFormat,
+            extractor: extracted.extractor,
+            warnings: extracted.warnings,
+            stats: extracted.stats,
+            ...this.buildDegradation(reasons, filePath)
         };
     }
 
@@ -319,13 +314,17 @@ export class DocumentHandlers extends BaseHandler {
         return null;
     }
 
-    private buildDegradation(reasons: string[]): { degraded: boolean; reason?: string; reasons?: string[] } {
+    private buildDegradation(
+        reasons: string[],
+        filePath: string
+    ): { degraded: boolean; reason?: string; reasons?: string[]; degradedReasons?: any } {
         const filtered = Array.from(new Set(reasons.filter(Boolean)));
         if (filtered.length === 0) return { degraded: false };
         return {
             degraded: true,
             reason: filtered[0],
-            reasons: filtered.length > 1 ? filtered : undefined
+            reasons: filtered.length > 1 ? filtered : undefined,
+            degradedReasons: buildDegradedReasons(filtered, { filePath })
         };
     }
 
@@ -391,6 +390,18 @@ export class DocumentHandlers extends BaseHandler {
             path: [safeTitle],
             range: { startLine: 1, endLine: normalizedLines, startByte: 0, endByte: Buffer.byteLength(content ?? "", "utf-8") },
             contentHash
+        };
+    }
+
+    private normalizeLimits(args: any): DocumentExtractionLimits | undefined {
+        const limits = args?.limits ?? args?.options?.limits;
+        if (!limits || typeof limits !== "object") return undefined;
+        return {
+            maxFileBytes: limits.maxFileBytes,
+            sampleHeadBytes: limits.sampleHeadBytes,
+            sampleTailBytes: limits.sampleTailBytes,
+            maxTimeMs: limits.maxTimeMs,
+            maxChars: limits.maxChars
         };
     }
 }

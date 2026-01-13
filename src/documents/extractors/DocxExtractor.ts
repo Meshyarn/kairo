@@ -3,6 +3,10 @@ import { promises as fs } from "fs";
 export type DocxExtractionResult = {
     html: string;
     warnings: string[];
+    stats?: {
+        inputBytes: number;
+        outputChars: number;
+    };
 };
 
 export class DocxExtractError extends Error {
@@ -52,7 +56,14 @@ export async function extractDocxAsHtml(absPath: string): Promise<DocxExtraction
         const warnings = Array.isArray(result?.messages)
             ? result.messages.map((msg: any) => String(msg?.message ?? msg))
             : [];
-        return { html: postProcessed.html, warnings: [...warnings, ...postProcessed.warnings] };
+        return {
+            html: postProcessed.html,
+            warnings: [...warnings, ...postProcessed.warnings],
+            stats: {
+                inputBytes: buffer.length,
+                outputChars: postProcessed.html.length
+            }
+        };
     } catch (error: any) {
         throw new DocxExtractError("docx_parse_failed", error?.message);
     }

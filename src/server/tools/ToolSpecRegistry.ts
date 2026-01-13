@@ -150,7 +150,24 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
       inputSchema: {
         type: "object",
         properties: {
-          filePath: { type: "string" }
+          filePath: { type: "string" },
+          options: { type: "object" },
+          limits: {
+            type: "object",
+            properties: {
+              maxChars: { type: "number" },
+              maxFileBytes: { type: "number" },
+              sampleHeadBytes: { type: "number" },
+              sampleTailBytes: { type: "number" },
+              maxTimeMs: { type: "number" }
+            }
+          },
+          extract: {
+            type: "object",
+            properties: {
+              profile: { type: "string", enum: ["index", "full"] }
+            }
+          }
         },
         required: ["filePath"],
         additionalProperties: DEFAULT_ADDITIONAL_PROPERTIES
@@ -508,7 +525,23 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
         type: "object",
         properties: {
           filePath: { type: "string" },
-          options: { type: "object" }
+          options: { type: "object" },
+          limits: {
+            type: "object",
+            properties: {
+              maxChars: { type: "number" },
+              maxFileBytes: { type: "number" },
+              sampleHeadBytes: { type: "number" },
+              sampleTailBytes: { type: "number" },
+              maxTimeMs: { type: "number" }
+            }
+          },
+          extract: {
+            type: "object",
+            properties: {
+              profile: { type: "string", enum: ["index", "full"] }
+            }
+          }
         },
         required: ["filePath"],
         additionalProperties: DEFAULT_ADDITIONAL_PROPERTIES
@@ -523,7 +556,23 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
         type: "object",
         properties: {
           filePath: { type: "string" },
-          options: { type: "object" }
+          options: { type: "object" },
+          limits: {
+            type: "object",
+            properties: {
+              maxChars: { type: "number" },
+              maxFileBytes: { type: "number" },
+              sampleHeadBytes: { type: "number" },
+              sampleTailBytes: { type: "number" },
+              maxTimeMs: { type: "number" }
+            }
+          },
+          extract: {
+            type: "object",
+            properties: {
+              profile: { type: "string", enum: ["index", "full"] }
+            }
+          }
         },
         required: ["filePath"],
         additionalProperties: DEFAULT_ADDITIONAL_PROPERTIES
@@ -542,7 +591,23 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
           headingPath: { type: "array", items: { type: "string" } },
           includeSubsections: { type: "boolean" },
           mode: { type: "string", enum: ["summary", "preview", "raw"] },
-          maxChars: { type: "number" }
+          maxChars: { type: "number" },
+          limits: {
+            type: "object",
+            properties: {
+              maxChars: { type: "number" },
+              maxFileBytes: { type: "number" },
+              sampleHeadBytes: { type: "number" },
+              sampleTailBytes: { type: "number" },
+              maxTimeMs: { type: "number" }
+            }
+          },
+          extract: {
+            type: "object",
+            properties: {
+              profile: { type: "string", enum: ["index", "full"] }
+            }
+          }
         },
         required: ["filePath"],
         additionalProperties: DEFAULT_ADDITIONAL_PROPERTIES
@@ -556,7 +621,24 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
       inputSchema: {
         type: "object",
         properties: {
-          filePath: { type: "string" }
+          filePath: { type: "string" },
+          options: { type: "object" },
+          limits: {
+            type: "object",
+            properties: {
+              maxChars: { type: "number" },
+              maxFileBytes: { type: "number" },
+              sampleHeadBytes: { type: "number" },
+              sampleTailBytes: { type: "number" },
+              maxTimeMs: { type: "number" }
+            }
+          },
+          extract: {
+            type: "object",
+            properties: {
+              profile: { type: "string", enum: ["index", "full"] }
+            }
+          }
         },
         required: ["filePath"],
         additionalProperties: DEFAULT_ADDITIONAL_PROPERTIES

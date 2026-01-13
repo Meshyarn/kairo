@@ -64,6 +64,7 @@ The entries below cover all ADRs from the project history. Items marked “retou
 - ADR-057: Unified degradedReasons + action guidance v1 → `docs/adr/ADR-057-unified-degraded-reasons-and-action-guidance-v1.md`
 - ADR-058: Tool schema contract + compatibility layer → `docs/adr/ADR-058-tool-schema-contract-and-compatibility-layer.md`
 - ADR-059: EvidencePack/Summaries lifecycle (prune/compact) → `docs/adr/ADR-059-evidence-pack-and-summaries-lifecycle-prune-compact.md`
+- ADR-060: Document tool parity (PDF/XLSX) → `docs/adr/ADR-060-document-tool-parity-pdf-xlsx.md`
 - ADR-055-H: Adaptive trust policy (no curated summary)
 - ADR-055-L: Action guidance + Understand fallback graph (no curated summary)
 - ADR-033: “Six Pillars” precursor to ADR-040; introduced orchestration primitives and earlier public surface.

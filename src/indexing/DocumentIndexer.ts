@@ -1,5 +1,4 @@
 import * as path from "path";
-import * as fs from "fs";
 import * as crypto from "crypto";
 import ignore from "ignore";
 import { IFileSystem } from "../platform/FileSystem.js";
@@ -12,10 +11,7 @@ import { EmbeddingRepository } from "./EmbeddingRepository.js";
 import { EmbeddingProviderFactory } from "../embeddings/EmbeddingProviderFactory.js";
 import { applyEmbeddingPrefix } from "../embeddings/EmbeddingText.js";
 import { VectorIndexManager } from "../vector/VectorIndexManager.js";
-import { extractHtmlTextPreserveLines } from "../documents/html/HtmlTextExtractor.js";
-import { extractDocxAsHtml, DocxExtractError } from "../documents/extractors/DocxExtractor.js";
-import { extractXlsxAsText, XlsxExtractError } from "../documents/extractors/XlsxExtractor.js";
-import { extractPdfAsText, PdfExtractError } from "../documents/extractors/PdfExtractor.js";
+import { DocumentContentLoader } from "../documents/DocumentContentLoader.js";
 
 const SUPPORTED_DOC_EXTENSIONS = new Set<string>([
     ".md",
@@ -43,15 +39,12 @@ const WELL_KNOWN_TEXT_FILES = new Set<string>([
     ".editorconfig"
 ]);
 
-const DEFAULT_MAX_FILE_BYTES = 2_000_000; // 2MB
-const DEFAULT_SAMPLE_HEAD_BYTES = 600_000;
-const DEFAULT_SAMPLE_TAIL_BYTES = 300_000;
-
 export class DocumentIndexer {
     private ignoreFilter: ReturnType<typeof ignore.default> = (ignore as unknown as () => any)();
     private readonly chunkRepo: DocumentChunkRepository;
     private readonly chunker: HeadingChunker;
     private readonly profiler: DocumentProfiler;
+    private readonly contentLoader: DocumentContentLoader;
 
     constructor(
         private readonly rootPath: string,
@@ -67,6 +60,7 @@ export class DocumentIndexer {
         this.chunkRepo = new DocumentChunkRepository(indexDatabase);
         this.chunker = new HeadingChunker();
         this.profiler = new DocumentProfiler(rootPath);
+        this.contentLoader = new DocumentContentLoader(rootPath, fileSystem);
         this.outlineOptions = options?.outlineOptions ?? {};
         this.embeddingRepository = options?.embeddingRepository;
         this.embeddingProviderFactory = options?.embeddingProviderFactory;
@@ -103,52 +97,31 @@ export class DocumentIndexer {
 
         const stats = await this.fileSystem.stat(relativePath);
         const ext = path.extname(relativePath).toLowerCase();
-        const isDocx = ext === ".docx";
-        const isXlsx = ext === ".xlsx";
-        const isPdf = ext === ".pdf";
         const isLog = ext === ".log";
-        const kind = isDocx ? "html" : (isXlsx || isPdf ? "text" : inferKind(relativePath));
+        const kind = inferKind(relativePath);
         const existing = this.indexDatabase.getFile(relativePath);
         if (!options.force && existing && existing.last_modified >= stats.mtime && existing.language === kind) {
             return;
         }
-        let rawContent = "";
-        if (isDocx) {
-            const absPath = path.resolve(this.rootPath, relativePath);
-            try {
-                const extracted = await extractDocxAsHtml(absPath);
-                rawContent = extracted.html ?? "";
-            } catch (error: any) {
-                const reason = error instanceof DocxExtractError ? error.reason : "docx_parse_failed";
-                console.warn(`[DocumentIndexer] Failed to extract DOCX (${relativePath}): ${reason}`);
-                return;
+        const extracted = await this.contentLoader.loadForIndex(relativePath, stats.size);
+        this.indexDatabase.upsertDocumentMeta(relativePath, {
+            filePath: relativePath,
+            sourceFormat: extracted.sourceFormat,
+            extractor: extracted.extractor,
+            warnings: extracted.warnings,
+            reasons: extracted.reasons,
+            stats: extracted.stats,
+            updatedAt: Date.now()
+        });
+        if (!extracted.profileContent) {
+            if (extracted.reasons.length > 0) {
+                console.warn(`[DocumentIndexer] Failed to extract document (${relativePath}): ${extracted.reasons.join(", ")}`);
             }
-        } else if (isXlsx) {
-            const absPath = path.resolve(this.rootPath, relativePath);
-            try {
-                const extracted = await extractXlsxAsText(absPath);
-                rawContent = extracted.text ?? "";
-            } catch (error: any) {
-                const reason = error instanceof XlsxExtractError ? error.reason : "xlsx_parse_failed";
-                console.warn(`[DocumentIndexer] Failed to extract XLSX (${relativePath}): ${reason}`);
-                return;
-            }
-        } else if (isPdf) {
-            const absPath = path.resolve(this.rootPath, relativePath);
-            try {
-                const extracted = await extractPdfAsText(absPath);
-                rawContent = extracted.text ?? "";
-            } catch (error: any) {
-                const reason = error instanceof PdfExtractError ? error.reason : "pdf_parse_failed";
-                console.warn(`[DocumentIndexer] Failed to extract PDF (${relativePath}): ${reason}`);
-                return;
-            }
-        } else {
-            rawContent = await this.readDocumentContent(relativePath, stats.size);
+            return;
         }
-        const contentForChunking = kind === "html" ? extractHtmlTextPreserveLines(rawContent) : rawContent;
+        const contentForChunking = extracted.contentForSearch;
 
-        this.indexDatabase.getOrCreateFile(relativePath, stats.mtime, kind);
+        this.indexDatabase.getOrCreateFile(relativePath, stats.mtime, extracted.kind);
         const previousChunks = this.chunkRepo.listChunksForFile(relativePath);
         if (previousChunks.length > 0) {
             this.vectorIndexManager?.removeChunks(previousChunks.map(chunk => chunk.id));
@@ -160,12 +133,12 @@ export class DocumentIndexer {
         } else {
             const profile = await this.profiler.profile({
                 filePath: relativePath,
-                content: rawContent,
-                kind,
+                content: extracted.profileContent,
+                kind: extracted.kind,
                 options: this.outlineOptions
             });
 
-            const chunks = this.chunker.chunk(relativePath, kind, profile.outline, contentForChunking, this.outlineOptions);
+            const chunks = this.chunker.chunk(relativePath, extracted.kind, profile.outline, contentForChunking, this.outlineOptions);
             stored = chunks.map(chunk => ({
                 ...chunk,
                 filePath: relativePath
@@ -211,56 +184,6 @@ export class DocumentIndexer {
             return null;
         }
         return relative || ".";
-    }
-
-    private async readDocumentContent(relativePath: string, sizeBytes: number): Promise<string> {
-        const maxBytes = Number(process.env.KAIRO_DOC_MAX_FILE_BYTES ?? DEFAULT_MAX_FILE_BYTES);
-        const headBytes = Number(process.env.KAIRO_DOC_SAMPLE_HEAD_BYTES ?? DEFAULT_SAMPLE_HEAD_BYTES);
-        const tailBytes = Number(process.env.KAIRO_DOC_SAMPLE_TAIL_BYTES ?? DEFAULT_SAMPLE_TAIL_BYTES);
-
-        let content: string;
-        if (Number.isFinite(maxBytes) && maxBytes > 0 && sizeBytes > maxBytes) {
-            content = await this.readSampledUtf8(relativePath, Math.max(1, headBytes), Math.max(0, tailBytes));
-        } else {
-            content = await this.fileSystem.readFile(relativePath);
-        }
-        return content;
-    }
-
-    private async readSampledUtf8(relativePath: string, headBytes: number, tailBytes: number): Promise<string> {
-        // Best-effort sampling: use fs when possible (NodeFileSystem), fall back to full read otherwise.
-        try {
-            const absPath = path.resolve(this.rootPath, relativePath);
-            const handle = await fs.promises.open(absPath, "r");
-            try {
-                const stat = await handle.stat();
-                const size = stat.size;
-                const headLen = Math.min(headBytes, size);
-                const tailLen = Math.min(tailBytes, Math.max(0, size - headLen));
-
-                const head = Buffer.alloc(headLen);
-                await handle.read(head, 0, headLen, 0);
-
-                let tailText = "";
-                if (tailLen > 0) {
-                    const tail = Buffer.alloc(tailLen);
-                    await handle.read(tail, 0, tailLen, size - tailLen);
-                    tailText = tail.toString("utf8");
-                }
-
-                const marker = `\n[[sampling_applied bytes=${size} head=${headLen} tail=${tailLen}]]\n`;
-                return `${head.toString("utf8")}${marker}${tailText}`;
-            } finally {
-                await handle.close();
-            }
-        } catch {
-            const full = await this.fileSystem.readFile(relativePath);
-            const marker = `\n[[sampling_applied]]\n`;
-            if (full.length <= headBytes + tailBytes) return full;
-            const head = full.slice(0, headBytes);
-            const tail = tailBytes > 0 ? full.slice(-tailBytes) : "";
-            return `${head}${marker}${tail}`;
-        }
     }
 
     private shouldEagerEmbed(): boolean {
