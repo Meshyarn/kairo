@@ -377,12 +377,25 @@ export class ExplorePillar {
                 const ucg = context.getState<UnifiedContextGraph>('ucg');
 
                 if (includeCode) {
-                    const codeResults = await this.runTool(context, "project_search", {
-                        query,
-                        maxResults: packMaxResults,
-                        type: "file",
-                        budget: searchBudget
-                    });
+                    let codeResults: any;
+                    try {
+                        codeResults = await this.runTool(context, "project_search", {
+                            query,
+                            maxResults: packMaxResults,
+                            type: "file",
+                            budget: searchBudget
+                        });
+                    } catch (error) {
+                        degraded = true;
+                        reasons.push("code_search_failed");
+                        if (decisionTrace) {
+                            decisionTrace.cache = {
+                                ...(decisionTrace.cache ?? {}),
+                                codeSearchError: String((error as any)?.message ?? "unknown")
+                            };
+                        }
+                        codeResults = { results: [] };
+                    }
                     const results = Array.isArray(codeResults?.results) ? codeResults.results : [];
                     
                     const codeItems = await Promise.all(results.map(async (item: any) => {
@@ -448,20 +461,33 @@ export class ExplorePillar {
                         : undefined;
                     const disableEmbeddings = symbolQuery
                         || (hasDeadline && typeof docEmbeddingBudgetMs === "number" && docEmbeddingBudgetMs < 400);
-                    const docResults = await this.runTool(context, "document_search", {
-                        query,
-                        output: "compact",
-                        maxResults: packMaxResults,
-                        maxCandidates: docMaxCandidates,
-                        maxChunkCandidates: docMaxChunkCandidates,
-                        maxChunksEmbeddedPerRequest: disableEmbeddings ? 8 : 24,
-                        maxEmbeddingTimeMs: docEmbeddingBudgetMs,
-                        includeEvidence: false,
-                        packId: undefined,
-                        includeComments,
-                        includeLogs,
-                        embedding: disableEmbeddings ? { provider: "disabled" } : undefined
-                    });
+                    let docResults: any;
+                    try {
+                        docResults = await this.runTool(context, "document_search", {
+                            query,
+                            output: "compact",
+                            maxResults: packMaxResults,
+                            maxCandidates: docMaxCandidates,
+                            maxChunkCandidates: docMaxChunkCandidates,
+                            maxChunksEmbeddedPerRequest: disableEmbeddings ? 8 : 24,
+                            maxEmbeddingTimeMs: docEmbeddingBudgetMs,
+                            includeEvidence: false,
+                            packId: undefined,
+                            includeComments,
+                            includeLogs,
+                            embedding: disableEmbeddings ? { provider: "disabled" } : undefined
+                        });
+                    } catch (error) {
+                        degraded = true;
+                        reasons.push("doc_search_failed");
+                        if (decisionTrace) {
+                            decisionTrace.docSearch = {
+                                attempted: true,
+                                error: String((error as any)?.message ?? "unknown")
+                            };
+                        }
+                        docResults = { results: [] };
+                    }
                     const sections = Array.isArray(docResults?.results) ? docResults.results : [];
                     const filtered = sections.filter((section: any) => {
                         if (section?.kind === "code_comment") return includeComments;
@@ -578,8 +604,12 @@ export class ExplorePillar {
                 const item = await buildItemForPath(entry.path, { view, maxChars, maxItemChars, allowSensitive, allowBinary, wantsFull, section: constraints.section }, context, (ctx, tool, args) => this.runTool(ctx, tool, args));
 
                 if (item.blocked) {
-                    const reasons = item.reason ? [item.reason] : undefined;
-                    const languageId = item.reason ? AstManager.getInstance().getLanguageId(entry.path) : undefined;
+                    let reason = item.reason;
+                    if (!reason && typeof item.message === "string" && item.message.includes("Syntax validation failed")) {
+                        reason = "syntax_validation_failed";
+                    }
+                    const reasons = reason ? [reason] : undefined;
+                    const languageId = reason ? AstManager.getInstance().getLanguageId(entry.path) : undefined;
                     const degradedReasons = reasons
                         ? buildDegradedReasons(reasons, { languageId, filePath: entry.path })
                         : undefined;

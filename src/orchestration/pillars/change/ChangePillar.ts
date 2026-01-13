@@ -60,8 +60,10 @@ import type { ImpactAnalyzer } from "../../../engine/ImpactAnalyzer.js";
 import type { CrossLangImpact } from "../../../types/engine.js";
 import { buildDegradedReasons } from "../../DegradedReasonMapper.js";
 import { AstManager } from "../../../ast/AstManager.js";
-import { checkQuerySupport } from "../../../ast/LanguageSupportSignals.js";
-import { getSupportForFilePath, SupportLevel } from "../../../config/LanguageSupportLevels.js";
+import {
+    evaluateLanguageParityGate,
+    formatParityBlockMessage
+} from "../../../config/LanguageParityGate.js";
 
 export class ChangePillar {
   private fileSystem = new NodeFileSystem(process.cwd());
@@ -308,22 +310,24 @@ export class ChangePillar {
         });
       }
 
-      const parityBlock = await this.resolveParityBlock(targetPath);
-      if (parityBlock.blocked) {
-        const reasons = parityBlock.reason ? [parityBlock.reason] : undefined;
-        const degradedReasons = reasons
-          ? buildDegradedReasons(reasons, { languageId: parityBlock.languageId, filePath: targetPath })
-          : undefined;
-        const message = parityBlock.message ?? "Language parity requirements are missing.";
+      const parityGate = await this.resolveParityGate(targetPath, dryRun ? "change_plan" : "change_apply");
+      const parityDegradedReasons = parityGate.result.reasons.length > 0
+        ? buildDegradedReasons(parityGate.result.reasons, {
+          languageId: parityGate.result.languageId,
+          filePath: targetPath
+        })
+        : undefined;
+      if (parityGate.blocked) {
+        const message = parityGate.message ?? "Language parity requirements are missing.";
         return attachWorkflow({
           success: false,
           status: "blocked",
           message,
           targetFile: targetPath,
           errorCode: "LANGUAGE_PARITY_MISSING",
-          blockedReason: parityBlock.reason ?? "language_parity_missing",
+          blockedReason: parityGate.result.reasons[0] ?? "language_parity_missing",
           blockingErrors: ["LANGUAGE_PARITY_MISSING"],
-          degradedReasons,
+          degradedReasons: parityDegradedReasons,
           guidance: { message },
           sessionId: resolvedSessionId
         });
@@ -627,8 +631,14 @@ export class ChangePillar {
           })
         : undefined;
       const degradedReasonDetails = crossLangImpact?.reasons
-        ? buildDegradedReasons(crossLangImpact.reasons, { packageName: crossLangImpact.packageName })
+        ? buildDegradedReasons(crossLangImpact.reasons, {
+          packageName: crossLangImpact.packageName
+        })
         : undefined;
+      const mergedDegradedReasons = [
+        ...(degradedReasonDetails ?? []),
+        ...(parityDegradedReasons ?? [])
+      ];
       let impactReport = toImpactReport(impact, deps, targetPath, hotSpots, crossLangImpact);
       let architecturalRisk: any = guardrailResult?.architecturalRisk;
       const architecturalWarnings: string[] = Array.isArray(guardrailResult?.architecturalWarnings)
@@ -843,8 +853,8 @@ export class ChangePillar {
         sessionId: resolvedSessionId,
         relatedDocs,
         integrity: integrityReport,
-        degraded: !finalResult.success && autoCorrectionAttempts.length === 0,
-        degradedReasons: degradedReasonDetails,
+        degraded: (!finalResult.success && autoCorrectionAttempts.length === 0) || mergedDegradedReasons.length > 0,
+        degradedReasons: mergedDegradedReasons.length > 0 ? mergedDegradedReasons : undefined,
         budget: {
           ...budget,
           used: {
@@ -876,37 +886,14 @@ export class ChangePillar {
     return (fromConstraints.length > 0 ? fromConstraints : targets).filter((t: any) => typeof t === 'string');
   }
 
-  private async resolveParityBlock(targetPath: string): Promise<{
-    blocked: boolean;
-    reason?: string;
-    message?: string;
-    languageId?: string;
-  }> {
-    const support = getSupportForFilePath(targetPath);
-    if (!support || support.level !== SupportLevel.L3) {
-      return { blocked: false };
-    }
-    const requiredQueries = support.editPolicy.requireQueries ?? [];
-    if (requiredQueries.length === 0) {
-      return { blocked: false };
-    }
-    const signal = await checkQuerySupport(targetPath, requiredQueries, { required: true });
-    if (!signal.degraded) {
-      return { blocked: false };
-    }
-    const astManager = AstManager.getInstance();
-    const languageId = astManager.getLanguageId(targetPath);
-    const missing = Array.isArray(signal.missing) ? signal.missing : [];
-    const missingSummary = missing.length > 0 ? ` (${missing.join(", ")})` : "";
-    const message = signal.reason === "language_parser_unavailable"
-      ? `Language parser unavailable for ${targetPath}.`
-      : `Missing query pack for ${languageId}${missingSummary}.`;
-    return {
-      blocked: true,
-      reason: signal.reason,
-      message,
-      languageId
-    };
+  private async resolveParityGate(
+    targetPath: string,
+    operation: "change_plan" | "change_apply"
+  ): Promise<{ blocked: boolean; message?: string; result: Awaited<ReturnType<typeof evaluateLanguageParityGate>> }> {
+    const result = await evaluateLanguageParityGate({ filePath: targetPath, operation });
+    const blocked = result.outcome === "block";
+    const message = result.reasons.length > 0 ? formatParityBlockMessage({ filePath: targetPath, result }) : undefined;
+    return { blocked, message, result };
   }
 
   private collectEditPaths(edits: any[]): string[] {

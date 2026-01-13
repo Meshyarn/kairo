@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { BUILTIN_LANGUAGE_MAPPINGS } from "../src/config/LanguageConfig.js";
-import { LANGUAGE_PARITY_MATRIX } from "../src/config/LanguageParityMatrix.js";
+import { LANGUAGE_PARITY_MATRIX, resolveRequiredQueries } from "../src/config/LanguageParityMatrix.js";
 import { AstManager } from "../src/ast/AstManager.js";
 
 type Finding = {
@@ -29,8 +29,6 @@ const queryDirAliases: Record<string, string> = {
   py: "python",
   rs: "rust"
 };
-
-const requiredQueries = ["imports", "exports", "symbols", "skeleton"];
 
 const mappedLanguageIds = new Set(
   Object.values(BUILTIN_LANGUAGE_MAPPINGS)
@@ -72,6 +70,7 @@ async function collectFindings(): Promise<Finding[]> {
 
     if (entry.requiredQueryPack) {
       const queryDir = resolveQueryDir(entry.languageId);
+      const requiredQueries = resolveRequiredQueries(entry);
       for (const query of requiredQueries) {
         const filePath = path.join(queriesRoot, queryDir, `${query}.scm`);
         if (!fs.existsSync(filePath)) {

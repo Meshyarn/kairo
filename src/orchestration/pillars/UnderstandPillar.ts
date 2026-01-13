@@ -630,6 +630,7 @@ export class UnderstandPillar {
       || reason === "unsupported_language"
       || reason === "missing_query_pack"
       || reason === "missing_wasm_grammar"
+      || reason === "missing_syntax_validator"
     );
   }
 

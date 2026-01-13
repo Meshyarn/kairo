@@ -25,6 +25,10 @@ import { ReviewReportBuilder } from "../../generation/review-report-builder.js";
 import type { FlowArtifactManager } from "../flow-artifact-manager.js";
 import { OptionResolver } from "../options/OptionResolver.js";
 import { buildDegradedReasons } from "../DegradedReasonMapper.js";
+import {
+  evaluateLanguageParityGate,
+  formatParityBlockMessage
+} from "../../config/LanguageParityGate.js";
 
 export class WritePillar {
   constructor(private readonly registry: InternalToolRegistry) {}
@@ -131,6 +135,47 @@ export class WritePillar {
       }
 
       const resolvedPath = await this.resolveTargetPath(targetPath);
+      const parityGate = await evaluateLanguageParityGate({
+        filePath: resolvedPath,
+        operation: dryRun ? "write_plan" : "write_apply"
+      });
+      const parityDegradedReasons = parityGate.reasons.length > 0
+        ? buildDegradedReasons(parityGate.reasons, {
+          languageId: parityGate.languageId,
+          filePath: resolvedPath
+        })
+        : undefined;
+      const applyParitySignals = <T extends Record<string, any>>(payload: T): T => {
+        if (!parityDegradedReasons || parityDegradedReasons.length === 0) {
+          return payload;
+        }
+        const mergedReasons = [
+          ...(Array.isArray(payload.degradedReasons) ? payload.degradedReasons : []),
+          ...parityDegradedReasons
+        ];
+        return {
+          ...payload,
+          degraded: Boolean(payload.degraded) || mergedReasons.length > 0,
+          degradedReasons: mergedReasons
+        };
+      };
+      const attachResponse = <T extends Record<string, any>>(payload: T) => attachSession(applyParitySignals(payload));
+
+      if (!dryRun && parityGate.outcome === "block") {
+        const message = formatParityBlockMessage({ filePath: resolvedPath, result: parityGate });
+        return attachResponse({
+          success: false,
+          status: "blocked",
+          message,
+          createdFiles: [],
+          transactionId: '',
+          rollbackAvailable: false,
+          blockedReason: parityGate.reasons[0] ?? "language_parity_missing",
+          blockingErrors: ["LANGUAGE_PARITY_MISSING"],
+          errorCode: "LANGUAGE_PARITY_MISSING",
+          guidance: { message }
+        });
+      }
 
       if (dryRun) {
         const refinedIntent = refinement ? `${originalIntent}\nRefinement: ${refinement}` : originalIntent;
@@ -239,7 +284,7 @@ export class WritePillar {
           }
         }
 
-        return attachSession({
+        return attachResponse({
           success: true,
           status: 'draft',
           draftPack,
@@ -279,7 +324,7 @@ export class WritePillar {
               reviewOptions,
               sessionStylePack
             );
-            return attachSession(result);
+            return attachResponse(result);
           }
         } catch (error: any) {
           stopSmartWrite();
@@ -306,7 +351,7 @@ export class WritePillar {
               reviewOptions,
               sessionStylePack
             );
-            return attachSession(result);
+            return attachResponse(result);
           }
         } catch (error: any) {
           stopGenerate();
@@ -342,7 +387,7 @@ export class WritePillar {
           );
           if (guardrailResult?.status === 'block') {
             stopSafePatch();
-            return attachSession({
+            return attachResponse({
               success: false,
               status: 'blocked',
               createdFiles: [],
@@ -373,7 +418,7 @@ export class WritePillar {
           });
           if (reviewBlock.blocked) {
             stopSafePatch();
-            return attachSession({
+            return attachResponse({
               success: false,
               status: 'blocked',
               createdFiles: [],
@@ -405,7 +450,7 @@ export class WritePillar {
 
           stopSafePatch();
 
-          return attachSession({
+          return attachResponse({
             success: result.success ?? true,
             status: result.success === false ? 'failure' : 'success',
             createdFiles: result.success ? [{ path: resolvedPath, description: `Written (safe mode) from intent: ${originalIntent}` }] : [],
@@ -437,7 +482,7 @@ export class WritePillar {
           });
         } catch (error: any) {
           stopSafePatch();
-          return attachSession({
+          return attachResponse({
             success: false,
             status: 'failure',
             createdFiles: [],
@@ -464,7 +509,7 @@ export class WritePillar {
           constraints
         );
         if (guardrailResult?.status === 'block') {
-          return attachSession({
+          return attachResponse({
             success: false,
             status: 'blocked',
             createdFiles: [],
@@ -494,7 +539,7 @@ export class WritePillar {
           stylePack: sessionStylePack
         });
         if (reviewBlock.blocked) {
-          return attachSession({
+          return attachResponse({
             success: false,
             status: 'blocked',
             createdFiles: [],
@@ -521,7 +566,7 @@ export class WritePillar {
           });
         }
 
-        return attachSession({
+        return attachResponse({
           success: true,
           status: 'success',
           createdFiles: [{ path: resolvedPath, description: `Written from intent: ${originalIntent}` }],
@@ -578,7 +623,7 @@ export class WritePillar {
       }
 
       if (content === '' && existingContent === null) {
-        return attachSession({
+        return attachResponse({
           success: true,
           status: 'success',
           createdFiles: [{ path: resolvedPath, description: `Created from intent: ${originalIntent}` }],
@@ -610,7 +655,7 @@ export class WritePillar {
         constraints
       );
       if (guardrailResult?.status === 'block') {
-        return attachSession({
+        return attachResponse({
           success: false,
           status: 'blocked',
           createdFiles: [],
@@ -640,7 +685,7 @@ export class WritePillar {
         stylePack: sessionStylePack
       });
       if (reviewBlock.blocked) {
-        return attachSession({
+        return attachResponse({
           success: false,
           status: 'blocked',
           createdFiles: [],
@@ -668,7 +713,7 @@ export class WritePillar {
         : undefined;
       const degradedReasons = buildDegradedReasons(reasonCodes, { filePath: resolvedPath });
 
-      return attachSession({
+      return attachResponse({
         success: editResult.success ?? true,
         status: editResult.success === false ? 'failure' : 'success',
         createdFiles: [{ path: resolvedPath, description: `Written from intent: ${originalIntent}` }],

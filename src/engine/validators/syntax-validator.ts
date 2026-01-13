@@ -21,6 +21,21 @@ export class SyntaxValidator {
                 preferredTier ? { preferredTier } : undefined
             );
             if (!provider) {
+                if (support?.level === SupportLevel.L3 && support.editPolicy.requireSyntaxValidation) {
+                    return {
+                        success: false,
+                        blockingErrors: [{
+                            filePath,
+                            message: "Syntax validator unavailable for this language.",
+                            code: "SYNTAX_VALIDATOR_UNAVAILABLE",
+                            provider: "syntax",
+                            severity: "error"
+                        }],
+                        durationMs: performance.now() - startTime,
+                        languageId,
+                        supportLevel: support?.level
+                    };
+                }
                 return {
                     success: true,
                     durationMs: performance.now() - startTime,

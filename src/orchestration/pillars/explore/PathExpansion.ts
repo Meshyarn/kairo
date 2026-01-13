@@ -216,18 +216,18 @@ export async function buildItemForPath(
         if (requiredQueries.length > 0) {
             const querySupport = await checkQuerySupport(filePath, requiredQueries, { required: true });
             if (querySupport.degraded) {
-                // ADR-040/041: L3 level missing queries must block to preserve system integrity
-                const languageId = AstManager.getInstance().getLanguageId(filePath);
-                const missing = Array.isArray(querySupport.missing) ? querySupport.missing : [];
-                const missingSummary = missing.length > 0 ? ` (${missing.join(", ")})` : "";
-                const message = querySupport.reason === "language_parser_unavailable"
-                    ? `Language parser unavailable for ${filePath}.`
-                    : `Missing query pack for ${languageId}${missingSummary}.`;
-                return {
-                    blocked: true,
-                    message,
-                    reason: querySupport.reason
-                };
+                if (querySupport.reason === "missing_query_pack") {
+                    const languageId = AstManager.getInstance().getLanguageId(filePath);
+                    const missing = Array.isArray(querySupport.missing) ? querySupport.missing : [];
+                    const missingSummary = missing.length > 0 ? ` (${missing.join(", ")})` : "";
+                    return {
+                        blocked: true,
+                        message: `Missing query pack for ${languageId}${missingSummary}.`,
+                        reason: querySupport.reason
+                    };
+                }
+                queryDegraded = true;
+                queryReason = querySupport.reason;
             }
         }
 
@@ -269,12 +269,27 @@ export async function buildItemForPath(
                 const validator = new SyntaxValidator();
                 const validation = await validator.validate(filePath, l3Content);
                 if (!validation.success) {
-                    // Syntax validation failure is always blocking for L3
-                    return {
-                        blocked: true,
-                        message: `Syntax validation failed for ${filePath}.`,
-                        reason: "syntax_validation_failed"
-                    };
+                    const codes = (validation.blockingErrors ?? []).map((error) => error.code);
+                    const hasSyntaxError = codes.includes("SYNTAX_ERROR");
+                    const hasValidatorUnavailable = codes.includes("SYNTAX_VALIDATOR_UNAVAILABLE");
+                    const hasLanguageUnavailable = codes.includes("SYNTAX_LANGUAGE_UNAVAILABLE");
+
+                    if (hasSyntaxError && !options.wantsFull) {
+                        return {
+                            blocked: true,
+                            message: `Syntax validation failed for ${filePath}.`,
+                            reason: "syntax_validation_failed"
+                        };
+                    }
+
+                    queryDegraded = true;
+                    if (hasValidatorUnavailable) {
+                        queryReason = "missing_syntax_validator";
+                    } else if (hasLanguageUnavailable) {
+                        queryReason = "missing_wasm_grammar";
+                    } else {
+                        queryReason = "syntax_validation_failed";
+                    }
                 }
             }
         }

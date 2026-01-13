@@ -26,7 +26,7 @@ describe("Language support: Python", () => {
       const symbols = await backend.extractSymbols({ filePath: "sample.py", content, languageId, doc });
       const skeleton = await manager.generateUniversalSkeleton("sample.py", content);
 
-      expect(getSupportForLanguageId(languageId)?.level).toBe("edit-safe");
+      expect(getSupportForLanguageId(languageId)?.level).toBe("L3");
       expected.imports?.forEach((specifier) => {
         expect(imports.map((entry) => entry.specifier)).toContain(specifier);
       });

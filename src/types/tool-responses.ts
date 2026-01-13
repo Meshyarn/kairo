@@ -8,6 +8,7 @@ export type DegradedReasonType =
   | "unsupported_language"
   | "missing_query_pack"
   | "missing_wasm_grammar"
+  | "missing_syntax_validator"
   | "syntax_validation_failed"
   | "skeleton_extraction_failed"
   | "symbol_index_unavailable"
