@@ -102,6 +102,14 @@ const PARITY_REASON_MAP: Record<string, {
     type: "symbol_index_unavailable",
     message: "Symbol index is unavailable; symbol-based analysis is degraded."
   },
+  cross_repo_scope_mismatch: {
+    type: "cross_repo_scope_mismatch",
+    message: "Requested repo scope does not include matching files."
+  },
+  cross_repo_edit_blocked: {
+    type: "cross_repo_edit_blocked",
+    message: "Cross-repo edits are blocked by policy."
+  },
   language_parser_unavailable: {
     type: "missing_wasm_grammar",
     message: "Language parser is unavailable.",

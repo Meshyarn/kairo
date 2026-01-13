@@ -17,6 +17,9 @@ import type { FlowArtifactManager } from "../../flow-artifact-manager.js";
 import { OptionResolver } from "../../options/OptionResolver.js";
 import { buildDegradedReasons } from "../../DegradedReasonMapper.js";
 import { applyTokenBudget, estimateTokens } from "../../TokenBudget.js";
+import type { RepoRegistry } from "../../../config/RepoRegistry.js";
+import type { PathNormalizer } from "../../../utils/PathNormalizer.js";
+import { resolveRepoInfo } from "../../../utils/RepoScope.js";
 
 import { 
     ExploreItem, 
@@ -67,6 +70,8 @@ export class ExplorePillar {
 
     public async execute(intent: ParsedIntent, context: OrchestrationContext): Promise<ExploreResponse> {
         const startedAt = Date.now();
+        const repoRegistry = this.registry.getMetadata<RepoRegistry>("repoRegistry");
+        const pathNormalizer = this.registry.getMetadata<PathNormalizer>("pathNormalizer");
         const constraints = intent.constraints as any;
         const query = typeof constraints.query === "string" ? constraints.query : undefined;
         const paths = Array.isArray(constraints.paths) ? constraints.paths : [];
@@ -383,6 +388,9 @@ export class ExplorePillar {
                             query,
                             maxResults: packMaxResults,
                             type: "file",
+                            repoScope: (constraints as any).repoScope,
+                            repoId: (constraints as any).repoId,
+                            repoIds: (constraints as any).repoIds,
                             budget: searchBudget
                         });
                     } catch (error) {
@@ -406,7 +414,10 @@ export class ExplorePillar {
                             range: item.line ? { startLine: item.line, endLine: item.line } : undefined,
                             score: item.score,
                             why: [item.type ?? "project_search"],
-                            metadata: {}
+                            metadata: {
+                                ...(item?.repoId ? { repoId: item.repoId } : {}),
+                                ...(item?.repoRelativePath ? { repoRelativePath: item.repoRelativePath } : {})
+                            }
                         };
 
                         try {
@@ -475,6 +486,9 @@ export class ExplorePillar {
                             packId: undefined,
                             includeComments,
                             includeLogs,
+                            repoScope: (constraints as any).repoScope,
+                            repoId: (constraints as any).repoId,
+                            repoIds: (constraints as any).repoIds,
                             embedding: disableEmbeddings ? { provider: "disabled" } : undefined
                         });
                     } catch (error) {
@@ -634,6 +648,19 @@ export class ExplorePillar {
 
                 const isFullContent = typeof payloadItem.content === "string";
                 applyBudgetToItem(payloadItem, isFullContent, view !== "full");
+
+                if (repoRegistry && pathNormalizer) {
+                    try {
+                        const repoInfo = resolveRepoInfo(payloadItem.filePath, repoRegistry, pathNormalizer);
+                        payloadItem.metadata = {
+                            ...(payloadItem.metadata ?? {}),
+                            repoId: repoInfo.repoId,
+                            ...(repoInfo.repoRelativePath ? { repoRelativePath: repoInfo.repoRelativePath } : {})
+                        };
+                    } catch {
+                        // ignore repo scope metadata failures
+                    }
+                }
 
                 const contentText = payloadItem.content ?? payloadItem.preview ?? "";
                 const contentLength = contentText.length;

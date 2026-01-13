@@ -12,6 +12,8 @@ export type DegradedReasonType =
   | "syntax_validation_failed"
   | "skeleton_extraction_failed"
   | "symbol_index_unavailable"
+  | "cross_repo_scope_mismatch"
+  | "cross_repo_edit_blocked"
   | "degraded";
 
 export type DegradedReason = {

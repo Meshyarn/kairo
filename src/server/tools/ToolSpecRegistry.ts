@@ -85,6 +85,15 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
           keywords: { type: "array", items: { type: "string" } },
           patterns: { type: "array", items: { type: "string" } },
           type: { type: "string", enum: ["auto", "file", "symbol", "directory", "filename"] },
+          repoScope: {
+            type: "object",
+            properties: {
+              mode: { type: "string", enum: ["all", "default", "repos"] },
+              repoIds: { type: "array", items: { type: "string" } }
+            }
+          },
+          repoId: { type: "string" },
+          repoIds: { type: "array", items: { type: "string" } },
           maxResults: { type: "number" },
           limit: { type: "number" }
         },
@@ -104,6 +113,15 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
           scope: { type: "string", enum: ["all", "docs", "project"] },
           output: { type: "string", enum: ["full", "compact", "pack_only"] },
           packId: { type: "string" },
+          repoScope: {
+            type: "object",
+            properties: {
+              mode: { type: "string", enum: ["all", "default", "repos"] },
+              repoIds: { type: "array", items: { type: "string" } }
+            }
+          },
+          repoId: { type: "string" },
+          repoIds: { type: "array", items: { type: "string" } },
           maxResults: { type: "number" },
           maxCandidates: { type: "number" },
           maxChunkCandidates: { type: "number" },
@@ -750,6 +768,15 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
               format: { type: "string", enum: ["ascii", "mermaid", "both"] }
             }
           },
+          repoScope: {
+            type: "object",
+            properties: {
+              mode: { type: "string", enum: ["all", "default", "repos"] },
+              repoIds: { type: "array", items: { type: "string" } }
+            }
+          },
+          repoId: { type: "string" },
+          repoIds: { type: "array", items: { type: "string" } },
           section: {
             type: "object",
             properties: {
@@ -831,6 +858,16 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
           },
           draftId: { type: "string" },
           refinement: { type: "string" },
+          repoScope: {
+            type: "object",
+            properties: {
+              mode: { type: "string", enum: ["all", "default", "repos"] },
+              repoIds: { type: "array", items: { type: "string" } }
+            }
+          },
+          repoId: { type: "string" },
+          repoIds: { type: "array", items: { type: "string" } },
+          allowCrossRepoEdits: { type: "boolean" },
           reviewOptions: {
             type: "object",
             properties: {
@@ -884,6 +921,16 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
           },
           draftId: { type: "string" },
           refinement: { type: "string" },
+          repoScope: {
+            type: "object",
+            properties: {
+              mode: { type: "string", enum: ["all", "default", "repos"] },
+              repoIds: { type: "array", items: { type: "string" } }
+            }
+          },
+          repoId: { type: "string" },
+          repoIds: { type: "array", items: { type: "string" } },
+          allowCrossRepoEdits: { type: "boolean" },
           reviewOptions: {
             type: "object",
             properties: {
