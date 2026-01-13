@@ -88,7 +88,7 @@ export type ManageInitArgs = {
 
 export type ManageDoctorArgs = {
     mode?: BootstrapMode;
-    scope?: "project" | "config" | "languages" | "wasm" | "host" | "contracts" | "parity";
+    scope?: "project" | "config" | "languages" | "wasm" | "host" | "contracts" | "parity" | "capabilities";
     root?: string;
 };
 
@@ -1148,6 +1148,8 @@ export class ConfigBootstrapper {
         if (!scope) return true;
         const code = finding.code;
         switch (scope) {
+            case "capabilities":
+                return false;
             case "languages":
                 return code === "LANGUAGE_GAP" || code === "SCAN_TRUNCATED";
             case "wasm":
@@ -1174,6 +1176,9 @@ export class ConfigBootstrapper {
         if (!scope) return true;
         if (scope === "host") {
             return filePath.replace(/\\\\/g, "/").endsWith("/.vscode/mcp.json");
+        }
+        if (scope === "capabilities") {
+            return false;
         }
         if (scope === "wasm") {
             return false;
@@ -1202,6 +1207,9 @@ export class ConfigBootstrapper {
         if (!scope) return true;
         if (scope === "wasm") {
             return hint.includes("KAIRO_WASM_DIR");
+        }
+        if (scope === "capabilities") {
+            return false;
         }
         if (scope === "languages") {
             return hint.includes("extensions") || hint.includes("mappings");

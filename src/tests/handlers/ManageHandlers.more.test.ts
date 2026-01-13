@@ -3,6 +3,7 @@ import { ManageHandlers } from "../../handlers/ManageHandlers.js";
 
 const makeContext = () => {
     return {
+        rootPath: process.cwd(),
         orchestrationEngine: { executePillar: jest.fn(async () => ({ ok: true })) },
         editCoordinator: {
             undo: jest.fn(async () => ({ success: true, message: "undo" })),
@@ -59,6 +60,7 @@ describe("ManageHandlers additional paths", () => {
         expect(status.success).toBe(true);
         expect(status.status.unresolvedSample).toHaveLength(1);
         expect(status.indexSnapshot).toBeDefined();
+        expect(status.capabilityDiagnostics).toBeDefined();
 
         const history = await raw({ command: "history" });
         expect(history.history.pendingTransactions).toContain("t1");

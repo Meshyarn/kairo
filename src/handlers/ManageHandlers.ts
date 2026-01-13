@@ -4,6 +4,7 @@ import { metrics } from "../utils/MetricsCollector.js";
 import { resolveEmbeddingConfigFromEnv } from "../embeddings/EmbeddingConfig.js";
 import { ConfigBootstrapper } from "../config/ConfigBootstrapper.js";
 import { StorageMaintenanceService } from "../indexing/StorageMaintenanceService.js";
+import { EngineManager } from "../orchestration/capabilities/EngineManager.js";
 
 export class ManageHandlers extends BaseHandler {
     private reindexInProgress = false;
@@ -80,6 +81,10 @@ export class ManageHandlers extends BaseHandler {
                         const indexSnapshot = await this.context.indexStateManager.getSnapshot();
                         const indexActivity = this.context.indexStateManager.getActivity();
                         const embeddingStatus = await this.context.documentSearchEngine.getEmbeddingStatus();
+                        const capabilityDiagnostics = EngineManager.getDiagnosticsSnapshot({
+                            detail: detail === "full" ? "full" : "summary",
+                            rootPath: this.context.rootPath
+                        });
 
                         if (includePerFile) {
                             return {
@@ -87,6 +92,7 @@ export class ManageHandlers extends BaseHandler {
                                 output: "Index status",
                                 status,
                                 embedding: embeddingStatus,
+                                capabilityDiagnostics,
                                 indexSnapshot,
                                 activity: {
                                     reindexInProgress: this.reindexInProgress,
@@ -111,6 +117,7 @@ export class ManageHandlers extends BaseHandler {
                                 unresolvedSample
                             },
                             embedding: embeddingStatus,
+                            capabilityDiagnostics,
                             indexSnapshot,
                             activity: {
                                 reindexInProgress: this.reindexInProgress,
@@ -181,9 +188,24 @@ export class ManageHandlers extends BaseHandler {
                         scope: args?.scope,
                         root: args?.root
                     });
+                    const includeCapabilities = !args?.scope
+                        || args?.scope === "capabilities"
+                        || args?.scope === "host"
+                        || args?.scope === "parity";
+                    const capabilityDiagnostics = includeCapabilities
+                        ? EngineManager.getDiagnosticsSnapshot({
+                            detail: args?.detail === "full" ? "full" : "summary",
+                            rootPath: this.context.rootPath
+                        })
+                        : undefined;
+                    const capabilityHints = includeCapabilities && capabilityDiagnostics
+                        ? this.buildCapabilityHints(capabilityDiagnostics)
+                        : undefined;
                     return {
                         ...result,
-                        output: "Config doctor completed."
+                        output: "Config doctor completed.",
+                        ...(capabilityDiagnostics ? { capabilityDiagnostics } : {}),
+                        ...(capabilityHints && capabilityHints.length > 0 ? { capabilityHints } : {})
                     };
                 }
             case 'reindex':
@@ -443,5 +465,17 @@ export class ManageHandlers extends BaseHandler {
             default:
                 return { success: false, output: `Unknown project_manage command: ${command}` };
         }
+    }
+
+    private buildCapabilityHints(snapshot: ReturnType<typeof EngineManager.getDiagnosticsSnapshot>): string[] {
+        const hints: string[] = [];
+        if (!snapshot.rustCore.available && snapshot.rustCore.error) {
+            hints.push(`Rust core unavailable: ${snapshot.rustCore.error}`);
+        }
+        const tokenizer = snapshot.tokenizer;
+        if (tokenizer?.missingReason) {
+            hints.push(tokenizer.missingReason);
+        }
+        return hints;
     }
 }

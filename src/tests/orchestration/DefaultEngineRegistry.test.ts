@@ -30,8 +30,8 @@ describe("DefaultEngineRegistry", () => {
         const provider = EngineManager.getProvider<ITokenChunkingProvider>(CAP_CHUNKING_TOKENS);
         expect(provider).not.toBeNull();
 
-        const diagnostics = EngineManager.getDiagnostics();
-        expect(diagnostics.capabilities[CAP_CHUNKING_TOKENS].provider?.id).toBe("JsChunkingProvider");
+        const diagnostics = EngineManager.getDiagnosticsSnapshot({ detail: "summary" });
+        expect(diagnostics.capabilities[CAP_CHUNKING_TOKENS].selected?.id).toBe("JsChunkingProvider");
     });
 
     it("falls back to JS chunking when rust module fails to load", () => {
@@ -50,8 +50,8 @@ describe("DefaultEngineRegistry", () => {
         const provider = EngineManager.getProvider<ITokenChunkingProvider>(CAP_CHUNKING_TOKENS);
         expect(provider).not.toBeNull();
 
-        const diagnostics = EngineManager.getDiagnostics();
-        expect(diagnostics.capabilities[CAP_CHUNKING_TOKENS].provider?.id).toBe("JsChunkingProvider");
+        const diagnostics = EngineManager.getDiagnosticsSnapshot({ detail: "summary" });
+        expect(diagnostics.capabilities[CAP_CHUNKING_TOKENS].selected?.id).toBe("JsChunkingProvider");
         expect(warnSpy).toHaveBeenCalled();
     });
 });
