@@ -275,7 +275,8 @@ export class SmartContextServer {
             this.rootPath,
             this.symbolIndex,
             new EvidencePackRepository(this.indexDatabase),
-            this.vectorIndexManager
+            this.vectorIndexManager,
+            this.indexDatabase
         );
         this.clusterSearchEngine = new ClusterSearchEngine({
             rootPath: this.rootPath,

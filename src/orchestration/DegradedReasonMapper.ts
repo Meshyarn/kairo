@@ -107,6 +107,42 @@ const PARITY_REASON_MAP: Record<string, {
     message: "Language query pack is missing.",
     actionToolCall: PARITY_ACTION_TOOLCALL,
     actionId: PARITY_ACTION_ID
+  },
+  document_sampled: {
+    type: "degraded",
+    message: "Document content was sampled; results may be partial.",
+    actionToolCall: PARITY_ACTION_TOOLCALL,
+    actionId: PARITY_ACTION_ID
+  },
+  document_extract_failed: {
+    type: "degraded",
+    message: "Document extraction failed.",
+    actionToolCall: PARITY_ACTION_TOOLCALL,
+    actionId: PARITY_ACTION_ID
+  },
+  document_parser_missing: {
+    type: "degraded",
+    message: "Document parser is missing or unavailable.",
+    actionToolCall: PARITY_ACTION_TOOLCALL,
+    actionId: PARITY_ACTION_ID
+  },
+  document_needs_ocr: {
+    type: "degraded",
+    message: "Document appears to require OCR for reliable text extraction.",
+    actionToolCall: PARITY_ACTION_TOOLCALL,
+    actionId: PARITY_ACTION_ID
+  },
+  document_cap_applied: {
+    type: "degraded",
+    message: "Document extraction hit a configured cap.",
+    actionToolCall: PARITY_ACTION_TOOLCALL,
+    actionId: PARITY_ACTION_ID
+  },
+  document_low_quality: {
+    type: "degraded",
+    message: "Document extraction quality is low; results may be incomplete.",
+    actionToolCall: PARITY_ACTION_TOOLCALL,
+    actionId: PARITY_ACTION_ID
   }
 };
 

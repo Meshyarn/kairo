@@ -50,6 +50,14 @@ export interface DocumentSearchResponse {
     reason?: string;
     reasons?: string[];
     provider?: { name: string; model: string; dims: number } | null;
+    fileMeta?: Record<string, {
+        sourceFormat: string;
+        extractor?: string;
+        warnings?: string[];
+        reasons?: string[];
+        stats?: Record<string, unknown>;
+        updatedAt: number;
+    }>;
     stats: {
         candidateFiles: number;
         candidateChunks: number;

@@ -32,6 +32,7 @@ export class MemoryIndexStore implements IndexStore {
     protected readonly ghosts = new Map<string, StoredGhostSymbol>();
     protected readonly documentChunks = new Map<string, StoredDocumentChunk[]>();
     protected readonly chunkIndex = new Map<string, { filePath: string; contentHash: string }>();
+    protected readonly documentMeta = new Map<string, { sourceFormat: string; extractor?: string; warnings?: string[]; reasons?: string[]; stats?: Record<string, unknown>; updatedAt: number }>();
     protected readonly embeddings = new Map<string, Map<string, StoredEmbedding>>();
     protected readonly evidencePacks = new Map<string, unknown>();
     protected readonly chunkSummaries = new Map<string, Map<string, { summary: string; contentHash?: string }>>();
@@ -78,6 +79,7 @@ export class MemoryIndexStore implements IndexStore {
         this.files.delete(normalized);
         this.symbols.delete(normalized);
         this.dependencies.delete(normalized);
+        this.documentMeta.delete(normalized);
         this.deleteEmbeddingsForFile(normalized);
         this.deleteDocumentChunks(normalized);
         this.cleanupIncomingDependencies(normalized);
@@ -290,6 +292,33 @@ export class MemoryIndexStore implements IndexStore {
         this.documentChunks.delete(normalized);
     }
 
+    public upsertDocumentMeta(filePath: string, meta: { filePath: string; sourceFormat: string; extractor?: string; warnings?: string[]; reasons?: string[]; stats?: Record<string, unknown>; updatedAt: number }): void {
+        const normalized = this.normalize(filePath);
+        this.documentMeta.set(normalized, {
+            sourceFormat: meta.sourceFormat,
+            extractor: meta.extractor,
+            warnings: meta.warnings ? [...meta.warnings] : undefined,
+            reasons: meta.reasons ? [...meta.reasons] : undefined,
+            stats: meta.stats ? { ...meta.stats } : undefined,
+            updatedAt: meta.updatedAt
+        });
+    }
+
+    public getDocumentMeta(filePath: string): { filePath: string; sourceFormat: string; extractor?: string; warnings?: string[]; reasons?: string[]; stats?: Record<string, unknown>; updatedAt: number } | null {
+        const normalized = this.normalize(filePath);
+        const stored = this.documentMeta.get(normalized);
+        if (!stored) return null;
+        return {
+            filePath: normalized,
+            sourceFormat: stored.sourceFormat,
+            extractor: stored.extractor,
+            warnings: stored.warnings ? [...stored.warnings] : undefined,
+            reasons: stored.reasons ? [...stored.reasons] : undefined,
+            stats: stored.stats ? { ...stored.stats } : undefined,
+            updatedAt: stored.updatedAt
+        };
+    }
+
     public upsertEmbedding(chunkId: string, key: EmbeddingKey, embedding: { dims: number; vector: Float32Array; norm?: number }): void {
         const mapKey = embeddingKey(key);
         const entry: StoredEmbedding = {
@@ -496,6 +525,7 @@ export class FileIndexStore extends MemoryIndexStore {
     private readonly dependenciesPath: string;
     private readonly ghostsPath: string;
     private readonly chunksPath: string;
+    private readonly documentMetaPath: string;
     private readonly embeddingsPath: string;
     private readonly packsPath: string;
     private readonly summariesPath: string;
@@ -516,6 +546,7 @@ export class FileIndexStore extends MemoryIndexStore {
         this.dependenciesPath = path.join(this.storageDir, "dependencies.json");
         this.ghostsPath = path.join(this.storageDir, "ghosts.json");
         this.chunksPath = path.join(this.storageDir, "chunks.json");
+        this.documentMetaPath = path.join(this.storageDir, "document_meta.json");
         this.embeddingsPath = path.join(this.storageDir, "embeddings.json");
         this.packsPath = path.join(this.storageDir, "packs.json");
         this.summariesPath = path.join(this.storageDir, "summaries.json");
@@ -539,6 +570,7 @@ export class FileIndexStore extends MemoryIndexStore {
         this.persistSymbols();
         this.persistDependencies();
         this.persistChunks();
+        this.persistDocumentMeta();
         if (!this.embeddingPackConfig.enabled || !this.hasEmbeddingPackOnDisk) {
             this.persistEmbeddings();
         }
@@ -550,6 +582,7 @@ export class FileIndexStore extends MemoryIndexStore {
         this.persistSymbols();
         this.persistDependencies();
         this.persistChunks();
+        this.persistDocumentMeta();
         if (!this.embeddingPackConfig.enabled || !this.hasEmbeddingPackOnDisk) {
             this.persistEmbeddings();
         }
@@ -600,6 +633,11 @@ export class FileIndexStore extends MemoryIndexStore {
     public override deleteDocumentChunks(filePath: string): void {
         super.deleteDocumentChunks(filePath);
         this.persistChunks();
+    }
+
+    public override upsertDocumentMeta(filePath: string, meta: any): void {
+        super.upsertDocumentMeta(filePath, meta);
+        this.persistDocumentMeta();
     }
 
     public override upsertEmbedding(chunkId: string, key: EmbeddingKey, embedding: { dims: number; vector: Float32Array; norm?: number }): void {
@@ -774,6 +812,21 @@ export class FileIndexStore extends MemoryIndexStore {
             super.upsertDocumentChunks(filePath, entries ?? []);
         }
 
+        const metas = readJson<Record<string, any>>(this.documentMetaPath, {});
+        for (const [filePath, meta] of Object.entries(metas)) {
+            if (!meta || typeof meta !== "object") continue;
+            if (typeof (meta as any).sourceFormat !== "string") continue;
+            super.upsertDocumentMeta(filePath, {
+                filePath,
+                sourceFormat: String((meta as any).sourceFormat),
+                extractor: typeof (meta as any).extractor === "string" ? (meta as any).extractor : undefined,
+                warnings: Array.isArray((meta as any).warnings) ? (meta as any).warnings.map((v: any) => String(v)) : undefined,
+                reasons: Array.isArray((meta as any).reasons) ? (meta as any).reasons.map((v: any) => String(v)) : undefined,
+                stats: (meta as any).stats && typeof (meta as any).stats === "object" ? (meta as any).stats : undefined,
+                updatedAt: Number.isFinite((meta as any).updatedAt) ? (meta as any).updatedAt : Date.now()
+            });
+        }
+
         if (!this.embeddingPackConfig.enabled || !this.hasEmbeddingPackOnDisk) {
             const embeddings = readJson<Record<string, Record<string, PersistedEmbedding>>>(this.embeddingsPath, {});
             for (const [chunkId, variants] of Object.entries(embeddings)) {
@@ -843,6 +896,14 @@ export class FileIndexStore extends MemoryIndexStore {
             payload[filePath] = chunks;
         }
         writeJson(this.chunksPath, payload);
+    }
+
+    private persistDocumentMeta(): void {
+        const payload: Record<string, unknown> = {};
+        for (const [filePath, meta] of this.documentMeta.entries()) {
+            payload[filePath] = meta;
+        }
+        writeJson(this.documentMetaPath, payload);
     }
 
     private persistEmbeddings(): void {

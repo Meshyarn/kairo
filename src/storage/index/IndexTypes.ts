@@ -58,6 +58,16 @@ export interface StoredDocumentChunk {
     updatedAt: number;
 }
 
+export interface StoredDocumentMeta {
+    filePath: string;
+    sourceFormat: string;
+    extractor?: string;
+    warnings?: string[];
+    reasons?: string[];
+    stats?: Record<string, unknown>;
+    updatedAt: number;
+}
+
 export interface StoredEmbedding {
     chunkId: string;
     provider: string;
@@ -121,6 +131,8 @@ export interface IndexStore {
     getChunkContentHash(chunkId: string): string | undefined;
     getDocumentChunk(chunkId: string): StoredDocumentChunk | null;
     deleteDocumentChunks(filePath: string): void;
+    upsertDocumentMeta(filePath: string, meta: StoredDocumentMeta): void;
+    getDocumentMeta(filePath: string): StoredDocumentMeta | null;
 
     upsertEmbedding(chunkId: string, key: EmbeddingKey, embedding: { dims: number; vector: Float32Array; norm?: number }): void;
     getEmbedding(chunkId: string, key: EmbeddingKey): StoredEmbedding | null;

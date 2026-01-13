@@ -6,6 +6,7 @@ import {
     type StoredUnresolvedDependency,
     type StoredGhostSymbol,
     type StoredDocumentChunk,
+    type StoredDocumentMeta,
     type StoredEmbedding,
     type EmbeddingKey,
     type TransactionLogEntry
@@ -19,6 +20,7 @@ export type {
     StoredUnresolvedDependency,
     StoredGhostSymbol,
     StoredDocumentChunk,
+    StoredDocumentMeta,
     StoredEmbedding,
     EmbeddingKey,
     TransactionLogEntry
@@ -144,6 +146,14 @@ export class IndexDatabase implements IndexStore {
 
     public deleteDocumentChunks(filePath: string): void {
         this.store.deleteDocumentChunks(filePath);
+    }
+
+    public upsertDocumentMeta(filePath: string, meta: StoredDocumentMeta): void {
+        this.store.upsertDocumentMeta(filePath, meta);
+    }
+
+    public getDocumentMeta(filePath: string): StoredDocumentMeta | null {
+        return this.store.getDocumentMeta(filePath);
     }
 
     public upsertEmbedding(chunkId: string, key: EmbeddingKey, embedding: { dims: number; vector: Float32Array; norm?: number }): void {
