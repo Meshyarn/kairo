@@ -208,6 +208,7 @@ export interface DraftPack {
     phantomDiffs?: PhantomDiff[];
     changePlan?: any;
     impactAnalysis?: ImpactAnalysis;
+    fileVersions?: Record<string, { expectedVersion?: number; expectedHash?: string }>;
     preflightCheck: PreflightCheck;
     stylePack?: StylePack;
     workflowMeta?: WorkflowMeta;

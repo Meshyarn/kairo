@@ -108,6 +108,7 @@ Plan/apply safe edits with impact analysis.
 | `target` | `string` |  | Optional hint (file/symbol). |
 | `targetFiles` | `string[]` |  | Constrain the blast radius. |
 | `edits` | `object[]` |  | Structured edits (advanced). |
+| `fileVersions` | `object` |  | Advanced stale-guard: `{ [relPath]: { expectedVersion?, expectedHash? } }` (typically from `DraftPack.fileVersions` or a prior read). |
 | `profile` | `"fast" \| "balanced" \| "deep"` |  | Preset for review/limits defaults. |
 | `safety` | `"plan" \| "apply"` |  | Maps to dry-run behavior (plan=true by default). |
 | `options.dryRun` | `boolean` |  | Default behavior is dry-run planning. |
@@ -167,6 +168,7 @@ Create or scaffold files.
 | `targetPath` | `string` |  | Where to create it. |
 | `template` | `string` |  | Template name/path (if supported). |
 | `content` | `string` |  | Explicit content overrides generation. |
+| `fileVersions` | `object` |  | Advanced stale-guard: `{ [relPath]: { expectedVersion?, expectedHash? } }` (typically from `DraftPack.fileVersions` or a prior read). |
 | `profile` | `"fast" \| "balanced" \| "deep"` |  | Preset for review/limits defaults. |
 | `safety` | `"plan" \| "apply"` |  | Maps to dry-run behavior (plan=true by default). |
 | `dryRun` | `boolean` |  | Generate DraftPack only. |

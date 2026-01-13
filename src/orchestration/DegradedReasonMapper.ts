@@ -157,6 +157,10 @@ const PARITY_REASON_MAP: Record<string, {
     message: "Document extraction quality is low; results may be incomplete.",
     actionToolCall: PARITY_ACTION_TOOLCALL,
     actionId: PARITY_ACTION_ID
+  },
+  file_version_mismatch: {
+    type: "degraded",
+    message: "File version mismatch detected; re-read the file before retrying."
   }
 };
 

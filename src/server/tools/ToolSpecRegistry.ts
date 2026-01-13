@@ -220,7 +220,17 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
         properties: {
           edits: { type: "array", items: { type: "object" } },
           dryRun: { type: "boolean" },
-          diffMode: { type: "string", enum: ["myers", "semantic"] }
+          diffMode: { type: "string", enum: ["myers", "semantic"] },
+          fileVersions: {
+            type: "object",
+            additionalProperties: {
+              type: "object",
+              properties: {
+                expectedVersion: { type: "number" },
+                expectedHash: { type: "string" }
+              }
+            }
+          }
         },
         required: ["edits"],
         additionalProperties: DEFAULT_ADDITIONAL_PROPERTIES
@@ -494,7 +504,17 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
           path: { type: "string" },
           edits: { type: "array", items: { type: "object" } },
           dryRun: { type: "boolean" },
-          options: { type: "object" }
+          options: { type: "object" },
+          fileVersions: {
+            type: "object",
+            additionalProperties: {
+              type: "object",
+              properties: {
+                expectedVersion: { type: "number" },
+                expectedHash: { type: "string" }
+              }
+            }
+          }
         },
         required: [],
         additionalProperties: DEFAULT_ADDITIONAL_PROPERTIES

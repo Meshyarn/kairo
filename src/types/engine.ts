@@ -4,6 +4,7 @@ export interface ReadFragmentResult {
     filePath: string;
     content: string;
     ranges: LineRange[];
+    versionInfo?: FileVersionInfo;
 }
 
 export interface LineRange {

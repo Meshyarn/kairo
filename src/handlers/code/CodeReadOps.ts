@@ -41,8 +41,9 @@ export const readCodeRaw = async (deps: CodeHandlerDeps, args: any): Promise<str
 };
 
 export const readFileRaw = async (deps: CodeHandlerDeps, args: any) => {
-    const { context, resolveRelativePath } = deps;
+    const { context, resolveRelativePath, resolveAbsolutePath } = deps;
     const filePath = resolveRelativePath(args.filePath);
+    const absPath = resolveAbsolutePath(args.filePath);
     try {
         if (args?.full) {
             const content = await context.fileSystem.readFile(filePath);
@@ -52,6 +53,7 @@ export const readFileRaw = async (deps: CodeHandlerDeps, args: any) => {
             const truncated = buffer.length > effectiveMax;
             const slice = truncated ? buffer.slice(0, effectiveMax).toString("utf-8") : content;
             const stats = await context.fileSystem.stat(filePath);
+            const versionInfo = await context.fileVersionManager.getVersion(absPath);
             return {
                 content: slice,
                 meta: {
@@ -60,7 +62,8 @@ export const readFileRaw = async (deps: CodeHandlerDeps, args: any) => {
                     maxBytes: effectiveMax,
                     fileSizeBytes: stats.size,
                     nextAction: { tool: "code_read", args: { filePath, view: "skeleton" } }
-                }
+                },
+                versionInfo
             };
         }
         return await readFileProfileRaw(deps, { filePath });
@@ -98,7 +101,11 @@ export const readFragmentRaw = async (deps: CodeHandlerDeps, args: any) => {
         }
 
         const fragment = await context.contextEngine.readFragment(absPath, ranges, contextLines);
-        return fragment;
+        const versionInfo = await context.fileVersionManager.getVersion(absPath);
+        return {
+            ...fragment,
+            versionInfo
+        };
     } catch {
         throw new Error(`File not found: ${filePath}`);
     }
@@ -110,6 +117,7 @@ export const readFileProfileRaw = async (deps: CodeHandlerDeps, args: any) => {
     const absPath = resolveAbsolutePath(args.filePath);
     const content = await context.fileSystem.readFile(filePath);
     const stats = await context.fileSystem.stat(filePath);
+    const versionInfo = await context.fileVersionManager.getVersion(absPath);
     const metadata = FileProfiler.analyzeMetadata(content, absPath);
     const docKind = inferDocumentKind(filePath);
     const isDocument = docKind !== "unknown";
@@ -163,6 +171,7 @@ export const readFileProfileRaw = async (deps: CodeHandlerDeps, args: any) => {
             configType: metadata.configType,
             configScope: metadata.configScope
         },
+        versionInfo,
         structure: {
             skeleton,
             symbols,

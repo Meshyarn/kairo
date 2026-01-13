@@ -334,6 +334,7 @@ export class SmartContextServer {
         this.internalRegistry.setMetadata('packageAliasMap', packageAliasMap);
         this.internalRegistry.setMetadata('impactAnalyzer', this.impactAnalyzer);
         this.internalRegistry.setMetadata('propertyAccessIndex', propertyAccessIndex);
+        this.internalRegistry.setMetadata('fileVersionManager', this.fileVersionManager);
         
         this.setupHandlers();
         this.initializeModularHandlers();

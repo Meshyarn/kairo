@@ -9,6 +9,8 @@ import { SyntaxValidator } from '../../engine/validators/syntax-validator.js';
 import { AstManager } from '../../ast/AstManager.js';
 import { getSupportForFilePath, SupportLevel } from '../../config/LanguageSupportLevels.js';
 import { applyTokenBudget } from '../TokenBudget.js';
+import type { FileVersionManager } from '../../engine/FileVersionManager.js';
+import type { PathNormalizer } from '../../utils/PathNormalizer.js';
 
 export class ReadPillar {
   constructor(private readonly registry: InternalToolRegistry) {}
@@ -155,6 +157,17 @@ export class ReadPillar {
       lineCount: profile?.metadata?.lineCount ?? (typeof fullContent === 'string' ? fullContent.split(/\r?\n/).length : (typeof content === 'string' ? content.split(/\r?\n/).length : 0)),
       language: profile?.metadata?.language ?? null
     };
+    const fileVersionManager = this.registry.getMetadata<FileVersionManager>('fileVersionManager');
+    const pathNormalizer = this.registry.getMetadata<PathNormalizer>('pathNormalizer');
+    if (fileVersionManager && pathNormalizer) {
+      try {
+        const absPath = pathNormalizer.toAbsolute(pathNormalizer.normalize(metadata.filePath));
+        const versionInfo = await fileVersionManager.getVersion(absPath);
+        (metadata as any).versionInfo = versionInfo;
+      } catch {
+        // ignore versionInfo failures
+      }
+    }
 
     const tokenBudget = applyTokenBudget(content, {
       maxTokens,
