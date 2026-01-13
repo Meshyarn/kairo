@@ -1,4 +1,5 @@
 import type { DocumentKind, EmbeddingConfig } from "../../types.js";
+import type { DegradedReason } from "../../types/tool-responses.js";
 
 export interface DocumentSearchOptions {
     scope?: "docs" | "project" | "all";
@@ -27,6 +28,8 @@ export interface DocumentSearchOptions {
 export interface DocumentSearchSection {
     id: string;
     filePath: string;
+    repoId?: string;
+    repoRelativePath?: string;
     kind: DocumentKind;
     sectionPath: string[];
     heading: string | null;
@@ -49,6 +52,7 @@ export interface DocumentSearchResponse {
     degraded?: boolean;
     reason?: string;
     reasons?: string[];
+    degradedReasons?: DegradedReason[];
     provider?: { name: string; model: string; dims: number } | null;
     fileMeta?: Record<string, {
         sourceFormat: string;

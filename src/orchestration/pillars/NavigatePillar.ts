@@ -8,6 +8,9 @@ import { resolveProgressState, logProgress, logToolStart, logToolEnd, ProgressSt
 import { buildDegradedReasons } from '../DegradedReasonMapper.js';
 import { checkSkeletonSupport } from '../../ast/LanguageSupportSignals.js';
 import { AstManager } from '../../ast/AstManager.js';
+import type { RepoRegistry } from '../../config/RepoRegistry.js';
+import type { PathNormalizer } from '../../utils/PathNormalizer.js';
+import { resolveRepoInfo } from '../../utils/RepoScope.js';
 
 
 export class NavigatePillar {
@@ -19,6 +22,8 @@ export class NavigatePillar {
     const limit = constraints.limit || 10;
     const contextMode = constraints.context ?? 'all';
     const include = (constraints.include ?? {}) as any;
+    const repoRegistry = this.registry.getMetadata<RepoRegistry>("repoRegistry");
+    const pathNormalizer = this.registry.getMetadata<PathNormalizer>("pathNormalizer");
     const progress = resolveProgressState('Navigate', constraints);
     const startedAt = Date.now();
 
@@ -52,6 +57,7 @@ export class NavigatePillar {
           const docRefs = await this.runTool(context, 'document_references', { filePath: resolvedDoc }, progress);
           const maxSnippetChars = Number.parseInt(process.env.KAIRO_DOC_SNIPPET_MAX_CHARS ?? "1200", 10);
           const skeletonSnippet = truncateText(docSkeleton?.skeleton ?? "", maxSnippetChars);
+          const repoInfo = resolveSafeRepoInfo(resolvedDoc, repoRegistry, pathNormalizer);
           return {
             success: true,
             status: 'success',
@@ -61,7 +67,8 @@ export class NavigatePillar {
                 line: 1,
                 snippet: skeletonSnippet,
                 relevance: 1,
-                type: 'doc'
+                type: 'doc',
+                ...repoInfo
               }
             ],
             codePreview: skeletonSnippet,
@@ -89,13 +96,19 @@ export class NavigatePillar {
         }, progress);
         const sections = Array.isArray(docResults?.results) ? docResults.results : [];
         if (sections.length > 0) {
-          const locations = sections.map((section: any) => ({
-            filePath: section.filePath ?? '',
-            line: section.range?.startLine ?? 0,
-            snippet: section.preview ?? '',
-            relevance: section.scores?.final ?? 0,
-            type: 'doc'
-          }));
+          const locations = sections.map((section: any) => {
+            const filePath = section.filePath ?? '';
+            const resolvedRepo = resolveSafeRepoInfo(filePath, repoRegistry, pathNormalizer);
+            return {
+              filePath,
+              line: section.range?.startLine ?? 0,
+              snippet: section.preview ?? '',
+              relevance: section.scores?.final ?? 0,
+              type: 'doc',
+              repoId: section.repoId ?? resolvedRepo.repoId,
+              repoRelativePath: section.repoRelativePath ?? resolvedRepo.repoRelativePath
+            };
+          });
           logProgress(progress, `Doc search results: ${locations.length}.`);
           return {
             success: true,
@@ -188,6 +201,11 @@ export class NavigatePillar {
         ? 'usage'
         : (item.type === 'symbol' ? 'exact' : (relevance >= 0.9 ? 'exact' : 'related'));
       const type = isTest ? 'test' : (isDoc ? 'doc' : inferredType);
+      const resolvedRepo = resolveSafeRepoInfo(filePath, repoRegistry, pathNormalizer);
+      const repoInfo = {
+        repoId: item.repoId ?? resolvedRepo.repoId,
+        repoRelativePath: item.repoRelativePath ?? resolvedRepo.repoRelativePath
+      };
       return {
         filePath,
         line,
@@ -195,7 +213,8 @@ export class NavigatePillar {
         relevance,
         type,
         pageRank: pageRankScores.get(filePath),
-        isHotSpot: hotSpotSet.has(filePath)
+        isHotSpot: hotSpotSet.has(filePath),
+        ...repoInfo
       };
     });
 
@@ -507,4 +526,21 @@ function truncateText(text: string, maxChars: number): string {
   const value = String(text ?? "");
   if (value.length <= limit) return value;
   return `${value.slice(0, Math.max(1, limit - 1))}…`;
+}
+
+function resolveSafeRepoInfo(
+  filePath: string,
+  repoRegistry?: RepoRegistry,
+  pathNormalizer?: PathNormalizer
+): { repoId?: string; repoRelativePath?: string } {
+  if (!filePath || !repoRegistry || !pathNormalizer) return {};
+  try {
+    const info = resolveRepoInfo(filePath, repoRegistry, pathNormalizer);
+    return {
+      repoId: info.repoId,
+      repoRelativePath: info.repoRelativePath
+    };
+  } catch {
+    return {};
+  }
 }

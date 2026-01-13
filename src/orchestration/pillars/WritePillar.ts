@@ -29,6 +29,10 @@ import {
   evaluateLanguageParityGate,
   formatParityBlockMessage
 } from "../../config/LanguageParityGate.js";
+import type { RepoRegistry } from "../../config/RepoRegistry.js";
+import type { PathNormalizer } from "../../utils/PathNormalizer.js";
+import { normalizeRepoScope } from "../../utils/RepoScope.js";
+import { evaluateRepoEditPolicy } from "./shared/RepoGuard.js";
 
 export class WritePillar {
   constructor(private readonly registry: InternalToolRegistry) {}
@@ -91,6 +95,17 @@ export class WritePillar {
         artifactManager
       });
       const workflowWarnings = this.buildWorkflowWarnings(workflowMeta, Boolean(resolvedSessionId));
+      const repoRegistry = this.registry.getMetadata<RepoRegistry>("repoRegistry");
+      const pathNormalizer = this.registry.getMetadata<PathNormalizer>("pathNormalizer");
+      const allowCrossRepoEdits = Boolean((constraints as any).allowCrossRepoEdits);
+      const repoScopeParams = {
+        repoScope: (constraints as any).repoScope,
+        repoId: (constraints as any).repoId,
+        repoIds: (constraints as any).repoIds
+      };
+      const repoScope = repoRegistry && pathNormalizer
+        ? normalizeRepoScope(repoScopeParams, repoRegistry, { defaultMode: "default" })
+        : undefined;
       const attachSession = <T extends Record<string, any>>(payload: T): T & { sessionId?: string; workflowMeta: WorkflowMeta; workflowWarnings?: string[] } => {
         const next = {
           ...payload,
@@ -135,6 +150,31 @@ export class WritePillar {
       }
 
       const resolvedPath = await this.resolveTargetPath(targetPath);
+      if (repoRegistry && pathNormalizer && repoScope) {
+        const guard = evaluateRepoEditPolicy({
+          filePaths: [resolvedPath],
+          repoScope,
+          repoRegistry,
+          pathNormalizer,
+          allowCrossRepoEdits
+        });
+        if (guard.blocked) {
+          const reason = guard.blockedReason ?? "cross_repo_edit_blocked";
+          const degradedReasons = buildDegradedReasons([reason]);
+          const guidanceMessage = reason === "cross_repo_edit_blocked"
+            ? "Set allowCrossRepoEdits=true in .kairo/config/mcp-config.json for involved repos, then rerun with allowCrossRepoEdits:true."
+            : "Adjust repoScope to include the target repository or use the default repo.";
+          return attachSession({
+            success: false,
+            status: "blocked",
+            message: guard.message ?? "Blocked by repo scope policy.",
+            errorCode: guard.errorCode ?? "CROSS_REPO_EDIT_BLOCKED",
+            blockedReason: reason,
+            degradedReasons,
+            guidance: { message: guidanceMessage }
+          });
+        }
+      }
       const parityGate = await evaluateLanguageParityGate({
         filePath: resolvedPath,
         operation: dryRun ? "write_plan" : "write_apply"

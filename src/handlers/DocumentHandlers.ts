@@ -5,6 +5,7 @@ import { extractHtmlTextPreserveLines } from "../documents/html/HtmlTextExtracto
 import { buildDeterministicPreview, buildDeterministicSummary } from "../documents/summary/DeterministicSummarizer.js";
 import { DocumentContentLoader, type DocumentExtractionLimits } from "../documents/DocumentContentLoader.js";
 import { buildDegradedReasons } from "../orchestration/DegradedReasonMapper.js";
+import { normalizeRepoScope, resolveRepoInfo, isRepoIdInScope } from "../utils/RepoScope.js";
 import * as path from "path";
 import * as crypto from "crypto";
 
@@ -282,7 +283,8 @@ export class DocumentHandlers extends BaseHandler {
 
     private async docSearchRaw(args: any) {
         const query = args?.query ?? args?.text ?? args?.keywords?.join?.(" ") ?? "";
-        return this.context.documentSearchEngine.search(String(query), {
+        const repoScope = normalizeRepoScope(args ?? {}, this.context.repoRegistry, { defaultMode: "all" });
+        const response = await this.context.documentSearchEngine.search(String(query), {
             scope: args?.scope,
             output: args?.output,
             packId: args?.packId,
@@ -305,6 +307,64 @@ export class DocumentHandlers extends BaseHandler {
             includeLogs: args?.includeLogs === true,
             includeMetrics: args?.includeMetrics === true
         });
+        return this.applyRepoScopeToDocumentSearch(response, repoScope);
+    }
+
+    private applyRepoScopeToDocumentSearch(response: any, repoScope: ReturnType<typeof normalizeRepoScope>) {
+        const annotate = (section: any) => {
+            const filePath = section?.filePath;
+            if (!filePath || typeof filePath !== "string") return null;
+            try {
+                const repoInfo = resolveRepoInfo(filePath, this.context.repoRegistry, this.context.pathNormalizer);
+                if (!isRepoIdInScope(repoInfo.repoId, repoScope)) return null;
+                return {
+                    ...section,
+                    filePath: repoInfo.workspacePath,
+                    repoId: repoInfo.repoId,
+                    repoRelativePath: repoInfo.repoRelativePath
+                };
+            } catch {
+                return null;
+            }
+        };
+
+        const results = Array.isArray(response?.results)
+            ? response.results.map(annotate).filter(Boolean)
+            : [];
+        const evidence = Array.isArray(response?.evidence)
+            ? response.evidence.map(annotate).filter(Boolean)
+            : undefined;
+        const filteredFileMeta = this.filterFileMeta(response?.fileMeta, repoScope);
+        const hadResults = Array.isArray(response?.results) && response.results.length > 0;
+        const mismatch = hadResults && results.length === 0;
+        const reasons = mismatch
+            ? Array.from(new Set([...(response?.reasons ?? []), "cross_repo_scope_mismatch"]))
+            : response?.reasons;
+        return {
+            ...response,
+            results,
+            evidence,
+            fileMeta: filteredFileMeta,
+            degraded: response?.degraded || mismatch,
+            reason: mismatch ? "cross_repo_scope_mismatch" : response?.reason,
+            reasons,
+            degradedReasons: reasons ? buildDegradedReasons(reasons) : response?.degradedReasons
+        };
+    }
+
+    private filterFileMeta(fileMeta: Record<string, any> | undefined, repoScope: ReturnType<typeof normalizeRepoScope>) {
+        if (!fileMeta || typeof fileMeta !== "object") return fileMeta;
+        const filtered: Record<string, any> = {};
+        for (const [filePath, meta] of Object.entries(fileMeta)) {
+            try {
+                const repoInfo = resolveRepoInfo(filePath, this.context.repoRegistry, this.context.pathNormalizer);
+                if (!isRepoIdInScope(repoInfo.repoId, repoScope)) continue;
+                filtered[repoInfo.workspacePath] = meta;
+            } catch {
+                continue;
+            }
+        }
+        return Object.keys(filtered).length > 0 ? filtered : undefined;
     }
 
     private normalizeHeadingPath(raw: any): string[] | null {

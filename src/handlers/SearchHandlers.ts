@@ -3,6 +3,7 @@ import { HandlerContext } from "./HandlerContext.js";
 import { ResourceUsage } from "../types.js";
 import { ErrorEnhancer } from "../errors/ErrorEnhancer.js";
 import * as path from "path";
+import { normalizeRepoScope, resolveRepoInfo, isRepoIdInScope } from "../utils/RepoScope.js";
 
 export class SearchHandlers extends BaseHandler {
     constructor(private context: HandlerContext) {
@@ -65,6 +66,7 @@ export class SearchHandlers extends BaseHandler {
         if (!query) {
             throw new Error("Missing required parameter: query");
         }
+        const repoScope = normalizeRepoScope(args ?? {}, this.context.repoRegistry, { defaultMode: "all" });
         const budget = args?.budget;
         const usage = budget ? ({ filesRead: 0, bytesRead: 0, parseTimeMs: 0 } as ResourceUsage) : undefined;
         const maxResults = typeof args.maxResults === "number"
@@ -152,7 +154,25 @@ export class SearchHandlers extends BaseHandler {
             }
         }
 
-        if (results.length === 0) {
+        const normalizedResults = results
+            .map((item) => {
+                if (!item?.path || typeof item.path !== "string") return null;
+                try {
+                    const repoInfo = resolveRepoInfo(item.path, this.context.repoRegistry, this.context.pathNormalizer);
+                    if (!isRepoIdInScope(repoInfo.repoId, repoScope)) return null;
+                    return {
+                        ...item,
+                        path: repoInfo.workspacePath,
+                        repoId: repoInfo.repoId,
+                        repoRelativePath: repoInfo.repoRelativePath
+                    };
+                } catch {
+                    return null;
+                }
+            })
+            .filter(Boolean) as any[];
+
+        if (normalizedResults.length === 0) {
             const enhanced = ErrorEnhancer.enhanceSearchNotFound(query);
             return {
                 results: [],
@@ -166,7 +186,7 @@ export class SearchHandlers extends BaseHandler {
         }
 
         return {
-            results,
+            results: normalizedResults,
             inferredType,
             degraded: usage?.degraded ?? false,
             budget: budget ? { ...budget, used: usage } : undefined

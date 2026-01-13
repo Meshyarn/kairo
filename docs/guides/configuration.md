@@ -43,7 +43,13 @@ Create `.kairo/config/mcp-config.json`:
 {
   "version": "1.0",
   "repositories": {
-    "main": { "path": ".", "name": "Main Repo", "type": "primary", "languages": ["typescript"] }
+    "main": {
+      "path": ".",
+      "name": "Main Repo",
+      "type": "primary",
+      "languages": ["typescript"],
+      "allowCrossRepoEdits": false
+    }
   },
   "defaultRepo": "main"
 }
@@ -51,6 +57,7 @@ Create `.kairo/config/mcp-config.json`:
 
 - Legacy location (if you already have it): `.mcp-config.json` in the project root.
 - Migration helper: `npm run migrate:mcp-config`
+- `allowCrossRepoEdits` must be explicitly set to `true` per repo to allow cross-repo edits (tool input must also set `allowCrossRepoEdits: true`).
 
 ### Language mappings (optional)
 

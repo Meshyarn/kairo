@@ -534,7 +534,7 @@ export class ConfigBootstrapper {
             name: "Main Repo",
             type: "primary",
             languages: rootLanguages,
-            allowCrossRepoEdits: true,
+            allowCrossRepoEdits: false,
             excludePatterns: [...DEFAULT_EXCLUDE_PATTERNS]
         });
         repoPaths.add(path.resolve(rootPath));
@@ -564,7 +564,7 @@ export class ConfigBootstrapper {
                 name: candidate.name ?? this.titleCase(repoId.replace(/-/g, " ")),
                 type: candidate.type,
                 languages: langScan.languages.map((lang) => lang.languageId),
-                allowCrossRepoEdits: true,
+                allowCrossRepoEdits: false,
                 excludePatterns: [...DEFAULT_EXCLUDE_PATTERNS]
             });
             repoPaths.add(absPath);
@@ -927,7 +927,7 @@ export class ConfigBootstrapper {
                 name: repo.name,
                 type: repo.type,
                 languages: repo.languages,
-                allowCrossRepoEdits: repo.allowCrossRepoEdits ?? true,
+                allowCrossRepoEdits: repo.allowCrossRepoEdits ?? false,
                 excludePatterns: repo.excludePatterns
             };
         }

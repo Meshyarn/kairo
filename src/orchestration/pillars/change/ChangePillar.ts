@@ -60,10 +60,13 @@ import type { ImpactAnalyzer } from "../../../engine/ImpactAnalyzer.js";
 import type { CrossLangImpact } from "../../../types/engine.js";
 import { buildDegradedReasons } from "../../DegradedReasonMapper.js";
 import { AstManager } from "../../../ast/AstManager.js";
+import type { PathNormalizer } from "../../../utils/PathNormalizer.js";
 import {
     evaluateLanguageParityGate,
     formatParityBlockMessage
 } from "../../../config/LanguageParityGate.js";
+import { normalizeRepoScope } from "../../../utils/RepoScope.js";
+import { evaluateRepoEditPolicy } from "../shared/RepoGuard.js";
 
 export class ChangePillar {
   private fileSystem = new NodeFileSystem(process.cwd());
@@ -167,11 +170,55 @@ export class ChangePillar {
       const targetFiles = this.resolveTargetFiles(constraints, targets);
       const editPaths = this.collectEditPaths(rawEdits);
       const shouldBatch = this.shouldUseBatch(constraints, targetFiles, editPaths);
+      const repoRegistry = this.registry.getMetadata<RepoRegistry>("repoRegistry");
+      const pathNormalizer = this.registry.getMetadata<PathNormalizer>("pathNormalizer");
+      const allowCrossRepoEdits = Boolean((constraints as any).allowCrossRepoEdits);
+      const repoScopeParams = {
+        repoScope: (constraints as any).repoScope,
+        repoId: (constraints as any).repoId,
+        repoIds: (constraints as any).repoIds
+      };
+      const repoScope = repoRegistry && pathNormalizer
+        ? normalizeRepoScope(repoScopeParams, repoRegistry, { defaultMode: "default" })
+        : undefined;
+
+      const handleRepoGuard = (guard: ReturnType<typeof evaluateRepoEditPolicy>) => {
+        if (!guard.blocked) return null;
+        const reason = guard.blockedReason ?? "cross_repo_edit_blocked";
+        const degradedReasons = buildDegradedReasons([reason]);
+        const guidanceMessage = reason === "cross_repo_edit_blocked"
+          ? "Set allowCrossRepoEdits=true in .kairo/config/mcp-config.json for involved repos, then rerun with allowCrossRepoEdits:true."
+          : "Adjust repoScope to include the target repository or use the default repo.";
+        return attachWorkflow({
+          success: false,
+          status: "blocked",
+          message: guard.message ?? "Blocked by repo scope policy.",
+          errorCode: guard.errorCode ?? "CROSS_REPO_EDIT_BLOCKED",
+          blockedReason: reason,
+          degradedReasons,
+          guidance: { message: guidanceMessage },
+          sessionId: resolvedSessionId
+        });
+      };
     
       const v2Enabled = ConfigurationManager.getEditorV2Enabled();
       const v2Mode = ConfigurationManager.getEditorV2Mode();
       const useV2 = v2Enabled && v2Mode !== 'off';
     
+      if (shouldBatch && repoRegistry && pathNormalizer && repoScope) {
+        const guard = evaluateRepoEditPolicy({
+          filePaths: [...targetFiles, ...editPaths],
+          repoScope,
+          repoRegistry,
+          pathNormalizer,
+          allowCrossRepoEdits
+        });
+        const blocked = handleRepoGuard(guard);
+        if (blocked) {
+          return blocked;
+        }
+      }
+
       if (useV2 && shouldBatch) {
         const result = await executeV2BatchChange(
           { intent, context, rawEdits, targetFiles, dryRun, v2Mode },
@@ -231,6 +278,20 @@ export class ChangePillar {
             ]
           }
         });
+      }
+
+      if (targetPath && repoRegistry && pathNormalizer && repoScope) {
+        const guard = evaluateRepoEditPolicy({
+          filePaths: [targetPath, ...editPaths],
+          repoScope,
+          repoRegistry,
+          pathNormalizer,
+          allowCrossRepoEdits
+        });
+        const blocked = handleRepoGuard(guard);
+        if (blocked) {
+          return blocked;
+        }
       }
 
       const useDraftApply = !dryRun && rawEdits.length === 0 && Boolean(draftContent);
