@@ -4,6 +4,7 @@ import { BaseHandler } from "./BaseHandler.js";
 import { HandlerContext } from "./HandlerContext.js";
 import { metrics } from "../utils/MetricsCollector.js";
 import { resolveEmbeddingConfigFromEnv } from "../embeddings/EmbeddingConfig.js";
+import { computeEmbeddingDiagnostics, isHashModel } from "../embeddings/EmbeddingDiagnostics.js";
 import { ConfigBootstrapper } from "../config/ConfigBootstrapper.js";
 import { StorageMaintenanceService } from "../indexing/StorageMaintenanceService.js";
 import { EngineManager } from "../orchestration/capabilities/EngineManager.js";
@@ -104,6 +105,8 @@ export class ManageHandlers extends BaseHandler {
                         const indexSnapshot = await this.context.indexStateManager.getSnapshot();
                         const indexActivity = this.context.indexStateManager.getActivity();
                         const embeddingStatus = await this.context.documentSearchEngine.getEmbeddingStatus();
+                        const embeddingDiagnostics = computeEmbeddingDiagnostics();
+                        const embeddingFindings = this.buildEmbeddingFindings(embeddingDiagnostics);
                         const capabilityDiagnostics = EngineManager.getDiagnosticsSnapshot({
                             detail: detail === "full" ? "full" : "summary",
                             rootPath: this.context.rootPath
@@ -115,6 +118,8 @@ export class ManageHandlers extends BaseHandler {
                                 output: "Index status",
                                 status,
                                 embedding: embeddingStatus,
+                                embeddingDiagnostics,
+                                embeddingFindings,
                                 capabilityDiagnostics,
                                 indexSnapshot,
                                 activity: {
@@ -140,6 +145,8 @@ export class ManageHandlers extends BaseHandler {
                                 unresolvedSample
                             },
                             embedding: embeddingStatus,
+                            embeddingDiagnostics,
+                            embeddingFindings,
                             capabilityDiagnostics,
                             indexSnapshot,
                             activity: {
@@ -250,6 +257,8 @@ export class ManageHandlers extends BaseHandler {
                     const staleGuidance = indexSnapshot ? this.buildStaleRiskGuidance(indexSnapshot.staleRisk) : null;
                     const metricsExportStatus = this.context.metricsExportService?.getStatus();
                     const budgetSnapshot = this.buildBudgetSnapshot();
+                    const embeddingDiagnostics = computeEmbeddingDiagnostics();
+                    const embeddingFindings = this.buildEmbeddingFindings(embeddingDiagnostics);
                     return {
                         ...result,
                         output: "Config doctor completed.",
@@ -268,6 +277,8 @@ export class ManageHandlers extends BaseHandler {
                         },
                         ...(indexSnapshot ? { indexSnapshot } : {}),
                         ...(staleGuidance ? { staleGuidance } : {}),
+                        embeddingDiagnostics,
+                        ...(embeddingFindings.length > 0 ? { embeddingFindings } : {}),
                         ...(budgetSnapshot ? { budget: budgetSnapshot } : {}),
                         ...(metricsExportStatus ? { metricsExport: metricsExportStatus } : {})
                     };
@@ -639,5 +650,27 @@ export class ManageHandlers extends BaseHandler {
                 }
             ]
         };
+    }
+
+    private buildEmbeddingFindings(diagnostics: ReturnType<typeof computeEmbeddingDiagnostics>): Array<{ code: string; severity: "info" | "warning" | "critical"; message: string }> {
+        const findings: Array<{ code: string; severity: "info" | "warning" | "critical"; message: string }> = [];
+        if (diagnostics.remoteDownloadsAllowed) {
+            findings.push({
+                code: "EMBEDDINGS_REMOTE_ENABLED",
+                severity: "warning",
+                message: "Remote embeddings downloads are enabled; offline baseline is not guaranteed."
+            });
+        }
+        const modelId = diagnostics.modelId;
+        if (modelId && !isHashModel(modelId) && diagnostics.missingAssets && diagnostics.missingAssets.length > 0) {
+            findings.push({
+                code: diagnostics.resolvedModelRoot ? "EMBEDDINGS_LOCAL_MODEL_INCOMPLETE" : "EMBEDDINGS_LOCAL_MODEL_MISSING",
+                severity: "warning",
+                message: diagnostics.resolvedModelRoot
+                    ? "Local embedding model is incomplete; required files are missing."
+                    : "Local embedding model is missing; embeddings-ready baseline is not met."
+            });
+        }
+        return findings;
     }
 }

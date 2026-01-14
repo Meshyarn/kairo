@@ -146,7 +146,7 @@ Kairo can cap responses using `limits.maxTokens` (token-first) in addition to `l
 
 | Variable | Purpose |
 |---|---|
-| `KAIRO_EMBEDDING_PROVIDER` | Select embedding backend (`local`, `remote`, `hash`, `disabled`). | `remote` allows downloading models from HuggingFace. |
+| `KAIRO_EMBEDDING_PROVIDER` | Select embedding backend (`local`, `remote`, `hash`, `disabled`). | `remote` is opt-in and enables downloads from HuggingFace. |
 | `KAIRO_EMBEDDING_QUANTIZED` | Use quantized model (`true`/`false`). | Default: `true` (int8/q8). Set `false` for full precision (fp32/fp16). |
 | `KAIRO_EMBEDDING_MODEL` | Bundled/local model identifier (default: `multilingual-e5-small`). |
 | `KAIRO_MODEL_DIR` | Bundled model directory override (no remote downloads). |
@@ -222,6 +222,7 @@ When `KAIRO_VECTOR_INDEX_REBUILD=manual`, use the CLI `kairo-build-vector-index`
 |---|---|
 | `KAIRO_MODEL_SOURCE` | Source directory used by `npm run bundle:models` (model root or parent). |
 | `KAIRO_SKIP_MODEL_BUNDLE` | Skip bundling in `prepack` (`true` to skip). |
+| `KAIRO_MODEL_BUNDLE_PROFILE` | Bundle profile (`minimal` default, `full` to include all assets). |
 
 ## Integrity audit (ADR-041)
 
