@@ -221,6 +221,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
           edits: { type: "array", items: { type: "object" } },
           dryRun: { type: "boolean" },
           diffMode: { type: "string", enum: ["myers", "semantic"] },
+          createMissingDirectories: { type: "boolean" },
           fileVersions: {
             type: "object",
             additionalProperties: {
@@ -229,6 +230,14 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
                 expectedVersion: { type: "number" },
                 expectedHash: { type: "string" }
               }
+            }
+          },
+          options: {
+            type: "object",
+            properties: {
+              applyMode: { type: "string", enum: ["atomic", "partial"] },
+              deleteMode: { type: "string", enum: ["forbid", "confirm"] },
+              ordering: { type: "string", enum: ["stable", "creates_first"] }
             }
           }
         },

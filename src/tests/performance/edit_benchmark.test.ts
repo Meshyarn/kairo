@@ -156,9 +156,11 @@ export { authenticate, validateCredentials };
         const args = {
             edits: [{
                 filePath: 'delete_hash_test.ts',
-                operation: 'delete'
+                operation: 'delete',
+                confirmationHash: 'deadbeef'
             }],
-            dryRun: true
+            dryRun: true,
+            options: { deleteMode: 'confirm' }
         };
 
         const response = await (server as any).handleCallTool('edit_apply', args);
