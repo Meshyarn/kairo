@@ -68,6 +68,7 @@ The entries below cover all ADRs from the project history. Items marked “retou
 - ADR-062: Multi-repo E2E UX + safety boundaries → `docs/adr/ADR-062-multi-repo-e2e-ux-and-safety-boundaries.md`
 - ADR-063: Capability diagnostics + provider policy integration → `docs/adr/ADR-063-capability-diagnostics-and-provider-policy-integration.md`
 - ADR-064: FileVersion handshake (read↔apply) → `docs/adr/ADR-064-fileversion-handshake-read-apply.md`
+- ADR-065: Change execution contract (atomic apply + delete policy) → `docs/adr/ADR-065-change-execution-contract-atomic-apply-partial-opt-in-delete-policy.md`
 - ADR-055-H: Adaptive trust policy (no curated summary)
 - ADR-055-L: Action guidance + Understand fallback graph (no curated summary)
 - ADR-033: “Six Pillars” precursor to ADR-040; introduced orchestration primitives and earlier public surface.
@@ -77,6 +78,7 @@ The entries below cover all ADRs from the project history. Items marked “retou
 
 - ADR-041 (retouched): Integrity audit modes integrated into pillars → `docs/adr/ADR-041-integrity-audit-and-guardrails.md`
 - ADR-064: FileVersion handshake (read↔apply) → `docs/adr/ADR-064-fileversion-handshake-read-apply.md`
+- ADR-065: Change execution contract (atomic apply + delete policy) → `docs/adr/ADR-065-change-execution-contract-atomic-apply-partial-opt-in-delete-policy.md`
 - ADR-048: Sync feedback loop + architectural safety guardrails (tighten preflight/apply checks).
 - ADR-049: Defensive hardening for integrity engine and audit logging.
 - ADR-046 (retouched): Semantic validation layer for edit operations (go beyond text-match correctness) → `docs/adr/ADR-046-semantic-validation-layer.md`
@@ -185,6 +187,7 @@ This list captures every ADR title from the project history and where it’s cov
 - ADR-050: Writer's Flow (Research → Analyze → Skeleton → Write → Review → Manage) → `docs/adr/ADR-050-writers-flow.md`
 - ADR-061: Language Parity Gates (L2/L3) & Silent-pass 제거 → `docs/adr/ADR-061-language-parity-gates-and-silent-pass-removal.md`
 - ADR-064: FileVersion Handshake (read↔apply) → `docs/adr/ADR-064-fileversion-handshake-read-apply.md`
+- ADR-065: Change Execution Contract (atomic apply + delete policy) → `docs/adr/ADR-065-change-execution-contract-atomic-apply-partial-opt-in-delete-policy.md`
 - ADR-063: Capability Diagnostics & Provider Policy Integration → `docs/adr/ADR-063-capability-diagnostics-and-provider-policy-integration.md`
 - ADR-062: Multi-Repo E2E UX & Safety Boundaries → `docs/adr/ADR-062-multi-repo-e2e-ux-and-safety-boundaries.md`
 - ADR-063: Capability Diagnostics & Provider Policy Integration → `docs/adr/ADR-063-capability-diagnostics-and-provider-policy-integration.md`
