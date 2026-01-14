@@ -70,6 +70,7 @@ The entries below cover all ADRs from the project history. Items marked “retou
 - ADR-064: FileVersion handshake (read↔apply) → `docs/adr/ADR-064-fileversion-handshake-read-apply.md`
 - ADR-065: Change execution contract (atomic apply + delete policy) → `docs/adr/ADR-065-change-execution-contract-atomic-apply-partial-opt-in-delete-policy.md`
 - ADR-066: Guardrails override & audit trail → `docs/adr/ADR-066-guardrails-override-and-audit-trail.md`
+- ADR-067: Observability baseline (bench accuracy + minimal metrics + optional OTel) → `docs/adr/ADR-067-observability-baseline-bench-accuracy-min-metrics-otel.md`
 - ADR-055-H: Adaptive trust policy (no curated summary)
 - ADR-055-L: Action guidance + Understand fallback graph (no curated summary)
 - ADR-033: “Six Pillars” precursor to ADR-040; introduced orchestration primitives and earlier public surface.
@@ -103,6 +104,7 @@ The entries below cover all ADRs from the project history. Items marked “retou
 - ADR-055-H: Adaptive trust policy (archived; no curated summary)
 - ADR-055-L: Action guidance + Understand fallback graph (archived; no curated summary)
 - ADR-056 (summary): Token-aware dynamic context compression (maxTokens + distill) → `docs/adr/ADR-056-token-aware-dynamic-context-compression.md`
+- ADR-067: Observability baseline (bench accuracy + minimal metrics + optional OTel) → `docs/adr/ADR-067-observability-baseline-bench-accuracy-min-metrics-otel.md`
 - ADR-022: Scalable memory architecture (on-disk/lazy/streaming baseline ideas).
 - ADR-028: Performance + accuracy enhancements (historical deep dive).
 - ADR-029: Production readiness / system maturity (historical).
@@ -190,6 +192,8 @@ This list captures every ADR title from the project history and where it’s cov
 - ADR-061: Language Parity Gates (L2/L3) & Silent-pass 제거 → `docs/adr/ADR-061-language-parity-gates-and-silent-pass-removal.md`
 - ADR-064: FileVersion Handshake (read↔apply) → `docs/adr/ADR-064-fileversion-handshake-read-apply.md`
 - ADR-065: Change Execution Contract (atomic apply + delete policy) → `docs/adr/ADR-065-change-execution-contract-atomic-apply-partial-opt-in-delete-policy.md`
+- ADR-066: Guardrails override & audit trail → `docs/adr/ADR-066-guardrails-override-and-audit-trail.md`
+- ADR-067: Observability baseline (bench accuracy + minimal metrics + optional OTel) → `docs/adr/ADR-067-observability-baseline-bench-accuracy-min-metrics-otel.md`
 - ADR-063: Capability Diagnostics & Provider Policy Integration → `docs/adr/ADR-063-capability-diagnostics-and-provider-policy-integration.md`
 - ADR-062: Multi-Repo E2E UX & Safety Boundaries → `docs/adr/ADR-062-multi-repo-e2e-ux-and-safety-boundaries.md`
 - ADR-063: Capability Diagnostics & Provider Policy Integration → `docs/adr/ADR-063-capability-diagnostics-and-provider-policy-integration.md`

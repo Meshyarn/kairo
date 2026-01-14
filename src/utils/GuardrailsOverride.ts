@@ -1,5 +1,6 @@
 import { ConfigurationManager } from "../config/ConfigurationManager.js";
 import { normalizePath } from "./PathHelpers.js";
+import { metrics } from "./MetricsCollector.js";
 
 export type GuardrailsOverrideEnvelope = {
     approval: {
@@ -184,164 +185,164 @@ export function evaluateOverride(context: OverrideContext): OverrideDecision | n
         if (requiredOverrides.length === 0) {
             return null;
         }
-        return {
+        return recordOverrideDecision({
             decision: "rejected",
             errorCode: "OVERRIDE_REQUIRED",
             blockedReason: "override_required",
             message: "Override approval is required for the requested operation.",
             overridesUsed: requiredOverrides
-        };
+        });
     }
 
     if (!policy.enabled) {
-        return {
+        return recordOverrideDecision({
             decision: "rejected",
             errorCode: "OVERRIDE_NOT_ALLOWED",
             blockedReason: "override_not_allowed",
             message: "Overrides are disabled by policy.",
             overridesUsed: []
-        };
+        });
     }
 
     const approval = override.approval;
     if (!approval?.approvedBy || !approval?.reason || !approval?.issuedAt || !approval?.expiresAt) {
-        return {
+        return recordOverrideDecision({
             decision: "rejected",
             errorCode: "OVERRIDE_NOT_ALLOWED",
             blockedReason: "override_not_allowed",
             message: "Override approval metadata is incomplete.",
             overridesUsed: []
-        };
+        });
     }
 
     const issuedAt = Date.parse(approval.issuedAt);
     const expiresAt = Date.parse(approval.expiresAt);
     if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
-        return {
+        return recordOverrideDecision({
             decision: "expired",
             errorCode: "OVERRIDE_EXPIRED",
             blockedReason: "override_expired",
             message: "Override approval has expired.",
             overridesUsed: []
-        };
+        });
     }
 
     const ttlMs = policy.maxTtlMinutes * 60 * 1000;
     if (Number.isFinite(issuedAt) && expiresAt - issuedAt > ttlMs) {
-        return {
+        return recordOverrideDecision({
             decision: "rejected",
             errorCode: "OVERRIDE_NOT_ALLOWED",
             blockedReason: "override_not_allowed",
             message: "Override TTL exceeds policy limits.",
             overridesUsed: []
-        };
+        });
     }
 
     const scope = override.scope;
     if (!scope || !Array.isArray(scope.pillars) || !scope.pillars.includes(context.pillar)) {
-        return {
+        return recordOverrideDecision({
             decision: "out_of_scope",
             errorCode: "OVERRIDE_OUT_OF_SCOPE",
             blockedReason: "override_out_of_scope",
             message: "Override scope does not include this pillar.",
             overridesUsed: []
-        };
+        });
     }
 
     if (Array.isArray(scope.repoIds) && scope.repoIds.length > 0) {
         if (!context.repoId || !scope.repoIds.includes(context.repoId)) {
-            return {
+            return recordOverrideDecision({
                 decision: "out_of_scope",
                 errorCode: "OVERRIDE_OUT_OF_SCOPE",
                 blockedReason: "override_out_of_scope",
                 message: "Override scope does not include this repository.",
                 overridesUsed: []
-            };
+            });
         }
     }
 
     if (Array.isArray(scope.fileGlobs) && scope.fileGlobs.length > 0) {
         if (context.targetFiles.length === 0) {
-            return {
+            return recordOverrideDecision({
                 decision: "out_of_scope",
                 errorCode: "OVERRIDE_OUT_OF_SCOPE",
                 blockedReason: "override_out_of_scope",
                 message: "Override scope requires file targets.",
                 overridesUsed: []
-            };
+            });
         }
         const matched = context.targetFiles.every((filePath) =>
             scope.fileGlobs!.some((pattern) => matchGlob(filePath, pattern))
         );
         if (!matched) {
-            return {
+            return recordOverrideDecision({
                 decision: "out_of_scope",
                 errorCode: "OVERRIDE_OUT_OF_SCOPE",
                 blockedReason: "override_out_of_scope",
                 message: "Override scope does not match target files.",
                 overridesUsed: []
-            };
+            });
         }
     }
 
     const scopeMaxFiles = Number.isFinite(scope.maxFiles) ? (scope.maxFiles as number) : Number.POSITIVE_INFINITY;
     const allowedMaxFiles = Math.min(scopeMaxFiles, policy.maxFiles);
     if (context.targetFiles.length > allowedMaxFiles) {
-        return {
+        return recordOverrideDecision({
             decision: "out_of_scope",
             errorCode: "OVERRIDE_OUT_OF_SCOPE",
             blockedReason: "override_out_of_scope",
             message: "Override scope exceeds the maximum allowed file count.",
             overridesUsed: []
-        };
+        });
     }
 
     const requestedAllow = flattenOverrideAllow(override.allow);
     for (const key of Object.keys(requestedAllow)) {
         const policyValue = policy.allowed[key];
         if (!policyValue) {
-            return {
+            return recordOverrideDecision({
                 decision: "rejected",
                 errorCode: "OVERRIDE_NOT_ALLOWED",
                 blockedReason: "override_not_allowed",
                 message: `Override '${key}' is not allowed by policy.`,
                 overridesUsed: []
-            };
+            });
         }
         if (policyValue === "confirm_only" && requestedAllow[key] !== "confirm_only") {
-            return {
+            return recordOverrideDecision({
                 decision: "rejected",
                 errorCode: "OVERRIDE_NOT_ALLOWED",
                 blockedReason: "override_not_allowed",
                 message: `Override '${key}' must use confirm_only policy.`,
                 overridesUsed: []
-            };
+            });
         }
     }
 
     for (const required of requiredOverrides) {
         if (!(required in requestedAllow)) {
-            return {
+            return recordOverrideDecision({
                 decision: "rejected",
                 errorCode: "OVERRIDE_REQUIRED",
                 blockedReason: "override_required",
                 message: `Override '${required}' is required for this operation.`,
                 overridesUsed: []
-            };
+            });
         }
         if (!isOverrideAllowed(requestedAllow[required])) {
-            return {
+            return recordOverrideDecision({
                 decision: "rejected",
                 errorCode: "OVERRIDE_NOT_ALLOWED",
                 blockedReason: "override_not_allowed",
                 message: `Override '${required}' is not enabled in the request.`,
                 overridesUsed: []
-            };
+            });
         }
     }
 
     const overridesUsed = Object.keys(requestedAllow).filter((key) => isOverrideAllowed(requestedAllow[key]));
-    return {
+    return recordOverrideDecision({
         decision: "accepted",
         message: "Override approved.",
         overridesUsed,
@@ -349,7 +350,16 @@ export function evaluateOverride(context: OverrideContext): OverrideDecision | n
         requestedAllow,
         approval,
         scope
-    };
+    });
+}
+
+function recordOverrideDecision(decision: OverrideDecision): OverrideDecision {
+    if (decision.decision === "accepted") {
+        metrics.inc("override.accepted_total");
+    } else {
+        metrics.inc("override.rejected_total");
+    }
+    return decision;
 }
 
 function flattenOverrideAllow(allow: GuardrailsOverrideEnvelope["allow"]): Record<string, unknown> {

@@ -76,6 +76,7 @@ import { metrics } from "../utils/MetricsCollector.js";
 import { VectorIndexManager } from "../vector/VectorIndexManager.js";
 import { AdaptiveFlowReporter } from "../utils/AdaptiveFlowReporter.js";
 import { AlertDispatcher } from "../utils/AlertDispatcher.js";
+import { MetricsExportService } from "../utils/metrics/MetricsExportService.js";
 
 // Orchestration Imports
 import { OrchestrationEngine } from "../orchestration/OrchestrationEngine.js";
@@ -153,6 +154,7 @@ export class SmartContextServer {
     private storagePruneRunning = false;
     private metricsReporter?: AdaptiveFlowReporter;
     private alertDispatcher?: AlertDispatcher;
+    private metricsExportService?: MetricsExportService;
     private toolSpecRegistry = createDefaultToolSpecRegistry();
 
     private searchHandlers!: SearchHandlers;
@@ -342,6 +344,7 @@ export class SmartContextServer {
 
         this.startHeartbeat();
         this.initMetricsReporter();
+        this.initMetricsExportService();
         this.startStoragePrune();
     }
 
@@ -377,6 +380,7 @@ export class SmartContextServer {
             indexDatabase: this.indexDatabase,
             historyEngine: this.historyEngine,
             flowArtifactManager: this.flowArtifactManager,
+            metricsExportService: this.metricsExportService,
             isTestEnv: () => this.isTestEnv()
         });
         this.searchHandlers = new SearchHandlers(handlerContext);
@@ -687,6 +691,15 @@ export class SmartContextServer {
         });
         reporter.start();
         this.metricsReporter = reporter;
+    }
+
+    private initMetricsExportService(): void {
+        if (this.isTestEnv()) return;
+        const service = new MetricsExportService();
+        this.metricsExportService = service;
+        void service.start().catch((error) => {
+            console.warn("[SmartContextServer] Metrics export service failed to start:", error);
+        });
     }
 
     private parseNumberEnv(raw: string | undefined, fallback: number): number {
@@ -1015,6 +1028,9 @@ export class SmartContextServer {
     public async shutdown() {
         this.stopHeartbeat();
         this.stopStoragePrune();
+        if (this.metricsExportService) {
+            await this.metricsExportService.stop();
+        }
         await this.server.close();
         this.clusterSearchEngine.stopBackgroundTasks();
         if (this.incrementalIndexer) {
