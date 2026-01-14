@@ -82,6 +82,14 @@ export class PathManager {
         return path.join(this.getHistoryDir(), 'transactions.db');
     }
 
+    static getAuditDir() {
+        return this.resolve('data', 'audit');
+    }
+
+    static getAuditLogPath() {
+        return path.join(this.getAuditDir(), 'audit.jsonl');
+    }
+
     // --- Configuration Paths ---
 
     static getConfigDir() {

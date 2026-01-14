@@ -28,6 +28,24 @@ const makeContext = () => {
   };
 };
 
+const makeOverride = () => ({
+  approval: {
+    approvedBy: "test",
+    reason: "delete policy test",
+    issuedAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    method: "manual"
+  },
+  scope: {
+    pillars: ["edit_apply"],
+    fileGlobs: ["**"],
+    maxFiles: 10
+  },
+  allow: {
+    editPolicy: { allowDelete: "confirm_only" }
+  }
+});
+
 describe("EditHandlers Branches", () => {
   let handlers: EditHandlers;
   let context: any;
@@ -57,10 +75,19 @@ describe("EditHandlers Branches", () => {
     context.fileSystem.exists.mockResolvedValue(true);
     context.fileSystem.readFile.mockResolvedValue("actual content");
 
+    // Branch: missing override blocks risky delete operation
+    const resBlocked = await (handlers as any).editCodeRaw({
+      edits: [{ operation: "delete", filePath: "blocked.ts" }],
+      options: { deleteMode: "confirm" }
+    });
+    expect(resBlocked.status).toBe("blocked");
+    expect(resBlocked.errorCode).toBe("OVERRIDE_REQUIRED");
+
     // Branch: delete requires confirmation hash
     const argsConfirm = {
       edits: [{ operation: "delete", filePath: "large.ts" }],
-      options: { deleteMode: "confirm" }
+      options: { deleteMode: "confirm" },
+      override: makeOverride()
     };
     const res1 = await (handlers as any).editCodeRaw(argsConfirm);
     expect(res1.results[0].status).toBe("confirmation_required");
@@ -68,7 +95,8 @@ describe("EditHandlers Branches", () => {
     // Branch: confirmation hash mismatch blocks deletion
     const argsHash = {
       edits: [{ operation: "delete", filePath: "small.ts", confirmationHash: "wrong-hash" }],
-      options: { deleteMode: "confirm" }
+      options: { deleteMode: "confirm" },
+      override: makeOverride()
     };
     const resHash = await (handlers as any).editCodeRaw(argsHash);
     expect(resHash.results[0].errorCode).toBe("DELETE_HASH_MISMATCH");
@@ -79,6 +107,7 @@ describe("EditHandlers Branches", () => {
     const argsDelete = {
       edits: [{ operation: "delete", filePath: "ok.ts", confirmationHash: hash }],
       options: { deleteMode: "confirm" },
+      override: makeOverride(),
       dryRun: false
     };
     await (handlers as any).editCodeRaw(argsDelete);

@@ -34,6 +34,12 @@ import type { RepoRegistry } from "../../config/RepoRegistry.js";
 import type { PathNormalizer } from "../../utils/PathNormalizer.js";
 import { normalizeRepoScope } from "../../utils/RepoScope.js";
 import { evaluateRepoEditPolicy } from "./shared/RepoGuard.js";
+import { AuditLog } from "../../utils/AuditLog.js";
+import {
+  detectOverrideRequirementsFromConstraints,
+  evaluateOverride,
+  type OverrideTrace
+} from "../../utils/GuardrailsOverride.js";
 
 export class WritePillar {
   constructor(private readonly registry: InternalToolRegistry) {}
@@ -97,6 +103,7 @@ export class WritePillar {
         artifactManager
       });
       const workflowWarnings = this.buildWorkflowWarnings(workflowMeta, Boolean(resolvedSessionId));
+      let overrideTrace: OverrideTrace | undefined;
       const repoRegistry = this.registry.getMetadata<RepoRegistry>("repoRegistry");
       const pathNormalizer = this.registry.getMetadata<PathNormalizer>("pathNormalizer");
       const fileVersionManager = this.registry.getMetadata<FileVersionManager>("fileVersionManager");
@@ -136,6 +143,9 @@ export class WritePillar {
         if (workflowWarnings.length > 0) {
           next.workflowWarnings = workflowWarnings;
         }
+        if (overrideTrace) {
+          (next as any).overrideTrace = overrideTrace;
+        }
         return resolvedSessionId ? { ...next, sessionId: resolvedSessionId } : next;
       };
 
@@ -153,6 +163,48 @@ export class WritePillar {
       }
 
       const resolvedPath = await this.resolveTargetPath(targetPath);
+      const overrideDecision = evaluateOverride({
+        override: (constraints as any).override,
+        requiredOverrides: detectOverrideRequirementsFromConstraints(constraints),
+        targetFiles: [resolvedPath],
+        pillar: "write",
+        repoId: typeof (constraints as any).repoId === "string" ? (constraints as any).repoId : undefined
+      });
+      const bypassIntegrityGuardrails = overrideDecision?.effectiveAllow?.["integrityGuardrails.bypass"] === true;
+      const bypassReviewBlock = overrideDecision?.effectiveAllow?.["reviewPolicy.bypassPreApplyBlock"] === true;
+      if (overrideDecision) {
+        const auditEventId = await AuditLog.append({
+          pillar: "write",
+          operation: "override_check",
+          decision: overrideDecision.decision,
+          actor: overrideDecision.approval?.approvedBy,
+          reason: overrideDecision.approval?.reason,
+          ticket: overrideDecision.approval?.ticket,
+          scope: overrideDecision.scope,
+          requested: overrideDecision.requestedAllow,
+          effective: overrideDecision.effectiveAllow,
+          targetFiles: [resolvedPath],
+          result: overrideDecision.errorCode
+            ? { success: false, status: "blocked", errorCode: overrideDecision.errorCode }
+            : undefined
+        });
+        overrideTrace = {
+          auditEventId,
+          decision: overrideDecision.decision,
+          overridesUsed: overrideDecision.overridesUsed,
+          expiresAt: overrideDecision.approval?.expiresAt
+        };
+        if (overrideDecision.errorCode) {
+          return attachSession({
+            success: false,
+            status: "blocked",
+            message: overrideDecision.message,
+            errorCode: overrideDecision.errorCode,
+            blockedReason: overrideDecision.blockedReason,
+            guidance: { message: overrideDecision.message }
+          });
+        }
+      }
       if (repoRegistry && pathNormalizer && repoScope) {
         const guard = evaluateRepoEditPolicy({
           filePaths: [resolvedPath],
@@ -202,7 +254,29 @@ export class WritePillar {
           degradedReasons: mergedReasons
         };
       };
-      const attachResponse = <T extends Record<string, any>>(payload: T) => attachSession(applyParitySignals(payload));
+      const attachResponse = <T extends Record<string, any>>(payload: T) => {
+        const response = attachSession(applyParitySignals(payload));
+        if (overrideDecision) {
+          void AuditLog.append({
+            pillar: "write",
+            operation: dryRun ? "dry_run" : "apply",
+            decision: overrideDecision.decision,
+            actor: overrideDecision.approval?.approvedBy,
+            reason: overrideDecision.approval?.reason,
+            ticket: overrideDecision.approval?.ticket,
+            scope: overrideDecision.scope,
+            requested: overrideDecision.requestedAllow,
+            effective: overrideDecision.effectiveAllow,
+            targetFiles: [resolvedPath],
+            result: {
+              success: Boolean((payload as any).success),
+              status: (payload as any).status,
+              errorCode: (payload as any).errorCode
+            }
+          });
+        }
+        return response;
+      };
 
       if (!dryRun && parityGate.outcome === "block") {
         const message = formatParityBlockMessage({ filePath: resolvedPath, result: parityGate });
@@ -392,7 +466,8 @@ export class WritePillar {
               resolvedSessionId,
               reviewOptions,
               sessionStylePack,
-              fileVersions
+              fileVersions,
+              { integrityGuardrails: bypassIntegrityGuardrails, reviewPolicy: bypassReviewBlock }
             );
             return attachResponse(result);
           }
@@ -420,7 +495,8 @@ export class WritePillar {
               resolvedSessionId,
               reviewOptions,
               sessionStylePack,
-              fileVersions
+              fileVersions,
+              { integrityGuardrails: bypassIntegrityGuardrails, reviewPolicy: bypassReviewBlock }
             );
             return attachResponse(result);
           }
@@ -458,6 +534,9 @@ export class WritePillar {
             constraints
           );
           if (guardrailResult?.status === 'block') {
+            if (bypassIntegrityGuardrails) {
+              workflowWarnings.push("Override bypassed integrity guardrails blocking for this apply.");
+            } else {
             stopSafePatch();
             return attachResponse({
               success: false,
@@ -478,6 +557,7 @@ export class WritePillar {
                 message: guardrailResult.violations?.[0]?.message ?? 'Write blocked by integrity guardrails.'
               }
             });
+            }
           }
           const reviewBlock = await this.checkReviewBlock({
             filePath: resolvedPath,
@@ -486,7 +566,8 @@ export class WritePillar {
             guardrailResult,
             constraints,
             reviewOptions,
-            stylePack: sessionStylePack
+            stylePack: sessionStylePack,
+            overrideBypass: bypassReviewBlock
           });
           if (reviewBlock.blocked) {
             stopSafePatch();
@@ -592,6 +673,9 @@ export class WritePillar {
           constraints
         );
         if (guardrailResult?.status === 'block') {
+          if (bypassIntegrityGuardrails) {
+            workflowWarnings.push("Override bypassed integrity guardrails blocking for this apply.");
+          } else {
           return attachResponse({
             success: false,
             status: 'blocked',
@@ -611,6 +695,7 @@ export class WritePillar {
               message: guardrailResult.violations?.[0]?.message ?? 'Write blocked by integrity guardrails.'
             }
           });
+          }
         }
         const reviewBlock = await this.checkReviewBlock({
           filePath: resolvedPath,
@@ -619,7 +704,8 @@ export class WritePillar {
           guardrailResult,
           constraints,
           reviewOptions,
-          stylePack: sessionStylePack
+          stylePack: sessionStylePack,
+          overrideBypass: bypassReviewBlock
         });
         if (reviewBlock.blocked) {
           return attachResponse({
@@ -758,6 +844,9 @@ export class WritePillar {
         constraints
       );
       if (guardrailResult?.status === 'block') {
+        if (bypassIntegrityGuardrails) {
+          workflowWarnings.push("Override bypassed integrity guardrails blocking for this apply.");
+        } else {
         return attachResponse({
           success: false,
           status: 'blocked',
@@ -777,6 +866,7 @@ export class WritePillar {
             message: guardrailResult.violations?.[0]?.message ?? 'Write blocked by integrity guardrails.'
           }
         });
+        }
       }
       const reviewBlock = await this.checkReviewBlock({
         filePath: resolvedPath,
@@ -785,7 +875,8 @@ export class WritePillar {
         guardrailResult,
         constraints,
         reviewOptions,
-        stylePack: sessionStylePack
+        stylePack: sessionStylePack,
+        overrideBypass: bypassReviewBlock
       });
       if (reviewBlock.blocked) {
         return attachResponse({
@@ -1078,6 +1169,7 @@ export class WritePillar {
     constraints?: any;
     reviewOptions: any;
     stylePack?: any;
+    overrideBypass?: boolean;
   }): Promise<{ blocked: boolean; review?: any; message?: string; reasons?: Array<{ kind: string; verdict: string }> }> {
     const blockOn = Array.isArray(params.reviewOptions?.blockOn) ? params.reviewOptions.blockOn : [];
     if (blockOn.length === 0) {
@@ -1102,6 +1194,9 @@ export class WritePillar {
     const reasons = collectBlockReasons(review, blockOn);
     if (reasons.length === 0) {
       return { blocked: false, review, reasons };
+    }
+    if (params.overrideBypass) {
+      return { blocked: false, review, reasons, message: "Review block was bypassed by override." };
     }
     return {
       blocked: true,
@@ -1221,7 +1316,8 @@ export class WritePillar {
     sessionId?: string,
     reviewOptions?: any,
     stylePack?: StylePack,
-    fileVersions?: Record<string, { expectedVersion?: number; expectedHash?: string }>
+    fileVersions?: Record<string, { expectedVersion?: number; expectedHash?: string }>,
+    overrideBypass?: { integrityGuardrails?: boolean; reviewPolicy?: boolean }
   ): Promise<any> {
     try {
       let finalContent = content;
@@ -1250,6 +1346,9 @@ export class WritePillar {
         constraints
       );
       if (guardrailResult?.status === 'block') {
+        if (overrideBypass?.integrityGuardrails) {
+          // Continue despite block.
+        } else {
         return {
           success: false,
           status: 'blocked',
@@ -1271,6 +1370,7 @@ export class WritePillar {
             message: guardrailResult.violations?.[0]?.message ?? 'Write blocked by integrity guardrails.'
           }
         };
+        }
       }
       const reviewBlock = await this.checkReviewBlock({
         filePath,
@@ -1281,7 +1381,8 @@ export class WritePillar {
         reviewOptions: reviewOptions ?? this.resolveReviewOptions(constraints?.reviewOptions, Boolean(sessionId)),
         stylePack: stylePack ?? (sessionId
           ? this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager")?.getLatestStylePack(sessionId)
-          : undefined)
+          : undefined),
+        overrideBypass: overrideBypass?.reviewPolicy === true
       });
       if (reviewBlock.blocked) {
         return {

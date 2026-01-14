@@ -1,6 +1,12 @@
 import { BaseHandler } from "./BaseHandler.js";
 import { HandlerContext } from "./HandlerContext.js";
 import type { BatchOperation, FileOperation } from "../types.js";
+import { AuditLog } from "../utils/AuditLog.js";
+import {
+    detectOverrideRequirementsForEditApply,
+    evaluateOverride,
+    type OverrideTrace
+} from "../utils/GuardrailsOverride.js";
 import { createRequire } from "module";
 import * as path from "path";
 import * as crypto from "crypto";
@@ -233,6 +239,51 @@ export class EditHandlers extends BaseHandler {
         const applyMode = rawOptions.applyMode === "partial" ? "partial" : "atomic";
         const deleteMode = rawOptions.deleteMode === "confirm" ? "confirm" : "forbid";
         const ordering = rawOptions.ordering === "stable" ? "stable" : "creates_first";
+        const overrideTargets = edits
+            .map((edit: any) => (edit?.filePath ? this.resolveRelativePath(edit.filePath) : undefined))
+            .filter(Boolean) as string[];
+        const overrideDecision = evaluateOverride({
+            override: args?.override,
+            requiredOverrides: detectOverrideRequirementsForEditApply({ options: rawOptions, edits }),
+            targetFiles: overrideTargets,
+            pillar: "edit_apply"
+        });
+        let overrideTrace: OverrideTrace | undefined;
+        if (overrideDecision) {
+            const auditEventId = await AuditLog.append({
+                pillar: "edit_apply",
+                operation: "override_check",
+                decision: overrideDecision.decision,
+                actor: overrideDecision.approval?.approvedBy,
+                reason: overrideDecision.approval?.reason,
+                ticket: overrideDecision.approval?.ticket,
+                scope: overrideDecision.scope,
+                requested: overrideDecision.requestedAllow,
+                effective: overrideDecision.effectiveAllow,
+                targetFiles: overrideTargets,
+                result: overrideDecision.errorCode
+                    ? { success: false, status: "blocked", errorCode: overrideDecision.errorCode }
+                    : undefined
+            });
+            overrideTrace = {
+                auditEventId,
+                decision: overrideDecision.decision,
+                overridesUsed: overrideDecision.overridesUsed,
+                expiresAt: overrideDecision.approval?.expiresAt
+            };
+            if (overrideDecision.errorCode) {
+                return {
+                    success: false,
+                    status: "blocked",
+                    errorCode: overrideDecision.errorCode,
+                    blockedReason: overrideDecision.blockedReason,
+                    message: overrideDecision.message,
+                    overrideTrace,
+                    results: [],
+                    summary: { planned: 0, applied: 0, failed: 0, blocked: 1, confirmationRequired: 0 }
+                };
+            }
+        }
 
         const operationsByFile = new Map<string, Set<string>>();
         const addOperation = (filePath: string, operation: string) => {
@@ -492,13 +543,36 @@ export class EditHandlers extends BaseHandler {
             const summary = summarize(preflightResults);
             const blocked = anyStatus(preflightResults, "blocked") || anyStatus(preflightResults, "confirmation_required");
             const failed = anyStatus(preflightResults, "failed");
-            return {
+            const response = {
                 success: !blocked && !failed,
                 status: blocked ? "blocked" : (failed ? "failed" : "success"),
                 message: blocked ? "Preflight blocked the apply request." : (failed ? "Preflight failed for one or more edits." : "Dry run completed."),
                 results: preflightResults,
                 summary
             };
+            if (overrideTrace) {
+                (response as any).overrideTrace = overrideTrace;
+            }
+            if (overrideDecision) {
+                void AuditLog.append({
+                    pillar: "edit_apply",
+                    operation: dryRun ? "dry_run" : "apply",
+                    decision: overrideDecision.decision,
+                    actor: overrideDecision.approval?.approvedBy,
+                    reason: overrideDecision.approval?.reason,
+                    ticket: overrideDecision.approval?.ticket,
+                    scope: overrideDecision.scope,
+                    requested: overrideDecision.requestedAllow,
+                    effective: overrideDecision.effectiveAllow,
+                    targetFiles: overrideTargets,
+                    result: {
+                        success: response.success,
+                        status: response.status,
+                        errorCode: (response as any).errorCode
+                    }
+                });
+            }
+            return response;
         }
 
         if (applyMode === "atomic" && createOps.length === 0 && deleteOps.length === 0 && replaceEditsByFile.size > 1) {
@@ -526,7 +600,7 @@ export class EditHandlers extends BaseHandler {
                     message: errorMessage,
                     error: errorMessage
                 }));
-                return {
+                const response = {
                     success: false,
                     status: "failed",
                     message: errorMessage,
@@ -534,6 +608,29 @@ export class EditHandlers extends BaseHandler {
                     results: failedResults,
                     summary: summarize(failedResults)
                 };
+                if (overrideTrace) {
+                    (response as any).overrideTrace = overrideTrace;
+                }
+                if (overrideDecision) {
+                    void AuditLog.append({
+                        pillar: "edit_apply",
+                        operation: "apply",
+                        decision: overrideDecision.decision,
+                        actor: overrideDecision.approval?.approvedBy,
+                        reason: overrideDecision.approval?.reason,
+                        ticket: overrideDecision.approval?.ticket,
+                        scope: overrideDecision.scope,
+                        requested: overrideDecision.requestedAllow,
+                        effective: overrideDecision.effectiveAllow,
+                        targetFiles: overrideTargets,
+                        result: {
+                            success: false,
+                            status: "failed",
+                            errorCode
+                        }
+                    });
+                }
+                return response;
             }
             const results = orderedReplaceFiles.map((filePath) => {
                 const preflight = preflightMap.get(`${filePath}::replace`);
@@ -551,13 +648,35 @@ export class EditHandlers extends BaseHandler {
                 this.context.incrementalIndexer?.enqueuePaths(absPath, "high");
             }
             const updated = await this.collectUpdatedFileStates(orderedReplaceFiles);
-            return {
+            const response = {
                 success: true,
                 status: "success",
                 results,
                 summary: summarize(results),
                 updatedFileStates: Object.keys(updated).length > 0 ? updated : undefined
             };
+            if (overrideTrace) {
+                (response as any).overrideTrace = overrideTrace;
+            }
+            if (overrideDecision) {
+                void AuditLog.append({
+                    pillar: "edit_apply",
+                    operation: "apply",
+                    decision: overrideDecision.decision,
+                    actor: overrideDecision.approval?.approvedBy,
+                    reason: overrideDecision.approval?.reason,
+                    ticket: overrideDecision.approval?.ticket,
+                    scope: overrideDecision.scope,
+                    requested: overrideDecision.requestedAllow,
+                    effective: overrideDecision.effectiveAllow,
+                    targetFiles: overrideTargets,
+                    result: {
+                        success: true,
+                        status: "success"
+                    }
+                });
+            }
+            return response;
         }
 
         const updatedFileStates: Record<string, { newVersion: number; newHash: string }> = {};
@@ -769,7 +888,8 @@ export class EditHandlers extends BaseHandler {
                 message: "Atomic apply failed; all changes rolled back.",
                 errorCode: "BATCH_APPLY_FAILED",
                 results: failedResults,
-                summary: summarize(failedResults)
+                summary: summarize(failedResults),
+                ...(overrideTrace ? { overrideTrace } : {})
             };
         }
 
@@ -817,13 +937,36 @@ export class EditHandlers extends BaseHandler {
             ? "success"
             : (summary.applied > 0 ? "partial_success" : (summary.blocked > 0 || summary.confirmationRequired > 0 ? "blocked" : "failed"));
 
-        return {
+        const response = {
             success,
             status,
             results,
             summary,
             updatedFileStates: Object.keys(updatedFileStates).length > 0 ? updatedFileStates : undefined
         };
+        if (overrideTrace) {
+            (response as any).overrideTrace = overrideTrace;
+        }
+        if (overrideDecision) {
+            void AuditLog.append({
+                pillar: "edit_apply",
+                operation: dryRun ? "dry_run" : "apply",
+                decision: overrideDecision.decision,
+                actor: overrideDecision.approval?.approvedBy,
+                reason: overrideDecision.approval?.reason,
+                ticket: overrideDecision.approval?.ticket,
+                scope: overrideDecision.scope,
+                requested: overrideDecision.requestedAllow,
+                effective: overrideDecision.effectiveAllow,
+                targetFiles: overrideTargets,
+                result: {
+                    success,
+                    status,
+                    errorCode: (response as any).errorCode
+                }
+            });
+        }
+        return response;
     }
 
     private async editFileRaw(args: any) {

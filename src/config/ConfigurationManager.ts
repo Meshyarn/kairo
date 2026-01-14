@@ -17,6 +17,13 @@ export interface ConfigurationEventPayloads {
     packageJsonChanged: { filePath: string };
 }
 
+export type OverridePolicyConfig = {
+    enabled?: boolean;
+    maxTtlMinutes?: number;
+    maxFiles?: number;
+    allowed?: Record<string, boolean | "confirm_only">;
+};
+
 const WATCH_FILES = [
     "tsconfig.json",
     "jsconfig.json",
@@ -433,6 +440,33 @@ export class ConfigurationManager extends EventEmitter {
         };
     }
 
+    public static getOverridePolicy(): {
+        enabled: boolean;
+        maxTtlMinutes: number;
+        maxFiles: number;
+        allowed: Record<string, boolean | "confirm_only">;
+    } {
+        const isTestEnv = process.env.NODE_ENV === "test" || process.env.JEST_WORKER_ID !== undefined;
+        const defaults = isTestEnv
+            ? {
+                enabled: true,
+                maxTtlMinutes: 60,
+                maxFiles: 50,
+                allowed: {
+                    "editPolicy.allowDelete": "confirm_only" as const,
+                    "editPolicy.allowPartialApply": true
+                } as Record<string, boolean | "confirm_only">
+            }
+            : { enabled: false, maxTtlMinutes: 60, maxFiles: 50, allowed: {} };
+        const fileConfig = ConfigurationManager.loadOverridesConfig();
+        return {
+            enabled: fileConfig.enabled ?? defaults.enabled,
+            maxTtlMinutes: Number.isFinite(fileConfig.maxTtlMinutes) ? (fileConfig.maxTtlMinutes as number) : defaults.maxTtlMinutes,
+            maxFiles: Number.isFinite(fileConfig.maxFiles) ? (fileConfig.maxFiles as number) : defaults.maxFiles,
+            allowed: fileConfig.allowed ?? defaults.allowed
+        };
+    }
+
     private static loadArchitecturalSafetyConfig(): {
         enabled?: boolean;
         coreThreshold?: number;
@@ -491,6 +525,21 @@ export class ConfigurationManager extends EventEmitter {
             const raw = fs.readFileSync(configPath, "utf-8");
             const parsed = JSON.parse(raw);
             return parsed?.integrityGuardrails ?? {};
+        } catch (error) {
+            console.warn(`[ConfigurationManager] Failed to read ${path.basename(configPath)}:`, error);
+            return {};
+        }
+    }
+
+    private static loadOverridesConfig(): OverridePolicyConfig {
+        const configPath = path.join(process.cwd(), ".mcp-config.json");
+        if (!fs.existsSync(configPath)) {
+            return {};
+        }
+        try {
+            const raw = fs.readFileSync(configPath, "utf-8");
+            const parsed = JSON.parse(raw);
+            return parsed?.overrides ?? {};
         } catch (error) {
             console.warn(`[ConfigurationManager] Failed to read ${path.basename(configPath)}:`, error);
             return {};

@@ -17,6 +17,12 @@ import type { DependencyGraph } from '../../../ast/DependencyGraph.js';
 import type { IndexStateManager } from '../../../indexing/IndexStateManager.js';
 import { FeatureFlags } from '../../../config/FeatureFlags.js';
 import type { StylePack, WorkflowMeta } from '../../../types/flow-artifacts.js';
+import { AuditLog } from "../../../utils/AuditLog.js";
+import {
+    detectOverrideRequirementsFromConstraints,
+    evaluateOverride,
+    type OverrideTrace
+} from "../../../utils/GuardrailsOverride.js";
 
 import { 
     toImpactReport, 
@@ -138,6 +144,7 @@ export class ChangePillar {
         artifactManager
       });
       const workflowWarnings = this.buildWorkflowWarnings(workflowMeta, Boolean(resolvedSessionId));
+      let overrideTrace: OverrideTrace | undefined;
       const attachWorkflow = <T extends Record<string, any>>(payload: T): T & { workflowMeta: WorkflowMeta; workflowWarnings?: string[] } => {
         const next = {
           ...payload,
@@ -165,6 +172,9 @@ export class ChangePillar {
         if (workflowWarnings.length > 0) {
           next.workflowWarnings = workflowWarnings;
         }
+        if (overrideTrace) {
+          (next as any).overrideTrace = overrideTrace;
+        }
         return next;
       };
 
@@ -172,6 +182,49 @@ export class ChangePillar {
       const targetFiles = this.resolveTargetFiles(constraints, targets);
       const editPaths = this.collectEditPaths(rawEdits);
       const shouldBatch = this.shouldUseBatch(constraints, targetFiles, editPaths);
+      const overrideTargets = targetFiles.length > 0 ? targetFiles : editPaths;
+      const overrideDecision = evaluateOverride({
+        override: (constraints as any).override,
+        requiredOverrides: detectOverrideRequirementsFromConstraints(constraints),
+        targetFiles: overrideTargets,
+        pillar: "change",
+        repoId: typeof (constraints as any).repoId === "string" ? (constraints as any).repoId : undefined
+      });
+      const bypassIntegrityGuardrails = overrideDecision?.effectiveAllow?.["integrityGuardrails.bypass"] === true;
+      const bypassReviewBlock = overrideDecision?.effectiveAllow?.["reviewPolicy.bypassPreApplyBlock"] === true;
+      if (overrideDecision) {
+        const auditEventId = await AuditLog.append({
+          pillar: "change",
+          operation: "override_check",
+          decision: overrideDecision.decision,
+          actor: overrideDecision.approval?.approvedBy,
+          reason: overrideDecision.approval?.reason,
+          ticket: overrideDecision.approval?.ticket,
+          scope: overrideDecision.scope,
+          requested: overrideDecision.requestedAllow,
+          effective: overrideDecision.effectiveAllow,
+          targetFiles: overrideTargets,
+          result: overrideDecision.errorCode
+            ? { success: false, status: "blocked", errorCode: overrideDecision.errorCode }
+            : undefined
+        });
+        overrideTrace = {
+          auditEventId,
+          decision: overrideDecision.decision,
+          overridesUsed: overrideDecision.overridesUsed,
+          expiresAt: overrideDecision.approval?.expiresAt
+        };
+        if (overrideDecision.errorCode) {
+          return attachWorkflow({
+            success: false,
+            status: "blocked",
+            message: overrideDecision.message,
+            errorCode: overrideDecision.errorCode,
+            blockedReason: overrideDecision.blockedReason,
+            guidance: { message: overrideDecision.message }
+          });
+        }
+      }
       const repoRegistry = this.registry.getMetadata<RepoRegistry>("repoRegistry");
       const pathNormalizer = this.registry.getMetadata<PathNormalizer>("pathNormalizer");
       const fileVersionManager = this.registry.getMetadata<FileVersionManager>("fileVersionManager");
@@ -482,6 +535,10 @@ export class ChangePillar {
         });
 
         if (!dryRun && guardrailResult?.status === "block") {
+          if (bypassIntegrityGuardrails) {
+            workflowWarnings.push("Override bypassed integrity guardrails blocking for this apply.");
+            guardrailResult = { ...guardrailResult, status: "warn", blockedReason: "override_bypassed" };
+          } else {
           return attachWorkflow({
             success: false,
             status: "blocked",
@@ -500,6 +557,7 @@ export class ChangePillar {
               message: guardrailResult.violations?.[0]?.message ?? "Resolve guardrail violations before retrying."
             }
           });
+          }
         }
       }
 
@@ -533,6 +591,9 @@ export class ChangePillar {
 
         const blockReasons = collectBlockReasons(preApplyReview, blockOn);
         if (blockReasons.length > 0) {
+          if (bypassReviewBlock) {
+            workflowWarnings.push("Override bypassed pre-apply review blocking for this apply.");
+          } else {
           if (artifactManager) {
             artifactManager.store({
               id: preApplyReview.id,
@@ -568,6 +629,7 @@ export class ChangePillar {
             },
             sessionId: resolvedSessionId
           });
+          }
         }
       }
 
@@ -973,6 +1035,26 @@ export class ChangePillar {
             });
           }
         }
+      }
+
+      if (overrideDecision) {
+        await AuditLog.append({
+          pillar: "change",
+          operation: dryRun ? "dry_run" : "apply",
+          decision: overrideDecision.decision,
+          actor: overrideDecision.approval?.approvedBy,
+          reason: overrideDecision.approval?.reason,
+          ticket: overrideDecision.approval?.ticket,
+          scope: overrideDecision.scope,
+          requested: overrideDecision.requestedAllow,
+          effective: overrideDecision.effectiveAllow,
+          targetFiles: overrideTargets,
+          result: {
+            success: finalResult.success,
+            status: finalResult.status,
+            errorCode: finalResult.errorCode
+          }
+        });
       }
 
       return attachWorkflow({

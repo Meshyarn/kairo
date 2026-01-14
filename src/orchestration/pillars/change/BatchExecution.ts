@@ -17,6 +17,7 @@ import {
 } from "../../guardrails/IntegrityGuardrails.js";
 import type { DependencyGraph } from "../../../ast/DependencyGraph.js";
 import type { IndexStateManager } from "../../../indexing/IndexStateManager.js";
+import { evaluateOverride } from "../../../utils/GuardrailsOverride.js";
 
 export async function executeBatchChange(
   args: {
@@ -296,6 +297,14 @@ async function executeBatchApply(
   normalizedByFile: Map<string, { edits: any[] }>
 ): Promise<any> {
   const { context, originalIntent, rawEdits, targetFiles, includeImpact, batchImpactLimit, dependencyGraph, indexStateManager, constraints, fileVersions } = args;
+  const overrideDecision = evaluateOverride({
+    override: (constraints as any)?.override,
+    requiredOverrides: [],
+    targetFiles,
+    pillar: "change",
+    repoId: typeof (constraints as any)?.repoId === "string" ? (constraints as any).repoId : undefined
+  });
+  const bypassIntegrityGuardrails = overrideDecision?.effectiveAllow?.["integrityGuardrails.bypass"] === true;
   const batchEdits: any[] = [];
   for (const [filePath, normalization] of normalizedByFile.entries()) {
     for (const edit of normalization.edits) {
@@ -329,6 +338,9 @@ async function executeBatchApply(
       applyMode: true
     });
     if (guardrail?.status === "block") {
+      if (bypassIntegrityGuardrails) {
+        continue;
+      }
       return {
         success: false,
         status: "blocked",

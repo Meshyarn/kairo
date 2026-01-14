@@ -5,6 +5,8 @@ import { resolveEmbeddingConfigFromEnv } from "../embeddings/EmbeddingConfig.js"
 import { ConfigBootstrapper } from "../config/ConfigBootstrapper.js";
 import { StorageMaintenanceService } from "../indexing/StorageMaintenanceService.js";
 import { EngineManager } from "../orchestration/capabilities/EngineManager.js";
+import { AuditLog } from "../utils/AuditLog.js";
+import { ConfigurationManager } from "../config/ConfigurationManager.js";
 
 export class ManageHandlers extends BaseHandler {
     private reindexInProgress = false;
@@ -58,6 +60,23 @@ export class ManageHandlers extends BaseHandler {
                 {
                     const result = await this.context.editCoordinator.redo();
                     return { success: result.success, output: result.message ?? "Redo complete.", result };
+                }
+            case 'audit':
+                {
+                    const action = args?.action ?? "tail";
+                    const limit = typeof args?.limit === "number" ? args.limit : 100;
+                    const since = typeof args?.since === "string" ? args.since : undefined;
+                    const filter = args?.filter && typeof args.filter === "object" ? args.filter : undefined;
+                    if (action === "stats") {
+                        const stats = await AuditLog.stats();
+                        return { success: true, action, stats };
+                    }
+                    if (action === "query") {
+                        const events = await AuditLog.query({ since, filter, limit });
+                        return { success: true, action, events };
+                    }
+                    const events = await AuditLog.tail(limit);
+                    return { success: true, action: "tail", events };
                 }
             case 'status':
                 {
@@ -201,11 +220,30 @@ export class ManageHandlers extends BaseHandler {
                     const capabilityHints = includeCapabilities && capabilityDiagnostics
                         ? this.buildCapabilityHints(capabilityDiagnostics)
                         : undefined;
+                    const overridePolicy = ConfigurationManager.getOverridePolicy();
+                    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+                    const recentAccepted = await AuditLog.query({
+                        since,
+                        filter: { decision: "accepted" },
+                        limit: 1000
+                    });
+                    const auditStats = await AuditLog.stats();
                     return {
                         ...result,
                         output: "Config doctor completed.",
                         ...(capabilityDiagnostics ? { capabilityDiagnostics } : {}),
-                        ...(capabilityHints && capabilityHints.length > 0 ? { capabilityHints } : {})
+                        ...(capabilityHints && capabilityHints.length > 0 ? { capabilityHints } : {}),
+                        overridePolicy: {
+                            enabled: overridePolicy.enabled,
+                            maxTtlMinutes: overridePolicy.maxTtlMinutes,
+                            maxFiles: overridePolicy.maxFiles,
+                            allowed: Object.keys(overridePolicy.allowed)
+                        },
+                        overrideAudit: {
+                            lastEventAt: auditStats.lastEventAt,
+                            totalEvents: auditStats.total,
+                            acceptedLast24h: recentAccepted.length
+                        }
                     };
                 }
             case 'reindex':

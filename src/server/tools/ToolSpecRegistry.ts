@@ -239,6 +239,59 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
               deleteMode: { type: "string", enum: ["forbid", "confirm"] },
               ordering: { type: "string", enum: ["stable", "creates_first"] }
             }
+          },
+          override: {
+            type: "object",
+            properties: {
+              approval: {
+                type: "object",
+                properties: {
+                  approvedBy: { type: "string" },
+                  reason: { type: "string" },
+                  ticket: { type: "string" },
+                  issuedAt: { type: "string" },
+                  expiresAt: { type: "string" },
+                  method: { type: "string", enum: ["manual", "break_glass"] }
+                }
+              },
+              scope: {
+                type: "object",
+                properties: {
+                  pillars: { type: "array", items: { type: "string", enum: ["change", "write", "edit_apply"] } },
+                  fileGlobs: { type: "array", items: { type: "string" } },
+                  repoIds: { type: "array", items: { type: "string" } },
+                  maxFiles: { type: "number" }
+                }
+              },
+              allow: {
+                type: "object",
+                properties: {
+                  integrityGuardrails: {
+                    type: "object",
+                    properties: { bypass: { type: "boolean" } }
+                  },
+                  architecturalSafety: {
+                    type: "object",
+                    properties: { bypass: { type: "boolean" } }
+                  },
+                  reviewPolicy: {
+                    type: "object",
+                    properties: { bypassPreApplyBlock: { type: "boolean" } }
+                  },
+                  parityGate: {
+                    type: "object",
+                    properties: { bypassL3Blocks: { type: "boolean" } }
+                  },
+                  editPolicy: {
+                    type: "object",
+                    properties: {
+                      allowPartialApply: { type: "boolean" },
+                      allowDelete: { type: "string", enum: ["confirm_only"] }
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         required: ["edits"],
@@ -282,6 +335,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
               "config",
               "init",
               "doctor",
+              "audit",
               "sessions",
               "session",
               "session_complete",
@@ -294,6 +348,18 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
             ]
           },
           target: { type: "string" },
+          action: { type: "string", enum: ["tail", "query", "stats"] },
+          limit: { type: "number" },
+          since: { type: "string" },
+          filter: {
+            type: "object",
+            properties: {
+              approvedBy: { type: "string" },
+              pillar: { type: "string", enum: ["change", "write", "edit_apply", "manage"] },
+              decision: { type: "string", enum: ["accepted", "rejected", "expired", "out_of_scope"] },
+              overrideKind: { type: "string" }
+            }
+          },
           outcome: { type: "object" },
           mode: { type: "string", enum: ["plan", "apply"] },
           targets: { type: "array", items: { type: "string", enum: ["kairo", "vscode"] } },
@@ -917,6 +983,59 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
               suggestDocs: { type: "boolean" },
               batchImpactLimit: { type: "number" }
             }
+          },
+          override: {
+            type: "object",
+            properties: {
+              approval: {
+                type: "object",
+                properties: {
+                  approvedBy: { type: "string" },
+                  reason: { type: "string" },
+                  ticket: { type: "string" },
+                  issuedAt: { type: "string" },
+                  expiresAt: { type: "string" },
+                  method: { type: "string", enum: ["manual", "break_glass"] }
+                }
+              },
+              scope: {
+                type: "object",
+                properties: {
+                  pillars: { type: "array", items: { type: "string", enum: ["change", "write"] } },
+                  fileGlobs: { type: "array", items: { type: "string" } },
+                  repoIds: { type: "array", items: { type: "string" } },
+                  maxFiles: { type: "number" }
+                }
+              },
+              allow: {
+                type: "object",
+                properties: {
+                  integrityGuardrails: {
+                    type: "object",
+                    properties: { bypass: { type: "boolean" } }
+                  },
+                  architecturalSafety: {
+                    type: "object",
+                    properties: { bypass: { type: "boolean" } }
+                  },
+                  reviewPolicy: {
+                    type: "object",
+                    properties: { bypassPreApplyBlock: { type: "boolean" } }
+                  },
+                  parityGate: {
+                    type: "object",
+                    properties: { bypassL3Blocks: { type: "boolean" } }
+                  },
+                  editPolicy: {
+                    type: "object",
+                    properties: {
+                      allowPartialApply: { type: "boolean" },
+                      allowDelete: { type: "string", enum: ["confirm_only"] }
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         required: ["intent"],
@@ -976,6 +1095,59 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
               quickGenerate: { type: "boolean" },
               smartWrite: { type: "boolean" },
               styleReference: { type: "array", items: { type: "string" } }
+            }
+          },
+          override: {
+            type: "object",
+            properties: {
+              approval: {
+                type: "object",
+                properties: {
+                  approvedBy: { type: "string" },
+                  reason: { type: "string" },
+                  ticket: { type: "string" },
+                  issuedAt: { type: "string" },
+                  expiresAt: { type: "string" },
+                  method: { type: "string", enum: ["manual", "break_glass"] }
+                }
+              },
+              scope: {
+                type: "object",
+                properties: {
+                  pillars: { type: "array", items: { type: "string", enum: ["change", "write"] } },
+                  fileGlobs: { type: "array", items: { type: "string" } },
+                  repoIds: { type: "array", items: { type: "string" } },
+                  maxFiles: { type: "number" }
+                }
+              },
+              allow: {
+                type: "object",
+                properties: {
+                  integrityGuardrails: {
+                    type: "object",
+                    properties: { bypass: { type: "boolean" } }
+                  },
+                  architecturalSafety: {
+                    type: "object",
+                    properties: { bypass: { type: "boolean" } }
+                  },
+                  reviewPolicy: {
+                    type: "object",
+                    properties: { bypassPreApplyBlock: { type: "boolean" } }
+                  },
+                  parityGate: {
+                    type: "object",
+                    properties: { bypassL3Blocks: { type: "boolean" } }
+                  },
+                  editPolicy: {
+                    type: "object",
+                    properties: {
+                      allowPartialApply: { type: "boolean" },
+                      allowDelete: { type: "string", enum: ["confirm_only"] }
+                    }
+                  }
+                }
+              }
             }
           }
         },
