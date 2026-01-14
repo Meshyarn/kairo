@@ -454,7 +454,8 @@ export class ConfigurationManager extends EventEmitter {
                 maxFiles: 50,
                 allowed: {
                     "editPolicy.allowDelete": "confirm_only" as const,
-                    "editPolicy.allowPartialApply": true
+                    "editPolicy.allowPartialApply": true,
+                    "staleGuard.bypass": true
                 } as Record<string, boolean | "confirm_only">
             }
             : { enabled: false, maxTtlMinutes: 60, maxFiles: 50, allowed: {} };

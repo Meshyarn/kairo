@@ -646,6 +646,7 @@ export class EditHandlers extends BaseHandler {
                 const absPath = this.resolveAbsolutePath(filePath);
                 this.context.indexStateManager?.markDirty(filePath);
                 this.context.incrementalIndexer?.enqueuePaths(absPath, "high");
+                this.context.cacheInvalidationHub?.onEvent({ type: "file_changed", absPath });
             }
             const updated = await this.collectUpdatedFileStates(orderedReplaceFiles);
             const response = {
@@ -898,9 +899,11 @@ export class EditHandlers extends BaseHandler {
                 if (action.type === "write") {
                     this.context.indexStateManager?.markDirty(action.filePath);
                     this.context.incrementalIndexer?.enqueuePaths(action.absPath, "high");
+                    this.context.cacheInvalidationHub?.onEvent({ type: "file_changed", absPath: action.absPath });
                 } else {
                     this.context.indexStateManager?.markDirty(action.filePath);
                     void this.context.incrementalIndexer?.notifyDeletion(action.absPath);
+                    this.context.cacheInvalidationHub?.onEvent({ type: "file_deleted", absPath: action.absPath });
                 }
             }
         } else {
@@ -908,9 +911,11 @@ export class EditHandlers extends BaseHandler {
                 if (action.type === "write") {
                     this.context.indexStateManager?.markDirty(action.filePath);
                     this.context.incrementalIndexer?.enqueuePaths(action.absPath, "high");
+                    this.context.cacheInvalidationHub?.onEvent({ type: "file_changed", absPath: action.absPath });
                 } else {
                     this.context.indexStateManager?.markDirty(action.filePath);
                     void this.context.incrementalIndexer?.notifyDeletion(action.absPath);
+                    this.context.cacheInvalidationHub?.onEvent({ type: "file_deleted", absPath: action.absPath });
                 }
             }
         }
@@ -1025,6 +1030,7 @@ export class EditHandlers extends BaseHandler {
         this.context.fileVersionManager.incrementVersion(absPath, content);
         this.context.indexStateManager?.markDirty(filePath);
         this.context.incrementalIndexer?.enqueuePaths(absPath, "high");
+        this.context.cacheInvalidationHub?.onEvent({ type: "file_changed", absPath });
         return { success: true, filePath };
     }
 
@@ -1080,6 +1086,7 @@ export class EditHandlers extends BaseHandler {
             }
             if (result.success && !dryRun) {
                 const updated = await this.collectUpdatedFileStates([relPath]);
+                this.context.cacheInvalidationHub?.onEvent({ type: "file_changed", absPath });
                 return {
                     ...result,
                     updatedFileStates: Object.keys(updated).length > 0 ? updated : undefined
@@ -1122,6 +1129,10 @@ export class EditHandlers extends BaseHandler {
         }
         if (result.success && !dryRun) {
             const updated = await this.collectUpdatedFileStates(Array.from(grouped.keys()));
+            for (const relPath of grouped.keys()) {
+                const absPath = this.resolveAbsolutePath(relPath);
+                this.context.cacheInvalidationHub?.onEvent({ type: "file_changed", absPath });
+            }
             return {
                 ...result,
                 updatedFileStates: Object.keys(updated).length > 0 ? updated : undefined

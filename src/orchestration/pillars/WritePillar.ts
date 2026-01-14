@@ -172,6 +172,7 @@ export class WritePillar {
       });
       const bypassIntegrityGuardrails = overrideDecision?.effectiveAllow?.["integrityGuardrails.bypass"] === true;
       const bypassReviewBlock = overrideDecision?.effectiveAllow?.["reviewPolicy.bypassPreApplyBlock"] === true;
+      const bypassStaleGuard = overrideDecision?.effectiveAllow?.["staleGuard.bypass"] === true;
       if (overrideDecision) {
         const auditEventId = await AuditLog.append({
           pillar: "write",
@@ -229,6 +230,33 @@ export class WritePillar {
             guidance: { message: guidanceMessage }
           });
         }
+      }
+
+      const staleGuard = await this.checkStaleGuard({
+        indexStateManager: this.registry.getMetadata<IndexStateManager>("indexStateManager"),
+        dryRun,
+        bypass: bypassStaleGuard,
+        workflowWarnings
+      });
+      if (staleGuard.blocked) {
+        return attachSession({
+          success: false,
+          status: "blocked",
+          message: staleGuard.message,
+          errorCode: "INDEX_STALE_HIGH",
+          blockedReason: "index_stale_high",
+          guidance: {
+            message: staleGuard.message,
+            suggestedActions: [
+              {
+                id: "manage.reindex",
+                description: "Rebuild index before apply.",
+                toolCall: { tool: "manage", args: { command: "reindex" } }
+              }
+            ]
+          },
+          indexSnapshot: staleGuard.snapshot
+        });
       }
       const parityGate = await evaluateLanguageParityGate({
         filePath: resolvedPath,
@@ -1203,6 +1231,30 @@ export class WritePillar {
       review,
       reasons,
       message: `Review blocked by ${reasons.map((item) => `${item.kind}(${item.verdict})`).join(", ")}.`
+    };
+  }
+
+  private async checkStaleGuard(args: {
+    indexStateManager?: IndexStateManager;
+    dryRun: boolean;
+    bypass: boolean;
+    workflowWarnings: string[];
+  }): Promise<{ blocked: boolean; message: string; snapshot?: any }> {
+    if (args.dryRun || !args.indexStateManager) {
+      return { blocked: false, message: "" };
+    }
+    const snapshot = await args.indexStateManager.getSnapshot();
+    if (snapshot.staleRisk !== "high") {
+      return { blocked: false, message: "", snapshot };
+    }
+    if (args.bypass) {
+      args.workflowWarnings.push("Override bypassed stale index guard.");
+      return { blocked: false, message: "", snapshot };
+    }
+    return {
+      blocked: true,
+      message: "Index staleness is high; reindex before apply.",
+      snapshot
     };
   }
 

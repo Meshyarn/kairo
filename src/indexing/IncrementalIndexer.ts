@@ -24,6 +24,7 @@ export interface IncrementalIndexerOptions {
     onFileQueued?: (filePath: string) => void;
     onFileIndexed?: (filePath: string) => void;
     onFileRemoved?: (filePath: string) => void;
+    onDirectoryRemoved?: (dirPath: string) => void;
 }
 
 const DEFAULT_BATCH_PAUSE_MS = 50;
@@ -667,6 +668,7 @@ export class IncrementalIndexer {
             this.removeMatchingFromQueues(queued => queued.startsWith(normalizedDir));
 
             await this.dependencyGraph.removeDirectory(dirPath);
+            this.options.onDirectoryRemoved?.(normalizedDir);
         } catch (error) {
             console.warn(`[IncrementalIndexer] failed to remove directory ${dirPath}:`, error);
         }

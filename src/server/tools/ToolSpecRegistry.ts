@@ -282,6 +282,10 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
                     type: "object",
                     properties: { bypassL3Blocks: { type: "boolean" } }
                   },
+                  staleGuard: {
+                    type: "object",
+                    properties: { bypass: { type: "boolean" } }
+                  },
                   editPolicy: {
                     type: "object",
                     properties: {
@@ -1026,6 +1030,10 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
                     type: "object",
                     properties: { bypassL3Blocks: { type: "boolean" } }
                   },
+                  staleGuard: {
+                    type: "object",
+                    properties: { bypass: { type: "boolean" } }
+                  },
                   editPolicy: {
                     type: "object",
                     properties: {
@@ -1138,6 +1146,10 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
                   parityGate: {
                     type: "object",
                     properties: { bypassL3Blocks: { type: "boolean" } }
+                  },
+                  staleGuard: {
+                    type: "object",
+                    properties: { bypass: { type: "boolean" } }
                   },
                   editPolicy: {
                     type: "object",

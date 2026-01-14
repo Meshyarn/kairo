@@ -22,6 +22,7 @@ export type GuardrailsOverrideEnvelope = {
         architecturalSafety?: { bypass?: boolean };
         reviewPolicy?: { bypassPreApplyBlock?: boolean };
         parityGate?: { bypassL3Blocks?: boolean };
+        staleGuard?: { bypass?: boolean };
         editPolicy?: {
             allowPartialApply?: boolean;
             allowDelete?: "confirm_only";
@@ -375,6 +376,9 @@ function flattenOverrideAllow(allow: GuardrailsOverrideEnvelope["allow"]): Recor
     }
     if (allow.parityGate?.bypassL3Blocks !== undefined) {
         flat["parityGate.bypassL3Blocks"] = allow.parityGate.bypassL3Blocks;
+    }
+    if (allow.staleGuard?.bypass !== undefined) {
+        flat["staleGuard.bypass"] = allow.staleGuard.bypass;
     }
     if (allow.editPolicy?.allowPartialApply !== undefined) {
         flat["editPolicy.allowPartialApply"] = allow.editPolicy.allowPartialApply;
