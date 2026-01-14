@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals
 import { UnifiedContextGraph } from '../orchestration/context/UnifiedContextGraph.js';
 import { FeatureFlags } from '../config/FeatureFlags.js';
 import { AstManager } from '../ast/AstManager.js';
+import { ContextNode } from '../orchestration/context/ContextNode.js';
+import { MemoryFileSystem } from '../platform/FileSystem.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -165,6 +167,44 @@ describe('UnifiedContextGraph', () => {
             expect(node).toBeDefined();
             expect(node?.lod).toBe(1);
             expect(node?.topology).toBeDefined();
+        });
+
+        it('should save and load graph state via injected MemoryFileSystem', async () => {
+            const rootPath = path.resolve("tmp", `ucg-mem-${Date.now()}`);
+            const fileSystem = new MemoryFileSystem(rootPath);
+            const testFile = path.join(rootPath, "src", "persist.ts");
+
+            const ucgMem = new UnifiedContextGraph(rootPath, 5000, false, fileSystem);
+            const node = new ContextNode(testFile, 1);
+            node.lastModified = 123;
+            node.size = 7;
+            node.setTopology({ path: testFile, languageId: "typescript", exports: [], imports: [] } as any);
+            node.addDependency(path.join(rootPath, "src", "dep.ts"));
+            (ucgMem as any).nodes.set(testFile, node);
+            (ucgMem as any).lruQueue = [testFile];
+
+            const data = {
+                nodes: Array.from((ucgMem as any).nodes.entries()).map(([p, n]: any) => ({
+                    path: p,
+                    lod: n.lod,
+                    topology: n.topology,
+                    structure: n.structure,
+                    lastModified: n.lastModified,
+                    size: n.size,
+                    dependencies: Array.from(n.dependencies),
+                    dependents: Array.from(n.dependents)
+                })),
+                lruQueue: (ucgMem as any).lruQueue
+            };
+
+            await (ucgMem as any).persistGraph(data);
+            const ucgMem2 = new UnifiedContextGraph(rootPath, 5000, false, fileSystem);
+            await (ucgMem2 as any).load();
+
+            const loaded = ucgMem2.getNode(testFile);
+            expect(loaded).toBeDefined();
+            expect(loaded?.lod).toBe(1);
+            expect(loaded?.topology).toBeDefined();
         });
     });
     

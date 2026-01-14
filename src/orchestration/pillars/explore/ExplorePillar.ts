@@ -14,6 +14,7 @@ import { AstManager } from "../../../ast/AstManager.js";
 import { ProjectSketchBuilder } from "../../../generation/project-sketch-builder.js";
 import type { ResearchPack } from "../../../types/flow-artifacts.js";
 import type { FlowArtifactManager } from "../../flow-artifact-manager.js";
+import type { IFileSystem } from "../../../platform/FileSystem.js";
 import { OptionResolver } from "../../options/OptionResolver.js";
 import { buildDegradedReasons } from "../../DegradedReasonMapper.js";
 import { applyTokenBudget, estimateTokens } from "../../TokenBudget.js";
@@ -422,7 +423,8 @@ export class ExplorePillar {
 
                         try {
                             if (item.path) {
-                                const graphSnapshot = await collectTopologyMetadata(ucg, item.path);
+                                const fileSystem = this.registry.getMetadata<IFileSystem>("fileSystem");
+                                const graphSnapshot = await collectTopologyMetadata(ucg, item.path, fileSystem);
                                 if (graphSnapshot.topology) {
                                     codeItem.metadata = {
                                         ...codeItem.metadata,
@@ -615,7 +617,8 @@ export class ExplorePillar {
                     }
                 }
 
-                const item = await buildItemForPath(entry.path, { view, maxChars, maxItemChars, allowSensitive, allowBinary, wantsFull, section: constraints.section }, context, (ctx, tool, args) => this.runTool(ctx, tool, args));
+                const fileSystem = this.registry.getMetadata<IFileSystem>("fileSystem");
+                const item = await buildItemForPath(entry.path, { view, maxChars, maxItemChars, allowSensitive, allowBinary, wantsFull, section: constraints.section }, context, (ctx, tool, args) => this.runTool(ctx, tool, args), fileSystem);
 
                 if (item.blocked) {
                     let reason = item.reason;

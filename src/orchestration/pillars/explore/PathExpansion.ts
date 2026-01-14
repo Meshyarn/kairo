@@ -1,5 +1,4 @@
 import path from "path";
-import * as fs from "fs";
 import { OrchestrationContext } from "../../OrchestrationContext.js";
 import { InternalToolRegistry } from "../../InternalToolRegistry.js";
 import { UnifiedContextGraph } from "../../context/UnifiedContextGraph.js";
@@ -10,6 +9,7 @@ import { getSupportForFilePath, SupportLevel } from "../../../config/LanguageSup
 import { TopologyInfo } from "../../../types.js";
 import { ExploreItem, truncate } from "./ResultFormatter.js";
 import { isDocPath, isGlob } from "./FilteringStrategy.js";
+import { NodeFileSystem, type IFileSystem } from "../../../platform/FileSystem.js";
 
 const DEFAULT_DEPTH = 5;
 
@@ -68,13 +68,15 @@ export async function expandPaths(
 
 export async function collectTopologyMetadata(
     ucg: UnifiedContextGraph | undefined,
-    filePath: string
+    filePath: string,
+    fileSystem?: IFileSystem
 ): Promise<{ topology?: TopologyInfo; lod?: number; dependencyCount?: number; dependents?: number }> {
     if (!filePath) {
         return {};
     }
 
     const astManager = AstManager.getInstance();
+    const fsAdapter = fileSystem ?? new NodeFileSystem(process.cwd());
     let topology: TopologyInfo | undefined;
     let lod = 0;
 
@@ -93,7 +95,7 @@ export async function collectTopologyMetadata(
 
     if (!topology) {
         try {
-            const content = fs.readFileSync(filePath, "utf-8");
+            const content = await fsAdapter.readFile(filePath);
             topology = await astManager.extractUniversalTopology(filePath, content);
             lod = 1;
         } catch (error) {
@@ -125,10 +127,12 @@ export async function buildItemForPath(
         section?: { sectionId?: string; headingPath?: string[]; includeSubsections?: boolean };
     },
     context: OrchestrationContext,
-    runTool: (context: OrchestrationContext, tool: string, args: any) => Promise<any>
+    runTool: (context: OrchestrationContext, tool: string, args: any) => Promise<any>,
+    fileSystem?: IFileSystem
 ): Promise<{ value?: ExploreItem; degraded?: boolean; reason?: string; blocked?: boolean; message?: string }> {
     const docPath = isDocPath(filePath);
     const safePreview = (value: string) => truncate(value ?? "", options.maxItemChars);
+    const fsAdapter = fileSystem ?? new NodeFileSystem(process.cwd());
 
     if (options.wantsFull) {
         if (docPath) {
@@ -233,7 +237,7 @@ export async function buildItemForPath(
 
         if (supportSpec.editPolicy.requireSyntaxValidation) {
             try {
-                l3Content = fs.readFileSync(path.resolve(filePath), "utf-8");
+                l3Content = await fsAdapter.readFile(path.resolve(filePath));
             } catch {
                 if (options.wantsFull) {
                     return {

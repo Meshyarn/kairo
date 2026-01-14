@@ -1,5 +1,4 @@
 import chokidar from 'chokidar';
-import * as fs from 'fs';
 import * as path from 'path';
 import { SymbolIndex } from '../ast/SymbolIndex.js';
 import { AstManager } from '../ast/AstManager.js';
@@ -10,6 +9,7 @@ import { ConfigurationEvent, ConfigurationManager } from '../config/Configuratio
 import { FeatureFlags } from '../config/FeatureFlags.js';
 import { metrics } from "../utils/MetricsCollector.js";
 import { PathManager } from "../utils/PathManager.js";
+import { NodeFileSystem, type IFileSystem } from '../platform/FileSystem.js';
 
 import { ProjectIndexManager } from './ProjectIndexManager.js';
 import type { ProjectIndex, FileIndexEntry } from './ProjectIndex.js';
@@ -22,6 +22,7 @@ export interface IncrementalIndexerOptions {
     initialScan?: boolean;
     batchPauseMs?: number;
     statConcurrency?: number;
+    fileSystem?: IFileSystem;
     onFileQueued?: (filePath: string) => void;
     onFileIndexed?: (filePath: string) => void;
     onFileRemoved?: (filePath: string) => void;
@@ -84,6 +85,7 @@ export class IncrementalIndexer {
     private baselineProcessedFiles = 0;
     private baselineStartedAt = 0;
     private baselineScanStartedAt = 0;
+    private readonly fileSystem: IFileSystem;
 
     constructor(
         private readonly rootPath: string,
@@ -95,7 +97,8 @@ export class IncrementalIndexer {
         private readonly options: IncrementalIndexerOptions = {},
         documentIndexer?: DocumentIndexer
     ) {
-        this.indexManager = new ProjectIndexManager(rootPath);
+        this.fileSystem = options.fileSystem ?? new NodeFileSystem(rootPath);
+        this.indexManager = new ProjectIndexManager(rootPath, this.fileSystem);
         this.astManager = AstManager.getInstance();
         this.extractorResolver = moduleResolver ?? new ModuleResolver(rootPath);
         this.unifiedExtractor = new UnifiedExtractor(this.astManager.getQueryProvider(), {
@@ -256,10 +259,9 @@ export class IncrementalIndexer {
 
         if (isDoc && !isCode) {
             const normalized = path.resolve(filePath);
-            const realpathSync = (fs as any).realpathSync?.native ?? fs.realpathSync;
             let finalPath = normalized;
             try {
-                finalPath = realpathSync(normalized);
+                finalPath = this.fileSystem.realpathSync?.(normalized) ?? normalized;
             } catch {
                 // Ignore if path doesn't exist
             }
@@ -271,10 +273,9 @@ export class IncrementalIndexer {
         }
 
         const normalized = path.resolve(filePath);
-        const realpathSync = (fs as any).realpathSync?.native ?? fs.realpathSync;
         let finalPath = normalized;
         try {
-            finalPath = realpathSync(normalized);
+            finalPath = this.fileSystem.realpathSync?.(normalized) ?? normalized;
         } catch {
             // Ignore if path doesn't exist
         }
@@ -345,8 +346,8 @@ export class IncrementalIndexer {
 
                     const stopBaselineIndex = this.baselineActive ? metrics.startTimer("baseline.index_ms") : null;
                     try {
-                            const symbols = await this.symbolIndex.getSymbolsForFile(filePath);
-                        const content = await fs.promises.readFile(filePath, 'utf-8');
+                        const symbols = await this.symbolIndex.getSymbolsForFile(filePath);
+                        const content = await this.fileSystem.readFile(filePath);
                         const languageId = this.astManager.getLanguageId(filePath);
                         let doc: any;
                         try {
@@ -365,10 +366,10 @@ export class IncrementalIndexer {
 
                             // Update persistent index
                             if (this.currentIndex && !this.stopped) {
-                                const stat = await fs.promises.stat(filePath).catch(() => undefined);
+                                const stat = await this.fileSystem.stat(filePath).catch(() => undefined);
                                 if (stat) {
                                     const entry: FileIndexEntry = {
-                                        mtime: stat.mtimeMs,
+                                        mtime: stat.mtime,
                                         symbols,
                                         imports,
                                         exports,
@@ -433,23 +434,28 @@ export class IncrementalIndexer {
                 const tickStart = Date.now();
                 let tickFiles = 0;
                 const current = stack.pop()!;
-                let entries: fs.Dirent[];
+                let entries: string[];
                 try {
-                    entries = await fs.promises.readdir(current, { withFileTypes: true });
+                    entries = await this.fileSystem.readDir(current);
                 } catch {
                     continue;
                 }
 
                 const supportedFiles: string[] = [];
                 for (const entry of entries) {
-                    const fullPath = path.join(current, entry.name);
+                    const fullPath = path.join(current, entry);
                     if (this.shouldIgnore(fullPath)) continue;
 
-                    if (entry.isDirectory()) {
-                        stack.push(fullPath);
-                    } else if (this.symbolIndex.isSupported(fullPath) || this.isDocumentFile(fullPath)) {
-                        supportedFiles.push(fullPath);
-                        this.baselineTotalFiles += 1;
+                    try {
+                        const stat = await this.fileSystem.stat(fullPath);
+                        if (stat.isDirectory()) {
+                            stack.push(fullPath);
+                        } else if (this.symbolIndex.isSupported(fullPath) || this.isDocumentFile(fullPath)) {
+                            supportedFiles.push(fullPath);
+                            this.baselineTotalFiles += 1;
+                        }
+                    } catch {
+                        // ignore missing/stat failures
                     }
                     batchCounter.count += 1;
                     tickFiles += 1;
@@ -558,26 +564,31 @@ export class IncrementalIndexer {
         try {
             while (stack.length > 0 && !this.stopped) {
                 const current = stack.pop()!;
-                let entries: fs.Dirent[];
+                let entries: string[];
                 try {
-                    entries = await fs.promises.readdir(current, { withFileTypes: true });
+                    entries = await this.fileSystem.readDir(current);
                 } catch {
                     continue;
                 }
 
                 for (const entry of entries) {
-                    const fullPath = path.join(current, entry.name);
+                    const fullPath = path.join(current, entry);
                     if (this.shouldIgnore(fullPath)) continue;
 
-                    if (entry.isDirectory()) {
-                        stack.push(fullPath);
-                    } else if (this.symbolIndex.isSupported(fullPath) || this.isDocumentFile(fullPath)) {
-                        // Check if already in index
-                        const relPath = path.relative(this.rootPath, fullPath);
-                        const existing = this.indexDatabase?.getFile(relPath);
-                        if (!existing) {
-                            newFiles.push(fullPath);
+                    try {
+                        const stat = await this.fileSystem.stat(fullPath);
+                        if (stat.isDirectory()) {
+                            stack.push(fullPath);
+                        } else if (this.symbolIndex.isSupported(fullPath) || this.isDocumentFile(fullPath)) {
+                            // Check if already in index
+                            const relPath = path.relative(this.rootPath, fullPath);
+                            const existing = this.indexDatabase?.getFile(relPath);
+                            if (!existing) {
+                                newFiles.push(fullPath);
+                            }
                         }
+                    } catch {
+                        // ignore
                     }
                     batchCounter.count += 1;
                     await this.yieldIfNeeded(batchCounter, batchSize);
@@ -744,12 +755,7 @@ export class IncrementalIndexer {
     }
 
     private async fileExists(filePath: string): Promise<boolean> {
-        try {
-            await fs.promises.access(filePath, fs.constants.F_OK);
-            return true;
-        } catch {
-            return false;
-        }
+        return this.fileSystem.exists(filePath);
     }
 
     private sleep(ms: number): Promise<void> {
@@ -876,7 +882,7 @@ export class IncrementalIndexer {
         let entry: FileIndexEntry | undefined = this.currentIndex.files[normalized];
         if (!entry) {
             try {
-                const resolved = await fs.promises.realpath(normalized);
+                const resolved = await this.fileSystem.realpath(normalized);
                 entry = this.currentIndex.files[resolved];
             } catch {
                 entry = undefined;
@@ -885,8 +891,8 @@ export class IncrementalIndexer {
         if (!entry) return true; // New file
 
         try {
-            const stat = await fs.promises.stat(filePath);
-            return stat.mtimeMs > entry.mtime; // Changed if mtime newer
+            const stat = await this.fileSystem.stat(filePath);
+            return stat.mtime > entry.mtime; // Changed if mtime newer
         } catch {
             return true; // Stat failed → reindex to be safe
         }

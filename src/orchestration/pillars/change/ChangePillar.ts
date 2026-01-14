@@ -1,4 +1,3 @@
-import fs from "fs";
 import { InternalToolRegistry } from '../../InternalToolRegistry.js';
 import { OrchestrationContext } from '../../OrchestrationContext.js';
 import { ParsedIntent } from '../../IntentRouter.js';
@@ -12,7 +11,7 @@ import { EditCoordinator } from '../../../engine/EditCoordinator.js';
 import { EditorEngine } from '../../../engine/Editor.js';
 import { HistoryEngine } from '../../../engine/History.js';
 import { UnifiedContextGraph } from '../../context/UnifiedContextGraph.js';
-import { NodeFileSystem } from '../../../platform/FileSystem.js';
+import { NodeFileSystem, type IFileSystem } from '../../../platform/FileSystem.js';
 import type { DependencyGraph } from '../../../ast/DependencyGraph.js';
 import type { IndexStateManager } from '../../../indexing/IndexStateManager.js';
 import { FeatureFlags } from '../../../config/FeatureFlags.js';
@@ -76,26 +75,39 @@ import { normalizeRepoScope } from "../../../utils/RepoScope.js";
 import { evaluateRepoEditPolicy } from "../shared/RepoGuard.js";
 
 export class ChangePillar {
-  private fileSystem = new NodeFileSystem(process.cwd());
+  private fileSystem?: IFileSystem;
   
   constructor(private readonly registry: InternalToolRegistry) {}
 
+  private resolveFileSystem(): IFileSystem {
+    if (this.fileSystem) return this.fileSystem;
+    const injected =
+      typeof this.registry.getMetadata === "function"
+        ? this.registry.getMetadata<IFileSystem>("fileSystem")
+        : undefined;
+    this.fileSystem = injected ?? new NodeFileSystem(process.cwd());
+    return this.fileSystem;
+  }
+
   private getEditCoordinator(): EditCoordinator {
     const rootPath = process.cwd();
-    const editorEngine = new EditorEngine(rootPath, this.fileSystem);
-    const historyEngine = new HistoryEngine(rootPath, this.fileSystem);
+    const fileSystem = this.resolveFileSystem();
+    const editorEngine = new EditorEngine(rootPath, fileSystem);
+    const historyEngine = new HistoryEngine(rootPath, fileSystem);
     return new EditCoordinator(editorEngine, historyEngine);
   }
 
   private getEditResolver(): EditResolver {
     const rootPath = process.cwd();
-    const editorEngine = new EditorEngine(rootPath, this.fileSystem);
-    return new EditResolver(this.fileSystem, editorEngine);
+    const fileSystem = this.resolveFileSystem();
+    const editorEngine = new EditorEngine(rootPath, fileSystem);
+    return new EditResolver(fileSystem, editorEngine);
   }
 
   public async execute(intent: ParsedIntent, context: OrchestrationContext): Promise<any> {
     const stopTotal = metrics.startTimer("change.total_ms");
     try {
+      const fileSystem = this.resolveFileSystem();
       const { targets, constraints, originalIntent } = intent;
       const { includeImpact = false, includeSymbolImpact = false } = constraints;
       const integrityOptions = IntegrityEngine.resolveOptions(constraints.integrity, "change");
@@ -530,7 +542,7 @@ export class ChangePillar {
         const guardrailTargetPath = resolveGuardrailTargetPath(targetPath);
         let originalContent = "";
         try {
-          originalContent = await this.fileSystem.readFile(guardrailTargetPath);
+          originalContent = await fileSystem.readFile(guardrailTargetPath);
         } catch {
           originalContent = "";
         }
@@ -681,7 +693,7 @@ export class ChangePillar {
         : Promise.resolve([]);
       
       const symbolImpactPromise = includeSymbolImpact && targetPath
-        ? analyzeSymbolImpact(targetPath, edits, constraints, this.fileSystem)
+        ? analyzeSymbolImpact(targetPath, edits, constraints, fileSystem)
         : Promise.resolve(null);
 
       const fileVersions = !dryRun ? expectedFileVersions : undefined;
@@ -987,7 +999,7 @@ export class ChangePillar {
       if (!dryRun && reviewOptions?.postApply && targetPath && finalResult.success) {
         let currentContent = "";
         try {
-          currentContent = await this.fileSystem.readFile(targetPath);
+          currentContent = await fileSystem.readFile(targetPath);
         } catch {
           currentContent = reviewNextContent ?? "";
         }
@@ -1376,11 +1388,14 @@ export class ChangePillar {
     const beforeManifest = loadResult.manifest;
 
     let afterManifest = beforeManifest;
-    if (alias.entryPath.endsWith(".d.ts") && fs.existsSync(alias.entryPath)) {
+    if (alias.entryPath.endsWith(".d.ts")) {
+      const fileSystem = this.resolveFileSystem();
+      if (await fileSystem.exists(alias.entryPath)) {
       const generator = new ContractManifestGenerator();
       afterManifest = generator.generateFromDts(alias.packageName, alias.entryPath, {
         sourceRepo: repo.path
       });
+      }
     }
 
     let diff = diffManifests(beforeManifest, afterManifest);
@@ -1487,12 +1502,13 @@ export class ChangePillar {
       const importPattern = new RegExp(
         String.raw`(?:from\s+["']${this.escapeRegExp(packageName)}["']|require\(\s*["']${this.escapeRegExp(packageName)}["']\s*\)|import\(\s*["']${this.escapeRegExp(packageName)}["']\s*\))`
       );
+      const fileSystem = this.resolveFileSystem();
       for (const filePath of paths) {
         if (!filePath || filePath === entryPath) continue;
         if (filePath.includes("/.kairo/") || filePath.includes("/node_modules/")) continue;
         if (!/\.(ts|tsx|js|jsx)$/.test(filePath)) continue;
         try {
-          const content = fs.readFileSync(filePath, "utf-8");
+          const content = await fileSystem.readFile(filePath);
           if (!importPattern.test(content)) continue;
         } catch {
           continue;

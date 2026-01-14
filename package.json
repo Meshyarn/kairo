@@ -36,6 +36,9 @@
     "build:markdown-wasm": "node dist/cli/build-markdown-wasm.js",
     "validate:languages": "node --import tsx scripts/validate-language-support.ts",
     "validate:parity": "node --import tsx scripts/validate-parity.ts",
+    "validate:fs": "node --import tsx scripts/validate-fs-boundary.ts --mode=strict --phase=A",
+    "validate:fs:b": "node --import tsx scripts/validate-fs-boundary.ts --mode=strict --phase=B",
+    "validate:fs:c": "node --import tsx scripts/validate-fs-boundary.ts --mode=strict --phase=C",
     "start": "tsx src/index.ts",
     "prepack": "npm run build && npm run bundle:models"
   },

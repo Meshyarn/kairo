@@ -1,7 +1,6 @@
 import path from "path";
-import type { Dirent } from "fs";
-import { promises as fs } from "fs";
 import { LRUCache } from "lru-cache";
+import { NodeFileSystem, type IFileSystem } from "../platform/FileSystem.js";
 import type {
     ArtifactId,
     ArtifactManagerStatus,
@@ -19,15 +18,7 @@ export interface FlowArtifactManagerOptions {
     defaultTTL?: number;
     persistPath?: string;
     autoPersist?: boolean;
-}
-
-async function fileExists(filePath: string): Promise<boolean> {
-    try {
-        await fs.access(filePath);
-        return true;
-    } catch {
-        return false;
-    }
+    fileSystem?: IFileSystem;
 }
 
 interface FlowArtifactIndexEntry {
@@ -56,12 +47,14 @@ export class FlowArtifactManager {
     private readonly indexPath: string;
     private readonly sessions: Map<string, FlowSession>;
     private index: FlowArtifactIndex;
+    private readonly fileSystem: IFileSystem;
 
     constructor(private readonly options: FlowArtifactManagerOptions = {}) {
         this.cache = new LRUCache({
             max: options.maxCacheSize ?? 100,
             ttl: options.defaultTTL ?? 30 * 60 * 1000
         });
+        this.fileSystem = options.fileSystem ?? new NodeFileSystem(process.cwd());
         this.persistPath = options.persistPath ?? path.resolve(process.cwd(), ".kairo", "flow-artifacts");
         this.indexPath = path.join(this.persistPath, "index.json");
         this.sessions = new Map<string, FlowSession>();
@@ -234,7 +227,7 @@ export class FlowArtifactManager {
             const absPath = entry.path
                 ? this.toAbsolutePersistPath(entry.path)
                 : await this.resolvePersistPath(id as ArtifactId, entry.type);
-            if (!await fileExists(absPath)) {
+            if (!await this.fileSystem.exists(absPath)) {
                 delete this.index.artifacts[id];
                 fixedIndexEntries += 1;
                 updated = true;
@@ -245,7 +238,7 @@ export class FlowArtifactManager {
         for (const [sessionId, entry] of sessionEntries) {
             if (!entry?.path) continue;
             const absPath = this.toAbsolutePersistPath(entry.path);
-            if (!await fileExists(absPath)) {
+            if (!await this.fileSystem.exists(absPath)) {
                 delete this.index.sessions[sessionId];
                 removedSessions += 1;
                 updated = true;
@@ -278,7 +271,7 @@ export class FlowArtifactManager {
 
     async persist(id: ArtifactId, artifact: FlowArtifact): Promise<string> {
         const target = await this.resolvePersistPath(id, artifact.type, true);
-        await fs.writeFile(target, JSON.stringify(artifact, null, 2), "utf-8");
+        await this.fileSystem.writeFile(target, JSON.stringify(artifact, null, 2));
         this.updateIndexForArtifact(artifact, target);
         await this.persistIndex();
         return target;
@@ -287,7 +280,7 @@ export class FlowArtifactManager {
     async restore(id: ArtifactId): Promise<FlowArtifact | undefined> {
         try {
             const filePath = await this.resolvePersistPath(id);
-            const raw = await fs.readFile(filePath, "utf-8");
+            const raw = await this.fileSystem.readFile(filePath);
             const artifact = JSON.parse(raw) as FlowArtifact;
             this.store(artifact);
             this.updateIndexForArtifact(artifact, filePath);
@@ -299,7 +292,7 @@ export class FlowArtifactManager {
 
     async importFromPath(filePath: string): Promise<FlowArtifact | undefined> {
         try {
-            const raw = await fs.readFile(filePath, "utf-8");
+            const raw = await this.fileSystem.readFile(filePath);
             const artifact = JSON.parse(raw) as FlowArtifact;
             this.store(artifact);
             this.updateIndexForArtifact(artifact, filePath);
@@ -315,17 +308,17 @@ export class FlowArtifactManager {
             return restoredFromIndex;
         }
         try {
-            const entries = await fs.readdir(this.persistPath, { withFileTypes: true });
+            const entries = await this.safeReadDirEntries(this.persistPath);
             let restored = 0;
             for (const entry of entries) {
-                if (entry.isFile()) {
+                if (entry.isFile) {
                     if (!entry.name.endsWith(".json")) continue;
                     const full = path.join(this.persistPath, entry.name);
                     const artifact = await this.importFromPath(full);
                     if (artifact) restored += 1;
                     continue;
                 }
-                if (!entry.isDirectory()) continue;
+                if (!entry.isDirectory) continue;
                 const fullDir = path.join(this.persistPath, entry.name);
                 if (entry.name === "sessions") {
                     await this.restoreSessionsFromDir(fullDir);
@@ -341,9 +334,9 @@ export class FlowArtifactManager {
 
     async persistSession(session: FlowSession): Promise<string> {
         const sessionDir = path.join(this.persistPath, "sessions");
-        await fs.mkdir(sessionDir, { recursive: true });
+        await this.fileSystem.createDir(sessionDir);
         const target = path.join(sessionDir, `${session.id}.json`);
-        await fs.writeFile(target, JSON.stringify(session, null, 2), "utf-8");
+        await this.fileSystem.writeFile(target, JSON.stringify(session, null, 2));
         this.updateIndexForSession(session, target);
         await this.persistIndex();
         return target;
@@ -353,7 +346,7 @@ export class FlowArtifactManager {
         try {
             const sessionDir = path.join(this.persistPath, "sessions");
             const filePath = path.join(sessionDir, `${sessionId}.json`);
-            const raw = await fs.readFile(filePath, "utf-8");
+            const raw = await this.fileSystem.readFile(filePath);
             const session = JSON.parse(raw) as FlowSession;
             this.sessions.set(session.id, session);
             this.updateIndexForSession(session, filePath);
@@ -366,7 +359,9 @@ export class FlowArtifactManager {
     private async removePersisted(id: ArtifactId): Promise<void> {
         try {
             const filePath = await this.resolvePersistPath(id);
-            await fs.rm(filePath, { force: true });
+            if (await this.fileSystem.exists(filePath)) {
+                await this.fileSystem.deleteFile(filePath);
+            }
         } catch {
             // ignore
         }
@@ -425,17 +420,20 @@ export class FlowArtifactManager {
 
     private async removeOrphanedArtifacts(): Promise<number> {
         let deleted = 0;
-        const entries = await this.safeReadDir(this.persistPath);
+        const entries = await this.safeReadDirEntries(this.persistPath);
         for (const entry of entries) {
-            if (!entry.isDirectory()) continue;
+            if (!entry.isDirectory) continue;
             if (entry.name === "sessions") continue;
             const dirPath = path.join(this.persistPath, entry.name);
-            const files = await this.safeReadDir(dirPath);
+            const files = await this.safeReadDirEntries(dirPath);
             for (const file of files) {
-                if (!file.isFile() || !file.name.endsWith(".json")) continue;
+                if (!file.isFile || !file.name.endsWith(".json")) continue;
                 const artifactId = file.name.replace(/\.json$/, "");
                 if (!this.index.artifacts[artifactId]) {
-                    await fs.rm(path.join(dirPath, file.name), { force: true });
+                    const orphanPath = path.join(dirPath, file.name);
+                    if (await this.fileSystem.exists(orphanPath)) {
+                        await this.fileSystem.deleteFile(orphanPath);
+                    }
                     deleted += 1;
                 }
             }
@@ -446,29 +444,44 @@ export class FlowArtifactManager {
     private async removeOrphanedSessions(): Promise<number> {
         let deleted = 0;
         const sessionDir = path.join(this.persistPath, "sessions");
-        const entries = await this.safeReadDir(sessionDir);
+        const entries = await this.safeReadDirEntries(sessionDir);
         for (const entry of entries) {
-            if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+            if (!entry.isFile || !entry.name.endsWith(".json")) continue;
             const sessionId = entry.name.replace(/\.json$/, "");
             if (!this.index.sessions[sessionId]) {
-                await fs.rm(path.join(sessionDir, entry.name), { force: true });
+                const orphanPath = path.join(sessionDir, entry.name);
+                if (await this.fileSystem.exists(orphanPath)) {
+                    await this.fileSystem.deleteFile(orphanPath);
+                }
                 deleted += 1;
             }
         }
         return deleted;
     }
 
-    private async safeReadDir(dirPath: string): Promise<Dirent[]> {
+    private async safeReadDirEntries(dirPath: string): Promise<Array<{ name: string; isFile: boolean; isDirectory: boolean }>> {
         try {
-            return await fs.readdir(dirPath, { withFileTypes: true });
+            const entries = await this.fileSystem.readDir(dirPath);
+            const results: Array<{ name: string; isFile: boolean; isDirectory: boolean }> = [];
+            for (const entry of entries) {
+                const fullPath = path.join(dirPath, entry);
+                try {
+                    const stat = await this.fileSystem.stat(fullPath);
+                    const isDirectory = stat.isDirectory();
+                    results.push({ name: entry, isFile: !isDirectory, isDirectory });
+                } catch {
+                    continue;
+                }
+            }
+            return results;
         } catch {
             return [];
         }
     }
 
     private async persistIndex(): Promise<void> {
-        await fs.mkdir(this.persistPath, { recursive: true });
-        await fs.writeFile(this.indexPath, JSON.stringify(this.index, null, 2), "utf-8");
+        await this.fileSystem.createDir(this.persistPath);
+        await this.fileSystem.writeFile(this.indexPath, JSON.stringify(this.index, null, 2));
     }
 
     private async restoreFromIndex(): Promise<number> {
@@ -498,7 +511,7 @@ export class FlowArtifactManager {
 
     private async restoreSessionFromPath(sessionId: string, filePath: string): Promise<FlowSession | undefined> {
         try {
-            const raw = await fs.readFile(filePath, "utf-8");
+            const raw = await this.fileSystem.readFile(filePath);
             const session = JSON.parse(raw) as FlowSession;
             if (session.id !== sessionId) {
                 session.id = sessionId;
@@ -513,7 +526,7 @@ export class FlowArtifactManager {
 
     private async readIndex(): Promise<FlowArtifactIndex | null> {
         try {
-            const raw = await fs.readFile(this.indexPath, "utf-8");
+            const raw = await this.fileSystem.readFile(this.indexPath);
             const parsed = JSON.parse(raw) as FlowArtifactIndex;
             if (!parsed || typeof parsed !== "object") return null;
             return {
@@ -539,7 +552,7 @@ export class FlowArtifactManager {
         const folder = type ? `${type}s` : "";
         const basePath = folder ? path.join(this.persistPath, folder) : this.persistPath;
         if (ensureDir) {
-            await fs.mkdir(basePath, { recursive: true });
+            await this.fileSystem.createDir(basePath);
         }
         const candidate = path.join(basePath, `${id}.json`);
         if (type || ensureDir) {
@@ -548,11 +561,8 @@ export class FlowArtifactManager {
         const types: ArtifactType[] = ["research", "analysis", "style", "draft", "review"];
         for (const entryType of types) {
             const entryPath = path.join(this.persistPath, `${entryType}s`, `${id}.json`);
-            try {
-                await fs.access(entryPath);
+            if (await this.fileSystem.exists(entryPath)) {
                 return entryPath;
-            } catch {
-                // continue
             }
         }
         return candidate;
@@ -560,7 +570,7 @@ export class FlowArtifactManager {
 
     private async restoreArtifactsFromDir(dir: string): Promise<number> {
         try {
-            const entries = await fs.readdir(dir);
+            const entries = await this.fileSystem.readDir(dir);
             let restored = 0;
             for (const entry of entries) {
                 if (!entry.endsWith(".json")) continue;
@@ -576,7 +586,7 @@ export class FlowArtifactManager {
 
     private async restoreSessionsFromDir(dir: string): Promise<void> {
         try {
-            const entries = await fs.readdir(dir);
+            const entries = await this.fileSystem.readDir(dir);
             for (const entry of entries) {
                 if (!entry.endsWith(".json")) continue;
                 const sessionId = entry.replace(/\.json$/, "");

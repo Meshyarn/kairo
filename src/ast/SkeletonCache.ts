@@ -1,11 +1,10 @@
-import * as fs from 'fs/promises';
 import * as path from 'path';
 import { PathHelpers } from '../utils/PathHelpers.js';
 import { createHash } from 'crypto';
-import type { Stats } from 'fs';
 import { LRUCache } from '../utils/LRUCache.js';
 import { PathManager } from '../utils/PathManager.js';
 import type { SkeletonOptions } from '../types.js';
+import { NodeFileSystem, type IFileSystem, type FileStats } from '../platform/FileSystem.js';
 
 interface CachedSkeleton {
     mtime: number;
@@ -20,14 +19,17 @@ export class SkeletonCache {
     private l2Hits = 0;
     private misses = 0;
     private readonly pendingWrites = new Set<Promise<void>>();
+    private readonly fileSystem: IFileSystem;
 
     constructor(
         projectRoot: string,
         memoryCacheSize = 1000,
-        ttlMs = 60_000
+        ttlMs = 60_000,
+        fileSystem?: IFileSystem
     ) {
         this.memoryCache = new LRUCache(memoryCacheSize, ttlMs);
         this.diskCacheDir = PathHelpers.join(PathManager.getCacheDir(), 'skeletons');
+        this.fileSystem = fileSystem ?? new NodeFileSystem(projectRoot);
     }
 
     public async getSkeleton(
@@ -35,14 +37,14 @@ export class SkeletonCache {
         options: SkeletonOptions = {},
         generator: (filePath: string, options: SkeletonOptions) => Promise<string>
     ): Promise<string> {
-        let stat: Stats;
+        let stat: FileStats;
         try {
-            stat = await fs.stat(filePath);
+            stat = await this.fileSystem.stat(filePath);
         } catch {
             return generator(filePath, options);
         }
 
-        const mtime = stat.mtimeMs;
+        const mtime = stat.mtime;
         const optionsHash = this.hashOptions(options);
         const cacheKey = this.getCacheKey(filePath, mtime, optionsHash);
 
@@ -83,13 +85,17 @@ export class SkeletonCache {
 
         const pathHash = this.hashPath(filePath);
         const dirPath = PathHelpers.join(this.diskCacheDir, pathHash);
-        await fs.rm(dirPath, { recursive: true, force: true });
+        if (await this.fileSystem.exists(dirPath)) {
+            await this.fileSystem.deleteFile(dirPath);
+        }
     }
 
     public async clearAll(): Promise<void> {
         await this.flushPendingWrites();
         this.memoryCache.clear();
-        await fs.rm(this.diskCacheDir, { recursive: true, force: true });
+        if (await this.fileSystem.exists(this.diskCacheDir)) {
+            await this.fileSystem.deleteFile(this.diskCacheDir);
+        }
     }
 
     public async close(): Promise<void> {
@@ -117,7 +123,7 @@ export class SkeletonCache {
     private async loadFromDisk(filePath: string, expectedMtime: number, optionsHash: string): Promise<CachedSkeleton | null> {
         const cacheFilePath = this.getDiskCachePath(filePath, expectedMtime, optionsHash);
         try {
-            const raw = await fs.readFile(cacheFilePath, 'utf-8');
+            const raw = await this.fileSystem.readFile(cacheFilePath);
             const cached = JSON.parse(raw) as CachedSkeleton;
             if (cached.mtime !== expectedMtime) {
                 return null;
@@ -134,8 +140,8 @@ export class SkeletonCache {
 
     private async saveToDisk(filePath: string, cached: CachedSkeleton): Promise<void> {
         const cacheFilePath = this.getDiskCachePath(filePath, cached.mtime, cached.optionsHash);
-        await fs.mkdir(path.dirname(cacheFilePath), { recursive: true });
-        await fs.writeFile(cacheFilePath, JSON.stringify(cached, null, 2), 'utf-8');
+        await this.fileSystem.createDir(path.dirname(cacheFilePath));
+        await this.fileSystem.writeFile(cacheFilePath, JSON.stringify(cached, null, 2));
     }
 
     private getDiskCachePath(filePath: string, mtime: number, optionsHash: string): string {

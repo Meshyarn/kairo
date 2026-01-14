@@ -1,4 +1,3 @@
-import * as fs from "fs";
 import * as path from "path";
 import { BaseHandler } from "./BaseHandler.js";
 import { HandlerContext } from "./HandlerContext.js";
@@ -169,7 +168,7 @@ export class ManageHandlers extends BaseHandler {
                     if (indexSnapshot) {
                         this.recordIndexMetrics(indexSnapshot);
                     }
-                    const budgetSnapshot = this.buildBudgetSnapshot();
+                    const budgetSnapshot = await this.buildBudgetSnapshot();
                     if (budgetSnapshot) {
                         this.recordBudgetMetrics(budgetSnapshot);
                     }
@@ -256,7 +255,7 @@ export class ManageHandlers extends BaseHandler {
                         : undefined;
                     const staleGuidance = indexSnapshot ? this.buildStaleRiskGuidance(indexSnapshot.staleRisk) : null;
                     const metricsExportStatus = this.context.metricsExportService?.getStatus();
-                    const budgetSnapshot = this.buildBudgetSnapshot();
+                    const budgetSnapshot = await this.buildBudgetSnapshot();
                     const embeddingDiagnostics = computeEmbeddingDiagnostics();
                     const embeddingFindings = this.buildEmbeddingFindings(embeddingDiagnostics);
                     return {
@@ -568,17 +567,17 @@ export class ManageHandlers extends BaseHandler {
         metrics.inc("cache.invalidate.all_total", 0);
     }
 
-    private buildBudgetSnapshot(): {
+    private async buildBudgetSnapshot(): Promise<{
         indexDirBytes: number;
         storageDirBytes: number;
         symbolSecondaryIndexEnabled: boolean;
         symbolSecondaryIndexBytes?: number;
-    } | null {
+    } | null> {
         try {
             const indexDir = PathManager.getIndexDir();
             const storageDir = PathManager.getStorageDir();
-            const indexDirBytes = this.getDirectorySizeBytes(indexDir);
-            const storageDirBytes = this.getDirectorySizeBytes(storageDir);
+            const indexDirBytes = await this.getDirectorySizeBytes(indexDir);
+            const storageDirBytes = await this.getDirectorySizeBytes(storageDir);
             const secondaryStatus = this.context.indexDatabase?.getSecondaryIndexStatus?.();
             return {
                 indexDirBytes,
@@ -605,29 +604,28 @@ export class ManageHandlers extends BaseHandler {
         metrics.gauge("symbol.search.secondary_index_enabled", snapshot.symbolSecondaryIndexEnabled ? 1 : 0);
     }
 
-    private getDirectorySizeBytes(dirPath: string): number {
+    private async getDirectorySizeBytes(dirPath: string): Promise<number> {
         let total = 0;
         const stack: string[] = [dirPath];
         while (stack.length > 0) {
             const current = stack.pop()!;
             let entries: string[] = [];
             try {
-                entries = fs.readdirSync(current);
+                entries = await this.context.fileSystem.readDir(current);
             } catch {
                 continue;
             }
             for (const entry of entries) {
                 const fullPath = path.join(current, entry);
-                let stat: fs.Stats;
                 try {
-                    stat = fs.statSync(fullPath);
+                    const stat = await this.context.fileSystem.stat(fullPath);
+                    if (stat.isDirectory()) {
+                        stack.push(fullPath);
+                    } else {
+                        total += stat.size;
+                    }
                 } catch {
                     continue;
-                }
-                if (stat.isDirectory()) {
-                    stack.push(fullPath);
-                } else if (stat.isFile()) {
-                    total += stat.size;
                 }
             }
         }

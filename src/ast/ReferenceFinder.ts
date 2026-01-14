@@ -1,10 +1,10 @@
 import * as path from 'path';
-import * as fs from 'fs';
 import { DependencyGraph } from './DependencyGraph.js';
 import { SymbolIndex } from './SymbolIndex.js';
 import { SkeletonGenerator } from './SkeletonGenerator.js';
 import { ModuleResolver } from './ModuleResolver.js';
 import { ImportSymbol, ExportSymbol, SymbolInfo } from '../types.js';
+import { NodeFileSystem, type IFileSystem } from '../platform/FileSystem.js';
 
 export interface ReferenceResult {
     filePath: string;
@@ -17,14 +17,18 @@ export interface ReferenceResult {
 export class ReferenceFinder {
     // Request-scoped cache to avoid re-parsing the same file multiple times during one search
     private symbolCache = new Map<string, SymbolInfo[]>();
+    private readonly fileSystem: IFileSystem;
 
     constructor(
         private rootPath: string,
         private graph: DependencyGraph,
         private index: SymbolIndex,
         private generator: SkeletonGenerator,
-        private resolver: ModuleResolver
-    ) {}
+        private resolver: ModuleResolver,
+        fileSystem?: IFileSystem
+    ) {
+        this.fileSystem = fileSystem ?? new NodeFileSystem(this.rootPath);
+    }
 
     public async findReferences(symbolName: string, definitionFilePath: string): Promise<ReferenceResult[]> {
         this.symbolCache.clear();
@@ -59,9 +63,9 @@ export class ReferenceFinder {
 
         for (const file of searchFiles) {
             try {
-                if (!fs.existsSync(file)) continue;
+                if (!this.fileSystem.existsSync?.(file)) continue;
                 
-                const content = fs.readFileSync(file, 'utf-8');
+                const content = this.fileSystem.readFileSync?.(file) ?? await this.fileSystem.readFile(file);
                 const lines = content.split(/\r?\n/);
                 const targetNames = await this.resolveLocalNames(file, normalizedDefPath, symbolName, content, treatAsDefaultExport);
                 if (targetNames.length === 0) {

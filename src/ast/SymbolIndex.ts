@@ -1,4 +1,3 @@
-import * as fs from 'fs';
 import * as path from 'path';
 import ignore from 'ignore';
 import { LRUCache } from 'lru-cache';
@@ -6,6 +5,7 @@ import { SkeletonGenerator } from './SkeletonGenerator.js';
 import { SymbolInfo } from '../types.js';
 import { IndexDatabase } from '../indexing/IndexDatabase.js';
 import { CommentIndexer } from '../indexing/CommentIndexer.js';
+import { NodeFileSystem, type IFileSystem, type FileStats } from '../platform/FileSystem.js';
 
 const SUPPORTED_EXTENSIONS = new Set<string>(['.ts', '.tsx', '.js', '.jsx', '.py']);
 const HOT_CACHE_SIZE = 50;
@@ -24,6 +24,7 @@ export class SymbolIndex {
     private readonly cache: LRUCache<string, CacheEntry>;
     private readonly rootPath: string;
     private readonly skeletonGenerator: SkeletonGenerator;
+    private readonly fileSystem: IFileSystem;
     private ignoreFilter: ReturnType<typeof ignore.default>;
     private readonly db: IndexDatabase;
     private readonly commentIndexer: CommentIndexer;
@@ -39,9 +40,16 @@ export class SymbolIndex {
     private incrementalUpdatePromise: Promise<void> | null = null;
 
 
-    constructor(rootPath: string, skeletonGenerator: SkeletonGenerator, ignorePatterns: string[], db?: IndexDatabase) {
+    constructor(
+        rootPath: string,
+        skeletonGenerator: SkeletonGenerator,
+        ignorePatterns: string[],
+        db?: IndexDatabase,
+        fileSystem?: IFileSystem
+    ) {
         this.rootPath = rootPath;
         this.skeletonGenerator = skeletonGenerator;
+        this.fileSystem = fileSystem ?? new NodeFileSystem(this.rootPath);
         this.userIgnorePatterns = [...ignorePatterns];
         this.ignoreFilter = this.createIgnoreFilter(this.userIgnorePatterns);
         this.db = db ?? new IndexDatabase(this.rootPath);
@@ -138,14 +146,19 @@ export class SymbolIndex {
     }
 
     public async getSymbolsForFile(filePath: string): Promise<SymbolInfo[]> {
-        let stats: fs.Stats;
+        let stats: FileStats;
         try {
-            stats = fs.statSync(filePath);
+            const snapshot = this.fileSystem.statSync?.(filePath);
+            if (!snapshot) {
+                this.dropFileFromIndex(filePath);
+                return [];
+            }
+            stats = snapshot;
         } catch {
             this.dropFileFromIndex(filePath);
             return [];
         }
-        const currentMtime = stats.mtimeMs;
+        const currentMtime = stats.mtime;
         const relativePath = this.toRelative(filePath);
         const cached = this.cache.get(relativePath);
         if (cached && cached.mtime === currentMtime) {
@@ -172,7 +185,7 @@ export class SymbolIndex {
             return [];
         }
 
-        const content = fs.readFileSync(filePath, 'utf-8');
+        const content = this.fileSystem.readFileSync?.(filePath) ?? await this.fileSystem.readFile(filePath);
         const symbols = await this.extractSymbols(filePath, content);
         this.cache.set(relativePath, { mtime: currentMtime, symbols });
         this.db.replaceSymbols({
@@ -274,14 +287,16 @@ export class SymbolIndex {
         for (const filePath of files) {
             const relative = this.toRelative(filePath);
             seen.add(relative);
-            let stats: fs.Stats;
+            let stats: FileStats;
             try {
-                stats = fs.statSync(filePath);
+                const snapshot = this.fileSystem.statSync?.(filePath);
+                if (!snapshot) continue;
+                stats = snapshot;
             } catch {
                 continue;
             }
             const record = recordMap.get(relative);
-            if (!record || record.last_modified !== stats.mtimeMs) {
+            if (!record || record.last_modified !== stats.mtime) {
                 await this.getSymbolsForFile(filePath);
             }
         }
@@ -304,14 +319,14 @@ export class SymbolIndex {
         for (const filePath of files) {
             const relative = this.toRelative(filePath);
             seen.add(relative);
-            let stats: fs.Stats;
+            let stats: FileStats;
             try {
-                stats = await fs.promises.stat(filePath);
+                stats = await this.fileSystem.stat(filePath);
             } catch {
                 continue;
             }
             const record = recordMap.get(relative);
-            if (!record || record.last_modified !== stats.mtimeMs) {
+            if (!record || record.last_modified !== stats.mtime) {
                 await this.getSymbolsForFile(filePath);
             }
         }
@@ -328,7 +343,7 @@ export class SymbolIndex {
         let results: string[] = [];
         let list: string[] = [];
         try {
-            list = fs.readdirSync(dir);
+            list = this.fileSystem.readDirSync?.(dir) ?? [];
         } catch {
             return [];
         }
@@ -339,8 +354,8 @@ export class SymbolIndex {
                 continue;
             }
             try {
-                const stat = fs.statSync(absPath);
-                if (stat.isDirectory()) {
+                const stat = this.fileSystem.statSync?.(absPath);
+                if (stat?.isDirectory()) {
                     results = results.concat(this.scanFiles(absPath));
                 } else if (this.isSupported(absPath)) {
                     results.push(absPath);
@@ -359,7 +374,7 @@ export class SymbolIndex {
             const current = stack.pop()!;
             let list: string[] = [];
             try {
-                list = await fs.promises.readdir(current);
+                list = await this.fileSystem.readDir(current);
             } catch {
                 continue;
             }
@@ -370,7 +385,7 @@ export class SymbolIndex {
                     continue;
                 }
                 try {
-                    const stat = await fs.promises.stat(absPath);
+                    const stat = await this.fileSystem.stat(absPath);
                     if (stat.isDirectory()) {
                         stack.push(absPath);
                     } else if (this.isSupported(absPath)) {
@@ -545,14 +560,14 @@ export class SymbolIndex {
             try {
                 // Check if file still exists
                 const fullPath = path.join(this.rootPath, relativePath);
-                if (!fs.existsSync(fullPath)) {
+                if (!this.fileSystem.existsSync?.(fullPath)) {
                     this.db.deleteFile(relativePath);
                     this.cache.delete(relativePath);
                     continue;
                 }
 
                 // Re-index this file only
-                const content = fs.readFileSync(fullPath, 'utf-8');
+                const content = this.fileSystem.readFileSync?.(fullPath) ?? await this.fileSystem.readFile(fullPath);
                 const symbols = await this.extractSymbols(fullPath, content);
                 this.cache.set(relativePath, { mtime: Date.now(), symbols });
                 this.db.replaceSymbols({

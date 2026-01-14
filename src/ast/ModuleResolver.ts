@@ -1,9 +1,9 @@
-import * as fs from 'fs';
 import * as path from 'path';
 import * as resolve from 'resolve';
 import { builtinModules } from 'module';
 import { createMatchPath, loadConfig, MatchPath } from 'tsconfig-paths';
 import type { PackageAliasMap } from '../config/PackageAliasMap.js';
+import { NodeFileSystem, type IFileSystem } from '../platform/FileSystem.js';
 
 export type ModuleResolverFallback = 'node' | 'bundler';
 
@@ -12,6 +12,7 @@ export interface ModuleResolverConfig {
     tsconfigPaths?: string[];
     fallbackResolution?: ModuleResolverFallback;
     packageAliasMap?: PackageAliasMap;
+    fileSystem?: IFileSystem;
 }
 
 interface TsconfigMatcher {
@@ -46,15 +47,18 @@ export class ModuleResolver {
     private tsconfigMatchers: TsconfigMatcher[] = [];
     private fallback: ModuleResolverFallback;
     private packageAliasMap?: PackageAliasMap;
+    private readonly fileSystem: IFileSystem;
 
     constructor(config: string | ModuleResolverConfig) {
         if (typeof config === 'string') {
             this.rootPath = config;
             this.fallback = 'node';
+            this.fileSystem = new NodeFileSystem(this.rootPath);
         } else {
             this.rootPath = config.rootPath;
             this.fallback = config.fallbackResolution || 'node';
             this.packageAliasMap = config.packageAliasMap;
+            this.fileSystem = config.fileSystem ?? new NodeFileSystem(this.rootPath);
             if (config.tsconfigPaths && config.tsconfigPaths.length > 0) {
                 this.initializeTsconfigMatchers(config.tsconfigPaths);
             }
@@ -310,8 +314,8 @@ export class ModuleResolver {
             return this.fileExistsCache.get(filePath)!;
         }
         try {
-            const stat = fs.statSync(filePath);
-            const isFile = stat.isFile();
+            const stat = this.fileSystem.statSync?.(filePath);
+            const isFile = stat ? !stat.isDirectory() : false;
             this.fileExistsCache.set(filePath, isFile);
             return isFile;
         } catch (e) {
@@ -325,8 +329,8 @@ export class ModuleResolver {
             return this.dirExistsCache.get(dirPath)!;
         }
         try {
-            const stat = fs.statSync(dirPath);
-            const isDir = stat.isDirectory();
+            const stat = this.fileSystem.statSync?.(dirPath);
+            const isDir = stat ? stat.isDirectory() : false;
             this.dirExistsCache.set(dirPath, isDir);
             return isDir;
         } catch (e) {
@@ -344,7 +348,7 @@ export class ModuleResolver {
 
         for (const candidate of candidates) {
             const configPath = path.isAbsolute(candidate) ? candidate : path.join(this.rootPath, candidate);
-            if (!fs.existsSync(configPath)) continue;
+            if (!this.fileSystem.existsSync?.(configPath)) continue;
             const normalized = configPath;
             if (seen.has(normalized)) continue;
             seen.add(normalized);
@@ -377,7 +381,7 @@ export class ModuleResolver {
 
     private discoverTsconfigPaths(): string[] {
         const defaults = new Set<string>();
-        const rootFiles = fs.existsSync(this.rootPath) ? fs.readdirSync(this.rootPath) : [];
+        const rootFiles = this.fileSystem.existsSync?.(this.rootPath) ? (this.fileSystem.readDirSync?.(this.rootPath) ?? []) : [];
         for (const file of rootFiles) {
             if (file.startsWith('tsconfig') && file.endsWith('.json')) {
                 defaults.add(path.join(this.rootPath, file));
@@ -387,17 +391,17 @@ export class ModuleResolver {
         const candidateDirs = ['packages', 'apps', 'libs', 'services'];
         for (const dir of candidateDirs) {
             const full = path.join(this.rootPath, dir);
-            if (!fs.existsSync(full) || !fs.statSync(full).isDirectory()) continue;
-            for (const sub of fs.readdirSync(full)) {
+            if (!this.fileSystem.existsSync?.(full) || !this.isDirectory(full)) continue;
+            for (const sub of this.fileSystem.readDirSync?.(full) ?? []) {
                 const tsconfigPath = path.join(full, sub, 'tsconfig.json');
-                if (fs.existsSync(tsconfigPath)) {
+                if (this.fileSystem.existsSync?.(tsconfigPath)) {
                     defaults.add(tsconfigPath);
                 }
             }
         }
 
         const direct = path.join(this.rootPath, 'tsconfig.json');
-        if (fs.existsSync(direct)) {
+        if (this.fileSystem.existsSync?.(direct)) {
             defaults.add(direct);
         }
 

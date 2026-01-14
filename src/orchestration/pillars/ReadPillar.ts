@@ -1,5 +1,4 @@
 import crypto from 'crypto';
-import fs from 'fs';
 import { InternalToolRegistry } from '../InternalToolRegistry.js';
 import { OrchestrationContext } from '../OrchestrationContext.js';
 import { ParsedIntent } from '../IntentRouter.js';
