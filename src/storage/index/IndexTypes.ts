@@ -108,6 +108,7 @@ export interface IndexStore {
     readSymbols(relativePath: string): SymbolInfo[] | undefined;
     streamAllSymbols(): Map<string, SymbolInfo[]>;
     searchSymbols(pattern: string, limit?: number): Array<{ path: string; data_json: string }>;
+    getSecondaryIndexStatus(): { enabled: boolean; bytes?: number };
 
     replaceDependencies(args: {
         relativePath: string;

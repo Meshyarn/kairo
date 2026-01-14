@@ -15,6 +15,7 @@ import { ProjectIndexManager } from './ProjectIndexManager.js';
 import type { ProjectIndex, FileIndexEntry } from './ProjectIndex.js';
 import { UnifiedExtractor } from '../ast/extraction/UnifiedExtractor.js';
 import { DocumentIndexer } from './DocumentIndexer.js';
+import type { IndexingActivity } from './IndexStateManager.js';
 
 export interface IncrementalIndexerOptions {
     watch?: boolean;
@@ -25,6 +26,7 @@ export interface IncrementalIndexerOptions {
     onFileIndexed?: (filePath: string) => void;
     onFileRemoved?: (filePath: string) => void;
     onDirectoryRemoved?: (dirPath: string) => void;
+    onActivity?: (activity?: IndexingActivity) => void;
 }
 
 const DEFAULT_BATCH_PAUSE_MS = 50;
@@ -76,6 +78,12 @@ export class IncrementalIndexer {
     private extractorResolver: ModuleResolver;
     private documentIndexer?: DocumentIndexer;
     private pendingPersistence: Promise<void> | null = null;
+    private baselineActive = false;
+    private baselineScanCompleted = false;
+    private baselineTotalFiles = 0;
+    private baselineProcessedFiles = 0;
+    private baselineStartedAt = 0;
+    private baselineScanStartedAt = 0;
 
     constructor(
         private readonly rootPath: string,
@@ -335,7 +343,8 @@ export class IncrementalIndexer {
                         return;
                     }
 
-                        try {
+                    const stopBaselineIndex = this.baselineActive ? metrics.startTimer("baseline.index_ms") : null;
+                    try {
                             const symbols = await this.symbolIndex.getSymbolsForFile(filePath);
                         const content = await fs.promises.readFile(filePath, 'utf-8');
                         const languageId = this.astManager.getLanguageId(filePath);
@@ -375,8 +384,14 @@ export class IncrementalIndexer {
                             doc?.dispose?.();
                         }
                         this.options.onFileIndexed?.(filePath);
+                        if (this.baselineActive) {
+                            this.baselineProcessedFiles += 1;
+                            this.updateBaselineActivity("indexing");
+                        }
                     } catch (error) {
                         console.warn(`[IncrementalIndexer] failed to index ${filePath}:`, error);
+                    } finally {
+                        if (stopBaselineIndex) stopBaselineIndex();
                     }
                 }));
             }
@@ -385,17 +400,38 @@ export class IncrementalIndexer {
         }
 
         this.clearActivity('queue_processing');
+        if (this.baselineActive && this.baselineScanCompleted && this.getTotalQueueSize() === 0) {
+            this.baselineActive = false;
+            this.baselineStartedAt = 0;
+            this.baselineScanCompleted = false;
+            this.baselineTotalFiles = 0;
+            this.baselineProcessedFiles = 0;
+            this.setActivity("baseline_complete");
+            this.clearActivity("baseline_complete");
+        }
         this.processing = false;
     }
 
     private async enqueueInitialScan(): Promise<void> {
+        this.baselineActive = true;
+        this.baselineScanCompleted = false;
+        this.baselineTotalFiles = 0;
+        this.baselineProcessedFiles = 0;
+        this.baselineStartedAt = Date.now();
+        this.baselineScanStartedAt = Date.now();
+        this.updateBaselineActivity("scanning");
         const stopInitialScan = metrics.startTimer("indexer.initial_scan_ms");
+        const stopBaselineScan = metrics.startTimer("baseline.scan_ms");
         const stack: string[] = [this.rootPath];
         const batchSize = this.resolveScanBatchSize();
         const batchCounter = { count: 0 };
+        const maxMsPerTick = this.resolveBaselineMaxMsPerTick();
+        const maxFilesPerTick = this.resolveBaselineMaxFilesPerTick();
         
         try {
             while (stack.length > 0 && !this.stopped) {
+                const tickStart = Date.now();
+                let tickFiles = 0;
                 const current = stack.pop()!;
                 let entries: fs.Dirent[];
                 try {
@@ -413,9 +449,16 @@ export class IncrementalIndexer {
                         stack.push(fullPath);
                     } else if (this.symbolIndex.isSupported(fullPath) || this.isDocumentFile(fullPath)) {
                         supportedFiles.push(fullPath);
+                        this.baselineTotalFiles += 1;
                     }
                     batchCounter.count += 1;
+                    tickFiles += 1;
                     await this.yieldIfNeeded(batchCounter, batchSize);
+                    if (tickFiles >= maxFilesPerTick || (Date.now() - tickStart) >= maxMsPerTick) {
+                        this.updateBaselineActivity("scanning");
+                        await this.sleep(0);
+                        tickFiles = 0;
+                    }
                 }
 
                 // Phase 1 (ADR-029): Parallel check for reindexing
@@ -429,6 +472,9 @@ export class IncrementalIndexer {
             }
         } finally {
             stopInitialScan();
+            stopBaselineScan();
+            this.baselineScanCompleted = true;
+            this.updateBaselineActivity("indexing");
         }
     }
 
@@ -765,6 +811,42 @@ export class IncrementalIndexer {
         if (!label || (this.activity && this.activity.label === label)) {
             this.activity = undefined;
         }
+    }
+
+    private updateBaselineActivity(phase: "scanning" | "indexing"): void {
+        if (!this.baselineActive) return;
+        const processed = phase === "scanning" ? this.baselineTotalFiles : this.baselineProcessedFiles;
+        const total = Math.max(this.baselineTotalFiles, 1);
+        const elapsedMs = Math.max(1, Date.now() - this.baselineStartedAt);
+        const rate = this.baselineProcessedFiles > 0 ? this.baselineProcessedFiles / elapsedMs : 0;
+        const remaining = Math.max(0, this.baselineTotalFiles - this.baselineProcessedFiles);
+        const eta = rate > 0 ? Math.round(remaining / rate) : undefined;
+        const activity: IndexingActivity = {
+            phase,
+            processed,
+            total,
+            ...(eta ? { eta } : {})
+        };
+        this.indexerActivityGauge(remaining, total);
+        this.options.onActivity?.(activity);
+    }
+
+    private indexerActivityGauge(remaining: number, total: number): void {
+        metrics.gauge("baseline.pending_files", remaining);
+        const ratio = total > 0 ? (total - remaining) / total : 0;
+        metrics.gauge("baseline.progress_ratio", ratio);
+    }
+
+    private resolveBaselineMaxMsPerTick(): number {
+        const raw = Number.parseInt(process.env.KAIRO_BASELINE_MAX_MS_PER_TICK ?? "25", 10);
+        if (Number.isFinite(raw) && raw > 0) return raw;
+        return 25;
+    }
+
+    private resolveBaselineMaxFilesPerTick(): number {
+        const raw = Number.parseInt(process.env.KAIRO_BASELINE_MAX_FILES_PER_TICK ?? "50", 10);
+        if (Number.isFinite(raw) && raw > 0) return raw;
+        return 50;
     }
 
     private async batchShouldReindex(files: string[]): Promise<string[]> {

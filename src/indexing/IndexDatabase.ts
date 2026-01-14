@@ -75,6 +75,10 @@ export class IndexDatabase implements IndexStore {
         return this.store.searchSymbols(pattern, limit);
     }
 
+    public getSecondaryIndexStatus(): { enabled: boolean; bytes?: number } {
+        return this.store.getSecondaryIndexStatus();
+    }
+
     public replaceDependencies(args: {
         relativePath: string;
         lastModified: number;
