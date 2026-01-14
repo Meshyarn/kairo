@@ -27,6 +27,7 @@ import type { NodeFileSystem } from "../platform/FileSystem.js";
 import type { RepoRegistry } from "../config/RepoRegistry.js";
 import type { FlowArtifactManager } from "../orchestration/flow-artifact-manager.js";
 import type { MetricsExportService } from "../utils/metrics/MetricsExportService.js";
+import type { CacheInvalidationHub } from "../server/CacheInvalidationHub.js";
 
 export interface HandlerContext {
     rootPath: string;
@@ -59,6 +60,7 @@ export interface HandlerContext {
     historyEngine: HistoryEngine;
     flowArtifactManager: FlowArtifactManager;
     metricsExportService?: MetricsExportService;
+    cacheInvalidationHub?: CacheInvalidationHub;
     isTestEnv: () => boolean;
     metadata?: Record<string, unknown>;
 }

@@ -77,6 +77,7 @@ import { VectorIndexManager } from "../vector/VectorIndexManager.js";
 import { AdaptiveFlowReporter } from "../utils/AdaptiveFlowReporter.js";
 import { AlertDispatcher } from "../utils/AlertDispatcher.js";
 import { MetricsExportService } from "../utils/metrics/MetricsExportService.js";
+import { CacheInvalidationHub } from "./CacheInvalidationHub.js";
 
 // Orchestration Imports
 import { OrchestrationEngine } from "../orchestration/OrchestrationEngine.js";
@@ -155,6 +156,8 @@ export class SmartContextServer {
     private metricsReporter?: AdaptiveFlowReporter;
     private alertDispatcher?: AlertDispatcher;
     private metricsExportService?: MetricsExportService;
+    private cacheInvalidationHub?: CacheInvalidationHub;
+    private cacheStrategy: CachingStrategy;
     private toolSpecRegistry = createDefaultToolSpecRegistry();
 
     private searchHandlers!: SearchHandlers;
@@ -256,9 +259,18 @@ export class SmartContextServer {
             {
                 watch: true,
                 initialScan: false,
-                onFileQueued: (filePath) => this.indexStateManager.markDirty(toRelative(filePath)),
+                onFileQueued: (filePath) => {
+                    this.indexStateManager.markDirty(toRelative(filePath));
+                    this.cacheInvalidationHub?.onEvent({ type: "file_changed", absPath: filePath });
+                },
                 onFileIndexed: (filePath) => this.indexStateManager.clearDirty(toRelative(filePath)),
-                onFileRemoved: (filePath) => this.indexStateManager.clearDirty(toRelative(filePath))
+                onFileRemoved: (filePath) => {
+                    this.indexStateManager.clearDirty(toRelative(filePath));
+                    this.cacheInvalidationHub?.onEvent({ type: "file_deleted", absPath: filePath });
+                },
+                onDirectoryRemoved: (dirPath) => {
+                    this.cacheInvalidationHub?.onEvent({ type: "dir_deleted", absPath: dirPath });
+                }
             },
             this.documentIndexer
         );
@@ -288,6 +300,21 @@ export class SmartContextServer {
             dependencyGraph: this.dependencyGraph,
             fileSystem: this.fileSystem
         });
+
+        this.cacheStrategy = new CachingStrategy(this.rootPath);
+        this.cacheInvalidationHub = new CacheInvalidationHub({
+            rootPath: this.rootPath,
+            indexStateManager: this.indexStateManager,
+            searchEngine: this.searchEngine,
+            dependencyGraph: this.dependencyGraph,
+            clusterSearchEngine: this.clusterSearchEngine,
+            documentSearchEngine: this.documentSearchEngine,
+            documentIndexer: this.documentIndexer,
+            orchestrationCache: this.cacheStrategy,
+            callGraphBuilder: this.callGraphBuilder,
+            typeDependencyTracker: this.typeDependencyTracker
+        });
+        void this.cacheInvalidationHub.syncEpoch();
 
         const historyEngine = new HistoryEngine(this.rootPath, this.fileSystem);
         this.historyEngine = historyEngine;
@@ -322,7 +349,7 @@ export class SmartContextServer {
             new IntentRouter(),
             new WorkflowPlanner(),
             this.internalRegistry,
-            new CachingStrategy(this.rootPath)
+            this.cacheStrategy
         );
         this.registerInternalTools();
         
@@ -381,6 +408,7 @@ export class SmartContextServer {
             historyEngine: this.historyEngine,
             flowArtifactManager: this.flowArtifactManager,
             metricsExportService: this.metricsExportService,
+            cacheInvalidationHub: this.cacheInvalidationHub,
             isTestEnv: () => this.isTestEnv()
         });
         this.searchHandlers = new SearchHandlers(handlerContext);
@@ -769,6 +797,7 @@ export class SmartContextServer {
         this.contextEngine.updateIgnoreFilter(this.createIgnoreFilter(normalized));
         void this.searchEngine.updateExcludeGlobs(normalized);
         this.documentIndexer?.updateIgnorePatterns(normalized);
+        this.cacheInvalidationHub?.onEvent({ type: "ignore_changed" });
     }
 
     private listIntentTools(): any[] {

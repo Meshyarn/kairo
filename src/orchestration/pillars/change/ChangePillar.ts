@@ -192,6 +192,7 @@ export class ChangePillar {
       });
       const bypassIntegrityGuardrails = overrideDecision?.effectiveAllow?.["integrityGuardrails.bypass"] === true;
       const bypassReviewBlock = overrideDecision?.effectiveAllow?.["reviewPolicy.bypassPreApplyBlock"] === true;
+      const bypassStaleGuard = overrideDecision?.effectiveAllow?.["staleGuard.bypass"] === true;
       if (overrideDecision) {
         const auditEventId = await AuditLog.append({
           pillar: "change",
@@ -228,6 +229,7 @@ export class ChangePillar {
       const repoRegistry = this.registry.getMetadata<RepoRegistry>("repoRegistry");
       const pathNormalizer = this.registry.getMetadata<PathNormalizer>("pathNormalizer");
       const fileVersionManager = this.registry.getMetadata<FileVersionManager>("fileVersionManager");
+      const indexStateManager = this.registry.getMetadata<IndexStateManager>("indexStateManager");
       const allowCrossRepoEdits = Boolean((constraints as any).allowCrossRepoEdits);
       const repoScopeParams = {
         repoScope: (constraints as any).repoScope,
@@ -275,6 +277,35 @@ export class ChangePillar {
         }
       }
 
+      const staleGuard = await this.checkStaleGuard({
+        indexStateManager,
+        dryRun,
+        bypass: bypassStaleGuard,
+        workflowWarnings
+      });
+      if (staleGuard.blocked) {
+        return attachWorkflow({
+          success: false,
+          status: "blocked",
+          message: staleGuard.message,
+          errorCode: "INDEX_STALE_HIGH",
+          blockedReason: "index_stale_high",
+          guidance: {
+            message: staleGuard.message,
+            suggestedActions: [
+              {
+                id: "manage.reindex",
+                priority: 1,
+                description: "Rebuild index before apply.",
+                rationale: "High stale risk reduces apply safety.",
+                toolCall: { tool: "manage", args: { command: "reindex" } }
+              }
+            ]
+          },
+          indexSnapshot: staleGuard.snapshot
+        });
+      }
+
       if (useV2 && shouldBatch) {
         const result = await executeV2BatchChange(
           { intent, context, rawEdits, targetFiles, dryRun, v2Mode },
@@ -286,7 +317,6 @@ export class ChangePillar {
 
       if (shouldBatch) {
         const dependencyGraph = this.registry.getMetadata<DependencyGraph>("dependencyGraph");
-        const indexStateManager = this.registry.getMetadata<IndexStateManager>("indexStateManager");
         const batchFileVersions = dryRun
           ? await this.buildFileVersionsSnapshot(targetFiles, fileVersionManager, pathNormalizer)
           : expectedFileVersions;
@@ -493,7 +523,6 @@ export class ChangePillar {
       }
 
       const dependencyGraph = this.registry.getMetadata<DependencyGraph>("dependencyGraph");
-      const indexStateManager = this.registry.getMetadata<IndexStateManager>("indexStateManager");
       let guardrailResult: any = undefined;
       let reviewOriginalContent = "";
       let reviewNextContent = "";
@@ -1499,6 +1528,30 @@ export class ChangePillar {
       }
     }
     return false;
+  }
+
+  private async checkStaleGuard(args: {
+    indexStateManager?: IndexStateManager;
+    dryRun: boolean;
+    bypass: boolean;
+    workflowWarnings: string[];
+  }): Promise<{ blocked: boolean; message: string; snapshot?: any }> {
+    if (args.dryRun || !args.indexStateManager) {
+      return { blocked: false, message: "" };
+    }
+    const snapshot = await args.indexStateManager.getSnapshot();
+    if (snapshot.staleRisk !== "high") {
+      return { blocked: false, message: "", snapshot };
+    }
+    if (args.bypass) {
+      args.workflowWarnings.push("Override bypassed stale index guard.");
+      return { blocked: false, message: "", snapshot };
+    }
+    return {
+      blocked: true,
+      message: "Index staleness is high; reindex before apply.",
+      snapshot
+    };
   }
 
 }

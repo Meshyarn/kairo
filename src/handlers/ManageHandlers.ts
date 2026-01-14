@@ -153,6 +153,12 @@ export class ManageHandlers extends BaseHandler {
                 }
             case 'metrics':
                 {
+                    const indexSnapshot = this.context.indexStateManager
+                        ? await this.context.indexStateManager.getSnapshot()
+                        : undefined;
+                    if (indexSnapshot) {
+                        this.recordIndexMetrics(indexSnapshot);
+                    }
                     const snapshot = metrics.snapshot();
                     return {
                         success: true,
@@ -231,6 +237,10 @@ export class ManageHandlers extends BaseHandler {
                         limit: 1000
                     });
                     const auditStats = await AuditLog.stats();
+                    const indexSnapshot = this.context.indexStateManager
+                        ? await this.context.indexStateManager.getSnapshot()
+                        : undefined;
+                    const staleGuidance = indexSnapshot ? this.buildStaleRiskGuidance(indexSnapshot.staleRisk) : null;
                     const metricsExportStatus = this.context.metricsExportService?.getStatus();
                     return {
                         ...result,
@@ -248,6 +258,8 @@ export class ManageHandlers extends BaseHandler {
                             totalEvents: auditStats.total,
                             acceptedLast24h: recentAccepted.length
                         },
+                        ...(indexSnapshot ? { indexSnapshot } : {}),
+                        ...(staleGuidance ? { staleGuidance } : {}),
                         ...(metricsExportStatus ? { metricsExport: metricsExportStatus } : {})
                     };
                 }
@@ -264,6 +276,7 @@ export class ManageHandlers extends BaseHandler {
                         const startedAt = new Date();
                         this.reindexInProgress = true;
                         this.context.indexStateManager.markReindexStart();
+                        this.context.cacheInvalidationHub?.onEvent({ type: "reindex_start" });
                         this.reindexLastResult = {
                             success: false,
                             output: "Reindex in progress.",
@@ -282,6 +295,7 @@ export class ManageHandlers extends BaseHandler {
                             };
                             this.reindexInProgress = false;
                             this.context.indexStateManager.markReindexComplete();
+                            this.context.cacheInvalidationHub?.onEvent({ type: "reindex_complete" });
                             return { success: true, output: "Reindex completed (test mode).", activity: { reindexInProgress: false } };
                         }
 
@@ -300,6 +314,7 @@ export class ManageHandlers extends BaseHandler {
                                     finishedAt: finishedAt.toISOString()
                                 };
                                 this.context.indexStateManager.markReindexComplete();
+                                this.context.cacheInvalidationHub?.onEvent({ type: "reindex_complete" });
                             } catch (error: any) {
                                 const finishedAt = new Date();
                                 this.reindexLastResult = {
@@ -520,5 +535,34 @@ export class ManageHandlers extends BaseHandler {
             hints.push(tokenizer.missingReason);
         }
         return hints;
+    }
+
+    private recordIndexMetrics(snapshot: { epoch: number; dirtyFileCount: number; coverageRatio: number; staleRisk: "low" | "medium" | "high" }): void {
+        metrics.gauge("index.epoch", snapshot.epoch);
+        metrics.gauge("index.dirty_files", snapshot.dirtyFileCount);
+        metrics.gauge("index.coverage_ratio", snapshot.coverageRatio);
+        const riskLevel = snapshot.staleRisk === "high" ? 2 : snapshot.staleRisk === "medium" ? 1 : 0;
+        metrics.gauge("index.stale_risk_level", riskLevel);
+        metrics.inc("cache.invalidate.file_total", 0);
+        metrics.inc("cache.invalidate.dir_total", 0);
+        metrics.inc("cache.invalidate.all_total", 0);
+    }
+
+    private buildStaleRiskGuidance(level: "low" | "medium" | "high") {
+        if (level === "low") return null;
+        const message = level === "high"
+            ? "Index staleness is high; reindex is recommended before apply."
+            : "Index staleness is elevated; consider reindexing for reliable results.";
+        return {
+            level,
+            message,
+            suggestedActions: [
+                {
+                    id: "manage.reindex",
+                    description: "Rebuild index to reduce stale risk.",
+                    toolCall: { tool: "manage", args: { command: "reindex" } }
+                }
+            ]
+        };
     }
 }
