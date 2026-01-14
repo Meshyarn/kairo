@@ -7,6 +7,9 @@ const DEFAULT_MODEL = "multilingual-e5-small";
 
 const modelRaw = process.env.KAIRO_EMBEDDING_MODEL || DEFAULT_MODEL;
 const modelId = normalizeModelId(modelRaw);
+const profileRaw = (process.env.KAIRO_MODEL_BUNDLE_PROFILE || "minimal").trim().toLowerCase();
+const bundleProfile = profileRaw === "full" ? "full" : "minimal";
+const quantized = process.env.KAIRO_EMBEDDING_QUANTIZED !== "false";
 
 if (!modelId || modelId === "hash") {
     console.log("[bundle-models] Hash embedding selected; skipping model bundle.");
@@ -38,13 +41,29 @@ const destinationRoot = process.env.KAIRO_MODEL_DIR
 const destinationPath = path.join(destinationRoot, modelId);
 
 await fs.rm(destinationPath, { recursive: true, force: true });
-await copyDir(sourcePath, destinationPath);
+if (bundleProfile === "full") {
+    await copyDir(sourcePath, destinationPath);
+} else {
+    await copyMinimalBundle(sourcePath, destinationPath, { quantized });
+}
 
-const required = ["config.json", "tokenizer.json", "tokenizer_config.json"];
+const required = [
+    "config.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    quantized ? path.join("onnx", "model_quantized.onnx") : path.join("onnx", "model.onnx")
+];
 const missing = await checkMissingFiles(destinationPath, required);
 if (missing.length > 0) {
     console.warn(`[bundle-models] Bundled model missing expected files: ${missing.join(", ")}`);
 }
+
+await writeManifest(destinationPath, {
+    modelId,
+    profile: bundleProfile,
+    quantized,
+    requiredFiles: required
+});
 
 console.log(`[bundle-models] Bundled "${modelId}" -> ${destinationPath}`);
 
@@ -96,6 +115,49 @@ async function copyDir(src, dest) {
     }
 }
 
+async function copyMinimalBundle(src, dest, options) {
+    await fs.mkdir(dest, { recursive: true });
+    const requiredFiles = [
+        "config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        options.quantized ? path.join("onnx", "model_quantized.onnx") : path.join("onnx", "model.onnx")
+    ];
+    const optionalFiles = [
+        "special_tokens_map.json",
+        "sentencepiece.bpe.model",
+        "quant_config.json",
+        "vocab.json",
+        "merges.txt",
+        "tokenizer.model"
+    ];
+    for (const file of requiredFiles) {
+        await copyFileOrThrow(src, dest, file);
+    }
+    for (const file of optionalFiles) {
+        await copyFileIfExists(src, dest, file);
+    }
+}
+
+async function copyFileOrThrow(srcRoot, destRoot, relativePath) {
+    const srcPath = path.join(srcRoot, relativePath);
+    const destPath = path.join(destRoot, relativePath);
+    await fs.mkdir(path.dirname(destPath), { recursive: true });
+    await fs.copyFile(srcPath, destPath);
+}
+
+async function copyFileIfExists(srcRoot, destRoot, relativePath) {
+    const srcPath = path.join(srcRoot, relativePath);
+    try {
+        await fs.access(srcPath);
+    } catch {
+        return;
+    }
+    const destPath = path.join(destRoot, relativePath);
+    await fs.mkdir(path.dirname(destPath), { recursive: true });
+    await fs.copyFile(srcPath, destPath);
+}
+
 async function checkMissingFiles(root, files) {
     const missing = [];
     for (const file of files) {
@@ -106,4 +168,13 @@ async function checkMissingFiles(root, files) {
         }
     }
     return missing;
+}
+
+async function writeManifest(destRoot, payload) {
+    const manifest = {
+        ...payload,
+        createdAt: new Date().toISOString()
+    };
+    const manifestPath = path.join(destRoot, "kairo-model.json");
+    await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2));
 }

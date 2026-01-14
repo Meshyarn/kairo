@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { resolveEmbeddingConfigFromEnv } from "../../embeddings/EmbeddingConfig.js";
+import { resolveEmbeddingModelSearchPaths } from "../../embeddings/ModelPaths.js";
 import { FeatureFlags } from "../../config/FeatureFlags.js";
 
 export type TokenizerDiagnostics = {
@@ -46,14 +47,11 @@ export function computeTokenizerDiagnostics(rootPath = process.cwd()): Tokenizer
     };
   }
 
-  const homeDir = process.env.HOME || process.env.USERPROFILE || "";
-  const candidates = [
-    embeddingConfig.modelDir ? path.join(embeddingConfig.modelDir, modelId) : null,
-    path.join(rootPath, "node_modules", "@xenova", "transformers", ".cache", modelId),
-    path.join(homeDir, ".cache", "huggingface", "hub", modelId.replace(/\//g, "--")),
-    path.join(rootPath, "models", modelId),
-    path.join(new URL(".", import.meta.url).pathname, "..", "..", "..", "..", "models", modelId)
-  ].filter((candidate): candidate is string => Boolean(candidate));
+  const candidates = resolveEmbeddingModelSearchPaths({
+    modelId,
+    modelDir: embeddingConfig.modelDir,
+    modelCacheDir: embeddingConfig.modelCacheDir
+  }).candidates;
 
   for (const dir of candidates) {
     const fullPath = path.join(dir, "tokenizer.json");

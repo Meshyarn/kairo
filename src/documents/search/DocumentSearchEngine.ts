@@ -6,13 +6,14 @@ import { DocumentIndexer } from "../../indexing/DocumentIndexer.js";
 import type { IndexDatabase } from "../../indexing/IndexDatabase.js";
 import { EmbeddingProviderFactory } from "../../embeddings/EmbeddingProviderFactory.js";
 import { EmbeddingTimeoutError } from "../../embeddings/EmbeddingQueue.js";
+import { computeEmbeddingDiagnostics, isHashModel } from "../../embeddings/EmbeddingDiagnostics.js";
 import { LRUCache } from "lru-cache";
 import { EvidencePackRepository, computeRootFingerprint } from "../../indexing/EvidencePackRepository.js";
 import { metrics } from "../../utils/MetricsCollector.js";
 import { VectorIndexManager } from "../../vector/VectorIndexManager.js";
 import type { DocumentSearchOptions, DocumentSearchResponse } from "./SearchTypes.js";
 import { buildStaleCheckItems, fillPreviewsFromSummaries, hydrateResponseFromPack, toStoredItems } from "./EvidencePackBuilder.js";
-import { normalizeSearchQuery, computePackId } from "./QueryParsing.js";
+import { normalizeSearchQuery, computePackId, mergeEmbeddingConfig } from "./QueryParsing.js";
 import { isMetricsPath } from "./SearchFilters.js";
 import { applyMmr, buildRankMap, computeSimilarity, quickMatchScore, tokenize } from "./ResultRanking.js";
 import { limitEvidence, toSearchSection } from "./SnippetExtractor.js";
@@ -255,6 +256,10 @@ export class DocumentSearchEngine {
         }
 
         const provider = await resolveEmbeddingProvider(this.embeddingFactory, options.embedding);
+        const embeddingConfig = options.embedding
+            ? mergeEmbeddingConfig(this.embeddingFactory.getConfig(), options.embedding)
+            : this.embeddingFactory.getConfig();
+        const embeddingDiagnostics = computeEmbeddingDiagnostics({ config: embeddingConfig });
         let vectorEnabled = provider.provider !== "disabled";
         let vectorScores = new Map<string, number>();
         let vectorRankMap = new Map<string, number>();
@@ -263,6 +268,21 @@ export class DocumentSearchEngine {
             ? Number.parseFloat(process.env.KAIRO_METRICS_SCORE_BOOST ?? "0.12")
             : 0;
         let queryVector: Float32Array | undefined;
+
+        if (!isTestEnv()) {
+            if (embeddingDiagnostics.remoteDownloadsAllowed) {
+                degradationReasons.push("embeddings_remote_enabled");
+            }
+            const modelId = embeddingDiagnostics.modelId;
+            if (modelId && !isHashModel(modelId) && embeddingDiagnostics.missingAssets && embeddingDiagnostics.missingAssets.length > 0) {
+                degradationReasons.push(embeddingDiagnostics.resolvedModelRoot
+                    ? "embeddings_local_model_incomplete"
+                    : "embeddings_local_model_missing");
+            }
+            if (provider.model && !isHashModel(modelId) && isHashModel(provider.model)) {
+                degradationReasons.push("embeddings_fallback_hash");
+            }
+        }
 
         if (vectorEnabled) {
             const queryEmbedding = await embedQuery(normalizedQuery, provider);
@@ -557,6 +577,10 @@ export class DocumentSearchEngine {
         return false;
     }
 
+}
+
+function isTestEnv(): boolean {
+    return process.env.NODE_ENV === "test" || process.env.JEST_WORKER_ID !== undefined;
 }
 
 function clampDocLimit(value: number, envKey: string): number {
