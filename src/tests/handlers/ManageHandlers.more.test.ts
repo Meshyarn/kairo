@@ -1,10 +1,12 @@
 import { describe, it, expect, jest } from "@jest/globals";
 import { ManageHandlers } from "../../handlers/ManageHandlers.js";
+import { MemoryFileSystem } from "../../platform/FileSystem.js";
 
 const makeContext = () => {
     return {
         rootPath: process.cwd(),
         orchestrationEngine: { executePillar: jest.fn(async () => ({ ok: true })) },
+        fileSystem: new MemoryFileSystem(process.cwd()),
         editCoordinator: {
             undo: jest.fn(async () => ({ success: true, message: "undo" })),
             redo: jest.fn(async () => ({ success: true, message: "redo" })),

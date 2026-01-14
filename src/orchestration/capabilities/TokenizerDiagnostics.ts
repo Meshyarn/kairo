@@ -1,8 +1,8 @@
-import fs from "fs";
 import path from "path";
 import { resolveEmbeddingConfigFromEnv } from "../../embeddings/EmbeddingConfig.js";
 import { resolveEmbeddingModelSearchPaths } from "../../embeddings/ModelPaths.js";
 import { FeatureFlags } from "../../config/FeatureFlags.js";
+import { NodeFileSystem, type IFileSystem } from "../../platform/FileSystem.js";
 
 export type TokenizerDiagnostics = {
   requiredForNativeChunking: boolean;
@@ -11,19 +11,20 @@ export type TokenizerDiagnostics = {
   missingReason?: string;
 };
 
-export function computeTokenizerDiagnostics(rootPath = process.cwd()): TokenizerDiagnostics {
+export function computeTokenizerDiagnostics(rootPath = process.cwd(), fileSystem?: IFileSystem): TokenizerDiagnostics {
   const rustCoreEnabled = FeatureFlags.isEnabled(FeatureFlags.RUST_CORE_ENABLED, FeatureFlags.getContext());
   const rustChunkingEnabled = resolveRustFeature(
     FeatureFlags.RUST_CHUNKING_ENABLED,
     rustCoreEnabled,
     process.env.KAIRO_RUST_CHUNKING
   );
+  const fsAdapter = fileSystem ?? new NodeFileSystem(rootPath);
   const searchedPaths: string[] = [];
 
   const explicit = process.env.KAIRO_TOKENIZER_PATH?.trim();
   if (explicit) {
     searchedPaths.push(explicit);
-    if (fs.existsSync(explicit)) {
+    if (fsAdapter.existsSync?.(explicit) ?? false) {
       return {
         requiredForNativeChunking: rustChunkingEnabled,
         resolvedPath: explicit,
@@ -56,7 +57,7 @@ export function computeTokenizerDiagnostics(rootPath = process.cwd()): Tokenizer
   for (const dir of candidates) {
     const fullPath = path.join(dir, "tokenizer.json");
     searchedPaths.push(fullPath);
-    if (fs.existsSync(fullPath)) {
+    if (fsAdapter.existsSync?.(fullPath) ?? false) {
       return {
         requiredForNativeChunking: rustChunkingEnabled,
         resolvedPath: fullPath,

@@ -1,8 +1,7 @@
-import * as fs from 'fs/promises';
-import * as fssync from 'fs';
 import * as path from 'path';
 import { ProjectIndex, FileIndexEntry } from './ProjectIndex.js';
 import { PathManager } from '../utils/PathManager.js';
+import { NodeFileSystem, type IFileSystem } from '../platform/FileSystem.js';
 
 const CURRENT_INDEX_VERSION = '1.1.0';
 
@@ -12,9 +11,11 @@ const CURRENT_INDEX_VERSION = '1.1.0';
 export class ProjectIndexManager {
   private projectRoot: string;
   private indexPath: string;
+  private readonly fileSystem: IFileSystem;
   
-  constructor(projectRoot: string) {
+  constructor(projectRoot: string, fileSystem?: IFileSystem) {
     this.projectRoot = projectRoot;
+    this.fileSystem = fileSystem ?? new NodeFileSystem(projectRoot);
     this.indexPath = this.resolveExistingIndexPath();
   }
   
@@ -22,10 +23,10 @@ export class ProjectIndexManager {
     const unifiedIndexPath = path.join(PathManager.getIndexDir(), 'index.json');
     const legacyIndexPath = path.join(this.projectRoot, '.kairo-index', 'index.json');
 
-    if (fssync.existsSync(unifiedIndexPath)) {
+    if (this.fileSystem.existsSync?.(unifiedIndexPath)) {
       return unifiedIndexPath;
     }
-    if (fssync.existsSync(legacyIndexPath)) {
+    if (this.fileSystem.existsSync?.(legacyIndexPath)) {
       return legacyIndexPath;
     }
     return unifiedIndexPath;
@@ -38,9 +39,11 @@ export class ProjectIndexManager {
   async loadPersistedIndex(): Promise<ProjectIndex | null> {
     try {
       this.indexPath = this.resolveExistingIndexPath();
-      await fs.access(this.indexPath);
+      if (!await this.fileSystem.exists(this.indexPath)) {
+        return null;
+      }
       
-      const data = await fs.readFile(this.indexPath, 'utf-8');
+      const data = await this.fileSystem.readFile(this.indexPath);
       const index: ProjectIndex = JSON.parse(data);
       
       if (index.version !== CURRENT_INDEX_VERSION) {
@@ -74,8 +77,8 @@ export class ProjectIndexManager {
       const json = JSON.stringify(index, null, 2);
 
       // Ensure directory exists
-      await fs.mkdir(path.dirname(targetPath), { recursive: true });
-      await fs.writeFile(targetPath, json, 'utf-8');
+      await this.fileSystem.createDir(path.dirname(targetPath));
+      await this.fileSystem.writeFile(targetPath, json);
       this.indexPath = targetPath;
       
       console.log(`[ProjectIndex] Persisted index with ${Object.keys(index.files).length} files`);
@@ -102,10 +105,10 @@ export class ProjectIndexManager {
 
     for (const file of currentFiles) {
       try {
-        const stat = await fs.stat(file);
+        const stat = await this.fileSystem.stat(file);
         const indexedEntry = index.files[file];
         
-        if (!indexedEntry || stat.mtimeMs > indexedEntry.mtime) {
+        if (!indexedEntry || stat.mtime > indexedEntry.mtime) {
           changed.push(file);
         } else {
           unchanged.push(file);

@@ -1,6 +1,6 @@
 import { OrchestrationContext } from "../../OrchestrationContext.js";
 import { UnifiedContextGraph } from "../../context/UnifiedContextGraph.js";
-import { NodeFileSystem } from "../../../platform/FileSystem.js";
+import type { IFileSystem } from "../../../platform/FileSystem.js";
 import { EditorEngine } from "../../../engine/Editor.js";
 import { SkeletonGenerator } from "../../../ast/SkeletonGenerator.js";
 import { SymbolIndex } from "../../../ast/SymbolIndex.js";
@@ -172,7 +172,7 @@ export async function analyzeSymbolImpact(
   filePath: string,
   edits: any[],
   constraints: any,
-  fileSystem: NodeFileSystem
+  fileSystem: IFileSystem
 ): Promise<SymbolImpactResult | null> {
   try {
     const currentContent = await fileSystem.readFile(filePath);

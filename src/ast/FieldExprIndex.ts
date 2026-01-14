@@ -1,8 +1,8 @@
-import fs from "fs";
 import { AstManager } from "./AstManager.js";
 import { QueryProvider } from "./QueryProvider.js";
 import type { FieldAccessIndexKey, FieldAccessIndexResult, FieldAccessLocation } from "./FieldAccessTypes.js";
 import type { DegradedReason } from "../types/tool-responses.js";
+import { NodeFileSystem, type IFileSystem } from "../platform/FileSystem.js";
 
 type IndexOptions = {
     content?: string;
@@ -12,14 +12,18 @@ type IndexOptions = {
 
 export class FieldExprIndex {
     private usages = new Map<string, FieldAccessLocation[]>();
+    private readonly fileSystem: IFileSystem;
 
     constructor(
         private readonly astManager: AstManager,
-        private readonly queryProvider: QueryProvider
-    ) {}
+        private readonly queryProvider: QueryProvider,
+        fileSystem?: IFileSystem
+    ) {
+        this.fileSystem = fileSystem ?? new NodeFileSystem(process.cwd());
+    }
 
     public async indexFile(filePath: string, options?: IndexOptions): Promise<FieldAccessIndexResult> {
-        const content = options?.content ?? fs.readFileSync(filePath, "utf-8");
+        const content = options?.content ?? this.fileSystem.readFileSync?.(filePath) ?? await this.fileSystem.readFile(filePath);
         const languageId = this.astManager.getLanguageId(filePath);
         const exportNames = new Set(options?.exportNames ?? []);
         let doc;

@@ -1,5 +1,4 @@
 import * as path from 'path';
-import * as fs from 'fs';
 import { createHash } from 'crypto';
 import { performance } from 'perf_hooks';
 import { AstBackend, AstDocument } from './AstBackend.js';
@@ -20,6 +19,7 @@ import { UniversalSkeletonGenerator } from './extraction/UniversalSkeletonGenera
 import { UniversalSymbolExtractor } from './extraction/UniversalSymbolExtractor.js';
 import { UniversalImportExtractor } from './extraction/UniversalImportExtractor.js';
 import { UniversalExportExtractor } from './extraction/UniversalExportExtractor.js';
+import { NodeFileSystem, type IFileSystem } from '../platform/FileSystem.js';
 
 export class AstManager implements AdaptiveAstManager {
     private static instance: AstManager | undefined;
@@ -31,6 +31,7 @@ export class AstManager implements AdaptiveAstManager {
     private ucg?: UnifiedContextGraph;
     private skeletonCache?: SkeletonCache;
     private skeletonGenerator?: SkeletonGenerator;
+    private fileSystem: IFileSystem;
 
     private queryProvider: QueryProvider;
     private unifiedExtractor: UnifiedExtractor;
@@ -56,10 +57,11 @@ export class AstManager implements AdaptiveAstManager {
     };
 
     private constructor() {
-        this.backend = new WebTreeSitterBackend();
+        this.fileSystem = new NodeFileSystem(process.cwd());
+        this.backend = new WebTreeSitterBackend({ fileSystem: this.fileSystem } as any);
         this.engineConfig = { mode: 'prod', parserBackend: 'auto' };
         
-        this.queryProvider = new QueryProvider();
+        this.queryProvider = new QueryProvider(undefined, this.fileSystem);
         this.unifiedExtractor = new UnifiedExtractor(this.queryProvider);
         this.universalSkeletonGenerator = new UniversalSkeletonGenerator(this.queryProvider);
         this.universalSymbolExtractor = new UniversalSymbolExtractor(this.queryProvider);
@@ -118,6 +120,15 @@ export class AstManager implements AdaptiveAstManager {
         const resolved = this.resolveConfig(config);
         this.engineConfig = resolved;
         const root = resolved.rootPath ?? process.cwd();
+        this.fileSystem = new NodeFileSystem(root);
+        if (this.queryProvider) {
+            this.queryProvider = new QueryProvider(undefined, this.fileSystem);
+            this.unifiedExtractor = new UnifiedExtractor(this.queryProvider);
+            this.universalSkeletonGenerator = new UniversalSkeletonGenerator(this.queryProvider);
+            this.universalSymbolExtractor = new UniversalSymbolExtractor(this.queryProvider);
+            this.universalImportExtractor = new UniversalImportExtractor(this.queryProvider);
+            this.universalExportExtractor = new UniversalExportExtractor(this.queryProvider);
+        }
         this.languageConfig?.dispose();
         this.languageConfig = new LanguageConfigLoader(root);
         const isTestEnv = resolved.mode === 'test' || process.env.NODE_ENV === 'test' || process.env.JEST_WORKER_ID !== undefined;
@@ -319,7 +330,7 @@ export class AstManager implements AdaptiveAstManager {
                 path,
                 { detailLevel: 'standard', includeComments: false },
                 async (filePath, options) => {
-                    const content = await fs.promises.readFile(filePath, 'utf-8');
+                    const content = await this.fileSystem.readFile(filePath);
                     return generator.generateSkeleton(filePath, content, options);
                 }
             );
@@ -387,7 +398,9 @@ export class AstManager implements AdaptiveAstManager {
     async fallbackToFullAST(path: string): Promise<LODResult> {
         const startTime = performance.now();
         // Read actual content for accurate parsing
-        const content = fs.existsSync(path) ? fs.readFileSync(path, 'utf-8') : '';
+        const content = this.fileSystem.existsSync?.(path)
+            ? (this.fileSystem.readFileSync?.(path) ?? await this.fileSystem.readFile(path))
+            : '';
         await this.parseFile(path, content);
         const durationMs = performance.now() - startTime;
         AdaptiveFlowMetrics.recordPromotion(0, 3);
