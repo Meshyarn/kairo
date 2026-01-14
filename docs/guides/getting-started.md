@@ -21,7 +21,8 @@ Runtime data (indexes/caches/logs) is stored under `.kairo/` in the target proje
 
 ## Prepare the local embedding model (offline)
 
-Runtime downloads are disabled, so you must prepare a local model before bundling or running in a closed environment.
+Kairo is offline-first by default. Runtime downloads are disabled unless you explicitly opt into `KAIRO_EMBEDDING_PROVIDER=remote`.
+Prepare a local model before bundling or running in a closed environment.
 
 Recommended source: `Xenova/multilingual-e5-small` (ONNX + tokenizer files compatible with `@xenova/transformers`).
 
@@ -52,6 +53,10 @@ models/
 - The folder name must match `KAIRO_EMBEDDING_MODEL` (default: `multilingual-e5-small`).
 - If you use a different model, ensure it ships ONNX + tokenizer assets compatible with `@xenova/transformers`.
 
+Offline baseline:
+- **Baseline-A (core)**: runs without network even if embeddings fall back to hash/disabled.
+- **Baseline-B (embeddings-ready)**: local model files are present so vector search works offline.
+
 ## Bundle the offline embedding model (packaging)
 
 When creating a release artifact, bundle the local model into `dist/models`:
@@ -63,6 +68,8 @@ KAIRO_EMBEDDING_MODEL=multilingual-e5-small \
 npm run bundle:models
 ```
 
+- By default, bundling uses the **minimal** profile (required tokenizer/config + one ONNX file).  
+  Set `KAIRO_MODEL_BUNDLE_PROFILE=full` to include all ONNX variants.
 - `npm pack` / `npm publish` runs the bundling automatically via `prepack`.
 - Set `KAIRO_SKIP_MODEL_BUNDLE=true` to skip bundling (dev-only).
 - If you override `KAIRO_MODEL_DIR`, keep it inside `dist/models` so it ships with the package.
