@@ -1,3 +1,5 @@
+import * as fs from "fs";
+import * as path from "path";
 import { BaseHandler } from "./BaseHandler.js";
 import { HandlerContext } from "./HandlerContext.js";
 import { metrics } from "../utils/MetricsCollector.js";
@@ -8,6 +10,7 @@ import { EngineManager } from "../orchestration/capabilities/EngineManager.js";
 import { AuditLog } from "../utils/AuditLog.js";
 import { ConfigurationManager } from "../config/ConfigurationManager.js";
 import { buildCatalogCoverage } from "../utils/MetricsCatalog.js";
+import { PathManager } from "../utils/PathManager.js";
 
 export class ManageHandlers extends BaseHandler {
     private reindexInProgress = false;
@@ -159,6 +162,10 @@ export class ManageHandlers extends BaseHandler {
                     if (indexSnapshot) {
                         this.recordIndexMetrics(indexSnapshot);
                     }
+                    const budgetSnapshot = this.buildBudgetSnapshot();
+                    if (budgetSnapshot) {
+                        this.recordBudgetMetrics(budgetSnapshot);
+                    }
                     const snapshot = metrics.snapshot();
                     return {
                         success: true,
@@ -242,6 +249,7 @@ export class ManageHandlers extends BaseHandler {
                         : undefined;
                     const staleGuidance = indexSnapshot ? this.buildStaleRiskGuidance(indexSnapshot.staleRisk) : null;
                     const metricsExportStatus = this.context.metricsExportService?.getStatus();
+                    const budgetSnapshot = this.buildBudgetSnapshot();
                     return {
                         ...result,
                         output: "Config doctor completed.",
@@ -260,6 +268,7 @@ export class ManageHandlers extends BaseHandler {
                         },
                         ...(indexSnapshot ? { indexSnapshot } : {}),
                         ...(staleGuidance ? { staleGuidance } : {}),
+                        ...(budgetSnapshot ? { budget: budgetSnapshot } : {}),
                         ...(metricsExportStatus ? { metricsExport: metricsExportStatus } : {})
                     };
                 }
@@ -546,6 +555,72 @@ export class ManageHandlers extends BaseHandler {
         metrics.inc("cache.invalidate.file_total", 0);
         metrics.inc("cache.invalidate.dir_total", 0);
         metrics.inc("cache.invalidate.all_total", 0);
+    }
+
+    private buildBudgetSnapshot(): {
+        indexDirBytes: number;
+        storageDirBytes: number;
+        symbolSecondaryIndexEnabled: boolean;
+        symbolSecondaryIndexBytes?: number;
+    } | null {
+        try {
+            const indexDir = PathManager.getIndexDir();
+            const storageDir = PathManager.getStorageDir();
+            const indexDirBytes = this.getDirectorySizeBytes(indexDir);
+            const storageDirBytes = this.getDirectorySizeBytes(storageDir);
+            const secondaryStatus = this.context.indexDatabase?.getSecondaryIndexStatus?.();
+            return {
+                indexDirBytes,
+                storageDirBytes,
+                symbolSecondaryIndexEnabled: secondaryStatus?.enabled ?? false,
+                ...(secondaryStatus?.bytes !== undefined ? { symbolSecondaryIndexBytes: secondaryStatus.bytes } : {})
+            };
+        } catch {
+            return null;
+        }
+    }
+
+    private recordBudgetMetrics(snapshot: {
+        indexDirBytes: number;
+        storageDirBytes: number;
+        symbolSecondaryIndexEnabled: boolean;
+        symbolSecondaryIndexBytes?: number;
+    }): void {
+        metrics.gauge("budget.index_dir_bytes", snapshot.indexDirBytes);
+        metrics.gauge("budget.storage_dir_bytes", snapshot.storageDirBytes);
+        if (snapshot.symbolSecondaryIndexBytes !== undefined) {
+            metrics.gauge("budget.symbol_secondary_index_bytes", snapshot.symbolSecondaryIndexBytes);
+        }
+        metrics.gauge("symbol.search.secondary_index_enabled", snapshot.symbolSecondaryIndexEnabled ? 1 : 0);
+    }
+
+    private getDirectorySizeBytes(dirPath: string): number {
+        let total = 0;
+        const stack: string[] = [dirPath];
+        while (stack.length > 0) {
+            const current = stack.pop()!;
+            let entries: string[] = [];
+            try {
+                entries = fs.readdirSync(current);
+            } catch {
+                continue;
+            }
+            for (const entry of entries) {
+                const fullPath = path.join(current, entry);
+                let stat: fs.Stats;
+                try {
+                    stat = fs.statSync(fullPath);
+                } catch {
+                    continue;
+                }
+                if (stat.isDirectory()) {
+                    stack.push(fullPath);
+                } else if (stat.isFile()) {
+                    total += stat.size;
+                }
+            }
+        }
+        return total;
     }
 
     private buildStaleRiskGuidance(level: "low" | "medium" | "high") {

@@ -258,7 +258,7 @@ export class SmartContextServer {
             this.configurationManager,
             {
                 watch: true,
-                initialScan: false,
+                initialScan: this.resolveBaselineEnabled(),
                 onFileQueued: (filePath) => {
                     this.indexStateManager.markDirty(toRelative(filePath));
                     this.cacheInvalidationHub?.onEvent({ type: "file_changed", absPath: filePath });
@@ -270,6 +270,9 @@ export class SmartContextServer {
                 },
                 onDirectoryRemoved: (dirPath) => {
                     this.cacheInvalidationHub?.onEvent({ type: "dir_deleted", absPath: dirPath });
+                },
+                onActivity: (activity) => {
+                    this.indexStateManager.setActivity(activity);
                 }
             },
             this.documentIndexer
@@ -742,6 +745,13 @@ export class SmartContextServer {
             return raw;
         }
         return 'warning';
+    }
+
+    private resolveBaselineEnabled(): boolean {
+        const raw = (process.env.KAIRO_BASELINE_ENABLED ?? "auto").toLowerCase();
+        if (raw === "off" || raw === "false" || raw === "0") return false;
+        if (raw === "on" || raw === "true" || raw === "1") return true;
+        return !this.isTestEnv();
     }
 
     private setupShutdownHooks(): void {

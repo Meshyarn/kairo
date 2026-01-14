@@ -28,6 +28,9 @@ export class MemoryIndexStore implements IndexStore {
 
     protected readonly files = new Map<string, FileRecord>();
     protected readonly symbols = new Map<string, SymbolInfo[]>();
+    protected readonly symbolRefsByTrigram = new Map<string, Set<string>>();
+    protected symbolSecondaryIndexEnabled = this.resolveSecondaryIndexEnabled();
+    protected symbolSecondaryIndexBytes = 0;
     protected readonly dependencies = new Map<string, DependencySnapshot>();
     protected readonly ghosts = new Map<string, StoredGhostSymbol>();
     protected readonly documentChunks = new Map<string, StoredDocumentChunk[]>();
@@ -76,6 +79,7 @@ export class MemoryIndexStore implements IndexStore {
 
     public deleteFile(relativePath: string): void {
         const normalized = this.normalize(relativePath);
+        this.removeSecondaryIndexForFile(normalized);
         this.files.delete(normalized);
         this.symbols.delete(normalized);
         this.dependencies.delete(normalized);
@@ -96,8 +100,10 @@ export class MemoryIndexStore implements IndexStore {
 
     public replaceSymbols(args: { relativePath: string; lastModified: number; language?: string | null; symbols: SymbolInfo[] }): void {
         const normalized = this.normalize(args.relativePath);
+        this.removeSecondaryIndexForFile(normalized);
         this.getOrCreateFile(normalized, args.lastModified, args.language);
         this.symbols.set(normalized, [...(args.symbols ?? [])]);
+        this.addSecondaryIndexForFile(normalized, args.symbols ?? []);
     }
 
     public readSymbols(relativePath: string): SymbolInfo[] | undefined {
@@ -116,19 +122,37 @@ export class MemoryIndexStore implements IndexStore {
 
     public searchSymbols(pattern: string, limit: number = 100): Array<{ path: string; data_json: string }> {
         const query = normalizeLikePattern(pattern);
+        if (!query) return [];
+        if (!this.symbolSecondaryIndexEnabled || query.length < 3) {
+            return this.searchSymbolsLinear(query, limit);
+        }
+        if (this.symbolRefsByTrigram.size === 0) {
+            return this.searchSymbolsLinear(query, limit);
+        }
+        const candidates = this.collectSecondaryCandidates(query);
+        if (!candidates) {
+            return this.searchSymbolsLinear(query, limit);
+        }
+        const cap = this.resolveSymbolSearchMaxCandidates();
+        const sliced = cap > 0 && candidates.length > cap ? candidates.slice(0, cap) : candidates;
         const results: Array<{ path: string; data_json: string }> = [];
-        if (!query) return results;
-        for (const [filePath, symbols] of this.symbols.entries()) {
-            for (const symbol of symbols) {
-                if (!symbol?.name) continue;
-                if (!symbol.name.toLowerCase().includes(query)) continue;
-                results.push({ path: filePath, data_json: JSON.stringify(symbol) });
-                if (results.length >= limit) {
-                    return results;
-                }
+        for (const ref of sliced) {
+            const resolved = this.resolveSymbolRef(ref);
+            if (!resolved?.symbol?.name) continue;
+            if (!resolved.symbol.name.toLowerCase().includes(query)) continue;
+            results.push({ path: resolved.filePath, data_json: JSON.stringify(resolved.symbol) });
+            if (results.length >= limit) {
+                return results;
             }
         }
         return results;
+    }
+
+    public getSecondaryIndexStatus(): { enabled: boolean; bytes?: number } {
+        return {
+            enabled: this.symbolSecondaryIndexEnabled,
+            bytes: this.symbolSecondaryIndexBytes
+        };
     }
 
     public replaceDependencies(args: {
@@ -507,6 +531,133 @@ export class MemoryIndexStore implements IndexStore {
         return normalized || ".";
     }
 
+    private searchSymbolsLinear(query: string, limit: number): Array<{ path: string; data_json: string }> {
+        const results: Array<{ path: string; data_json: string }> = [];
+        for (const [filePath, symbols] of this.symbols.entries()) {
+            for (const symbol of symbols) {
+                if (!symbol?.name) continue;
+                if (!symbol.name.toLowerCase().includes(query)) continue;
+                results.push({ path: filePath, data_json: JSON.stringify(symbol) });
+                if (results.length >= limit) {
+                    return results;
+                }
+            }
+        }
+        return results;
+    }
+
+    private collectSecondaryCandidates(query: string): string[] | null {
+        const trigrams = this.toTrigrams(query);
+        if (trigrams.length === 0) return null;
+        const sets: Set<string>[] = [];
+        for (const trigram of trigrams) {
+            const set = this.symbolRefsByTrigram.get(trigram);
+            if (!set || set.size === 0) {
+                return [];
+            }
+            sets.push(set);
+        }
+        sets.sort((a, b) => a.size - b.size);
+        let candidates = new Set(sets[0]);
+        for (let i = 1; i < sets.length; i++) {
+            const next = sets[i];
+            for (const ref of candidates) {
+                if (!next.has(ref)) {
+                    candidates.delete(ref);
+                }
+            }
+            if (candidates.size === 0) break;
+        }
+        return Array.from(candidates);
+    }
+
+    private resolveSymbolRef(ref: string): { filePath: string; symbol: SymbolInfo } | null {
+        const splitIndex = ref.lastIndexOf("#");
+        if (splitIndex <= 0) return null;
+        const filePath = ref.slice(0, splitIndex);
+        const ordinal = Number.parseInt(ref.slice(splitIndex + 1), 10);
+        if (!Number.isFinite(ordinal) || ordinal < 0) return null;
+        const symbols = this.symbols.get(filePath);
+        const symbol = symbols?.[ordinal];
+        if (!symbol) return null;
+        return { filePath, symbol };
+    }
+
+    private addSecondaryIndexForFile(filePath: string, symbols: SymbolInfo[]): void {
+        if (!this.symbolSecondaryIndexEnabled) return;
+        symbols.forEach((symbol, index) => {
+            if (!symbol?.name) return;
+            const ref = this.buildSymbolRef(filePath, index);
+            const trigrams = this.toTrigrams(symbol.name.toLowerCase());
+            if (trigrams.length === 0) return;
+            for (const trigram of trigrams) {
+                let set = this.symbolRefsByTrigram.get(trigram);
+                if (!set) {
+                    set = new Set();
+                    this.symbolRefsByTrigram.set(trigram, set);
+                }
+                set.add(ref);
+            }
+        });
+    }
+
+    private removeSecondaryIndexForFile(filePath: string): void {
+        if (!this.symbolSecondaryIndexEnabled) return;
+        const symbols = this.symbols.get(filePath) ?? [];
+        symbols.forEach((symbol, index) => {
+            if (!symbol?.name) return;
+            const ref = this.buildSymbolRef(filePath, index);
+            const trigrams = this.toTrigrams(symbol.name.toLowerCase());
+            for (const trigram of trigrams) {
+                const set = this.symbolRefsByTrigram.get(trigram);
+                if (!set) continue;
+                set.delete(ref);
+                if (set.size === 0) {
+                    this.symbolRefsByTrigram.delete(trigram);
+                }
+            }
+        });
+    }
+
+    protected rebuildSecondaryIndex(): void {
+        if (!this.symbolSecondaryIndexEnabled) {
+            this.symbolRefsByTrigram.clear();
+            return;
+        }
+        this.symbolRefsByTrigram.clear();
+        for (const [filePath, symbols] of this.symbols.entries()) {
+            this.addSecondaryIndexForFile(filePath, symbols);
+        }
+    }
+
+    protected resolveSecondaryIndexEnabled(): boolean {
+        const raw = (process.env.KAIRO_SYMBOL_SECONDARY_INDEX ?? "auto").trim().toLowerCase();
+        if (raw === "off" || raw === "false" || raw === "0") return false;
+        if (raw === "on" || raw === "true" || raw === "1") return true;
+        return true;
+    }
+
+    protected resolveSymbolSearchMaxCandidates(): number {
+        const raw = Number.parseInt(process.env.KAIRO_SYMBOL_SEARCH_MAX_CANDIDATES ?? "20000", 10);
+        if (!Number.isFinite(raw) || raw <= 0) return 20000;
+        return raw;
+    }
+
+    private toTrigrams(input: string): string[] {
+        const normalized = input.trim().toLowerCase();
+        if (normalized.length < 3) return [];
+        if (normalized.length === 3) return [normalized];
+        const trigrams: string[] = [];
+        for (let i = 0; i <= normalized.length - 3; i++) {
+            trigrams.push(normalized.slice(i, i + 3));
+        }
+        return trigrams;
+    }
+
+    private buildSymbolRef(filePath: string, ordinal: number): string {
+        return `${filePath}#${ordinal}`;
+    }
+
     private cleanupIncomingDependencies(targetPath: string): void {
         for (const [source, snapshot] of this.dependencies.entries()) {
             const filtered = snapshot.outgoing.filter(dep => dep.target !== targetPath);
@@ -522,6 +673,7 @@ export class FileIndexStore extends MemoryIndexStore {
     private readonly manifestPath: string;
     private readonly filesPath: string;
     private readonly symbolsPath: string;
+    private readonly secondaryIndexPath: string;
     private readonly dependenciesPath: string;
     private readonly ghostsPath: string;
     private readonly chunksPath: string;
@@ -534,6 +686,7 @@ export class FileIndexStore extends MemoryIndexStore {
     private readonly embeddingPacks = new Map<string, EmbeddingPackManager>();
     private readonly hasLegacyEmbeddingsOnDisk: boolean;
     private hasEmbeddingPackOnDisk: boolean;
+    private secondaryIndexPersistTimer?: NodeJS.Timeout;
 
     constructor(rootPath: string, repoId?: string) {
         super(rootPath, "file");
@@ -543,6 +696,7 @@ export class FileIndexStore extends MemoryIndexStore {
         this.manifestPath = path.join(this.storageDir, "manifest.json");
         this.filesPath = path.join(this.storageDir, "files.json");
         this.symbolsPath = path.join(this.storageDir, "symbols.json");
+        this.secondaryIndexPath = path.join(this.storageDir, "symbols_secondary_index.json");
         this.dependenciesPath = path.join(this.storageDir, "dependencies.json");
         this.ghostsPath = path.join(this.storageDir, "ghosts.json");
         this.chunksPath = path.join(this.storageDir, "chunks.json");
@@ -556,6 +710,7 @@ export class FileIndexStore extends MemoryIndexStore {
         this.hasEmbeddingPackOnDisk = this.embeddingPackConfig.enabled && (!this.hasLegacyEmbeddingsOnDisk || this.detectEmbeddingPackOnDisk());
         this.maybeMigrateEmbeddingPack();
         this.loadFromDisk();
+        this.loadSecondaryIndex();
     }
 
     public override getOrCreateFile(relativePath: string, lastModified?: number, language?: string | null): FileRecord {
@@ -568,6 +723,7 @@ export class FileIndexStore extends MemoryIndexStore {
         super.deleteFile(relativePath);
         this.persistFiles();
         this.persistSymbols();
+        this.persistSecondaryIndex();
         this.persistDependencies();
         this.persistChunks();
         this.persistDocumentMeta();
@@ -580,6 +736,7 @@ export class FileIndexStore extends MemoryIndexStore {
         super.deleteFilesByPrefix(prefix);
         this.persistFiles();
         this.persistSymbols();
+        this.persistSecondaryIndex();
         this.persistDependencies();
         this.persistChunks();
         this.persistDocumentMeta();
@@ -592,6 +749,7 @@ export class FileIndexStore extends MemoryIndexStore {
         super.replaceSymbols(args);
         this.persistFiles();
         this.persistSymbols();
+        this.persistSecondaryIndex();
     }
 
     public override replaceDependencies(args: {
@@ -756,6 +914,11 @@ export class FileIndexStore extends MemoryIndexStore {
     }
 
     public override close(): void {
+        if (this.secondaryIndexPersistTimer) {
+            clearTimeout(this.secondaryIndexPersistTimer);
+            this.secondaryIndexPersistTimer = undefined;
+            this.flushSecondaryIndex();
+        }
         if (this.embeddingPackConfig.enabled && this.hasEmbeddingPackOnDisk) {
             for (const pack of this.embeddingPacks.values()) {
                 pack.close();
@@ -784,12 +947,9 @@ export class FileIndexStore extends MemoryIndexStore {
 
         const symbols = readJson<Record<string, SymbolInfo[]>>(this.symbolsPath, {});
         for (const [filePath, entries] of Object.entries(symbols)) {
-            super.replaceSymbols({
-                relativePath: filePath,
-                lastModified: this.getFile(filePath)?.last_modified ?? Date.now(),
-                language: this.getFile(filePath)?.language ?? null,
-                symbols: entries ?? []
-            });
+            const record = this.getFile(filePath);
+            super.getOrCreateFile(filePath, record?.last_modified ?? Date.now(), record?.language ?? null);
+            this.symbols.set(this.normalize(filePath), entries ?? []);
         }
 
         const deps = readJson<Record<string, DependencySnapshot>>(this.dependenciesPath, {});
@@ -876,6 +1036,94 @@ export class FileIndexStore extends MemoryIndexStore {
             payload[filePath] = entries;
         }
         writeJson(this.symbolsPath, payload);
+    }
+
+    private loadSecondaryIndex(): void {
+        if (!this.symbolSecondaryIndexEnabled) {
+            this.symbolRefsByTrigram.clear();
+            this.symbolSecondaryIndexBytes = 0;
+            return;
+        }
+        const maxBytes = this.resolveSecondaryIndexMaxBytes();
+        if (!fs.existsSync(this.secondaryIndexPath)) {
+            this.rebuildSecondaryIndex();
+            this.persistSecondaryIndex();
+            return;
+        }
+        try {
+            const size = fs.statSync(this.secondaryIndexPath).size;
+            this.symbolSecondaryIndexBytes = size;
+            if (maxBytes > 0 && size > maxBytes) {
+                this.symbolSecondaryIndexEnabled = false;
+                this.symbolRefsByTrigram.clear();
+                fs.rmSync(this.secondaryIndexPath, { force: true });
+                return;
+            }
+        } catch {
+            // best-effort
+        }
+        const payload = readJson<{ version?: number; trigrams?: Record<string, string[]> } | null>(this.secondaryIndexPath, null);
+        if (!payload || payload.version !== 1 || !payload.trigrams || typeof payload.trigrams !== "object") {
+            this.rebuildSecondaryIndex();
+            this.persistSecondaryIndex();
+            return;
+        }
+        this.symbolRefsByTrigram.clear();
+        for (const [trigram, refs] of Object.entries(payload.trigrams)) {
+            if (!Array.isArray(refs) || refs.length === 0) continue;
+            this.symbolRefsByTrigram.set(trigram, new Set(refs.filter(Boolean)));
+        }
+        if (!Number.isFinite(this.symbolSecondaryIndexBytes)) {
+            this.symbolSecondaryIndexBytes = 0;
+        }
+    }
+
+    private persistSecondaryIndex(): void {
+        if (!this.symbolSecondaryIndexEnabled) return;
+        if (this.secondaryIndexPersistTimer) return;
+        this.secondaryIndexPersistTimer = setTimeout(() => {
+            this.secondaryIndexPersistTimer = undefined;
+            this.flushSecondaryIndex();
+        }, 250);
+    }
+
+    private flushSecondaryIndex(): void {
+        if (!this.symbolSecondaryIndexEnabled) return;
+        const payload = this.buildSecondaryIndexPayload();
+        const json = JSON.stringify(payload);
+        const size = Buffer.byteLength(json);
+        const maxBytes = this.resolveSecondaryIndexMaxBytes();
+        if (maxBytes > 0 && size > maxBytes) {
+            this.symbolSecondaryIndexEnabled = false;
+            this.symbolRefsByTrigram.clear();
+            this.symbolSecondaryIndexBytes = size;
+            try {
+                fs.rmSync(this.secondaryIndexPath, { force: true });
+            } catch {
+                // best-effort
+            }
+            return;
+        }
+        const dir = path.dirname(this.secondaryIndexPath);
+        fs.mkdirSync(dir, { recursive: true });
+        const tmpPath = `${this.secondaryIndexPath}.tmp-${process.pid}-${Date.now()}`;
+        fs.writeFileSync(tmpPath, json);
+        fs.renameSync(tmpPath, this.secondaryIndexPath);
+        this.symbolSecondaryIndexBytes = size;
+    }
+
+    private resolveSecondaryIndexMaxBytes(): number {
+        const raw = Number.parseInt(process.env.KAIRO_SYMBOL_SECONDARY_INDEX_MAX_BYTES ?? "67108864", 10);
+        if (!Number.isFinite(raw) || raw <= 0) return 0;
+        return raw;
+    }
+
+    private buildSecondaryIndexPayload(): { version: number; trigrams: Record<string, string[]> } {
+        const trigrams: Record<string, string[]> = {};
+        for (const [key, refs] of this.symbolRefsByTrigram.entries()) {
+            trigrams[key] = Array.from(refs);
+        }
+        return { version: 1, trigrams };
     }
 
     private persistDependencies(): void {

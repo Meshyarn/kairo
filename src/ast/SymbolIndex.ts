@@ -30,6 +30,8 @@ export class SymbolIndex {
     private userIgnorePatterns: string[];
 
     private baselinePromise?: Promise<void>;
+    private baselineRequested = false;
+    private readonly waitForBaselineByDefault: boolean;
     private editTracker: Map<string, number> = new Map();
     private pendingUpdates: Set<string> = new Set();
     private updateDebounceTimer?: NodeJS.Timeout;
@@ -45,6 +47,7 @@ export class SymbolIndex {
         this.db = db ?? new IndexDatabase(this.rootPath);
         this.commentIndexer = new CommentIndexer(this.db);
         this.cache = new LRUCache({ max: HOT_CACHE_SIZE });
+        this.waitForBaselineByDefault = this.resolveBaselineWaitMode();
     }
 
     public invalidateFile(filePath: string) {
@@ -108,7 +111,9 @@ export class SymbolIndex {
         if (results.length > 0) {
             return results;
         }
-
+        if (!this.shouldRunFuzzySearch()) {
+            return [];
+        }
         return this.fuzzySearch(query, { maxEditDistance: 2 });
     }
 
@@ -230,9 +235,16 @@ export class SymbolIndex {
         return path.relative(this.rootPath, absPath).replace(/\\/g, '/');
     }
 
-    private async ensureBaselineIndex(): Promise<void> {
+    private async ensureBaselineIndex(waitForBaseline: boolean = this.waitForBaselineByDefault): Promise<void> {
         if (this.baselinePromise) {
-            return this.baselinePromise;
+            if (waitForBaseline) {
+                await this.baselinePromise;
+            }
+            return;
+        }
+        if (!waitForBaseline) {
+            this.startBaselineSync();
+            return;
         }
         this.baselinePromise = this.syncWithDisk();
         try {
@@ -240,6 +252,17 @@ export class SymbolIndex {
         } finally {
             this.baselinePromise = undefined;
         }
+    }
+
+    private startBaselineSync(): void {
+        if (this.baselinePromise || this.baselineRequested) {
+            return;
+        }
+        this.baselineRequested = true;
+        this.baselinePromise = this.syncWithDiskAsync();
+        this.baselinePromise.finally(() => {
+            this.baselinePromise = undefined;
+        });
     }
 
     private async syncWithDisk(): Promise<void> {
@@ -272,6 +295,35 @@ export class SymbolIndex {
 
     }
 
+    private async syncWithDiskAsync(): Promise<void> {
+        const records = this.db.listFiles();
+        const recordMap = new Map(records.map(record => [record.path, record]));
+        const files = await this.scanFilesAsync(this.rootPath);
+        const seen = new Set<string>();
+
+        for (const filePath of files) {
+            const relative = this.toRelative(filePath);
+            seen.add(relative);
+            let stats: fs.Stats;
+            try {
+                stats = await fs.promises.stat(filePath);
+            } catch {
+                continue;
+            }
+            const record = recordMap.get(relative);
+            if (!record || record.last_modified !== stats.mtimeMs) {
+                await this.getSymbolsForFile(filePath);
+            }
+        }
+
+        for (const record of recordMap.values()) {
+            if (!seen.has(record.path)) {
+                this.db.deleteFile(record.path);
+                this.cache.delete(record.path);
+            }
+        }
+    }
+
     private scanFiles(dir: string): string[] {
         let results: string[] = [];
         let list: string[] = [];
@@ -298,6 +350,59 @@ export class SymbolIndex {
             }
         }
         return results;
+    }
+
+    private async scanFilesAsync(dir: string): Promise<string[]> {
+        const results: string[] = [];
+        const stack: string[] = [dir];
+        while (stack.length > 0) {
+            const current = stack.pop()!;
+            let list: string[] = [];
+            try {
+                list = await fs.promises.readdir(current);
+            } catch {
+                continue;
+            }
+            for (const entry of list) {
+                const absPath = path.join(current, entry);
+                const relPath = path.relative(this.rootPath, absPath);
+                if (relPath && this.shouldIgnore(relPath)) {
+                    continue;
+                }
+                try {
+                    const stat = await fs.promises.stat(absPath);
+                    if (stat.isDirectory()) {
+                        stack.push(absPath);
+                    } else if (this.isSupported(absPath)) {
+                        results.push(absPath);
+                    }
+                } catch {
+                    continue;
+                }
+            }
+            await this.yieldToEventLoop();
+        }
+        return results;
+    }
+
+    private async yieldToEventLoop(): Promise<void> {
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
+    }
+
+    private resolveBaselineWaitMode(): boolean {
+        const raw = (process.env.KAIRO_BASELINE_BLOCKING ?? "").trim().toLowerCase();
+        if (raw === "true" || raw === "1") return true;
+        if (raw === "false" || raw === "0") return false;
+        return process.env.NODE_ENV === "test" || process.env.JEST_WORKER_ID !== undefined;
+    }
+
+    private shouldRunFuzzySearch(): boolean {
+        const mode = (process.env.KAIRO_SYMBOL_FUZZY_SEARCH ?? "auto").trim().toLowerCase();
+        if (mode === "off" || mode === "false") return false;
+        if (mode === "on" || mode === "true") return true;
+        const maxFilesRaw = Number.parseInt(process.env.KAIRO_SYMBOL_FUZZY_MAX_FILES ?? "2000", 10);
+        const maxFiles = Number.isFinite(maxFilesRaw) ? maxFilesRaw : 2000;
+        return this.db.listFiles().length <= maxFiles;
     }
 
     public fuzzySearch(
