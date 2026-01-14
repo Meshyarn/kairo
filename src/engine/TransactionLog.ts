@@ -4,8 +4,10 @@ import { IndexDatabase } from "../indexing/IndexDatabase.js";
 
 export interface TransactionSnapshot {
     filePath: string;
+    originalExists?: boolean;
     originalContent: string;
     originalHash: string;
+    newExists?: boolean;
     newContent?: string;
     newHash?: string;
 }

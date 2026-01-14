@@ -86,8 +86,10 @@ export interface TransactionLogEntry {
     description: string;
     snapshots: Array<{
         filePath: string;
+        originalExists?: boolean;
         originalContent: string;
         originalHash: string;
+        newExists?: boolean;
         newContent?: string;
         newHash?: string;
     }>;
