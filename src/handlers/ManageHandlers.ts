@@ -7,6 +7,7 @@ import { StorageMaintenanceService } from "../indexing/StorageMaintenanceService
 import { EngineManager } from "../orchestration/capabilities/EngineManager.js";
 import { AuditLog } from "../utils/AuditLog.js";
 import { ConfigurationManager } from "../config/ConfigurationManager.js";
+import { buildCatalogCoverage } from "../utils/MetricsCatalog.js";
 
 export class ManageHandlers extends BaseHandler {
     private reindexInProgress = false;
@@ -152,10 +153,12 @@ export class ManageHandlers extends BaseHandler {
                 }
             case 'metrics':
                 {
+                    const snapshot = metrics.snapshot();
                     return {
                         success: true,
                         output: "Metrics snapshot.",
-                        metrics: metrics.snapshot()
+                        metrics: snapshot,
+                        catalogCoverage: buildCatalogCoverage(snapshot, "basic")
                     };
                 }
             case 'metrics_reset':
@@ -228,6 +231,7 @@ export class ManageHandlers extends BaseHandler {
                         limit: 1000
                     });
                     const auditStats = await AuditLog.stats();
+                    const metricsExportStatus = this.context.metricsExportService?.getStatus();
                     return {
                         ...result,
                         output: "Config doctor completed.",
@@ -243,7 +247,8 @@ export class ManageHandlers extends BaseHandler {
                             lastEventAt: auditStats.lastEventAt,
                             totalEvents: auditStats.total,
                             acceptedLast24h: recentAccepted.length
-                        }
+                        },
+                        ...(metricsExportStatus ? { metricsExport: metricsExportStatus } : {})
                     };
                 }
             case 'reindex':

@@ -138,6 +138,7 @@ export class DocumentSearchEngine {
             if (!cached.expiresAt || cached.expiresAt > now) {
                 const stale = await this.isPackStale(cached.staleCheckItems ?? []);
                 if (!stale) {
+                    metrics.inc("cache.docs_pack.hit_total");
                     return this.attachFileMeta({
                         ...cached.response,
                         pack: {
@@ -166,6 +167,7 @@ export class DocumentSearchEngine {
                         .map(item => ({ chunkId: item.chunkId, snapshot: { contentHash: item.snapshot?.contentHash } }))
                         .filter(item => Boolean(item.snapshot?.contentHash));
                     this.packCache.set(effectivePackId, { response: responseFromDb, createdAt, expiresAt, staleCheckItems });
+                    metrics.inc("cache.docs_pack.hit_total");
                     return this.attachFileMeta({
                         ...responseFromDb,
                         pack: { packId: effectivePackId, hit: true, createdAt, expiresAt }
@@ -174,6 +176,7 @@ export class DocumentSearchEngine {
             }
         }
 
+        metrics.inc("cache.docs_pack.miss_total");
         const candidateFiles = await collectCandidateFiles(this.searchEngine, this.chunkRepository, {
             query: normalizedQuery,
             maxCandidates,

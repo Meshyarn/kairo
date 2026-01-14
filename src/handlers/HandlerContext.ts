@@ -26,6 +26,7 @@ import type { HistoryEngine } from "../engine/History.js";
 import type { NodeFileSystem } from "../platform/FileSystem.js";
 import type { RepoRegistry } from "../config/RepoRegistry.js";
 import type { FlowArtifactManager } from "../orchestration/flow-artifact-manager.js";
+import type { MetricsExportService } from "../utils/metrics/MetricsExportService.js";
 
 export interface HandlerContext {
     rootPath: string;
@@ -57,6 +58,7 @@ export interface HandlerContext {
     indexDatabase: IndexDatabase;
     historyEngine: HistoryEngine;
     flowArtifactManager: FlowArtifactManager;
+    metricsExportService?: MetricsExportService;
     isTestEnv: () => boolean;
     metadata?: Record<string, unknown>;
 }

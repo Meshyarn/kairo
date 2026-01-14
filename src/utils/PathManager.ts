@@ -90,6 +90,14 @@ export class PathManager {
         return path.join(this.getAuditDir(), 'audit.jsonl');
     }
 
+    static getMetricsDir() {
+        return this.resolve('data', 'metrics');
+    }
+
+    static getMetricsLogPath() {
+        return path.join(this.getMetricsDir(), 'metrics.jsonl');
+    }
+
     // --- Configuration Paths ---
 
     static getConfigDir() {

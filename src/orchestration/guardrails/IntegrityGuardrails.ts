@@ -13,6 +13,7 @@ import type { ImportInfo, ExportInfo } from "../../indexing/ProjectIndex.js";
 import { normalizePath, toRelativePath } from "../../utils/PathHelpers.js";
 import { AstDiffEngine, type AstChange } from "../../ast/AstDiffEngine.js";
 import { getSupportForFilePath, SupportLevel } from "../../config/LanguageSupportLevels.js";
+import { metrics } from "../../utils/MetricsCollector.js";
 
 type GuardrailStatus = "pass" | "warn" | "block";
 type LanguageParityMode = "strict" | "balanced" | "permissive";
@@ -439,6 +440,12 @@ export async function evaluateIntegrityGuardrails(args: GuardrailContext): Promi
 
     if (architecturalWarnings.length > 0 && status === "pass") {
         status = "warn";
+    }
+
+    if (status === "block") {
+        metrics.inc("guardrails.blocked_total");
+    } else if (status === "warn") {
+        metrics.inc("guardrails.warn_total");
     }
 
     return {

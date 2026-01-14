@@ -2,6 +2,7 @@ import type { StoredDocumentChunk } from "../../indexing/DocumentChunkRepository
 import type { EvidencePackRepository, StoredEvidencePack } from "../../indexing/EvidencePackRepository.js";
 import { buildDeterministicPreview } from "../summary/DeterministicSummarizer.js";
 import type { DocumentSearchResponse, DocumentSearchSection } from "./SearchTypes.js";
+import { metrics } from "../../utils/MetricsCollector.js";
 
 export function buildStaleCheckItems(
     results: DocumentSearchSection[],
@@ -158,8 +159,12 @@ export function fillPreviewsFromSummaries(
         if (!chunk) continue;
         const cached = evidencePacks?.getSummary(section.id, "preview", chunk.contentHash);
         if (cached) {
+            metrics.inc("cache.evidence_summary.hit_total");
             section.preview = cached.length > maxChars ? `${cached.slice(0, Math.max(1, maxChars - 1))}…` : cached;
             continue;
+        }
+        if (evidencePacks) {
+            metrics.inc("cache.evidence_summary.miss_total");
         }
         const built = buildDeterministicPreview({
             text: chunk.text,
