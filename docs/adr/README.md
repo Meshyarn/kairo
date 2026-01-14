@@ -69,6 +69,7 @@ The entries below cover all ADRs from the project history. Items marked “retou
 - ADR-063: Capability diagnostics + provider policy integration → `docs/adr/ADR-063-capability-diagnostics-and-provider-policy-integration.md`
 - ADR-064: FileVersion handshake (read↔apply) → `docs/adr/ADR-064-fileversion-handshake-read-apply.md`
 - ADR-065: Change execution contract (atomic apply + delete policy) → `docs/adr/ADR-065-change-execution-contract-atomic-apply-partial-opt-in-delete-policy.md`
+- ADR-066: Guardrails override & audit trail → `docs/adr/ADR-066-guardrails-override-and-audit-trail.md`
 - ADR-055-H: Adaptive trust policy (no curated summary)
 - ADR-055-L: Action guidance + Understand fallback graph (no curated summary)
 - ADR-033: “Six Pillars” precursor to ADR-040; introduced orchestration primitives and earlier public surface.
@@ -79,6 +80,7 @@ The entries below cover all ADRs from the project history. Items marked “retou
 - ADR-041 (retouched): Integrity audit modes integrated into pillars → `docs/adr/ADR-041-integrity-audit-and-guardrails.md`
 - ADR-064: FileVersion handshake (read↔apply) → `docs/adr/ADR-064-fileversion-handshake-read-apply.md`
 - ADR-065: Change execution contract (atomic apply + delete policy) → `docs/adr/ADR-065-change-execution-contract-atomic-apply-partial-opt-in-delete-policy.md`
+- ADR-066: Guardrails override & audit trail → `docs/adr/ADR-066-guardrails-override-and-audit-trail.md`
 - ADR-048: Sync feedback loop + architectural safety guardrails (tighten preflight/apply checks).
 - ADR-049: Defensive hardening for integrity engine and audit logging.
 - ADR-046 (retouched): Semantic validation layer for edit operations (go beyond text-match correctness) → `docs/adr/ADR-046-semantic-validation-layer.md`
