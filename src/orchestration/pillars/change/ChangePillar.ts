@@ -72,6 +72,26 @@ import { normalizeChangeInput } from "./ChangeInputNormalizer.js";
 import { buildWorkflowMeta, buildWorkflowWarnings } from "../shared/WorkflowMeta.js";
 import { evaluateOverrideDecision } from "../shared/OverrideDecision.js";
 import { evaluateIntegrityGuardrailBlock } from "../shared/IntegrityGuardrailDecision.js";
+import type { OptionSource, TraceOptionResolution } from "../../../types/option-trace.js";
+import { TraceBuilder } from "../../trace/TraceBuilder.js";
+
+const resolveOptionSource = (explicit: boolean, hasSession: boolean): OptionSource => {
+  if (explicit) return "explicit";
+  if (hasSession) return "session";
+  return "default";
+};
+
+const buildStringResolution = (
+  resolved: string | undefined,
+  explicit: boolean,
+  hasSession: boolean,
+  requested?: unknown
+): TraceOptionResolution<string | null> => ({
+  source: resolveOptionSource(explicit, hasSession),
+  explicit,
+  resolved: resolved ?? null,
+  ...(requested !== undefined ? { requested } : {})
+});
 
 export class ChangePillar {
   private fileSystem?: IFileSystem;
@@ -129,6 +149,39 @@ export class ChangePillar {
         resolveSessionId: (rawSessionId, fallback) => artifactManager?.resolveSessionId(rawSessionId, fallback),
         getSessionPolicy: (sessionId) => (sessionId ? artifactManager?.getSession(sessionId)?.policy : undefined)
       });
+      const sessionProfile = sessionPolicy?.change?.profile ?? sessionPolicy?.profile;
+      const sessionSafety = sessionPolicy?.change?.safety ?? sessionPolicy?.safety;
+      const traceBuilder = traceEnabled
+        ? new TraceBuilder(
+          "change",
+          {
+            profile: buildStringResolution(
+              resolvedOptions.effective.profile,
+              typeof constraints.profile === "string",
+              Boolean(sessionProfile),
+              typeof constraints.profile === "string" ? constraints.profile : undefined
+            ),
+            safety: buildStringResolution(
+              resolvedOptions.effective.safety,
+              typeof (constraints as any).safety === "string",
+              Boolean(sessionSafety),
+              typeof (constraints as any).safety === "string" ? (constraints as any).safety : undefined
+            ),
+            dryRun: {
+              source: typeof constraints.dryRun === "boolean" ? "explicit" : (sessionSafety ? "session" : "computed"),
+              explicit: typeof constraints.dryRun === "boolean",
+              resolved: dryRun,
+              ...(typeof constraints.dryRun === "boolean" ? { requested: constraints.dryRun } : {})
+            },
+            trace: {
+              source: constraints.trace === true ? "explicit" : "default",
+              explicit: constraints.trace === true,
+              resolved: traceEnabled
+            }
+          },
+          { startedAtMs: Date.now() }
+        )
+        : undefined;
       if (resolvedSessionId) {
         const policyPatch: Partial<{ profile?: string; safety?: string; change?: Record<string, unknown> }> = {};
         if (typeof constraints.profile === "string") {
@@ -169,20 +222,15 @@ export class ChangePillar {
           ...(traceEnabled
             ? {
                 effectiveOptions: {
+                  version: 1,
+                  pillar: "change",
                   profile: resolvedOptions.effective.profile,
                   safety: resolvedOptions.effective.safety,
                   dryRun,
                   reviewOptions,
                   diffMode
                 },
-                decisionTrace: {
-                  dryRun: {
-                    explicit: typeof constraints.dryRun === "boolean",
-                    resolved: dryRun
-                  },
-                  safety: resolvedOptions.effective.safety ?? null,
-                  profile: resolvedOptions.effective.profile ?? null
-                }
+                decisionTrace: traceBuilder?.finalize()
               }
             : {})
         } as T & { workflowMeta: WorkflowMeta; workflowWarnings?: string[] };
@@ -212,7 +260,22 @@ export class ChangePillar {
       const bypassReviewBlock = overrideEvaluation.bypass.reviewPolicy;
       const bypassStaleGuard = overrideEvaluation.bypass.staleGuard;
       overrideTrace = overrideEvaluation.trace;
+      if (traceBuilder) {
+        traceBuilder.recordEvent({
+          area: "guardrails",
+          code: "override_evaluated",
+          data: {
+            decision: overrideDecision?.decision ?? "none",
+            bypassIntegrityGuardrails,
+            bypassReviewBlock,
+            bypassStaleGuard
+          }
+        });
+      }
       if (overrideEvaluation.blockedResponse) {
+        if (traceBuilder) {
+          traceBuilder.recordSkip("override", "guardrail_blocked", "override not permitted");
+        }
         return attachWorkflow(overrideEvaluation.blockedResponse);
       }
       const repoRegistry = this.registry.getMetadata<RepoRegistry>("repoRegistry");
@@ -228,6 +291,16 @@ export class ChangePillar {
       const repoScope = repoRegistry && pathNormalizer
         ? normalizeRepoScope(repoScopeParams, repoRegistry, { defaultMode: "default" })
         : undefined;
+      if (traceBuilder && repoScope) {
+        traceBuilder.recordEvent({
+          area: "policy",
+          code: "repo_scope_resolved",
+          data: {
+            mode: repoScope.scope.mode,
+            repoIdsCount: Array.isArray(repoScope.repoIds) ? repoScope.repoIds.length : 0
+          }
+        });
+      }
 
       const handleRepoGuard = (guard: ReturnType<typeof evaluateRepoEditPolicy>) => {
         if (!guard.blocked) return null;
@@ -236,6 +309,9 @@ export class ChangePillar {
         const guidanceMessage = reason === "cross_repo_edit_blocked"
           ? "Set allowCrossRepoEdits=true in .kairo/config/mcp-config.json for involved repos, then rerun with allowCrossRepoEdits:true."
           : "Adjust repoScope to include the target repository or use the default repo.";
+        if (traceBuilder) {
+          traceBuilder.recordSkip("repo_scope", "policy_disabled", reason);
+        }
         return attachWorkflow({
           success: false,
           status: "blocked",
@@ -272,7 +348,17 @@ export class ChangePillar {
         bypass: bypassStaleGuard,
         workflowWarnings
       });
+      if (traceBuilder) {
+        traceBuilder.recordEvent({
+          area: "guardrails",
+          code: "stale_guard",
+          data: { blocked: staleGuard.blocked, bypassed: bypassStaleGuard }
+        });
+      }
       if (staleGuard.blocked) {
+        if (traceBuilder) {
+          traceBuilder.recordSkip("stale_guard", "guardrail_blocked", "index stale risk high");
+        }
         return attachWorkflow({
           success: false,
           status: "blocked",
@@ -460,7 +546,21 @@ export class ChangePillar {
           filePath: targetPath
         })
         : undefined;
-      if (parityGate.blocked) {
+      if (traceBuilder) {
+        traceBuilder.recordEvent({
+          area: "capabilities",
+          code: "parity_gate",
+          data: {
+            blocked: parityGate.blocked || parityGate.result.outcome === "block",
+            languageId: parityGate.result.languageId ?? null,
+            reasons: parityGate.result.reasons.slice(0, 3)
+          }
+        });
+      }
+      if (parityGate.result.outcome === "block") {
+        if (traceBuilder) {
+          traceBuilder.recordSkip("parity_gate", "guardrail_blocked", "language parity gate blocked");
+        }
         const message = parityGate.message ?? "Language parity requirements are missing.";
         return attachWorkflow({
           success: false,
@@ -561,7 +661,17 @@ export class ChangePillar {
           downgradeOnBypass: true
         });
         guardrailResult = guardrailDecision.guardrailResult;
+        if (traceBuilder) {
+          traceBuilder.recordEvent({
+            area: "guardrails",
+            code: "integrity_guardrails",
+            data: { blocked: guardrailDecision.blocked, bypassed: bypassIntegrityGuardrails }
+          });
+        }
         if (guardrailDecision.blocked) {
+          if (traceBuilder) {
+            traceBuilder.recordSkip("integrity_guardrails", "guardrail_blocked", "integrity guardrails blocked apply");
+          }
           return attachWorkflow({
             success: false,
             status: "blocked",

@@ -53,7 +53,11 @@ describe('UnderstandPillar integration', () => {
         intent.constraints.trace = true;
         const result = await pillar.execute(intent, new OrchestrationContext());
 
+        expect(result.effectiveOptions?.version).toBe(1);
+        expect(result.effectiveOptions?.pillar).toBe('understand');
         expect(result.effectiveOptions?.profile).toBe('deep');
-        expect(result.decisionTrace).toBeDefined();
+        expect(result.decisionTrace?.version).toBe(1);
+        expect(result.decisionTrace?.pillar).toBe('understand');
+        expect(result.decisionTrace?.optionResolution?.profile?.resolved).toBe('deep');
     });
 });

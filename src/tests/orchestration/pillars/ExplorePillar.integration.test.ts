@@ -92,9 +92,12 @@ describe('ExplorePillar Integration', () => {
     });
 
     expect(result.success).toBe(true);
+    expect(result.effectiveOptions?.version).toBe(1);
+    expect(result.effectiveOptions?.pillar).toBe('explore');
     expect(result.effectiveOptions?.sources).toBe('docs');
-    expect(result.decisionTrace?.docSearch).toBeDefined();
-    expect(result.decisionTrace?.docSearch?.skippedReason).not.toBe('doc_search_skipped');
+    expect(result.decisionTrace?.version).toBe(1);
+    expect(result.decisionTrace?.pillar).toBe('explore');
+    expect(result.decisionTrace?.optionResolution?.sources?.resolved).toBe('docs');
   });
 
   it('blocks sensitive files by default', async () => {

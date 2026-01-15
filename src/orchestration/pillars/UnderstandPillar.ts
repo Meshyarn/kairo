@@ -1,4 +1,5 @@
 
+import path from "path";
 import { LRUCache } from "lru-cache";
 import { InternalToolRegistry } from '../InternalToolRegistry.js';
 import { OrchestrationContext } from '../OrchestrationContext.js';
@@ -29,11 +30,31 @@ import { UniversalFallbackExtractor } from '../../ast/extraction/UniversalFallba
 import { AstManager } from '../../ast/AstManager.js';
 import { applyTokenBudget } from '../TokenBudget.js';
 import { normalizeUnderstandInput } from './understand/UnderstandInputNormalizer.js';
+import type { OptionSource, TraceOptionResolution } from '../../types/option-trace.js';
+import { TraceBuilder } from '../trace/TraceBuilder.js';
 import {
   applySkeletonCompressionDecision,
   resolveAllowGraphs,
   shouldBuildFallbackGraph
 } from "./understand/UnderstandDecisionEngine.js";
+
+const resolveOptionSource = (explicit: boolean, hasSession: boolean): OptionSource => {
+  if (explicit) return "explicit";
+  if (hasSession) return "session";
+  return "default";
+};
+
+const buildStringResolution = (
+  resolved: string | undefined,
+  explicit: boolean,
+  hasSession: boolean,
+  requested?: unknown
+): TraceOptionResolution<string | null> => ({
+  source: resolveOptionSource(explicit, hasSession),
+  explicit,
+  resolved: resolved ?? null,
+  ...(requested !== undefined ? { requested } : {})
+});
 
 
 export class UnderstandPillar {
@@ -77,6 +98,36 @@ export class UnderstandPillar {
     let resolvedPath = explicitPath ?? null;
     const progress = resolveProgressState('Understand', constraints);
     const startedAt = Date.now();
+    const sessionProfile = sessionPolicy?.understand?.profile ?? sessionPolicy?.profile;
+    const sessionSources = sessionPolicy?.understand?.sources ?? sessionPolicy?.sources;
+    const traceBuilder = traceEnabled
+      ? new TraceBuilder(
+        "understand",
+        {
+          profile: buildStringResolution(
+            resolvedOptions.effective.profile,
+            typeof constraints.profile === "string",
+            Boolean(sessionProfile),
+            typeof constraints.profile === "string" ? constraints.profile : undefined
+          ),
+          sources: buildStringResolution(
+            resolvedOptions.effective.sources,
+            typeof constraints.sources === "string",
+            Boolean(sessionSources),
+            typeof constraints.sources === "string" ? constraints.sources : undefined
+          ),
+          trace: {
+            source: constraints.trace === true ? "explicit" : "default",
+            explicit: constraints.trace === true,
+            resolved: traceEnabled
+          }
+        },
+        { startedAtMs: startedAt }
+      )
+      : undefined;
+    if (traceBuilder) {
+      traceBuilder.setBudget({ maxTokens });
+    }
 
     const metrics = analyzeQuery(subject);
     const initialProjectStats = context.getState<any>("project_profile");
@@ -144,9 +195,24 @@ export class UnderstandPillar {
       }
     }
 
+    if (traceBuilder && includeCalls && !symbolName) {
+      traceBuilder.recordSkip("call_graph", "not_applicable", "symbol not resolved");
+    }
+
     logProgress(progress, `Resolved filePath="${filePath}" symbol="${symbolName ?? ''}".`);
 
     const isDocument = isDocumentPath(filePath);
+    if (traceBuilder && isDocument) {
+      if (includeCalls) {
+        traceBuilder.recordSkip("call_graph", "unsupported", "document targets skip call graph");
+      }
+      if (includeDependencies) {
+        traceBuilder.recordSkip("dependencies", "unsupported", "document targets skip dependencies");
+      }
+      if (include.hotSpots === true) {
+        traceBuilder.recordSkip("hot_spots", "unsupported", "document targets skip hotspots");
+      }
+    }
     let projectStats: any = undefined;
     try {
       projectStats = await this.runTool(context, 'project_profile', {}, progress);
@@ -223,6 +289,9 @@ export class UnderstandPillar {
     } else if (includeCalls && symbolName && !allowGraphs) {
       degraded = true;
       refinementReason = refinementReason ?? 'budget_exceeded';
+      if (traceBuilder) {
+        traceBuilder.recordSkip("call_graph", "budget_exceeded", "graph budget gated");
+      }
     }
 
     if (includeDependencies && allowGraphs) {
@@ -239,6 +308,9 @@ export class UnderstandPillar {
     } else if (includeDependencies && !allowGraphs) {
       degraded = true;
       refinementReason = refinementReason ?? 'budget_exceeded';
+      if (traceBuilder) {
+        traceBuilder.recordSkip("dependencies", "budget_exceeded", "graph budget gated");
+      }
     }
 
     if (include.hotSpots === true && allowGraphs) {
@@ -246,10 +318,21 @@ export class UnderstandPillar {
     } else if (include.hotSpots === true && !allowGraphs) {
       degraded = true;
       refinementReason = refinementReason ?? 'budget_exceeded';
+      if (traceBuilder) {
+        traceBuilder.recordSkip("hot_spots", "budget_exceeded", "graph budget gated");
+      }
     }
 
     if (!isDocument && shouldBuildFallbackGraph(degradedReasons)) {
       fallbackGraph = await this.buildFallbackGraph(filePath);
+      if (traceBuilder) {
+        traceBuilder.recordEvent({
+          area: "capabilities",
+          code: "fallback_graph",
+          message: "Using fallback graph extraction",
+          data: { filePathHint: path.basename(filePath) }
+        });
+      }
     }
 
     const compressionDecision = applySkeletonCompressionDecision({
@@ -358,15 +441,21 @@ export class UnderstandPillar {
     });
     if (traceEnabled) {
       response.effectiveOptions = {
+        version: 1,
+        pillar: "understand",
         profile: resolvedOptions.effective.profile,
         sources: resolvedOptions.effective.sources,
         depth,
         include
       };
-      response.decisionTrace = {
-        profileApplied: resolvedOptions.effective.profile ?? null,
-        sourcesApplied: resolvedOptions.effective.sources ?? null
-      };
+      if (traceBuilder) {
+        traceBuilder.setBudget({
+          maxTokens,
+          compressionApplied: compressionDecision.compression?.applied,
+          compressionMode: compressionDecision.compression?.mode
+        });
+        response.decisionTrace = traceBuilder.finalize();
+      }
     }
     return response;
 

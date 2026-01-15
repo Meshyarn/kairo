@@ -76,6 +76,7 @@ The entries below cover all ADRs from the project history. Items marked “retou
 - ADR-070: Offline baseline policy (remote embeddings, model packaging) → `docs/adr/ADR-070-offline-baseline-policy-remote-embeddings-model-packaging.md`
 - ADR-071: IFileSystem boundary expansion & testability program → `docs/adr/ADR-071-ifilesystem-boundary-expansion-and-testability-program.md`
 - ADR-072: Pillar decomposition & module boundary hardening → `docs/adr/ADR-072-pillar-decomposition-and-module-boundary-hardening.md`
+- ADR-073: Option trace 표준화 (decisionTrace/effectiveOptions v1) → `docs/adr/ADR-073-option-trace-standardization-decisiontrace-effectiveoptions.md`
 - ADR-055-H: Adaptive trust policy (no curated summary)
 - ADR-055-L: Action guidance + Understand fallback graph (no curated summary)
 - ADR-033: “Six Pillars” precursor to ADR-040; introduced orchestration primitives and earlier public surface.
