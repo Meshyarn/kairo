@@ -59,5 +59,17 @@ describe('UnderstandPillar integration', () => {
         expect(result.decisionTrace?.version).toBe(1);
         expect(result.decisionTrace?.pillar).toBe('understand');
         expect(result.decisionTrace?.optionResolution?.profile?.resolved).toBe('deep');
+
+        const allowlist = new Set([
+            "allocator.plan_created",
+            "allocator.section_strategy",
+            "allocator.section_omit",
+            "allocator.reuse_pack",
+            "allocator.reuse_summary"
+        ]);
+        const allocatorCodes = (result.decisionTrace?.events ?? [])
+            .map((event: any) => event?.code)
+            .filter((code: any) => typeof code === "string" && code.startsWith("allocator."));
+        expect(allocatorCodes.every((code: string) => allowlist.has(code))).toBe(true);
     });
 });

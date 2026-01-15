@@ -32,6 +32,7 @@ import { applyTokenBudget } from '../TokenBudget.js';
 import { normalizeUnderstandInput } from './understand/UnderstandInputNormalizer.js';
 import type { OptionSource, TraceOptionResolution } from '../../types/option-trace.js';
 import { TraceBuilder } from '../trace/TraceBuilder.js';
+import { buildBudgetPlan, getSectionPlan } from '../budget/TokenBudgetAllocatorV2.js';
 import {
   applySkeletonCompressionDecision,
   resolveAllowGraphs,
@@ -128,6 +129,71 @@ export class UnderstandPillar {
     if (traceBuilder) {
       traceBuilder.setBudget({ maxTokens });
     }
+    const budgetPlan = buildBudgetPlan({
+      pillar: "understand",
+      profile: resolvedOptions.effective.profile ?? "balanced",
+      sources: resolvedOptions.effective.sources,
+      maxTokens
+    });
+    let includeCallsPlanned = includeCalls;
+    let includeDependenciesPlanned = includeDependencies;
+    let includeHotSpotsPlanned = include.hotSpots === true;
+    let wantsVibePlanned = wantsVibe;
+    let wantsAnalysisPlanned = wantsAnalysis;
+    const relatedCodePlan = getSectionPlan(budgetPlan, "related_code");
+    const analysisPlan = getSectionPlan(budgetPlan, "analysis_pack");
+    const stylePlan = getSectionPlan(budgetPlan, "style_pack");
+    const relatedCodeLimit = relatedCodePlan?.strategy === "summary"
+      ? 1
+      : (relatedCodePlan?.strategy === "preview" ? 3 : undefined);
+    const budgetOmissions: Array<"dependencies" | "call_graph" | "hot_spots" | "analysis_pack" | "style_pack"> = [];
+
+    const recordAllocatorEvents = () => {
+      if (!traceBuilder) return;
+      traceBuilder.recordEvent({
+        area: "budget",
+        code: "allocator.plan_created",
+        data: {
+          maxTokens: budgetPlan.maxTokens,
+          maxChars: budgetPlan.maxChars,
+          sectionCount: budgetPlan.sections.length
+        }
+      });
+      for (const section of budgetPlan.sections) {
+        traceBuilder.recordEvent({
+          area: "budget",
+          code: "allocator.section_strategy",
+          data: {
+            section: section.section,
+            strategy: section.strategy,
+            tokens: section.tokens,
+            chars: section.chars
+          }
+        });
+        if (section.strategy === "omit") {
+          traceBuilder.recordSkip(section.section, "budget_exceeded", "allocator omitted section");
+        }
+      }
+    };
+
+    const applyBudgetOmit = (section: "dependencies" | "call_graph" | "hot_spots" | "analysis_pack" | "style_pack") => {
+      budgetOmissions.push(section);
+      if (section === "dependencies") includeDependenciesPlanned = false;
+      if (section === "call_graph") includeCallsPlanned = false;
+      if (section === "hot_spots") includeHotSpotsPlanned = false;
+      if (section === "analysis_pack") wantsAnalysisPlanned = false;
+      if (section === "style_pack") wantsVibePlanned = false;
+    };
+
+    for (const entry of budgetPlan.sections) {
+      if (entry.strategy !== "omit") continue;
+      if (entry.section === "dependencies") applyBudgetOmit("dependencies");
+      if (entry.section === "call_graph") applyBudgetOmit("call_graph");
+      if (entry.section === "hot_spots") applyBudgetOmit("hot_spots");
+      if (entry.section === "analysis_pack") applyBudgetOmit("analysis_pack");
+      if (entry.section === "style_pack") applyBudgetOmit("style_pack");
+    }
+    recordAllocatorEvents();
 
     const metrics = analyzeQuery(subject);
     const initialProjectStats = context.getState<any>("project_profile");
@@ -136,8 +202,8 @@ export class UnderstandPillar {
       queryLength: metrics.length,
       tokenCount: metrics.tokenCount,
       strongQuery: metrics.strong,
-      includeGraph: includeDependencies || includeCalls,
-      includeHotSpots: include.hotSpots,
+      includeGraph: includeDependenciesPlanned || includeCallsPlanned,
+      includeHotSpots: includeHotSpotsPlanned,
       projectStats: initialProjectStats?.fileCount ? { fileCount: initialProjectStats.fileCount } : undefined
     });
     const searchBudget = this.resolveSearchBudget(constraints, subject, initialBudget);
@@ -180,7 +246,7 @@ export class UnderstandPillar {
     const primaryResult = resolvedPath ? { path: resolvedPath } : searchResult.results[0];
     let filePath = primaryResult.path;
     let symbolName = primaryResult?.symbol?.name;
-    if (includeCalls && !symbolName && symbolHint) {
+    if (includeCallsPlanned && !symbolName && symbolHint) {
       const symbolMatches = await this.runTool(context, 'project_search', {
         query: symbolHint,
         type: 'symbol',
@@ -195,7 +261,7 @@ export class UnderstandPillar {
       }
     }
 
-    if (traceBuilder && includeCalls && !symbolName) {
+    if (traceBuilder && includeCallsPlanned && !symbolName) {
       traceBuilder.recordSkip("call_graph", "not_applicable", "symbol not resolved");
     }
 
@@ -203,13 +269,13 @@ export class UnderstandPillar {
 
     const isDocument = isDocumentPath(filePath);
     if (traceBuilder && isDocument) {
-      if (includeCalls) {
+      if (includeCallsPlanned) {
         traceBuilder.recordSkip("call_graph", "unsupported", "document targets skip call graph");
       }
-      if (includeDependencies) {
+      if (includeDependenciesPlanned) {
         traceBuilder.recordSkip("dependencies", "unsupported", "document targets skip dependencies");
       }
-      if (include.hotSpots === true) {
+      if (includeHotSpotsPlanned) {
         traceBuilder.recordSkip("hot_spots", "unsupported", "document targets skip hotspots");
       }
     }
@@ -224,8 +290,8 @@ export class UnderstandPillar {
       queryLength: metrics.length,
       tokenCount: metrics.tokenCount,
       strongQuery: metrics.strong,
-      includeGraph: includeDependencies || includeCalls,
-      includeHotSpots: include.hotSpots,
+      includeGraph: includeDependenciesPlanned || includeCallsPlanned,
+      includeHotSpots: includeHotSpotsPlanned,
       projectStats: { fileCount: projectStats?.fileCount }
     });
 
@@ -239,6 +305,22 @@ export class UnderstandPillar {
     const degradedReasons: string[] = [];
     let fallbackGraph: { mode: "l2"; edges: Array<{ from: string; to: string; confidence: "low"; reason?: string }>; evidence?: string[] } | undefined = undefined;
     let refinementReason: string | undefined = undefined;
+    if (budgetOmissions.length > 0) {
+      degraded = true;
+      if (!degradedReasons.includes("budget_exceeded")) {
+        degradedReasons.push("budget_exceeded");
+      }
+      refinementReason = refinementReason ?? "budget_exceeded";
+      if (traceBuilder) {
+        for (const section of budgetOmissions) {
+          traceBuilder.recordEvent({
+            area: "budget",
+            code: "allocator.section_omit",
+            data: { section }
+          });
+        }
+      }
+    }
     if (isDocument) {
       const docAnalysis = await this.runTool(context, 'document_analyze', { filePath }, progress);
       skeleton = docAnalysis?.skeleton ?? '';
@@ -250,6 +332,21 @@ export class UnderstandPillar {
       if (Array.isArray(docProfile?.mentions) && docProfile.mentions.length > 0) {
         mentionMatches = await resolveMentionReferences(context, docProfile.mentions, runTool, progress);
         relatedCode = mergeRelatedCode(relatedCode, mentionMatches);
+      }
+      if (relatedCodeLimit && Array.isArray(relatedCode) && relatedCode.length > relatedCodeLimit) {
+        relatedCode = relatedCode.slice(0, relatedCodeLimit);
+        degraded = true;
+        if (!degradedReasons.includes("budget_exceeded")) {
+          degradedReasons.push("budget_exceeded");
+        }
+        refinementReason = refinementReason ?? "budget_exceeded";
+        if (traceBuilder) {
+          traceBuilder.recordEvent({
+            area: "budget",
+            code: "allocator.section_omit",
+            data: { section: "related_code" }
+          });
+        }
       }
     } else {
       const support = await checkSkeletonSupport(filePath);
@@ -269,15 +366,15 @@ export class UnderstandPillar {
       isDocument,
       strongQuery: isStrongQuery(metrics),
       budgetProfile: budget.profile,
-      includeCalls,
-      includeDependencies,
-      includeHotSpots: include.hotSpots === true
+      includeCalls: includeCallsPlanned,
+      includeDependencies: includeDependenciesPlanned,
+      includeHotSpots: includeHotSpotsPlanned
     });
-    if (isDocument && (includeCalls || includeDependencies || include.hotSpots === true)) {
+    if (isDocument && (includeCallsPlanned || includeDependenciesPlanned || includeHotSpotsPlanned)) {
       degraded = true;
       refinementReason = refinementReason ?? 'document_file';
     }
-    if (includeCalls && symbolName && allowGraphs) {
+    if (includeCallsPlanned && symbolName && allowGraphs) {
       calls = await fetchCallGraph({
         context,
         filePath,
@@ -286,7 +383,7 @@ export class UnderstandPillar {
         runTool,
         progress
       });
-    } else if (includeCalls && symbolName && !allowGraphs) {
+    } else if (includeCallsPlanned && symbolName && !allowGraphs) {
       degraded = true;
       refinementReason = refinementReason ?? 'budget_exceeded';
       if (traceBuilder) {
@@ -294,7 +391,7 @@ export class UnderstandPillar {
       }
     }
 
-    if (includeDependencies && allowGraphs) {
+    if (includeDependenciesPlanned && allowGraphs) {
       deps = await collectDependenciesFromGraph(ucg, filePath);
 
       if (!deps || !Array.isArray(deps.edges) || deps.edges.length === 0) {
@@ -305,7 +402,7 @@ export class UnderstandPillar {
           direction: 'both'
         }, progress);
       }
-    } else if (includeDependencies && !allowGraphs) {
+    } else if (includeDependenciesPlanned && !allowGraphs) {
       degraded = true;
       refinementReason = refinementReason ?? 'budget_exceeded';
       if (traceBuilder) {
@@ -313,9 +410,9 @@ export class UnderstandPillar {
       }
     }
 
-    if (include.hotSpots === true && allowGraphs) {
+    if (includeHotSpotsPlanned && allowGraphs) {
       hotSpots = await this.runTool(context, 'hotspot_detect', {}, progress);
-    } else if (include.hotSpots === true && !allowGraphs) {
+    } else if (includeHotSpotsPlanned && !allowGraphs) {
       degraded = true;
       refinementReason = refinementReason ?? 'budget_exceeded';
       if (traceBuilder) {
@@ -353,7 +450,7 @@ export class UnderstandPillar {
 
 
         // 3. Synthesize Response (Advanced synthesis in Phase 3)
-    const status = includeCalls && !symbolName ? 'partial_success' : (degraded ? 'partial_success' : 'ok');
+    const status = includeCallsPlanned && !symbolName ? 'partial_success' : (degraded ? 'partial_success' : 'ok');
     const elapsedMs = Date.now() - startedAt;
     logProgress(progress, `Completed in ${elapsedMs}ms.`);
     const integrityReport = integrityOptions && integrityOptions.mode !== "off"
@@ -386,8 +483,20 @@ export class UnderstandPillar {
       }
     }
 
-    const analysisPack = wantsAnalysis
-      ? this.buildAnalysisPack({
+    let analysisPack: AnalysisPack | undefined;
+    if (wantsAnalysisPlanned) {
+      if (analysisPlan?.strategy === "summary" && resolvedSessionId && artifactManager) {
+        analysisPack = artifactManager.getLatestAnalysisPack(resolvedSessionId);
+        if (analysisPack && traceBuilder) {
+          traceBuilder.recordEvent({
+            area: "budget",
+            code: "allocator.reuse_pack",
+            data: { section: "analysis_pack" }
+          });
+        }
+      }
+      if (!analysisPack) {
+        analysisPack = this.buildAnalysisPack({
           goal: subject,
           primaryFile: filePath,
           searchResults: searchResult?.results,
@@ -395,8 +504,9 @@ export class UnderstandPillar {
           hotSpots,
           degraded,
           analysis
-        })
-      : undefined;
+        });
+      }
+    }
 
     if (analysisPack) {
       if (artifactManager) {
@@ -408,6 +518,23 @@ export class UnderstandPillar {
           sessionId: resolvedSessionId,
           metadata: { intent: subject }
         });
+      }
+    }
+
+    let stylePack: StylePack | undefined;
+    if (wantsVibePlanned) {
+      if (stylePlan?.strategy === "summary" && resolvedSessionId && artifactManager) {
+        stylePack = artifactManager.getLatestStylePack(resolvedSessionId);
+        if (stylePack && traceBuilder) {
+          traceBuilder.recordEvent({
+            area: "budget",
+            code: "allocator.reuse_pack",
+            data: { section: "style_pack" }
+          });
+        }
+      }
+      if (!stylePack) {
+        stylePack = await this.buildStylePack(filePath, vibe, indexSnapshot, resolvedSessionId, subject);
       }
     }
 
@@ -425,7 +552,7 @@ export class UnderstandPillar {
       deps,
       hotSpots,
       integrityReport,
-      includeCalls,
+      includeCalls: includeCallsPlanned,
       degraded,
       degradedReasons: degradedReasons.length > 0 ? degradedReasons : undefined,
       degradedReasonDetails: buildDegradedReasons(degradedReasons),
@@ -434,7 +561,7 @@ export class UnderstandPillar {
       budget,
       allowGraphs,
       indexSnapshot,
-      stylePack: wantsVibe ? await this.buildStylePack(filePath, vibe, indexSnapshot, resolvedSessionId, subject) : undefined,
+      stylePack,
       analysisPack,
       sessionId: resolvedSessionId,
       compression: compressionDecision.compression

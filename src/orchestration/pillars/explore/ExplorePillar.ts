@@ -22,6 +22,7 @@ import type { PathNormalizer } from "../../../utils/PathNormalizer.js";
 import { resolveRepoInfo } from "../../../utils/RepoScope.js";
 import type { OptionSource, TraceOptionResolution } from "../../../types/option-trace.js";
 import { TraceBuilder } from "../../trace/TraceBuilder.js";
+import { buildBudgetPlan, getSectionPlan } from "../../budget/TokenBudgetAllocatorV2.js";
 import { normalizeExploreInput } from "./ExploreInputNormalizer.js";
 import {
     applyBudgetToExploreItemsWithGlobalLimit,
@@ -190,6 +191,81 @@ export class ExplorePillar {
         const includeCode = include.code !== false;
         const includeComments = include.comments === true;
         const includeLogs = include.logs === true;
+        const sessionProfile = sessionPolicy?.explore?.profile ?? sessionPolicy?.profile;
+        const sessionSources = sessionPolicy?.explore?.sources ?? sessionPolicy?.sources;
+        const traceBuilder = traceEnabled
+            ? new TraceBuilder(
+                "explore",
+                {
+                    profile: buildStringResolution(
+                        resolvedOptions.effective.profile,
+                        typeof constraints.profile === "string",
+                        Boolean(sessionProfile),
+                        typeof constraints.profile === "string" ? constraints.profile : undefined
+                    ),
+                    sources: buildStringResolution(
+                        resolvedOptions.effective.sources,
+                        typeof constraints.sources === "string",
+                        Boolean(sessionSources),
+                        typeof constraints.sources === "string" ? constraints.sources : undefined
+                    ),
+                    trace: {
+                        source: constraints.trace === true ? "explicit" : "default",
+                        explicit: constraints.trace === true,
+                        resolved: traceEnabled
+                    }
+                },
+                { startedAtMs: startedAt }
+            )
+            : undefined;
+        if (traceBuilder) {
+            traceBuilder.setBudget({ maxTokens, maxChars, timeoutMs });
+        }
+        const budgetPlan = buildBudgetPlan({
+            pillar: "explore",
+            profile: resolvedOptions.effective.profile ?? "balanced",
+            sources: resolvedOptions.effective.sources,
+            maxTokens,
+            maxChars,
+            timeoutMs,
+            include,
+            view
+        });
+        const docSectionPlan = getSectionPlan(budgetPlan, "doc_sections");
+        const docSectionStrategy = docSectionPlan?.strategy ?? "raw";
+        const docSectionMaxChars = Math.min(
+            maxChars,
+            resolveSectionChars(docSectionPlan, maxChars)
+        );
+        const allowDocSectionExpand = docSectionStrategy !== "omit";
+        const researchPlan = getSectionPlan(budgetPlan, "research_pack");
+        const researchOmitted = researchPlan?.strategy === "omit";
+        if (traceBuilder) {
+            traceBuilder.recordEvent({
+                area: "budget",
+                code: "allocator.plan_created",
+                data: {
+                    maxTokens: budgetPlan.maxTokens,
+                    maxChars: budgetPlan.maxChars,
+                    sectionCount: budgetPlan.sections.length
+                }
+            });
+            for (const section of budgetPlan.sections) {
+                traceBuilder.recordEvent({
+                    area: "budget",
+                    code: "allocator.section_strategy",
+                    data: {
+                        section: section.section,
+                        strategy: section.strategy,
+                        tokens: section.tokens,
+                        chars: section.chars
+                    }
+                });
+                if (section.strategy === "omit") {
+                    traceBuilder.recordSkip(section.section, "budget_exceeded", "allocator omitted section");
+                }
+            }
+        }
 
         if (searchBudget) {
             const desiredFileBudget = Math.min(
@@ -242,40 +318,15 @@ export class ExplorePillar {
             data: { docs: [], code: [] },
             sessionId: resolvedSessionId
         };
-        const sessionProfile = sessionPolicy?.explore?.profile ?? sessionPolicy?.profile;
-        const sessionSources = sessionPolicy?.explore?.sources ?? sessionPolicy?.sources;
-        const traceBuilder = traceEnabled
-            ? new TraceBuilder(
-                "explore",
-                {
-                    profile: buildStringResolution(
-                        resolvedOptions.effective.profile,
-                        typeof constraints.profile === "string",
-                        Boolean(sessionProfile),
-                        typeof constraints.profile === "string" ? constraints.profile : undefined
-                    ),
-                    sources: buildStringResolution(
-                        resolvedOptions.effective.sources,
-                        typeof constraints.sources === "string",
-                        Boolean(sessionSources),
-                        typeof constraints.sources === "string" ? constraints.sources : undefined
-                    ),
-                    trace: {
-                        source: constraints.trace === true ? "explicit" : "default",
-                        explicit: constraints.trace === true,
-                        resolved: traceEnabled
-                    }
-                },
-                { startedAtMs: startedAt }
-            )
-            : undefined;
-        if (traceBuilder) {
-            traceBuilder.setBudget({ maxTokens, maxChars, timeoutMs });
-        }
-
         if (researchRequested) {
-            response.researchPack = await this.buildResearchPack(research, resolvedSessionId, intent.originalIntent).catch(() => undefined);
-            if (!response.researchPack) {
+            if (researchOmitted) {
+                if (traceBuilder) {
+                    traceBuilder.recordSkip("research_pack", "budget_exceeded", "allocator omitted research pack");
+                }
+            } else {
+                response.researchPack = await this.buildResearchPack(research, resolvedSessionId, intent.originalIntent).catch(() => undefined);
+            }
+            if (!response.researchPack && !researchOmitted) {
                 response.insights = response.insights || [];
                 response.insights.push({
                     type: "warning",
@@ -336,7 +387,9 @@ export class ExplorePillar {
                 }
                 if (constraints.cursor?.content) {
                     const sliced = slicePack(cachedPack, contentCursorState, maxResults, includeDocs, includeCode, includeComments, includeLogs);
-                    const expandedDocs = await Promise.all(sliced.docs.map((item) => this.expandDocContent(item, maxChars, context)));
+                    const expandedDocs = allowDocSectionExpand
+                        ? await Promise.all(sliced.docs.map((item) => this.expandDocContent(item, docSectionMaxChars, context, docSectionStrategy, query)))
+                        : sliced.docs;
                     const expandedCode = await Promise.all(sliced.code.map((item) => this.expandCodeContent(item, maxChars, context)));
 
                     const applyBudgetWithGlobalLimit = (items: ExploreItem[]) => {
@@ -923,14 +976,24 @@ export class ExplorePillar {
         return `rp_${Date.now().toString(36)}_${suffix}`;
     }
 
-    private async expandDocContent(item: ExploreItem, maxChars: number, context: OrchestrationContext): Promise<ExploreItem> {
+    private async expandDocContent(
+        item: ExploreItem,
+        maxChars: number,
+        context: OrchestrationContext,
+        strategy: "raw" | "preview" | "summary" | "distill" | "truncate",
+        query?: string
+    ): Promise<ExploreItem> {
         const headingPath = Array.isArray(item.metadata?.headingPath) ? item.metadata?.headingPath : undefined;
+        const mode = strategy === "summary" || strategy === "distill"
+            ? "summary"
+            : (strategy === "preview" || strategy === "truncate" ? "preview" : "raw");
         const result = await this.runTool(context, "document_section", {
             filePath: item.filePath,
             headingPath,
             includeSubsections: false,
-            mode: "raw",
-            maxChars
+            mode,
+            maxChars,
+            ...(query ? { query } : {})
         });
         return {
             ...item,
@@ -975,4 +1038,15 @@ export class ExplorePillar {
         const hasSymbolToken = tokens.some(token => /[A-Z_]/.test(token) || /\d/.test(token));
         return tokens.length > 1 ? hasSymbolToken : hasSymbolToken;
     }
+}
+
+function resolveSectionChars(plan: { chars?: number; tokens?: number } | undefined, fallback: number): number {
+    if (!plan) return fallback;
+    if (Number.isFinite(plan.chars) && (plan.chars ?? 0) > 0) {
+        return Math.max(64, plan.chars ?? fallback);
+    }
+    if (Number.isFinite(plan.tokens) && (plan.tokens ?? 0) > 0) {
+        return Math.max(64, Math.floor((plan.tokens ?? 0) * 4));
+    }
+    return fallback;
 }

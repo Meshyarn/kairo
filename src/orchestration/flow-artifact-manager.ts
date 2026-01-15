@@ -10,7 +10,8 @@ import type {
     FlowSessionOutcome,
     FlowSessionStatus,
     SessionPolicy,
-    StylePack
+    StylePack,
+    AnalysisPack
 } from "../types/flow-artifacts.js";
 
 export interface FlowArtifactManagerOptions {
@@ -103,6 +104,13 @@ export class FlowArtifactManager {
             .filter((artifact) => artifact.type === "style")
             .sort((a, b) => b.createdAt - a.createdAt)[0];
         return latest && "pack" in latest ? (latest.pack as StylePack) : undefined;
+    }
+
+    getLatestAnalysisPack(sessionId: string): AnalysisPack | undefined {
+        const latest = this.getBySession(sessionId)
+            .filter((artifact) => artifact.type === "analysis")
+            .sort((a, b) => b.createdAt - a.createdAt)[0];
+        return latest && "pack" in latest ? (latest.pack as AnalysisPack) : undefined;
     }
 
     getSessionSummary(sessionId: string): { session: FlowSession; summary: { counts: Record<ArtifactType, number>; lastUpdatedAt: number; latestIds: Record<string, string | undefined> } } | undefined {
