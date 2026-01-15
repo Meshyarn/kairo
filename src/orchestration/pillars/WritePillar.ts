@@ -39,6 +39,26 @@ import { normalizeWriteInput } from "./write/WriteInputNormalizer.js";
 import { buildWorkflowMeta, buildWorkflowWarnings } from "./shared/WorkflowMeta.js";
 import { evaluateOverrideDecision } from "./shared/OverrideDecision.js";
 import { evaluateIntegrityGuardrailBlock } from "./shared/IntegrityGuardrailDecision.js";
+import type { OptionSource, TraceOptionResolution } from "../../types/option-trace.js";
+import { TraceBuilder } from "../trace/TraceBuilder.js";
+
+const resolveOptionSource = (explicit: boolean, hasSession: boolean): OptionSource => {
+  if (explicit) return "explicit";
+  if (hasSession) return "session";
+  return "default";
+};
+
+const buildStringResolution = (
+  resolved: string | undefined,
+  explicit: boolean,
+  hasSession: boolean,
+  requested?: unknown
+): TraceOptionResolution<string | null> => ({
+  source: resolveOptionSource(explicit, hasSession),
+  explicit,
+  resolved: resolved ?? null,
+  ...(requested !== undefined ? { requested } : {})
+});
 
 export class WritePillar {
   constructor(private readonly registry: InternalToolRegistry) {}
@@ -78,6 +98,39 @@ export class WritePillar {
         resolveSessionId: (rawSessionId, fallback) => artifactManager?.resolveSessionId(rawSessionId, fallback),
         getSessionPolicy: (sessionId) => (sessionId ? artifactManager?.getSession(sessionId)?.policy : undefined)
       });
+      const sessionProfile = sessionPolicy?.write?.profile ?? sessionPolicy?.profile;
+      const sessionSafety = sessionPolicy?.write?.safety ?? sessionPolicy?.safety;
+      const traceBuilder = traceEnabled
+        ? new TraceBuilder(
+          "write",
+          {
+            profile: buildStringResolution(
+              resolvedOptions.effective.profile,
+              typeof constraints.profile === "string",
+              Boolean(sessionProfile),
+              typeof constraints.profile === "string" ? constraints.profile : undefined
+            ),
+            safety: buildStringResolution(
+              resolvedOptions.effective.safety,
+              typeof (constraints as any).safety === "string",
+              Boolean(sessionSafety),
+              typeof (constraints as any).safety === "string" ? (constraints as any).safety : undefined
+            ),
+            dryRun: {
+              source: typeof constraints.dryRun === "boolean" ? "explicit" : (sessionSafety ? "session" : "computed"),
+              explicit: typeof constraints.dryRun === "boolean",
+              resolved: dryRun,
+              ...(typeof constraints.dryRun === "boolean" ? { requested: constraints.dryRun } : {})
+            },
+            trace: {
+              source: constraints.trace === true ? "explicit" : "default",
+              explicit: constraints.trace === true,
+              resolved: traceEnabled
+            }
+          },
+          { startedAtMs: Date.now() }
+        )
+        : undefined;
       let content = initialContent;
       if (resolvedSessionId) {
         const policyPatch: Partial<{ profile?: string; safety?: string; write?: Record<string, unknown> }> = {};
@@ -122,6 +175,16 @@ export class WritePillar {
       const repoScope = repoRegistry && pathNormalizer
         ? normalizeRepoScope(repoScopeParams, repoRegistry, { defaultMode: "default" })
         : undefined;
+      if (traceBuilder && repoScope) {
+        traceBuilder.recordEvent({
+          area: "policy",
+          code: "repo_scope_resolved",
+          data: {
+            mode: repoScope.scope.mode,
+            repoIdsCount: Array.isArray(repoScope.repoIds) ? repoScope.repoIds.length : 0
+          }
+        });
+      }
       const attachSession = <T extends Record<string, any>>(payload: T): T & { sessionId?: string; workflowMeta: WorkflowMeta; workflowWarnings?: string[] } => {
         const next = {
           ...payload,
@@ -129,20 +192,15 @@ export class WritePillar {
           ...(traceEnabled
             ? {
                 effectiveOptions: {
+                  version: 1,
+                  pillar: "write",
                   profile: resolvedOptions.effective.profile,
                   safety: resolvedOptions.effective.safety,
                   dryRun,
                   reviewOptions,
                   diffMode: resolvedOptions.effective.diffMode
                 },
-                decisionTrace: {
-                  dryRun: {
-                    explicit: typeof constraints.dryRun === "boolean",
-                    resolved: dryRun
-                  },
-                  safety: resolvedOptions.effective.safety ?? null,
-                  profile: resolvedOptions.effective.profile ?? null
-                }
+                decisionTrace: traceBuilder?.finalize()
               }
             : {})
         } as T & { sessionId?: string; workflowMeta: WorkflowMeta; workflowWarnings?: string[] };
@@ -181,7 +239,22 @@ export class WritePillar {
       const bypassReviewBlock = overrideEvaluation.bypass.reviewPolicy;
       const bypassStaleGuard = overrideEvaluation.bypass.staleGuard;
       overrideTrace = overrideEvaluation.trace;
+      if (traceBuilder) {
+        traceBuilder.recordEvent({
+          area: "guardrails",
+          code: "override_evaluated",
+          data: {
+            decision: overrideDecision?.decision ?? "none",
+            bypassIntegrityGuardrails,
+            bypassReviewBlock,
+            bypassStaleGuard
+          }
+        });
+      }
       if (overrideEvaluation.blockedResponse) {
+        if (traceBuilder) {
+          traceBuilder.recordSkip("override", "guardrail_blocked", "override not permitted");
+        }
         return attachSession(overrideEvaluation.blockedResponse);
       }
       if (repoRegistry && pathNormalizer && repoScope) {
@@ -198,6 +271,9 @@ export class WritePillar {
           const guidanceMessage = reason === "cross_repo_edit_blocked"
             ? "Set allowCrossRepoEdits=true in .kairo/config/mcp-config.json for involved repos, then rerun with allowCrossRepoEdits:true."
             : "Adjust repoScope to include the target repository or use the default repo.";
+          if (traceBuilder) {
+            traceBuilder.recordSkip("repo_scope", "policy_disabled", reason);
+          }
           return attachSession({
             success: false,
             status: "blocked",
@@ -216,7 +292,17 @@ export class WritePillar {
         bypass: bypassStaleGuard,
         workflowWarnings
       });
+      if (traceBuilder) {
+        traceBuilder.recordEvent({
+          area: "guardrails",
+          code: "stale_guard",
+          data: { blocked: staleGuard.blocked, bypassed: bypassStaleGuard }
+        });
+      }
       if (staleGuard.blocked) {
+        if (traceBuilder) {
+          traceBuilder.recordSkip("stale_guard", "guardrail_blocked", "index stale risk high");
+        }
         return attachSession({
           success: false,
           status: "blocked",
@@ -240,6 +326,17 @@ export class WritePillar {
         filePath: resolvedPath,
         operation: dryRun ? "write_plan" : "write_apply"
       });
+      if (traceBuilder) {
+        traceBuilder.recordEvent({
+          area: "capabilities",
+          code: "parity_gate",
+          data: {
+            blocked: parityGate.outcome === "block",
+            languageId: parityGate.languageId ?? null,
+            reasons: Array.isArray(parityGate.reasons) ? parityGate.reasons.slice(0, 3) : []
+          }
+        });
+      }
       const parityDegradedReasons = parityGate.reasons.length > 0
         ? buildDegradedReasons(parityGate.reasons, {
           languageId: parityGate.languageId,
@@ -286,6 +383,9 @@ export class WritePillar {
 
       if (!dryRun && parityGate.outcome === "block") {
         const message = formatParityBlockMessage({ filePath: resolvedPath, result: parityGate });
+        if (traceBuilder) {
+          traceBuilder.recordSkip("parity_gate", "guardrail_blocked", "language parity gate blocked");
+        }
         return attachResponse({
           success: false,
           status: "blocked",
@@ -548,7 +648,17 @@ export class WritePillar {
             downgradeOnBypass: false
           });
           guardrailResult = guardrailDecision.guardrailResult;
+          if (traceBuilder) {
+            traceBuilder.recordEvent({
+              area: "guardrails",
+              code: "integrity_guardrails",
+              data: { blocked: guardrailDecision.blocked, bypassed: bypassIntegrityGuardrails }
+            });
+          }
           if (guardrailDecision.blocked) {
+            if (traceBuilder) {
+              traceBuilder.recordSkip("integrity_guardrails", "guardrail_blocked", "integrity guardrails blocked write");
+            }
             stopSafePatch();
             return attachResponse({
               success: false,
@@ -692,7 +802,17 @@ export class WritePillar {
           downgradeOnBypass: false
         });
         guardrailResult = guardrailDecision.guardrailResult;
+        if (traceBuilder) {
+          traceBuilder.recordEvent({
+            area: "guardrails",
+            code: "integrity_guardrails",
+            data: { blocked: guardrailDecision.blocked, bypassed: bypassIntegrityGuardrails }
+          });
+        }
         if (guardrailDecision.blocked) {
+          if (traceBuilder) {
+            traceBuilder.recordSkip("integrity_guardrails", "guardrail_blocked", "integrity guardrails blocked write");
+          }
           return attachResponse({
             success: false,
             status: 'blocked',

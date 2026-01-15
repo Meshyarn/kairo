@@ -1203,6 +1203,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
           target: { type: "string" },
           limit: { type: "number" },
           detail: { type: "string", enum: ["summary", "full"] },
+          trace: { type: "boolean" },
           outcome: { type: "object" },
           sessionId: { type: "string" },
           policy: { type: "object" },

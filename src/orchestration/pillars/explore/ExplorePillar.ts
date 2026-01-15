@@ -20,6 +20,8 @@ import { applyTokenBudget, estimateTokens } from "../../TokenBudget.js";
 import type { RepoRegistry } from "../../../config/RepoRegistry.js";
 import type { PathNormalizer } from "../../../utils/PathNormalizer.js";
 import { resolveRepoInfo } from "../../../utils/RepoScope.js";
+import type { OptionSource, TraceOptionResolution } from "../../../types/option-trace.js";
+import { TraceBuilder } from "../../trace/TraceBuilder.js";
 import { normalizeExploreInput } from "./ExploreInputNormalizer.js";
 import {
     applyBudgetToExploreItemsWithGlobalLimit,
@@ -61,6 +63,24 @@ const DEFAULT_PACK_TTL_MS = Number.parseInt(process.env.KAIRO_EXPLORE_PACK_TTL_M
 const DEFAULT_PACK_CACHE_SIZE = Number.parseInt(process.env.KAIRO_EXPLORE_PACK_CACHE_SIZE ?? "100", 10) || 100;
 const DEFAULT_RESEARCH_TTL_MS = Number.parseInt(process.env.KAIRO_RESEARCH_PACK_TTL_MS ?? "1800000", 10) || 1800000;
 const DEFAULT_RESEARCH_CACHE_SIZE = Number.parseInt(process.env.KAIRO_RESEARCH_PACK_CACHE_SIZE ?? "50", 10) || 50;
+
+const resolveOptionSource = (explicit: boolean, hasSession: boolean): OptionSource => {
+    if (explicit) return "explicit";
+    if (hasSession) return "session";
+    return "default";
+};
+
+const buildStringResolution = (
+    resolved: string | undefined,
+    explicit: boolean,
+    hasSession: boolean,
+    requested?: unknown
+): TraceOptionResolution<string | null> => ({
+    source: resolveOptionSource(explicit, hasSession),
+    explicit,
+    resolved: resolved ?? null,
+    ...(requested !== undefined ? { requested } : {})
+});
 
 export class ExplorePillar {
     private static packCache = new LRUCache<string, ExplorePack>({
@@ -222,12 +242,36 @@ export class ExplorePillar {
             data: { docs: [], code: [] },
             sessionId: resolvedSessionId
         };
-        const decisionTrace = traceEnabled ? {
-            cache: {} as Record<string, unknown>,
-            docSearch: {} as Record<string, unknown>,
-            heuristic: { symbolLikeQuery: symbolQuery },
-            budget: { timeoutMs }
-        } : undefined;
+        const sessionProfile = sessionPolicy?.explore?.profile ?? sessionPolicy?.profile;
+        const sessionSources = sessionPolicy?.explore?.sources ?? sessionPolicy?.sources;
+        const traceBuilder = traceEnabled
+            ? new TraceBuilder(
+                "explore",
+                {
+                    profile: buildStringResolution(
+                        resolvedOptions.effective.profile,
+                        typeof constraints.profile === "string",
+                        Boolean(sessionProfile),
+                        typeof constraints.profile === "string" ? constraints.profile : undefined
+                    ),
+                    sources: buildStringResolution(
+                        resolvedOptions.effective.sources,
+                        typeof constraints.sources === "string",
+                        Boolean(sessionSources),
+                        typeof constraints.sources === "string" ? constraints.sources : undefined
+                    ),
+                    trace: {
+                        source: constraints.trace === true ? "explicit" : "default",
+                        explicit: constraints.trace === true,
+                        resolved: traceEnabled
+                    }
+                },
+                { startedAtMs: startedAt }
+            )
+            : undefined;
+        if (traceBuilder) {
+            traceBuilder.setBudget({ maxTokens, maxChars, timeoutMs });
+        }
 
         if (researchRequested) {
             response.researchPack = await this.buildResearchPack(research, resolvedSessionId, intent.originalIntent).catch(() => undefined);
@@ -286,9 +330,9 @@ export class ExplorePillar {
             const contentCursorState = parseItemsCursor(constraints.cursor?.content);
             const cachedPack = effectivePackId ? ExplorePillar.packCache.get(effectivePackId) : undefined;
             if (cachedPack) {
-                if (decisionTrace) {
-                    decisionTrace.cache = { packHit: true, packId: cachedPack.packId };
-                    decisionTrace.docSearch = { attempted: false, skippedReason: "cache_hit" };
+                if (traceBuilder) {
+                    traceBuilder.setCache({ used: true, hit: true, keyHint: "explore.pack:v1" });
+                    traceBuilder.recordSkip("doc_search", "cache_hit", "explore pack cache hit");
                 }
                 if (constraints.cursor?.content) {
                     const sliced = slicePack(cachedPack, contentCursorState, maxResults, includeDocs, includeCode, includeComments, includeLogs);
@@ -336,8 +380,8 @@ export class ExplorePillar {
                     expiresAt: cachedPack.expiresAt
                 };
             } else {
-                if (decisionTrace) {
-                    decisionTrace.cache = { packHit: false };
+                if (traceBuilder) {
+                    traceBuilder.setCache({ used: true, hit: false, keyHint: "explore.pack:v1" });
                 }
                 const isDeepProfile = profile === "deep";
                 const packMaxResults = Math.max(maxResults, DEFAULT_PACK_RESULTS, isDeepProfile ? 40 : 0);
@@ -361,11 +405,13 @@ export class ExplorePillar {
                     } catch (error) {
                         degraded = true;
                         reasons.push("code_search_failed");
-                        if (decisionTrace) {
-                            decisionTrace.cache = {
-                                ...(decisionTrace.cache ?? {}),
-                                codeSearchError: String((error as any)?.message ?? "unknown")
-                            };
+                        if (traceBuilder) {
+                            traceBuilder.recordEvent({
+                                area: "io",
+                                code: "project_search_failed",
+                                message: "project_search failed",
+                                data: { error: String((error as any)?.message ?? "unknown").slice(0, 120) }
+                            });
                         }
                         codeResults = { results: [] };
                     }
@@ -422,8 +468,12 @@ export class ExplorePillar {
                     && (!hasDeadline || timeRemaining() > 400);
 
                 if (shouldRunDocSearch) {
-                    if (decisionTrace) {
-                        decisionTrace.docSearch = { attempted: true };
+                    if (traceBuilder) {
+                        traceBuilder.recordEvent({
+                            area: "policy",
+                            code: "doc_search_attempted",
+                            data: { includeDocs, includeComments }
+                        });
                     }
                     const docCandidateMultiplier = isDeepProfile ? 6 : 3;
                     const docMaxCandidatesBase = Math.max(packMaxResults * docCandidateMultiplier, isDeepProfile ? 48 : 24);
@@ -460,11 +510,13 @@ export class ExplorePillar {
                     } catch (error) {
                         degraded = true;
                         reasons.push("doc_search_failed");
-                        if (decisionTrace) {
-                            decisionTrace.docSearch = {
-                                attempted: true,
-                                error: String((error as any)?.message ?? "unknown")
-                            };
+                        if (traceBuilder) {
+                            traceBuilder.recordEvent({
+                                area: "io",
+                                code: "document_search_failed",
+                                message: "document_search failed",
+                                data: { error: String((error as any)?.message ?? "unknown").slice(0, 120) }
+                            });
                         }
                         docResults = { results: [] };
                     }
@@ -500,11 +552,12 @@ export class ExplorePillar {
                 } else if (includeDocs || includeComments) {
                     degraded = true;
                     reasons.push(shouldPreferCode ? "doc_search_skipped" : "budget_exceeded");
-                    if (decisionTrace) {
-                        decisionTrace.docSearch = {
-                            attempted: false,
-                            skippedReason: shouldPreferCode ? "doc_search_skipped" : "budget_exceeded"
-                        };
+                    if (traceBuilder) {
+                        traceBuilder.recordSkip(
+                            "doc_search",
+                            shouldPreferCode ? "sources_filtered" : "budget_exceeded",
+                            shouldPreferCode ? "symbol query prefers code" : "budget/time limit"
+                        );
                     }
                 }
 
@@ -707,13 +760,24 @@ export class ExplorePillar {
 
         if (traceEnabled) {
             response.effectiveOptions = {
+                version: 1,
+                pillar: "explore",
                 profile: resolvedOptions.effective.profile,
                 sources: resolvedOptions.effective.sources,
                 include,
                 limits,
                 view
             };
-            response.decisionTrace = decisionTrace;
+            if (traceBuilder) {
+                traceBuilder.setBudget({
+                    maxTokens,
+                    maxChars,
+                    timeoutMs,
+                    compressionApplied: response.compression?.applied,
+                    compressionMode: response.compression?.mode === "none" ? undefined : response.compression?.mode
+                });
+                response.decisionTrace = traceBuilder.finalize();
+            }
         }
 
         this.addIndexStatusInsights(response);

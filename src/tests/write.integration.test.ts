@@ -39,7 +39,11 @@ describe('SmartContextServer - write integration', () => {
 
     expect(result.success).toBe(true);
     expect(result.status).toBe('draft');
+    expect(result.effectiveOptions?.version).toBe(1);
+    expect(result.effectiveOptions?.pillar).toBe('write');
     expect(result.effectiveOptions?.safety).toBe('plan');
-    expect(result.decisionTrace?.dryRun?.resolved).toBe(true);
+    expect(result.decisionTrace?.version).toBe(1);
+    expect(result.decisionTrace?.pillar).toBe('write');
+    expect(result.decisionTrace?.optionResolution?.dryRun?.resolved).toBe(true);
   });
 });
