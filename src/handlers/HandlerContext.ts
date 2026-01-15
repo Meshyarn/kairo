@@ -3,6 +3,7 @@ import type { InternalToolRegistry } from "../orchestration/InternalToolRegistry
 import type { SearchEngine } from "../engine/Search.js";
 import type { DocumentSearchEngine } from "../documents/search/DocumentSearchEngine.js";
 import type { SymbolIndex } from "../ast/SymbolIndex.js";
+import type { SymbolEmbeddingIndex } from "../indexing/SymbolEmbeddingIndex.js";
 import type { AstManager } from "../ast/AstManager.js";
 import type { ContextEngine } from "../engine/Context.js";
 import type { DependencyGraph } from "../ast/DependencyGraph.js";
@@ -38,6 +39,7 @@ export interface HandlerContext {
     searchEngine: SearchEngine;
     documentSearchEngine: DocumentSearchEngine;
     symbolIndex: SymbolIndex;
+    symbolEmbeddingIndex?: SymbolEmbeddingIndex;
     astManager: AstManager;
     contextEngine: ContextEngine;
     dependencyGraph: DependencyGraph;

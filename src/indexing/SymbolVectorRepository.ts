@@ -1,6 +1,7 @@
-import type { VectorIndexManager, VectorItem, VectorItemMetadata } from "../vector/VectorIndexManager.js";
+import type { VectorIndexManager, VectorItem } from "../vector/VectorIndexManager.js";
 import type { EmbeddingProviderClient } from "../embeddings/EmbeddingProviderFactory.js";
 import type { SymbolIndex } from "../ast/SymbolIndex.js";
+import type { EmbeddingRepository } from "./EmbeddingRepository.js";
 
 /**
  * CodeSymbol interface for Layer 3 Smart Fuzzy Match
@@ -24,6 +25,13 @@ export interface SymbolWithSimilarity {
     similarity: number;
 }
 
+export type ParsedSymbolId = {
+    filePath: string;
+    lineRange: { start: number; end: number };
+    type: CodeSymbol["type"];
+    name: string;
+};
+
 /**
  * Bridge between SymbolIndex and VectorIndexManager
  * Enables embedding-based symbol search for Layer 3
@@ -32,6 +40,7 @@ export class SymbolVectorRepository {
     private readonly vectorIndexManager: VectorIndexManager;
     private readonly embeddingProvider: EmbeddingProviderClient;
     private readonly symbolIndex: SymbolIndex;
+    private readonly embeddingRepository: EmbeddingRepository;
     private readonly provider: string;
     private readonly model: string;
 
@@ -39,11 +48,13 @@ export class SymbolVectorRepository {
         vectorIndexManager: VectorIndexManager,
         embeddingProvider: EmbeddingProviderClient,
         symbolIndex: SymbolIndex,
+        embeddingRepository: EmbeddingRepository,
         options: { provider: string; model: string }
     ) {
         this.vectorIndexManager = vectorIndexManager;
         this.embeddingProvider = embeddingProvider;
         this.symbolIndex = symbolIndex;
+        this.embeddingRepository = embeddingRepository;
         this.provider = options.provider;
         this.model = options.model;
     }
@@ -60,6 +71,16 @@ export class SymbolVectorRepository {
         if (embeddings.length === 0) {
             throw new Error(`Failed to generate embedding for symbol: ${symbol.symbolId}`);
         }
+        const vector = embeddings[0];
+        if (!vector || vector.length === 0) {
+            throw new Error(`Empty embedding for symbol: ${symbol.symbolId}`);
+        }
+        this.embeddingRepository.upsertEmbedding(symbol.symbolId, {
+            provider: this.provider,
+            model: this.model,
+            dims: vector.length,
+            vector
+        });
 
         // Create VectorItem
         const item: VectorItem = {
@@ -75,8 +96,8 @@ export class SymbolVectorRepository {
             embedding: {
                 provider: this.provider,
                 model: this.model,
-                dims: embeddings[0].length,
-                vector: embeddings[0],
+                dims: vector.length,
+                vector
             },
         };
 
@@ -101,6 +122,12 @@ export class SymbolVectorRepository {
                 const embedding = embeddings[j];
                 
                 if (!embedding) continue;
+                this.embeddingRepository.upsertEmbedding(symbol.symbolId, {
+                    provider: this.provider,
+                    model: this.model,
+                    dims: embedding.length,
+                    vector: embedding
+                });
                 
                 const item: VectorItem = {
                     id: symbol.symbolId,
@@ -128,11 +155,11 @@ export class SymbolVectorRepository {
     /**
      * Search symbols by natural language query
      */
-    async searchSymbols(query: string, topK = 3): Promise<SymbolWithSimilarity[]> {
+    async searchSymbols(query: string, topK = 3): Promise<{ results: SymbolWithSimilarity[]; degraded: boolean; reason?: string; backend?: string }> {
         // Embed query
         const queryEmbeddings = await this.embeddingProvider.embed([query]);
         if (queryEmbeddings.length === 0) {
-            return [];
+            return { results: [], degraded: true, reason: "embedding_provider_disabled" };
         }
 
         // Search via VectorIndexManager
@@ -143,23 +170,36 @@ export class SymbolVectorRepository {
         });
 
         if (results.degraded || results.ids.length === 0) {
-            return [];
+            return { results: [], degraded: true, reason: results.reason ?? "vector_index_unavailable", backend: results.backend };
         }
 
-        // Convert IDs back to CodeSymbols with similarity scores
-        // Note: In a real implementation, we'd need to store metadata
-        // For now, return partial results
-        return results.ids.map((id, index) => ({
-            symbol: {
-                symbolId: id,
-                name: id.split('::').pop() ?? id,
-                type: 'function' as const,
-                filePath: '',
-                lineRange: { start: 0, end: 0 },
-                range: { startByte: 0, endByte: 0 },
-            },
-            similarity: results.scores.get(id) ?? 0,
-        }));
+        const parsed = results.ids.map((id) => this.parseSymbolId(id)).map((parsedSymbol, index) => {
+            if (!parsedSymbol) {
+                return {
+                    symbol: {
+                        symbolId: results.ids[index],
+                        name: results.ids[index],
+                        type: "function" as const,
+                        filePath: results.ids[index],
+                        lineRange: { start: 0, end: 0 },
+                        range: { startByte: 0, endByte: 0 }
+                    },
+                    similarity: results.scores.get(results.ids[index]) ?? 0
+                };
+            }
+            return {
+                symbol: {
+                    symbolId: results.ids[index],
+                    name: parsedSymbol.name,
+                    type: parsedSymbol.type,
+                    filePath: parsedSymbol.filePath,
+                    lineRange: parsedSymbol.lineRange,
+                    range: { startByte: 0, endByte: 0 }
+                },
+                similarity: results.scores.get(results.ids[index]) ?? 0
+            };
+        });
+        return { results: parsed, degraded: false, backend: results.backend };
     }
 
     /**
@@ -178,6 +218,50 @@ export class SymbolVectorRepository {
      */
     removeSymbol(symbolId: string): void {
         this.vectorIndexManager.removeChunk(symbolId);
+    }
+
+    async clearIndex(): Promise<{ removed: number }> {
+        let removed = 0;
+        this.embeddingRepository.iterateEmbeddings(this.provider, this.model, (embedding) => {
+            this.vectorIndexManager.removeChunk(embedding.chunkId);
+            this.embeddingRepository.deleteEmbedding(embedding.chunkId);
+            removed += 1;
+        });
+        return { removed };
+    }
+
+    public buildSymbolId(symbol: Omit<CodeSymbol, "symbolId">): string {
+        return SymbolVectorRepository.buildSymbolId(symbol);
+    }
+
+    public parseSymbolId(symbolId: string): ParsedSymbolId | null {
+        return SymbolVectorRepository.parseSymbolId(symbolId);
+    }
+
+    static buildSymbolId(symbol: Omit<CodeSymbol, "symbolId">): string {
+        const encodedPath = base64UrlEncode(symbol.filePath);
+        const encodedName = base64UrlEncode(symbol.name);
+        return `sym:v1:${encodedPath}:${symbol.lineRange.start}:${symbol.lineRange.end}:${symbol.type}:${encodedName}`;
+    }
+
+    static parseSymbolId(symbolId: string): ParsedSymbolId | null {
+        if (!symbolId || !symbolId.startsWith("sym:v1:")) return null;
+        const parts = symbolId.split(":");
+        if (parts.length < 7) return null;
+        const filePath = base64UrlDecode(parts[2]);
+        const startLine = Number(parts[3]);
+        const endLine = Number(parts[4]);
+        const type = parts[5] as CodeSymbol["type"];
+        const name = base64UrlDecode(parts[6]);
+        if (!filePath || !name || !Number.isFinite(startLine) || !Number.isFinite(endLine)) {
+            return null;
+        }
+        return {
+            filePath,
+            lineRange: { start: startLine, end: endLine },
+            type,
+            name
+        };
     }
 
     /**
@@ -205,4 +289,18 @@ export class SymbolVectorRepository {
         
         return parts.join(' ');
     }
+}
+
+function base64UrlEncode(value: string): string {
+    return Buffer.from(value, "utf8")
+        .toString("base64")
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/g, "");
+}
+
+function base64UrlDecode(value: string): string {
+    const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    return Buffer.from(padded, "base64").toString("utf8");
 }

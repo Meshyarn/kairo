@@ -85,6 +85,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
           keywords: { type: "array", items: { type: "string" } },
           patterns: { type: "array", items: { type: "string" } },
           type: { type: "string", enum: ["auto", "file", "symbol", "directory", "filename"] },
+          semanticSymbols: { type: "boolean" },
           repoScope: {
             type: "object",
             properties: {
@@ -340,6 +341,9 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
               "init",
               "doctor",
               "audit",
+              "symbol_index_build",
+              "symbol_index_status",
+              "symbol_index_clear",
               "sessions",
               "session",
               "session_complete",

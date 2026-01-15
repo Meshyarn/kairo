@@ -2,6 +2,8 @@ import type { EmbeddingProviderClient } from "../embeddings/EmbeddingProviderFac
 import type { SymbolIndex } from "../ast/SymbolIndex.js";
 import type { VectorIndexManager } from "../vector/VectorIndexManager.js";
 import { SymbolVectorRepository, type CodeSymbol, type SymbolWithSimilarity } from "./SymbolVectorRepository.js";
+import type { EmbeddingRepository } from "./EmbeddingRepository.js";
+import type { DefinitionSymbol, SymbolInfo } from "../types.js";
 
 /**
  * Configuration for SymbolEmbeddingIndex
@@ -9,19 +11,28 @@ import { SymbolVectorRepository, type CodeSymbol, type SymbolWithSimilarity } fr
 export interface SymbolEmbeddingConfig {
     /** Whether to enable symbol embedding indexing */
     enabled: boolean;
+    /** Mode for symbol semantic search */
+    mode: "off" | "manual";
     /** Batch size for symbol indexing */
     batchSize: number;
     /** Minimum similarity threshold for search results */
     minSimilarity: number;
     /** Maximum number of results to return */
     maxResults: number;
+    /** Maximum chars to include per symbol text */
+    maxTextChars: number;
+    /** Model key for symbol embeddings (separate from docs) */
+    symbolModelKey: string;
 }
 
 const DEFAULT_CONFIG: SymbolEmbeddingConfig = {
     enabled: true,
+    mode: "manual",
     batchSize: 10,
     minSimilarity: 0.5,
     maxResults: 20,
+    maxTextChars: 2000,
+    symbolModelKey: "symbols_v1"
 };
 
 /**
@@ -45,10 +56,12 @@ export class SymbolEmbeddingIndex {
     private readonly config: SymbolEmbeddingConfig;
     private readonly symbolVectorRepo: SymbolVectorRepository;
     private indexedSymbolCount: number = 0;
+    private lastBuildAt?: number;
 
     constructor(
         private readonly symbolIndex: SymbolIndex,
         private readonly vectorIndexManager: VectorIndexManager,
+        private readonly embeddingRepository: EmbeddingRepository,
         private readonly embeddingProvider: EmbeddingProviderClient,
         config: Partial<SymbolEmbeddingConfig> = {}
     ) {
@@ -57,9 +70,10 @@ export class SymbolEmbeddingIndex {
             vectorIndexManager,
             embeddingProvider,
             symbolIndex,
+            embeddingRepository,
             {
                 provider: embeddingProvider.provider,
-                model: embeddingProvider.model,
+                model: this.config.symbolModelKey || embeddingProvider.model,
             }
         );
     }
@@ -96,8 +110,28 @@ export class SymbolEmbeddingIndex {
             return;
         }
 
+        this.indexedSymbolCount = 0;
         const allSymbols = await this.extractAllSymbols();
         await this.batchIndex(allSymbols);
+        this.lastBuildAt = Date.now();
+    }
+
+    async buildIndex(): Promise<{ indexedSymbols: number; removed: number; durationMs: number }> {
+        const startedAt = Date.now();
+        const cleared = await this.clearIndex();
+        await this.indexAllSymbols();
+        const vectorConfig = this.vectorIndexManager.getConfig();
+        if (this.vectorIndexManager.isEnabled() && vectorConfig.mode !== "bruteforce") {
+            await this.vectorIndexManager.rebuildFromRepository(
+                this.embeddingProvider.provider,
+                this.config.symbolModelKey
+            );
+        }
+        return {
+            indexedSymbols: this.indexedSymbolCount,
+            removed: cleared.removed,
+            durationMs: Date.now() - startedAt
+        };
     }
 
     /**
@@ -126,7 +160,7 @@ export class SymbolEmbeddingIndex {
         const results = await this.symbolVectorRepo.searchSymbols(query, topK);
 
         // Filter by similarity threshold and symbol type
-        let filtered = results.filter(r => r.similarity >= minSimilarity);
+        let filtered = results.results.filter(r => r.similarity >= minSimilarity);
 
         if (options.symbolTypes && options.symbolTypes.length > 0) {
             filtered = filtered.filter(r => 
@@ -141,6 +175,31 @@ export class SymbolEmbeddingIndex {
         }));
     }
 
+    async searchSymbolsWithDiagnostics(
+        query: string,
+        options: {
+            topK?: number;
+            minSimilarity?: number;
+            symbolTypes?: CodeSymbol['type'][];
+        } = {}
+    ): Promise<{ results: SymbolSearchResult[]; degraded: boolean; reason?: string; backend?: string }> {
+        if (!this.config.enabled) {
+            return { results: [], degraded: true, reason: "symbol_semantic_search_disabled" };
+        }
+        const raw = await this.symbolVectorRepo.searchSymbols(query, options.topK ?? this.config.maxResults);
+        if (raw.degraded) {
+            return { results: [], degraded: true, reason: raw.reason, backend: raw.backend };
+        }
+        const filtered = raw.results
+            .filter(result => result.similarity >= (options.minSimilarity ?? this.config.minSimilarity))
+            .filter(result => !options.symbolTypes || options.symbolTypes.includes(result.symbol.type))
+            .map(result => ({
+                ...result,
+                relevanceScore: this.calculateRelevanceScore(result.symbol, result.similarity, query)
+            }));
+        return { results: filtered, degraded: false, backend: raw.backend };
+    }
+
     /**
      * Get statistics about indexed symbols
      */
@@ -149,7 +208,33 @@ export class SymbolEmbeddingIndex {
             indexedSymbolCount: this.indexedSymbolCount,
             enabled: this.config.enabled,
             config: this.config,
+            lastBuildAt: this.lastBuildAt
         };
+    }
+
+    getStatus() {
+        const vectorConfig = this.vectorIndexManager.getConfig();
+        return {
+            enabled: this.config.enabled,
+            mode: this.config.mode,
+            provider: this.embeddingProvider.provider,
+            baseModel: this.embeddingProvider.model,
+            symbolModelKey: this.config.symbolModelKey,
+            indexedSymbolCount: this.indexedSymbolCount,
+            lastBuildAt: this.lastBuildAt ? new Date(this.lastBuildAt).toISOString() : undefined,
+            vectorIndex: {
+                enabled: this.vectorIndexManager.isEnabled(),
+                mode: vectorConfig.mode,
+                rebuild: vectorConfig.rebuild
+            }
+        };
+    }
+
+    async clearIndex(): Promise<{ removed: number }> {
+        const result = await this.symbolVectorRepo.clearIndex();
+        this.indexedSymbolCount = 0;
+        this.lastBuildAt = undefined;
+        return result;
     }
 
     /**
@@ -157,25 +242,53 @@ export class SymbolEmbeddingIndex {
      */
     private async extractAllSymbols(): Promise<CodeSymbol[]> {
         const symbols: CodeSymbol[] = [];
-        // SymbolIndex doesn't have getAllFiles, we need to track indexed files separately
-        // For now, return empty array (will be implemented when integrated with IncrementalIndexer)
+        const allSymbols = await this.symbolIndex.getAllSymbols();
+        for (const [filePath, fileSymbols] of allSymbols.entries()) {
+            for (const symbol of fileSymbols ?? []) {
+                if (!isDefinitionSymbol(symbol)) continue;
+                const normalized = this.normalizeSymbolType(symbol.type);
+                if (!normalized) continue;
+                const content = typeof symbol.content === "string"
+                    ? symbol.content
+                    : (typeof symbol.doc === "string" ? symbol.doc : undefined);
+                const trimmedContent = content
+                    ? content.slice(0, this.config.maxTextChars)
+                    : undefined;
+                const codeSymbol: CodeSymbol = {
+                    symbolId: SymbolVectorRepository.buildSymbolId({
+                        filePath,
+                        name: symbol.name,
+                        type: normalized,
+                        lineRange: { start: symbol.range.startLine, end: symbol.range.endLine },
+                        range: { startByte: symbol.range.startByte, endByte: symbol.range.endByte },
+                        signature: symbol.signature,
+                        content: trimmedContent
+                    }),
+                    name: symbol.name,
+                    type: normalized,
+                    filePath,
+                    lineRange: { start: symbol.range.startLine, end: symbol.range.endLine },
+                    range: { startByte: symbol.range.startByte, endByte: symbol.range.endByte },
+                    signature: symbol.signature,
+                    content: trimmedContent
+                };
+                symbols.push(codeSymbol);
+            }
+        }
         return symbols;
     }
 
     /**
      * Normalize SymbolIndex kind to CodeSymbol type
      */
-    private normalizeSymbolType(kind: string): CodeSymbol['type'] {
+    private normalizeSymbolType(kind: string): CodeSymbol['type'] | null {
         const normalized = kind.toLowerCase();
-        
-        if (normalized.includes('class')) return 'class';
-        if (normalized.includes('function')) return 'function';
-        if (normalized.includes('method')) return 'method';
-        if (normalized.includes('interface')) return 'interface';
-        if (normalized.includes('type')) return 'type';
-        
-        // Default to function
-        return 'function';
+        if (normalized === "class") return "class";
+        if (normalized === "function") return "function";
+        if (normalized === "method") return "method";
+        if (normalized === "interface") return "interface";
+        if (normalized === "type_alias") return "type";
+        return null;
     }
 
     /**
@@ -205,4 +318,8 @@ export class SymbolEmbeddingIndex {
 
         return Math.min(score, 1.0);
     }
+}
+
+function isDefinitionSymbol(symbol: SymbolInfo): symbol is DefinitionSymbol {
+    return symbol.type !== "import" && symbol.type !== "export";
 }

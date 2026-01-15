@@ -71,9 +71,10 @@ import { extractDocxAsHtml, DocxExtractError } from "../documents/extractors/Doc
 import { extractXlsxAsText, XlsxExtractError } from "../documents/extractors/XlsxExtractor.js";
 import { extractPdfAsText, PdfExtractError } from "../documents/extractors/PdfExtractor.js";
 import { EmbeddingProviderFactory } from "../embeddings/EmbeddingProviderFactory.js";
-import { resolveEmbeddingConfigFromEnv } from "../embeddings/EmbeddingConfig.js";
+import { resolveEmbeddingConfigFromEnv, resolveEmbeddingProviderEnv } from "../embeddings/EmbeddingConfig.js";
 import { metrics } from "../utils/MetricsCollector.js";
 import { VectorIndexManager } from "../vector/VectorIndexManager.js";
+import { SymbolEmbeddingIndex } from "../indexing/SymbolEmbeddingIndex.js";
 import { AdaptiveFlowReporter } from "../utils/AdaptiveFlowReporter.js";
 import { AlertDispatcher } from "../utils/AlertDispatcher.js";
 import { MetricsExportService } from "../utils/metrics/MetricsExportService.js";
@@ -96,7 +97,7 @@ import { ManageHandlers } from "../handlers/ManageHandlers.js";
 import { NavigateHandlers } from "../handlers/NavigateHandlers.js";
 import { IntegrityHandlers } from "../handlers/IntegrityHandlers.js";
 import { HandlerRegistry } from "../handlers/HandlerRegistry.js";
-import { createHandlerContext } from "../handlers/HandlerContext.js";
+import { createHandlerContext, type HandlerContext } from "../handlers/HandlerContext.js";
 
 export class SmartContextServer {
     private server: Server;
@@ -130,6 +131,7 @@ export class SmartContextServer {
     private embeddingRepository: EmbeddingRepository;
     private embeddingProviderFactory: EmbeddingProviderFactory;
     private vectorIndexManager: VectorIndexManager;
+    private symbolEmbeddingIndex?: SymbolEmbeddingIndex;
     private documentSearchEngine: DocumentSearchEngine;
     private ghostInterfaceBuilder: GhostInterfaceBuilder;
     private fallbackResolver: FallbackResolver;
@@ -159,6 +161,7 @@ export class SmartContextServer {
     private cacheInvalidationHub?: CacheInvalidationHub;
     private cacheStrategy: CachingStrategy;
     private toolSpecRegistry = createDefaultToolSpecRegistry();
+    private handlerContext?: HandlerContext;
 
     private searchHandlers!: SearchHandlers;
     private codeHandlers!: CodeHandlers;
@@ -376,6 +379,7 @@ export class SmartContextServer {
         this.initMetricsReporter();
         this.initMetricsExportService();
         this.startStoragePrune();
+        void this.initSymbolSemanticSearch();
     }
 
     private initializeModularHandlers(): void {
@@ -389,6 +393,7 @@ export class SmartContextServer {
             searchEngine: this.searchEngine,
             documentSearchEngine: this.documentSearchEngine,
             symbolIndex: this.symbolIndex,
+            symbolEmbeddingIndex: this.symbolEmbeddingIndex,
             astManager: this.astManager,
             contextEngine: this.contextEngine,
             dependencyGraph: this.dependencyGraph,
@@ -414,6 +419,7 @@ export class SmartContextServer {
             cacheInvalidationHub: this.cacheInvalidationHub,
             isTestEnv: () => this.isTestEnv()
         });
+        this.handlerContext = handlerContext;
         this.searchHandlers = new SearchHandlers(handlerContext);
         this.codeHandlers = new CodeHandlers(handlerContext);
         this.editHandlers = new EditHandlers(handlerContext);
@@ -731,6 +737,49 @@ export class SmartContextServer {
         void service.start().catch((error) => {
             console.warn("[SmartContextServer] Metrics export service failed to start:", error);
         });
+    }
+
+    private async initSymbolSemanticSearch(): Promise<void> {
+        const enabled = (process.env.KAIRO_SYMBOL_SEMANTIC_SEARCH_ENABLED ?? "false").toLowerCase() === "true";
+        const mode = (process.env.KAIRO_SYMBOL_SEMANTIC_SEARCH_MODE ?? "manual").toLowerCase();
+        if (!enabled || mode === "off") {
+            return;
+        }
+        const embeddingConfig = this.embeddingProviderFactory.getConfig();
+        const providerEnv = resolveEmbeddingProviderEnv(embeddingConfig).provider;
+        const baseModel = embeddingConfig.local?.model ?? "multilingual-e5-small";
+        if (providerEnv === "disabled" || baseModel === "hash" || baseModel.startsWith("hash-")) {
+            return;
+        }
+        try {
+            const provider = await this.embeddingProviderFactory.getProvider();
+            if (provider.provider === "disabled" || provider.model === "hash") {
+                return;
+            }
+            const symbolModelKey = process.env.KAIRO_SYMBOL_EMBEDDING_MODEL_KEY
+                ?? `${provider.model}::symbols_v1`;
+            this.symbolEmbeddingIndex = new SymbolEmbeddingIndex(
+                this.symbolIndex,
+                this.vectorIndexManager,
+                this.embeddingRepository,
+                provider,
+                {
+                    enabled: true,
+                    mode: mode === "manual" ? "manual" : "off",
+                    batchSize: this.parseNumberEnv(process.env.KAIRO_SYMBOL_EMBEDDINGS_BATCH_SIZE, 10),
+                    minSimilarity: this.parseNumberEnv(process.env.KAIRO_SYMBOL_EMBEDDINGS_MIN_SIMILARITY, 0.5),
+                    maxResults: this.parseNumberEnv(process.env.KAIRO_SYMBOL_EMBEDDINGS_MAX_RESULTS, 20),
+                    maxTextChars: this.parseNumberEnv(process.env.KAIRO_SYMBOL_EMBEDDINGS_MAX_TEXT_CHARS, 2000),
+                    symbolModelKey
+                }
+            );
+            this.searchEngine.setSymbolEmbeddingIndex(this.symbolEmbeddingIndex);
+            if (this.handlerContext) {
+                this.handlerContext.symbolEmbeddingIndex = this.symbolEmbeddingIndex;
+            }
+        } catch (error) {
+            console.warn("[SmartContextServer] Symbol semantic search init failed:", error);
+        }
     }
 
     private parseNumberEnv(raw: string | undefined, fallback: number): number {

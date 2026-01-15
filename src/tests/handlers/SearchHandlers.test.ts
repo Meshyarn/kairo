@@ -41,6 +41,26 @@ describe('SearchHandlers', () => {
     expect(result.results[0].path).toContain('data.ts');
   });
 
+  it('degrades semantic symbol search when disabled', async () => {
+    const prev = process.env.KAIRO_SYMBOL_SEMANTIC_SEARCH_ENABLED;
+    process.env.KAIRO_SYMBOL_SEMANTIC_SEARCH_ENABLED = "false";
+    const result = await runTool(server, 'project_search', {
+      query: 'DATA',
+      type: 'symbol',
+      semanticSymbols: true
+    });
+    if (prev === undefined) {
+      delete process.env.KAIRO_SYMBOL_SEMANTIC_SEARCH_ENABLED;
+    } else {
+      process.env.KAIRO_SYMBOL_SEMANTIC_SEARCH_ENABLED = prev;
+    }
+
+    expect(result.results.length).toBeGreaterThan(0);
+    expect(Array.isArray(result.degradedReasons)).toBe(true);
+    const messages = result.degradedReasons.map((entry: any) => entry?.message ?? "");
+    expect(messages.some((msg: string) => msg.toLowerCase().includes("disabled"))).toBe(true);
+  });
+
   it('handles file_scout tool correctly', async () => {
     const result = await runTool(server, 'file_scout', {
       query: 'DATA'
