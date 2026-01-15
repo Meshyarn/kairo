@@ -15,12 +15,12 @@ import { ProjectSketchBuilder } from "../../../generation/project-sketch-builder
 import type { ResearchPack } from "../../../types/flow-artifacts.js";
 import type { FlowArtifactManager } from "../../flow-artifact-manager.js";
 import type { IFileSystem } from "../../../platform/FileSystem.js";
-import { OptionResolver } from "../../options/OptionResolver.js";
 import { buildDegradedReasons } from "../../DegradedReasonMapper.js";
 import { applyTokenBudget, estimateTokens } from "../../TokenBudget.js";
 import type { RepoRegistry } from "../../../config/RepoRegistry.js";
 import type { PathNormalizer } from "../../../utils/PathNormalizer.js";
 import { resolveRepoInfo } from "../../../utils/RepoScope.js";
+import { normalizeExploreInput } from "./ExploreInputNormalizer.js";
 
 import { 
     ExploreItem, 
@@ -73,42 +73,33 @@ export class ExplorePillar {
         const startedAt = Date.now();
         const repoRegistry = this.registry.getMetadata<RepoRegistry>("repoRegistry");
         const pathNormalizer = this.registry.getMetadata<PathNormalizer>("pathNormalizer");
-        const constraints = intent.constraints as any;
-        const query = typeof constraints.query === "string" ? constraints.query : undefined;
-        const paths = Array.isArray(constraints.paths) ? constraints.paths : [];
-        const research = constraints.research as {
-            sketch?: boolean;
-            topN?: number;
-            format?: "ascii" | "mermaid" | "both";
-        } | undefined;
-        const rawSessionId = typeof constraints.sessionId === "string" ? constraints.sessionId : undefined;
-        const researchRequested = !!research && research?.sketch !== false;
-        const packId = typeof constraints.packId === "string" ? constraints.packId : undefined;
-        const fullPaths = Array.isArray(constraints.fullPaths) ? constraints.fullPaths : [];
-        const allowSensitive = constraints.allowSensitive === true;
-        const allowBinary = constraints.allowBinary === true;
-        const allowGlobs = constraints.allowGlobs === true;
-        const integrityOptions = IntegrityEngine.resolveOptions(constraints.integrity, "explore");
         const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
-        const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, intent.originalIntent ?? query ?? "explore");
-        const sessionPolicy = resolvedSessionId ? artifactManager?.getSession(resolvedSessionId)?.policy : undefined;
-
-        const resolvedOptions = OptionResolver.resolveExploreOptions(constraints, sessionPolicy);
-        const view = resolvedOptions.effective.view;
-        const include = resolvedOptions.effective.include;
-        const includeExplicit = resolvedOptions.meta.includeExplicit;
-        const sourcesWantsDocs = resolvedOptions.meta.sourcesWantsDocs;
-        const traceEnabled = resolvedOptions.effective.traceEnabled;
-        const profile = resolvedOptions.effective.profile;
-        const limits = resolvedOptions.effective.limits as {
-            maxResults?: number;
-            maxChars?: number;
-            maxTokens?: number;
-            maxItemChars?: number;
-            maxBytes?: number;
-            maxFiles?: number;
-            timeoutMs?: number;
-        };
+        const {
+            constraints,
+            query,
+            paths,
+            research,
+            researchRequested,
+            packId,
+            fullPaths,
+            allowSensitive,
+            allowBinary,
+            allowGlobs,
+            integrityOptions,
+            resolvedSessionId,
+            sessionPolicy,
+            resolvedOptions,
+            view,
+            include,
+            includeExplicit,
+            sourcesWantsDocs,
+            traceEnabled,
+            profile,
+            limits
+        } = normalizeExploreInput(intent, {
+            resolveSessionId: (rawSessionId, fallback) => artifactManager?.resolveSessionId(rawSessionId, fallback),
+            getSessionPolicy: (sessionId) => (sessionId ? artifactManager?.getSession(sessionId)?.policy : undefined)
+        });
 
         const queryMetrics = query ? analyzeQuery(query) : undefined;
         const queryTokens = query ? query.trim().split(/\s+/).filter(Boolean) : [];

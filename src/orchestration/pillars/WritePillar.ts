@@ -23,7 +23,6 @@ import type { DraftPack, StylePack, WorkflowMeta } from "../../types/flow-artifa
 import { DraftPackBuilder } from "../../generation/draft-pack-builder.js";
 import { ReviewReportBuilder } from "../../generation/review-report-builder.js";
 import type { FlowArtifactManager } from "../flow-artifact-manager.js";
-import { OptionResolver } from "../options/OptionResolver.js";
 import { buildDegradedReasons } from "../DegradedReasonMapper.js";
 import type { FileVersionManager } from "../../engine/FileVersionManager.js";
 import {
@@ -40,6 +39,8 @@ import {
   evaluateOverride,
   type OverrideTrace
 } from "../../utils/GuardrailsOverride.js";
+import { normalizeWriteInput } from "./write/WriteInputNormalizer.js";
+import { buildWorkflowMeta, buildWorkflowWarnings } from "./shared/WorkflowMeta.js";
 
 export class WritePillar {
   constructor(private readonly registry: InternalToolRegistry) {}
@@ -53,26 +54,33 @@ export class WritePillar {
   public async execute(intent: ParsedIntent, context: OrchestrationContext): Promise<any> {
     const stopTotal = metrics.startTimer("write.total_ms");
     try {
-      const { constraints, targets, originalIntent } = intent;
-      const targetPath = constraints.targetPath || targets[0];
-      const template = constraints.template;
-      let content = constraints.content ?? '';
-      const hasExplicitContent = constraints.content !== undefined;
-      const safeWrite = Boolean((constraints as any).safeWrite);
-      const quickGenerate = Boolean((constraints as any).quickGenerate);
-      const smartWrite = Boolean((constraints as any).smartWrite);
-      const styleReference = (constraints as any).styleReference as string[] | undefined;
-      const rawSessionId = typeof (constraints as any).sessionId === "string" ? (constraints as any).sessionId : undefined;
       const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
-      const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, originalIntent);
-      const sessionPolicy = resolvedSessionId ? artifactManager?.getSession(resolvedSessionId)?.policy : undefined;
-    const resolvedOptions = OptionResolver.resolveWriteOptions(constraints, resolvedSessionId, sessionPolicy);
-      const dryRun = resolvedOptions.effective.dryRun;
-      const traceEnabled = resolvedOptions.effective.traceEnabled;
-      const draftOptions = (constraints as any).draftOptions as { skeletonOnly?: boolean } | undefined;
-      const reviewOptions = resolvedOptions.effective.reviewOptions;
-      const draftId = typeof (constraints as any).draftId === "string" ? (constraints as any).draftId : undefined;
-      const refinement = typeof (constraints as any).refinement === "string" ? (constraints as any).refinement : undefined;
+      const {
+        constraints,
+        targets,
+        originalIntent,
+        targetPath,
+        template,
+        content: initialContent,
+        hasExplicitContent,
+        safeWrite,
+        quickGenerate,
+        smartWrite,
+        styleReference,
+        resolvedSessionId,
+        sessionPolicy,
+        resolvedOptions,
+        dryRun,
+        traceEnabled,
+        draftOptions,
+        reviewOptions,
+        draftId,
+        refinement
+      } = normalizeWriteInput(intent, {
+        resolveSessionId: (rawSessionId, fallback) => artifactManager?.resolveSessionId(rawSessionId, fallback),
+        getSessionPolicy: (sessionId) => (sessionId ? artifactManager?.getSession(sessionId)?.policy : undefined)
+      });
+      let content = initialContent;
       if (resolvedSessionId) {
         const policyPatch: Partial<{ profile?: string; safety?: string; write?: Record<string, unknown> }> = {};
         if (typeof constraints.profile === "string") {
@@ -96,13 +104,13 @@ export class WritePillar {
       const draftPack = draftArtifact?.type === "draft" ? (draftArtifact as any).pack : undefined;
       const draftContent = draftPack?.phantomFiles?.[0]?.content as string | undefined;
       const expectedFileVersions = (constraints as any).fileVersions ?? draftPack?.fileVersions;
-      const workflowMeta = this.buildWorkflowMeta({
+      const workflowMeta = buildWorkflowMeta({
         sessionId: resolvedSessionId,
         dryRun,
         stylePack: sessionStylePack,
         artifactManager
       });
-      const workflowWarnings = this.buildWorkflowWarnings(workflowMeta, Boolean(resolvedSessionId));
+      const workflowWarnings = buildWorkflowWarnings(workflowMeta, Boolean(resolvedSessionId));
       let overrideTrace: OverrideTrace | undefined;
       const repoRegistry = this.registry.getMetadata<RepoRegistry>("repoRegistry");
       const pathNormalizer = this.registry.getMetadata<PathNormalizer>("pathNormalizer");
@@ -1099,59 +1107,6 @@ export class WritePillar {
       }
     }
     return undefined;
-  }
-
-  private buildWorkflowMeta(args: {
-    sessionId?: string;
-    dryRun: boolean;
-    stylePack?: StylePack;
-    artifactManager?: FlowArtifactManager;
-  }): WorkflowMeta {
-    const sessionArtifacts = args.sessionId && args.artifactManager
-      ? args.artifactManager.getBySession(args.sessionId)
-      : [];
-    const hasResearch = sessionArtifacts.some((artifact) => artifact.type === "research");
-    const hasAnalysis = sessionArtifacts.some((artifact) => artifact.type === "analysis");
-    const hasStylePack = Boolean(args.stylePack);
-    const dryRunUsed = args.dryRun;
-    const confidence: WorkflowMeta["confidence"] =
-      hasResearch && hasAnalysis && hasStylePack && dryRunUsed
-        ? "high"
-        : (hasStylePack || hasAnalysis || dryRunUsed)
-          ? "medium"
-          : "low";
-    const reasons: string[] = [];
-    if (!hasResearch) reasons.push("missing_research");
-    if (!hasAnalysis) reasons.push("missing_analysis");
-    if (!hasStylePack) reasons.push("missing_style_pack");
-    if (!dryRunUsed) reasons.push("dry_run_disabled");
-    return {
-      confidence,
-      reasons,
-      workflowStatus: {
-        hasResearch,
-        hasAnalysis,
-        hasStylePack,
-        dryRunUsed
-      }
-    };
-  }
-
-  private buildWorkflowWarnings(meta: WorkflowMeta, hasSession: boolean): string[] {
-    const warnings: string[] = [];
-    if (hasSession && !meta.workflowStatus.hasStylePack) {
-      warnings.push("No StylePack found in session. Consider running understand({ vibe: { extract: true } }).");
-    }
-    if (hasSession && !meta.workflowStatus.hasAnalysis) {
-      warnings.push("No AnalysisPack found in session. Consider running understand({ analysis: { clusters: true } }).");
-    }
-    if (hasSession && !meta.workflowStatus.hasResearch) {
-      warnings.push("No ResearchPack found in session. Consider running explore({ research: { sketch: true } }).");
-    }
-    if (!meta.workflowStatus.dryRunUsed) {
-      warnings.push("Applied changes without dryRun; review is recommended before apply.");
-    }
-    return warnings;
   }
 
   private looksLikePath(value: string): boolean {

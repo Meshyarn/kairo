@@ -55,7 +55,6 @@ import {
     executeV2BatchChange
 } from "./BatchExecution.js";
 import { resolveTargetPath } from "./shared/TargetResolver.js";
-import { OptionResolver } from "../../options/OptionResolver.js";
 import { ContractManifestLoader } from "../../../contracts/ContractManifestLoader.js";
 import { ContractManifestGenerator } from "../../../contracts/ContractManifestGenerator.js";
 import { diffManifests } from "../../../contracts/ContractDiffer.js";
@@ -73,6 +72,8 @@ import {
 } from "../../../config/LanguageParityGate.js";
 import { normalizeRepoScope } from "../../../utils/RepoScope.js";
 import { evaluateRepoEditPolicy } from "../shared/RepoGuard.js";
+import { normalizeChangeInput } from "./ChangeInputNormalizer.js";
+import { buildWorkflowMeta, buildWorkflowWarnings } from "../shared/WorkflowMeta.js";
 
 export class ChangePillar {
   private fileSystem?: IFileSystem;
@@ -108,22 +109,28 @@ export class ChangePillar {
     const stopTotal = metrics.startTimer("change.total_ms");
     try {
       const fileSystem = this.resolveFileSystem();
-      const { targets, constraints, originalIntent } = intent;
-      const { includeImpact = false, includeSymbolImpact = false } = constraints;
-      const integrityOptions = IntegrityEngine.resolveOptions(constraints.integrity, "change");
       const ucg = context.getState<UnifiedContextGraph>('ucg');
-      const rawSessionId = typeof constraints.sessionId === "string" ? constraints.sessionId : undefined;
       const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
-      const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, originalIntent);
-      const sessionPolicy = resolvedSessionId ? artifactManager?.getSession(resolvedSessionId)?.policy : undefined;
-    const resolvedOptions = OptionResolver.resolveChangeOptions(constraints, resolvedSessionId, sessionPolicy);
-      const dryRun = resolvedOptions.effective.dryRun;
-      const reviewOptions = resolvedOptions.effective.reviewOptions;
-      const traceEnabled = resolvedOptions.effective.traceEnabled;
-      const diffMode = resolvedOptions.effective.diffMode;
-      const draftId = typeof (constraints as any).draftId === "string" ? (constraints as any).draftId : undefined;
-      const refinement = typeof (constraints as any).refinement === "string" ? (constraints as any).refinement : undefined;
-      const refinedIntent = refinement ? `${originalIntent}\nRefinement: ${refinement}` : originalIntent;
+      const {
+        targets,
+        constraints,
+        originalIntent,
+        includeImpact,
+        includeSymbolImpact,
+        integrityOptions,
+        resolvedSessionId,
+        sessionPolicy,
+        resolvedOptions,
+        dryRun,
+        reviewOptions,
+        traceEnabled,
+        diffMode,
+        draftId,
+        refinedIntent
+      } = normalizeChangeInput(intent, {
+        resolveSessionId: (rawSessionId, fallback) => artifactManager?.resolveSessionId(rawSessionId, fallback),
+        getSessionPolicy: (sessionId) => (sessionId ? artifactManager?.getSession(sessionId)?.policy : undefined)
+      });
       if (resolvedSessionId) {
         const policyPatch: Partial<{ profile?: string; safety?: string; change?: Record<string, unknown> }> = {};
         if (typeof constraints.profile === "string") {
@@ -149,13 +156,13 @@ export class ChangePillar {
         ?? (resolvedSessionId && artifactManager
           ? artifactManager.getLatestStylePack(resolvedSessionId)
           : undefined);
-      const workflowMeta = this.buildWorkflowMeta({
+      const workflowMeta = buildWorkflowMeta({
         sessionId: resolvedSessionId,
         dryRun,
         stylePack: sessionStylePack,
         artifactManager
       });
-      const workflowWarnings = this.buildWorkflowWarnings(workflowMeta, Boolean(resolvedSessionId));
+      const workflowWarnings = buildWorkflowWarnings(workflowMeta, Boolean(resolvedSessionId));
       let overrideTrace: OverrideTrace | undefined;
       const attachWorkflow = <T extends Record<string, any>>(payload: T): T & { workflowMeta: WorkflowMeta; workflowWarnings?: string[] } => {
         const next = {
@@ -1244,42 +1251,6 @@ export class ChangePillar {
     return Object.keys(snapshot).length > 0 ? snapshot : undefined;
   }
 
-  private buildWorkflowMeta(args: {
-    sessionId?: string;
-    dryRun: boolean;
-    stylePack?: StylePack;
-    artifactManager?: FlowArtifactManager;
-  }): WorkflowMeta {
-    const sessionArtifacts = args.sessionId && args.artifactManager
-      ? args.artifactManager.getBySession(args.sessionId)
-      : [];
-    const hasResearch = sessionArtifacts.some((artifact) => artifact.type === "research");
-    const hasAnalysis = sessionArtifacts.some((artifact) => artifact.type === "analysis");
-    const hasStylePack = Boolean(args.stylePack);
-    const dryRunUsed = args.dryRun;
-    const confidence: WorkflowMeta["confidence"] =
-      hasResearch && hasAnalysis && hasStylePack && dryRunUsed
-        ? "high"
-        : (hasStylePack || hasAnalysis || dryRunUsed)
-          ? "medium"
-          : "low";
-    const reasons: string[] = [];
-    if (!hasResearch) reasons.push("missing_research");
-    if (!hasAnalysis) reasons.push("missing_analysis");
-    if (!hasStylePack) reasons.push("missing_style_pack");
-    if (!dryRunUsed) reasons.push("dry_run_disabled");
-    return {
-      confidence,
-      reasons,
-      workflowStatus: {
-        hasResearch,
-        hasAnalysis,
-        hasStylePack,
-        dryRunUsed
-      }
-    };
-  }
-
   private extractTargetFromEdits(edits: any[]): string | undefined {
     for (const edit of edits) {
       const p = edit?.filePath ?? edit?.path;
@@ -1342,23 +1313,6 @@ export class ChangePillar {
       replacementString: args.draftContent,
       indexRange: { start: 0, end: args.originalContent.length }
     }];
-  }
-
-  private buildWorkflowWarnings(meta: WorkflowMeta, hasSession: boolean): string[] {
-    const warnings: string[] = [];
-    if (hasSession && !meta.workflowStatus.hasStylePack) {
-      warnings.push("No StylePack found in session. Consider running understand({ vibe: { extract: true } }).");
-    }
-    if (hasSession && !meta.workflowStatus.hasAnalysis) {
-      warnings.push("No AnalysisPack found in session. Consider running understand({ analysis: { clusters: true } }).");
-    }
-    if (hasSession && !meta.workflowStatus.hasResearch) {
-      warnings.push("No ResearchPack found in session. Consider running explore({ research: { sketch: true } }).");
-    }
-    if (!meta.workflowStatus.dryRunUsed) {
-      warnings.push("Applied changes without dryRun; review is recommended before apply.");
-    }
-    return warnings;
   }
 
   private async buildCrossLangImpact(

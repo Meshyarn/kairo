@@ -23,12 +23,12 @@ import {
 } from './understand/DependencyAnalysis.js';
 import { buildUnderstandResponse } from './understand/ReportGenerator.js';
 import { resolveProgressState, logProgress, logToolStart, logToolEnd, ProgressState } from '../../utils/ProgressLogger.js';
-import { OptionResolver } from '../options/OptionResolver.js';
 import { checkSkeletonSupport } from '../../ast/LanguageSupportSignals.js';
 import { buildDegradedReasons } from '../DegradedReasonMapper.js';
 import { UniversalFallbackExtractor } from '../../ast/extraction/UniversalFallbackExtractor.js';
 import { AstManager } from '../../ast/AstManager.js';
 import { applyTokenBudget } from '../TokenBudget.js';
+import { normalizeUnderstandInput } from './understand/UnderstandInputNormalizer.js';
 
 
 export class UnderstandPillar {
@@ -42,33 +42,36 @@ export class UnderstandPillar {
   constructor(private readonly registry: InternalToolRegistry) {}
 
   public async execute(intent: ParsedIntent, context: OrchestrationContext): Promise<any> {
-    const { targets, constraints, originalIntent } = intent;
-    const subject = constraints.goal || targets[0] || originalIntent;
-    const rawSessionId = typeof constraints.sessionId === "string" ? constraints.sessionId : undefined;
     const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
-    const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, subject);
-    const sessionPolicy = resolvedSessionId ? artifactManager?.getSession(resolvedSessionId)?.policy : undefined;
-    const resolvedOptions = OptionResolver.resolveUnderstandOptions(constraints, sessionPolicy);
-    const depth = resolvedOptions.effective.depth || 'standard';
-    const include = resolvedOptions.effective.include ?? {};
-    const traceEnabled = resolvedOptions.effective.traceEnabled;
-    const vibe = constraints.vibe as { extract?: boolean; scope?: string; includeNorms?: boolean } | undefined;
-    const wantsVibe = vibe?.extract === true;
-    const analysis = constraints.analysis as { clusters?: boolean; maxClusters?: number; maxFilesPerCluster?: number } | undefined;
-    const wantsAnalysis = analysis?.clusters === true;
-    const includeDependencies = include.dependencies === true || include.pageRank === true;
-    const includeCalls = include.callGraph === true;
-    const explicitPath = this.extractPath(subject) ?? (typeof originalIntent === 'string' ? this.extractPath(originalIntent) : null);
-    const symbolHint = extractSymbol(subject) ?? (typeof originalIntent === 'string' ? extractSymbol(originalIntent) : null);
-    let resolvedPath = explicitPath;
+    const {
+      constraints,
+      subject,
+      resolvedSessionId,
+      sessionPolicy,
+      resolvedOptions,
+      depth,
+      include,
+      traceEnabled,
+      vibe,
+      wantsVibe,
+      analysis,
+      wantsAnalysis,
+      includeDependencies,
+      includeCalls,
+      explicitPath,
+      symbolHint,
+      integrityOptions,
+      limits,
+      maxTokens
+    } = normalizeUnderstandInput(intent, {
+      resolveSessionId: (rawSessionId, fallback) => artifactManager?.resolveSessionId(rawSessionId, fallback),
+      getSessionPolicy: (sessionId) => (sessionId ? artifactManager?.getSession(sessionId)?.policy : undefined),
+      extractPath: (value) => this.extractPath(value ?? ""),
+      extractSymbol: (value) => extractSymbol(value ?? "")
+    });
+    let resolvedPath = explicitPath ?? null;
     const progress = resolveProgressState('Understand', constraints);
     const startedAt = Date.now();
-    const integrityOptions = IntegrityEngine.resolveOptions(constraints.integrity, "understand");
-    const envMaxTokens = Number.parseInt(process.env.KAIRO_UNDERSTAND_MAX_TOKENS ?? process.env.KAIRO_DEFAULT_MAX_TOKENS ?? "", 10);
-    const limits = constraints.limits ?? {};
-    const maxTokens = Number.isFinite(limits.maxTokens) && limits.maxTokens! > 0
-      ? limits.maxTokens
-      : (Number.isFinite(envMaxTokens) && envMaxTokens > 0 ? envMaxTokens : undefined);
 
     const metrics = analyzeQuery(subject);
     const initialProjectStats = context.getState<any>("project_profile");
