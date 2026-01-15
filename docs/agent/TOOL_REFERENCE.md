@@ -215,6 +215,9 @@ When `options.safeWrite=true`:
 
 Project/session state utilities.
 
+- `manage({ command: "status" })`는 `rollout` 필드로 preset/userIdHash/flag mode + adaptive flow gate 요약을 함께 반환한다.
+- `manage({ command: "doctor" })`도 `rollout` 필드로 동일한 운영 진단 정보를 반환한다.
+
 **Parameters**
 
 | Field | Type | Required | Notes |
