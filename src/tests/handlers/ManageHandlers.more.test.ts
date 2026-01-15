@@ -1,6 +1,7 @@
 import { describe, it, expect, jest } from "@jest/globals";
 import { ManageHandlers } from "../../handlers/ManageHandlers.js";
 import { MemoryFileSystem } from "../../platform/FileSystem.js";
+import { FeatureFlags } from "../../config/FeatureFlags.js";
 
 const makeContext = () => {
     return {
@@ -58,11 +59,25 @@ describe("ManageHandlers additional paths", () => {
         const handler = new ManageHandlers(context as any);
         const raw = (handler as any).manageProjectRaw.bind(handler);
 
-        const status = await raw({ command: "status", suppressLogs: true });
+        const status = await FeatureFlags.withContext({ userId: "test-user" }, () =>
+            raw({ command: "status", suppressLogs: true })
+        );
         expect(status.success).toBe(true);
         expect(status.status.unresolvedSample).toHaveLength(1);
         expect(status.indexSnapshot).toBeDefined();
         expect(status.capabilityDiagnostics).toBeDefined();
+        expect(status.rollout).toBeDefined();
+        expect(status.rollout.preset).toBeDefined();
+        expect(status.rollout.userIdResolved).toBe(true);
+        expect(status.rollout.userIdHash).toBeDefined();
+        expect(status.rollout.flags).toBeDefined();
+        expect(status.rollout.modes).toBeDefined();
+        expect(status.rollout.adaptiveFlow).toBeDefined();
+        expect(status.rollout.cohort).toBeDefined();
+        expect(status.rollout.cohort.betaPercent).toBeDefined();
+        expect(status.rollout.cohort.canaryUserCount).toBeDefined();
+        expect(status.rollout.adaptiveFlow.metrics).toBeDefined();
+        expect(status.rollout.adaptiveFlow.alertThresholds).toBeDefined();
 
         const history = await raw({ command: "history" });
         expect(history.history.pendingTransactions).toContain("t1");

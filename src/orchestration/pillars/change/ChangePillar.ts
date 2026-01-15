@@ -63,6 +63,12 @@ import { buildDegradedReasons } from "../../DegradedReasonMapper.js";
 import { AstManager } from "../../../ast/AstManager.js";
 import type { PathNormalizer } from "../../../utils/PathNormalizer.js";
 import {
+    computeAdaptiveFlowGate,
+    recordAdaptiveFlowGateTrace,
+    resolveRolloutPresetFromEnv,
+    setAdaptiveFlowGate
+} from "../../adaptive-flow/AdaptiveFlowGate.js";
+import {
     evaluateLanguageParityGate,
     formatParityBlockMessage
 } from "../../../config/LanguageParityGate.js";
@@ -182,6 +188,29 @@ export class ChangePillar {
           { startedAtMs: Date.now() }
         )
         : undefined;
+      let fileCount: number | undefined;
+      const rolloutDependencyGraph = this.registry.getMetadata<DependencyGraph>("dependencyGraph");
+      if (rolloutDependencyGraph?.getIndexStatus) {
+        try {
+          const status = await rolloutDependencyGraph.getIndexStatus();
+          if (typeof status?.global?.totalFiles === "number") {
+            fileCount = status.global.totalFiles;
+          }
+        } catch {
+          fileCount = undefined;
+        }
+      }
+      const gate = computeAdaptiveFlowGate({
+        profile: resolvedOptions.effective.profile,
+        fileCount
+      });
+      setAdaptiveFlowGate(context, gate);
+      if (traceBuilder) {
+        recordAdaptiveFlowGateTrace(traceBuilder, gate, {
+          rolloutMode: resolveRolloutPresetFromEnv() ?? FeatureFlags.getMode(FeatureFlags.ADAPTIVE_FLOW_ENABLED),
+          userIdResolved: Boolean(FeatureFlags.getContext()?.userId)
+        });
+      }
       if (resolvedSessionId) {
         const policyPatch: Partial<{ profile?: string; safety?: string; change?: Record<string, unknown> }> = {};
         if (typeof constraints.profile === "string") {
@@ -772,7 +801,7 @@ export class ChangePillar {
       
       const dependencyPromise = allowDependencyAnalysis
         ? (async () => {
-            const deps = await collectDependentsFromGraph(ucg, targetPath);
+            const deps = await collectDependentsFromGraph(ucg, targetPath, context);
             if (deps) {
               return deps;
             }

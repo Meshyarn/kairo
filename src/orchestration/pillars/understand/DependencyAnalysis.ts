@@ -1,6 +1,7 @@
 import { OrchestrationContext } from "../../OrchestrationContext.js";
 import { UnifiedContextGraph } from "../../context/UnifiedContextGraph.js";
 import type { ProgressState } from "../../../utils/ProgressLogger.js";
+import { resolveAdaptiveFlowLOD } from "../../adaptive-flow/AdaptiveFlowGate.js";
 
 export type { ProgressState };
 type RunTool = (context: OrchestrationContext, tool: string, args: any, progress?: ProgressState) => Promise<any>;
@@ -49,6 +50,11 @@ export async function resolveCodeReferences(
   const limited = refs.filter(ref => ref?.resolvedPath).slice(0, 5);
   for (const ref of limited) {
     const resolvedPath = ref.resolvedPath as string;
+    const ucg = context.getState<UnifiedContextGraph>('ucg');
+    if (ucg) {
+      const minLOD = resolveAdaptiveFlowLOD(context, 1);
+      await ucg.ensureLOD({ path: resolvedPath, minLOD });
+    }
     try {
       const match = await runTool(context, "project_search", {
         query: resolvedPath,
@@ -81,6 +87,13 @@ export async function resolveMentionReferences(
     const key = `${mention.kind}:${mention.text}`;
     if (seen.has(key)) continue;
     seen.add(key);
+    if (mention.kind === "path") {
+      const ucg = context.getState<UnifiedContextGraph>('ucg');
+      if (ucg) {
+        const minLOD = resolveAdaptiveFlowLOD(context, 1);
+        await ucg.ensureLOD({ path: mention.text, minLOD });
+      }
+    }
     try {
       const searchType = mention.kind === "path" ? "filename" : "symbol";
       const match = await runTool(context, "project_search", {
@@ -122,14 +135,16 @@ export function mergeRelatedCode(primary?: any[], additional?: any[]): any[] | u
 
 export async function collectDependenciesFromGraph(
   ucg: UnifiedContextGraph | undefined,
-  filePath: string
+  filePath: string,
+  context: OrchestrationContext
 ): Promise<{ success: boolean; edges: Array<{ from: string; to: string; type: string; metadata?: Record<string, unknown> }> } | undefined> {
   if (!ucg || !filePath) {
     return undefined;
   }
 
   try {
-    await ucg.ensureLOD({ path: filePath, minLOD: 1 });
+    const minLOD = resolveAdaptiveFlowLOD(context, 1);
+    await ucg.ensureLOD({ path: filePath, minLOD });
   } catch (error) {
     console.debug("[UnderstandPillar] Failed to promote primary file for shared graph:", error);
     return undefined;
@@ -145,9 +160,10 @@ export async function collectDependenciesFromGraph(
     return { success: true, edges: [] };
   }
 
+  const dependencyLOD = resolveAdaptiveFlowLOD(context, 1);
   await Promise.all(dependencies.map(async (dep) => {
     try {
-      await ucg.ensureLOD({ path: dep, minLOD: 1 });
+      await ucg.ensureLOD({ path: dep, minLOD: dependencyLOD });
     } catch {
       // Non-fatal: dependency remains but without enriched metadata
     }

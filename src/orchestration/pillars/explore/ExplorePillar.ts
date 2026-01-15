@@ -23,6 +23,14 @@ import { resolveRepoInfo } from "../../../utils/RepoScope.js";
 import type { OptionSource, TraceOptionResolution } from "../../../types/option-trace.js";
 import { TraceBuilder } from "../../trace/TraceBuilder.js";
 import { buildBudgetPlan, getSectionPlan } from "../../budget/TokenBudgetAllocatorV2.js";
+import { FeatureFlags } from "../../../config/FeatureFlags.js";
+import {
+    computeAdaptiveFlowGate,
+    recordAdaptiveFlowGateTrace,
+    resolveAdaptiveFlowLOD,
+    resolveRolloutPresetFromEnv,
+    setAdaptiveFlowGate
+} from "../../adaptive-flow/AdaptiveFlowGate.js";
 import { normalizeExploreInput } from "./ExploreInputNormalizer.js";
 import {
     applyBudgetToExploreItemsWithGlobalLimit,
@@ -220,6 +228,17 @@ export class ExplorePillar {
             : undefined;
         if (traceBuilder) {
             traceBuilder.setBudget({ maxTokens, maxChars, timeoutMs });
+        }
+        const gate = computeAdaptiveFlowGate({
+            profile: resolvedOptions.effective.profile,
+            fileCount: typeof projectStats?.fileCount === "number" ? projectStats.fileCount : undefined
+        });
+        setAdaptiveFlowGate(context, gate);
+        if (traceBuilder) {
+            recordAdaptiveFlowGateTrace(traceBuilder, gate, {
+                rolloutMode: resolveRolloutPresetFromEnv() ?? FeatureFlags.getMode(FeatureFlags.ADAPTIVE_FLOW_ENABLED),
+                userIdResolved: Boolean(FeatureFlags.getContext()?.userId)
+            });
         }
         const budgetPlan = buildBudgetPlan({
             pillar: "explore",
@@ -470,6 +489,7 @@ export class ExplorePillar {
                     }
                     const results = Array.isArray(codeResults?.results) ? codeResults.results : [];
                     
+                    const topologyMinLOD = resolveAdaptiveFlowLOD(context, 1);
                     const codeItems = await Promise.all(results.map(async (item: any) => {
                         const codeItem: ExploreItem = {
                             kind: "file_preview",
@@ -487,7 +507,7 @@ export class ExplorePillar {
                         try {
                             if (item.path) {
                                 const fileSystem = this.registry.getMetadata<IFileSystem>("fileSystem");
-                                const graphSnapshot = await collectTopologyMetadata(ucg, item.path, fileSystem);
+                                const graphSnapshot = await collectTopologyMetadata(ucg, item.path, fileSystem, topologyMinLOD);
                                 if (graphSnapshot.topology) {
                                     codeItem.metadata = {
                                         ...codeItem.metadata,
