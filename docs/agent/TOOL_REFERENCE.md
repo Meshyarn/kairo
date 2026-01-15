@@ -16,6 +16,10 @@ The agent-facing interface is the **Five Pillars**:
 
 The following reflects the **current inputs** as exposed by `src/index.ts`.
 
+> Note: When `trace: true` is provided, tools return `effectiveOptions` and `decisionTrace` using the v1 schema:
+> - `effectiveOptions.version = 1` (and `pillar`)
+> - `decisionTrace.version = 1` (and `pillar`, `optionResolution`, `skips`, `events`)
+
 ### `explore`
 
 Unified search + read interface for docs and code.
@@ -54,7 +58,7 @@ Unified search + read interface for docs and code.
 | `allowSensitive` | `boolean` |  | Opt-in for sensitive files. |
 | `allowBinary` | `boolean` |  | Opt-in for binary files. |
 | `allowGlobs` | `boolean` |  | Opt-in for glob paths. |
-| `trace` | `boolean` |  | Return `effectiveOptions` + `decisionTrace`. |
+| `trace` | `boolean` |  | Return v1 `effectiveOptions` + v1 `decisionTrace`. |
 
 **Usage**
 
@@ -92,7 +96,7 @@ Deep analysis of structure and relationships (opt-in includes).
 | `analysis.maxFilesPerCluster` | `number` |  | Max files per cluster. |
 | `limits.timeoutMs` | `number` |  | Per-call timeout budget (best-effort). |
 | `limits.maxTokens` | `number` |  | Token-first cap for structure payloads (may distill skeleton; emits `budget_exceeded` + `compression`). |
-| `trace` | `boolean` |  | Return `effectiveOptions` + `decisionTrace`. |
+| `trace` | `boolean` |  | Return v1 `effectiveOptions` + v1 `decisionTrace`. |
 
 ---
 
@@ -128,7 +132,7 @@ Plan/apply safe edits with impact analysis.
 | `options.batchMode` | `boolean` |  | Reserved (implementation-dependent). |
 | `options.suggestDocs` | `boolean` |  | Enable doc update suggestions on successful apply. |
 | `options.batchImpactLimit` | `number` |  | Max files to include in batch impact preview. |
-| `trace` | `boolean` |  | Return `effectiveOptions` + `decisionTrace`. |
+| `trace` | `boolean` |  | Return v1 `effectiveOptions` + v1 `decisionTrace`. |
 
 **Workflow output**
 
@@ -186,7 +190,7 @@ Create or scaffold files.
 | `options.quickGenerate` | `boolean` |  | Generate content from intent when `content` is not provided. |
 | `options.smartWrite` | `boolean` |  | Pattern-aware generation using similar files (when possible). |
 | `options.styleReference` | `string[]` |  | Optional explicit reference files for pattern extraction. |
-| `trace` | `boolean` |  | Return `effectiveOptions` + `decisionTrace`. |
+| `trace` | `boolean` |  | Return v1 `effectiveOptions` + v1 `decisionTrace`. |
 
 **Workflow output**
 
@@ -220,6 +224,7 @@ Project/session state utilities.
 | `target` | `string` |  | Mainly used by `test`. |
 | `limit` | `number` |  | Max items for list commands (sessions). |
 | `detail` | `"summary" \| "full"` |  | Detail level for `status`/`doctor`. |
+| `trace` | `boolean` |  | Return v1 `effectiveOptions` + v1 `decisionTrace`. |
 | `sessionId` | `string` |  | Session id for `session` / `session_complete`. |
 | `outcome` | `object` |  | Used by `session_complete` (e.g. `{ summary, status, nextSteps }`). |
 | `policy` | `object` |  | SessionPolicy update for `session_update`. |
