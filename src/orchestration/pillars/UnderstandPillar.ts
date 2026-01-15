@@ -29,6 +29,11 @@ import { UniversalFallbackExtractor } from '../../ast/extraction/UniversalFallba
 import { AstManager } from '../../ast/AstManager.js';
 import { applyTokenBudget } from '../TokenBudget.js';
 import { normalizeUnderstandInput } from './understand/UnderstandInputNormalizer.js';
+import {
+  applySkeletonCompressionDecision,
+  resolveAllowGraphs,
+  shouldBuildFallbackGraph
+} from "./understand/UnderstandDecisionEngine.js";
 
 
 export class UnderstandPillar {
@@ -194,7 +199,14 @@ export class UnderstandPillar {
     let deps: any = null;
     let hotSpots: any = [];
 
-    const allowGraphs = !isDocument && isStrongQuery(metrics) && (budget.profile !== 'safe' || includeCalls || includeDependencies || include.hotSpots === true);
+    const allowGraphs = resolveAllowGraphs({
+      isDocument,
+      strongQuery: isStrongQuery(metrics),
+      budgetProfile: budget.profile,
+      includeCalls,
+      includeDependencies,
+      includeHotSpots: include.hotSpots === true
+    });
     if (isDocument && (includeCalls || includeDependencies || include.hotSpots === true)) {
       degraded = true;
       refinementReason = refinementReason ?? 'document_file';
@@ -236,39 +248,23 @@ export class UnderstandPillar {
       refinementReason = refinementReason ?? 'budget_exceeded';
     }
 
-    if (!isDocument && this.shouldBuildFallbackGraph(degradedReasons)) {
+    if (!isDocument && shouldBuildFallbackGraph(degradedReasons)) {
       fallbackGraph = await this.buildFallbackGraph(filePath);
     }
 
-    const compression = applyTokenBudget(typeof skeleton === "string" ? skeleton : String(skeleton ?? ""), {
+    const compressionDecision = applySkeletonCompressionDecision({
+      skeleton: typeof skeleton === "string" ? skeleton : String(skeleton ?? ""),
+      filePath,
       maxTokens,
-      maxChars: undefined,
-      languageId: AstManager.getInstance().getLanguageId(filePath)
+      languageId: AstManager.getInstance().getLanguageId(filePath),
+      buildDigest: () => this.buildSkeletonDigest(profile),
+      applyTokenBudget
     });
-    const compressionDecisions: Array<{
-      item: string;
-      from: "full" | "skeleton" | "reference" | "summary";
-      to: "full" | "skeleton" | "reference" | "summary";
-      reason: "budget_exceeded" | "low_score" | "distance";
-    }> = [];
-    let compressionMode: "truncate" | "distill" = "truncate";
-    if (compression.applied && typeof skeleton === "string") {
-      const digest = this.buildSkeletonDigest(profile);
-      if (digest) {
-        skeleton = digest;
-        compressionMode = "distill";
-        compressionDecisions.push({
-          item: filePath,
-          from: "skeleton",
-          to: "summary",
-          reason: "budget_exceeded"
-        });
-      } else {
-        skeleton = compression.text;
-      }
+    skeleton = compressionDecision.skeleton;
+    if (compressionDecision.degraded) {
       degraded = true;
-      if (!degradedReasons.includes("budget_exceeded")) {
-        degradedReasons.push("budget_exceeded");
+      if (compressionDecision.degradedReason && !degradedReasons.includes(compressionDecision.degradedReason)) {
+        degradedReasons.push(compressionDecision.degradedReason);
       }
     }
 
@@ -358,18 +354,7 @@ export class UnderstandPillar {
       stylePack: wantsVibe ? await this.buildStylePack(filePath, vibe, indexSnapshot, resolvedSessionId, subject) : undefined,
       analysisPack,
       sessionId: resolvedSessionId,
-      compression: compression.applied
-        ? {
-            applied: true,
-            mode: compressionMode,
-            elasticWindowPct: compression.elasticWindowPct,
-            maxTokens: compression.maxTokens,
-            estimatedTokens: compression.estimatedTokens,
-            maxChars: compression.maxChars,
-            usedChars: compression.usedChars,
-            decisions: compressionDecisions.length > 0 ? compressionDecisions : undefined
-          }
-        : undefined
+      compression: compressionDecision.compression
     });
     if (traceEnabled) {
       response.effectiveOptions = {
@@ -624,17 +609,6 @@ export class UnderstandPillar {
     }
 
     return { results: [] };
-  }
-
-  private shouldBuildFallbackGraph(reasons: string[]): boolean {
-    return reasons.some((reason) =>
-      reason === "language_query_missing"
-      || reason === "language_parser_unavailable"
-      || reason === "unsupported_language"
-      || reason === "missing_query_pack"
-      || reason === "missing_wasm_grammar"
-      || reason === "missing_syntax_validator"
-    );
   }
 
   private filterSearchResults(result: any): any {

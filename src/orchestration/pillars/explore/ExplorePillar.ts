@@ -21,6 +21,11 @@ import type { RepoRegistry } from "../../../config/RepoRegistry.js";
 import type { PathNormalizer } from "../../../utils/PathNormalizer.js";
 import { resolveRepoInfo } from "../../../utils/RepoScope.js";
 import { normalizeExploreInput } from "./ExploreInputNormalizer.js";
+import {
+    applyBudgetToExploreItemsWithGlobalLimit,
+    applyBudgetToExploreItem,
+    createExploreBudgetState
+} from "./ExploreDecisionEngine.js";
 
 import { 
     ExploreItem, 
@@ -259,51 +264,21 @@ export class ExplorePillar {
 
         const reasons: string[] = [];
         let degraded = false;
-        let budgetExceeded = false;
         let totalChars = 0;
         let totalTokens = 0;
-        let compressionEstimatedTokens = 0;
-        let compressionUsedChars = 0;
-        const compressionDecisions: Array<{
-            item: string;
-            from: "full" | "skeleton" | "reference" | "summary";
-            to: "full" | "skeleton" | "reference" | "summary";
-            reason: "budget_exceeded" | "low_score" | "distance";
-        }> = [];
-
-        const applyBudgetToItem = (
-            item: ExploreItem,
-            isFullContent: boolean,
-            allowDistill: boolean
-        ): ExploreItem => {
-            const text = isFullContent ? item.content : item.preview;
-            if (!text) return item;
-            const languageId = isDocPath(item.filePath) ? undefined : AstManager.getInstance().getLanguageId(item.filePath);
-            const budget = applyTokenBudget(text, {
-                maxTokens: maxItemTokens,
-                maxChars: isFullContent ? maxChars : maxItemChars,
-                languageId
+        const budgetState = createExploreBudgetState();
+        const getLanguageId = (filePath: string) => isDocPath(filePath) ? undefined : AstManager.getInstance().getLanguageId(filePath);
+        const applyBudgetToItem = (item: ExploreItem, isFullContent: boolean, allowDistill: boolean): ExploreItem => {
+            return applyBudgetToExploreItem(budgetState, item, {
+                isFullContent,
+                allowDistill,
+                maxItemTokens,
+                maxChars,
+                maxItemChars,
+                getLanguageId,
+                applyTokenBudget,
+                truncate
             });
-            compressionEstimatedTokens += budget.estimatedTokens ?? 0;
-            compressionUsedChars += budget.usedChars;
-            if (budget.applied) {
-                budgetExceeded = true;
-            }
-            if (isFullContent && allowDistill && budget.applied) {
-                item.preview = truncate(budget.text, maxItemChars);
-                item.content = undefined;
-                compressionDecisions.push({
-                    item: item.filePath,
-                    from: "full",
-                    to: "skeleton",
-                    reason: "budget_exceeded"
-                });
-            } else if (isFullContent) {
-                item.content = budget.text;
-            } else {
-                item.preview = budget.text;
-            }
-            return item;
         };
 
         if (query) {
@@ -321,26 +296,24 @@ export class ExplorePillar {
                     const expandedCode = await Promise.all(sliced.code.map((item) => this.expandCodeContent(item, maxChars, context)));
 
                     const applyBudgetWithGlobalLimit = (items: ExploreItem[]) => {
-                        const results: ExploreItem[] = [];
-                        for (const item of items) {
-                            if (degraded && reasons.includes("budget_exceeded")) break;
-
-                            const processed = applyBudgetToItem(item, true, view !== "full");
-                            if (maxTokens) {
-                                const content = processed.content ?? processed.preview ?? "";
-                                const itemTokens = estimateTokens(content, {
-                                    languageId: isDocPath(processed.filePath) ? undefined : AstManager.getInstance().getLanguageId(processed.filePath)
-                                });
-                                if (totalTokens + itemTokens > maxTokens) {
-                                    degraded = true;
-                                    reasons.push("budget_exceeded");
-                                    break;
-                                }
-                                totalTokens += itemTokens;
-                            }
-                            results.push(processed);
-                        }
-                        return results;
+                        const result = applyBudgetToExploreItemsWithGlobalLimit({
+                            state: budgetState,
+                            items,
+                            isFullContent: true,
+                            allowDistill: view !== "full",
+                            maxItemTokens,
+                            maxChars,
+                            maxItemChars,
+                            maxTokens,
+                            totalTokens,
+                            degraded,
+                            reasons,
+                            getLanguageId,
+                            estimateTokens
+                        });
+                        totalTokens = result.totalTokens;
+                        degraded = result.degraded;
+                        return result.items;
                     };
 
                     response.data.docs = applyBudgetWithGlobalLimit(expandedDocs);
@@ -711,18 +684,18 @@ export class ExplorePillar {
             response.message = "No results found.";
         }
 
-        if (budgetExceeded) {
+        if (budgetState.budgetExceeded) {
             degraded = true;
             reasons.push("budget_exceeded");
             response.compression = {
                 applied: true,
-                mode: compressionDecisions.length > 0 ? "distill" : "truncate",
+                mode: budgetState.compressionDecisions.length > 0 ? "distill" : "truncate",
                 elasticWindowPct: maxTokens ? 0.05 : undefined,
                 maxTokens,
-                estimatedTokens: compressionEstimatedTokens > 0 ? compressionEstimatedTokens : undefined,
+                estimatedTokens: budgetState.compressionEstimatedTokens > 0 ? budgetState.compressionEstimatedTokens : undefined,
                 maxChars,
-                usedChars: compressionUsedChars > 0 ? compressionUsedChars : undefined,
-                decisions: compressionDecisions.length > 0 ? compressionDecisions : undefined
+                usedChars: budgetState.compressionUsedChars > 0 ? budgetState.compressionUsedChars : undefined,
+                decisions: budgetState.compressionDecisions.length > 0 ? budgetState.compressionDecisions : undefined
             };
         }
 
