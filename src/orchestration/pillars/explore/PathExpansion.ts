@@ -7,6 +7,7 @@ import { checkQuerySupport, checkSkeletonSupport } from "../../../ast/LanguageSu
 import { SyntaxValidator } from "../../../engine/validators/syntax-validator.js";
 import { getSupportForFilePath, SupportLevel } from "../../../config/LanguageSupportLevels.js";
 import { TopologyInfo } from "../../../types.js";
+import type { LOD_LEVEL } from "../../../types/ast.js";
 import { ExploreItem, truncate } from "./ResultFormatter.js";
 import { isDocPath, isGlob } from "./FilteringStrategy.js";
 import { NodeFileSystem, type IFileSystem } from "../../../platform/FileSystem.js";
@@ -69,7 +70,8 @@ export async function expandPaths(
 export async function collectTopologyMetadata(
     ucg: UnifiedContextGraph | undefined,
     filePath: string,
-    fileSystem?: IFileSystem
+    fileSystem?: IFileSystem,
+    minLOD: LOD_LEVEL = 1
 ): Promise<{ topology?: TopologyInfo; lod?: number; dependencyCount?: number; dependents?: number }> {
     if (!filePath) {
         return {};
@@ -82,7 +84,7 @@ export async function collectTopologyMetadata(
 
     if (ucg) {
         try {
-            await ucg.ensureLOD({ path: filePath, minLOD: 1 });
+            await ucg.ensureLOD({ path: filePath, minLOD });
             const node = ucg.getNode(filePath);
             if (node && node.topology) {
                 topology = node.topology;

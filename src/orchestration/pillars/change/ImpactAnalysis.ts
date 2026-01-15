@@ -10,6 +10,8 @@ import { AstDiffEngine } from "../../../ast/AstDiffEngine.js";
 import { SymbolImpactAnalyzer, type SymbolImpactRequest, type SymbolImpactResult } from "../../../engine/SymbolImpactAnalyzer.js";
 import { AutoRepairSuggester } from "../../../engine/AutoRepairSuggester.js";
 import path from "path";
+import { resolveAdaptiveFlowLOD } from "../../adaptive-flow/AdaptiveFlowGate.js";
+import type { LOD_LEVEL } from "../../../types/ast.js";
 
 export function toImpactReport(impact: any, deps: any, targetPath: string, hotSpots: any, crossLangImpact?: any) {
   if (!impact) return undefined;
@@ -118,14 +120,16 @@ export function computePageRankFromEdges(edges: Array<{ source?: string; target?
 
 export async function collectDependentsFromGraph(
   ucg: UnifiedContextGraph | undefined,
-  targetPath: string | undefined
+  targetPath: string | undefined,
+  context: OrchestrationContext
 ): Promise<{ success: boolean; edges: Array<{ from: string; to: string; type: string; metadata?: Record<string, unknown> }> } | undefined> {
   if (!ucg || !targetPath) {
     return undefined;
   }
 
   try {
-    await ucg.ensureLOD({ path: targetPath, minLOD: 1 });
+    const minLOD: LOD_LEVEL = resolveAdaptiveFlowLOD(context, 1);
+    await ucg.ensureLOD({ path: targetPath, minLOD });
   } catch (error) {
     console.debug('[ChangePillar] Failed to promote target for shared graph impact:', error);
     return undefined;
@@ -141,9 +145,10 @@ export async function collectDependentsFromGraph(
     return { success: true, edges: [] };
   }
 
+  const dependentLOD: LOD_LEVEL = resolveAdaptiveFlowLOD(context, 1);
   await Promise.all(dependents.map(async (dep) => {
     try {
-      await ucg.ensureLOD({ path: dep, minLOD: 1 });
+      await ucg.ensureLOD({ path: dep, minLOD: dependentLOD });
     } catch {
       // Missing metadata is acceptable
     }

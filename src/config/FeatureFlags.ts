@@ -218,6 +218,14 @@ export class FeatureFlags {
         return this.modes.get(flag) ?? 'off';
     }
 
+    static getBetaPercent(): number {
+        return this.betaPercent;
+    }
+
+    static getCanaryUserCount(): number {
+        return this.canaryUsers.size;
+    }
+
     static resetForTesting(): void {
         this.flags.clear();
         this.modes.clear();

@@ -110,6 +110,17 @@ describe('ExplorePillar Integration', () => {
       .map((event: any) => event?.code)
       .filter((code: any) => typeof code === "string" && code.startsWith("allocator."));
     expect(allocatorCodes.every((code: string) => allowlist.has(code))).toBe(true);
+
+    const adaptiveFlowAllowlist = new Set([
+      "adaptive_flow.gate.profile",
+      "adaptive_flow.gate.scale",
+      "adaptive_flow.rollout.user_missing",
+      "adaptive_flow.shadow.noop"
+    ]);
+    const adaptiveFlowCodes = (result.decisionTrace?.events ?? [])
+      .map((event: any) => event?.code)
+      .filter((code: any) => typeof code === "string" && code.startsWith("adaptive_flow."));
+    expect(adaptiveFlowCodes.every((code: string) => adaptiveFlowAllowlist.has(code))).toBe(true);
   });
 
   it('blocks sensitive files by default', async () => {

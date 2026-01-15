@@ -1,4 +1,5 @@
 import * as path from "path";
+import { createHash } from "crypto";
 import { BaseHandler } from "./BaseHandler.js";
 import { HandlerContext } from "./HandlerContext.js";
 import { metrics } from "../utils/MetricsCollector.js";
@@ -11,6 +12,8 @@ import { AuditLog } from "../utils/AuditLog.js";
 import { ConfigurationManager } from "../config/ConfigurationManager.js";
 import { buildCatalogCoverage } from "../utils/MetricsCatalog.js";
 import { PathManager } from "../utils/PathManager.js";
+import { FeatureFlags } from "../config/FeatureFlags.js";
+import { computeAdaptiveFlowGate, resolveRolloutPresetFromEnv } from "../orchestration/adaptive-flow/AdaptiveFlowGate.js";
 
 export class ManageHandlers extends BaseHandler {
     private reindexInProgress = false;
@@ -49,6 +52,77 @@ export class ManageHandlers extends BaseHandler {
 
     private resolveAbsolutePath(inputPath: string): string {
         return this.context.pathNormalizer.toAbsolute(this.resolveRelativePath(inputPath));
+    }
+
+    private buildRolloutStatus(fileCount?: number) {
+        const preset = resolveRolloutPresetFromEnv() ?? "full";
+        const userId = FeatureFlags.getContext()?.userId;
+        const userIdResolved = Boolean(userId);
+        const userIdHash = userId
+            ? createHash("sha1").update(userId).digest("hex").slice(0, 8)
+            : undefined;
+        const manualOverrides = [
+            "KAIRO_ADAPTIVE_FLOW_ENABLED",
+            "KAIRO_TOPOLOGY_SCANNER_ENABLED",
+            "KAIRO_UCG_ENABLED"
+        ].filter((key) => Boolean(process.env[key]));
+        const flags = {
+            adaptiveFlow: FeatureFlags.isEnabled(FeatureFlags.ADAPTIVE_FLOW_ENABLED),
+            ucg: FeatureFlags.isEnabled(FeatureFlags.UCG_ENABLED),
+            topologyScanner: FeatureFlags.isEnabled(FeatureFlags.TOPOLOGY_SCANNER_ENABLED),
+            dualWrite: FeatureFlags.isEnabled(FeatureFlags.DUAL_WRITE_VALIDATION)
+        };
+        const modes = {
+            adaptiveFlow: FeatureFlags.getMode(FeatureFlags.ADAPTIVE_FLOW_ENABLED),
+            ucg: FeatureFlags.getMode(FeatureFlags.UCG_ENABLED),
+            topologyScanner: FeatureFlags.getMode(FeatureFlags.TOPOLOGY_SCANNER_ENABLED),
+            dualWrite: FeatureFlags.getMode(FeatureFlags.DUAL_WRITE_VALIDATION)
+        };
+        const profile = "balanced";
+        const gate = computeAdaptiveFlowGate({ profile, fileCount });
+        const reasonCodes: string[] = [];
+        if (gate.gatedByProfile) reasonCodes.push("profile_gate");
+        if (gate.gatedByScale) reasonCodes.push("scale_gate");
+        return {
+            preset,
+            userIdResolved,
+            ...(userIdHash ? { userIdHash } : {}),
+            cohort: {
+                canaryUserCount: FeatureFlags.getCanaryUserCount(),
+                betaPercent: FeatureFlags.getBetaPercent()
+            },
+            overrides: {
+                forcePreset: process.env.KAIRO_ROLLOUT_FORCE === "true",
+                manualEnvOverrides: manualOverrides
+            },
+            flags,
+            modes,
+            adaptiveFlow: {
+                enabled: flags.adaptiveFlow,
+                profile,
+                fileCount,
+                appliedMinLOD: gate.allowedMaxLOD,
+                gatedByProfile: gate.gatedByProfile,
+                gatedByScale: gate.gatedByScale,
+                reasonCodes,
+                metrics: {
+                    enabled: process.env.KAIRO_METRICS_ENABLED !== "false",
+                    dir: process.env.KAIRO_METRICS_DIR ?? path.join(this.context.rootPath, ".kairo", "logs"),
+                    intervalMs: Number(process.env.KAIRO_METRICS_INTERVAL_MS ?? 60_000)
+                },
+                alertThresholds: {
+                    topologySuccessRate: this.parseNumberEnv(process.env.KAIRO_TOPOLOGY_SUCCESS_MIN, 0.95),
+                    ucgMemoryMb: this.parseNumberEnv(process.env.KAIRO_UCG_MEMORY_MAX_MB, 500),
+                    l3PromotionRatio: this.parseNumberEnv(process.env.KAIRO_L3_PROMOTION_RATIO_MAX, 0.5)
+                }
+            }
+        };
+    }
+
+    private parseNumberEnv(raw: string | undefined, fallback: number): number {
+        if (!raw) return fallback;
+        const value = Number(raw);
+        return Number.isFinite(value) ? value : fallback;
     }
 
     private async manageProjectRaw(args: any) {
@@ -110,6 +184,7 @@ export class ManageHandlers extends BaseHandler {
                             detail: detail === "full" ? "full" : "summary",
                             rootPath: this.context.rootPath
                         });
+                        const rolloutStatus = this.buildRolloutStatus(status?.global?.totalFiles);
 
                         if (includePerFile) {
                             return {
@@ -121,6 +196,7 @@ export class ManageHandlers extends BaseHandler {
                                 embeddingFindings,
                                 capabilityDiagnostics,
                                 indexSnapshot,
+                                rollout: rolloutStatus,
                                 activity: {
                                     reindexInProgress: this.reindexInProgress,
                                     lastReindex: this.reindexLastResult,
@@ -148,6 +224,7 @@ export class ManageHandlers extends BaseHandler {
                             embeddingFindings,
                             capabilityDiagnostics,
                             indexSnapshot,
+                            rollout: rolloutStatus,
                             activity: {
                                 reindexInProgress: this.reindexInProgress,
                                 lastReindex: this.reindexLastResult,
@@ -229,6 +306,18 @@ export class ManageHandlers extends BaseHandler {
                         scope: args?.scope,
                         root: args?.root
                     });
+                    let fileCount: number | undefined;
+                    const dependencyGraph = this.context.dependencyGraph;
+                    if (dependencyGraph?.getIndexStatus) {
+                        try {
+                            const status = await dependencyGraph.getIndexStatus();
+                            if (typeof status?.global?.totalFiles === "number") {
+                                fileCount = status.global.totalFiles;
+                            }
+                        } catch {
+                            fileCount = undefined;
+                        }
+                    }
                     const includeCapabilities = !args?.scope
                         || args?.scope === "capabilities"
                         || args?.scope === "host"
@@ -258,6 +347,7 @@ export class ManageHandlers extends BaseHandler {
                     const budgetSnapshot = await this.buildBudgetSnapshot();
                     const embeddingDiagnostics = computeEmbeddingDiagnostics();
                     const embeddingFindings = this.buildEmbeddingFindings(embeddingDiagnostics);
+                    const rolloutStatus = this.buildRolloutStatus(fileCount);
                     return {
                         ...result,
                         output: "Config doctor completed.",
@@ -279,7 +369,8 @@ export class ManageHandlers extends BaseHandler {
                         embeddingDiagnostics,
                         ...(embeddingFindings.length > 0 ? { embeddingFindings } : {}),
                         ...(budgetSnapshot ? { budget: budgetSnapshot } : {}),
-                        ...(metricsExportStatus ? { metricsExport: metricsExportStatus } : {})
+                        ...(metricsExportStatus ? { metricsExport: metricsExportStatus } : {}),
+                        rollout: rolloutStatus
                     };
                 }
             case 'reindex':

@@ -88,7 +88,8 @@ describe("DependencyAnalysis", () => {
       getNode: (path: string) => (path === "src/main.ts" ? primary : path === "src/dep.ts" ? dep : undefined)
     };
 
-    const result = await collectDependenciesFromGraph(ucg as any, "src/main.ts");
+    const dependContext = new OrchestrationContext();
+    const result = await collectDependenciesFromGraph(ucg as any, "src/main.ts", dependContext);
 
     expect(result?.success).toBe(true);
     expect(result?.edges).toHaveLength(1);

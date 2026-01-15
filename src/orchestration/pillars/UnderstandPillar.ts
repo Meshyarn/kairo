@@ -33,6 +33,13 @@ import { normalizeUnderstandInput } from './understand/UnderstandInputNormalizer
 import type { OptionSource, TraceOptionResolution } from '../../types/option-trace.js';
 import { TraceBuilder } from '../trace/TraceBuilder.js';
 import { buildBudgetPlan, getSectionPlan } from '../budget/TokenBudgetAllocatorV2.js';
+import { FeatureFlags } from "../../config/FeatureFlags.js";
+import {
+  computeAdaptiveFlowGate,
+  recordAdaptiveFlowGateTrace,
+  resolveRolloutPresetFromEnv,
+  setAdaptiveFlowGate
+} from "../adaptive-flow/AdaptiveFlowGate.js";
 import {
   applySkeletonCompressionDecision,
   resolveAllowGraphs,
@@ -196,7 +203,17 @@ export class UnderstandPillar {
     recordAllocatorEvents();
 
     const metrics = analyzeQuery(subject);
-    const initialProjectStats = context.getState<any>("project_profile");
+    let initialProjectStats = context.getState<any>("project_profile");
+    if (!initialProjectStats) {
+      try {
+        initialProjectStats = await this.runTool(context, "project_profile", {}, progress);
+        if (initialProjectStats) {
+          context.setState("project_profile", initialProjectStats);
+        }
+      } catch {
+        initialProjectStats = undefined;
+      }
+    }
     const initialBudget = BudgetManager.create({
       category: 'understand',
       queryLength: metrics.length,
@@ -207,6 +224,18 @@ export class UnderstandPillar {
       projectStats: initialProjectStats?.fileCount ? { fileCount: initialProjectStats.fileCount } : undefined
     });
     const searchBudget = this.resolveSearchBudget(constraints, subject, initialBudget);
+
+    const gate = computeAdaptiveFlowGate({
+      profile: resolvedOptions.effective.profile,
+      fileCount: typeof initialProjectStats?.fileCount === "number" ? initialProjectStats.fileCount : undefined
+    });
+    setAdaptiveFlowGate(context, gate);
+    if (traceBuilder) {
+      recordAdaptiveFlowGateTrace(traceBuilder, gate, {
+        rolloutMode: resolveRolloutPresetFromEnv() ?? FeatureFlags.getMode(FeatureFlags.ADAPTIVE_FLOW_ENABLED),
+        userIdResolved: Boolean(FeatureFlags.getContext()?.userId)
+      });
+    }
 
     logProgress(progress, `Start subject="${subject}" depth=${depth}.`);
     const ucg = context.getState<UnifiedContextGraph>('ucg');
@@ -392,7 +421,7 @@ export class UnderstandPillar {
     }
 
     if (includeDependenciesPlanned && allowGraphs) {
-      deps = await collectDependenciesFromGraph(ucg, filePath);
+      deps = await collectDependenciesFromGraph(ucg, filePath, context);
 
       if (!deps || !Array.isArray(deps.edges) || deps.edges.length === 0) {
         // Fallback to legacy tool if shared graph is unavailable or cold
