@@ -23,12 +23,17 @@ import {
 } from './understand/DependencyAnalysis.js';
 import { buildUnderstandResponse } from './understand/ReportGenerator.js';
 import { resolveProgressState, logProgress, logToolStart, logToolEnd, ProgressState } from '../../utils/ProgressLogger.js';
-import { OptionResolver } from '../options/OptionResolver.js';
 import { checkSkeletonSupport } from '../../ast/LanguageSupportSignals.js';
 import { buildDegradedReasons } from '../DegradedReasonMapper.js';
 import { UniversalFallbackExtractor } from '../../ast/extraction/UniversalFallbackExtractor.js';
 import { AstManager } from '../../ast/AstManager.js';
 import { applyTokenBudget } from '../TokenBudget.js';
+import { normalizeUnderstandInput } from './understand/UnderstandInputNormalizer.js';
+import {
+  applySkeletonCompressionDecision,
+  resolveAllowGraphs,
+  shouldBuildFallbackGraph
+} from "./understand/UnderstandDecisionEngine.js";
 
 
 export class UnderstandPillar {
@@ -42,33 +47,36 @@ export class UnderstandPillar {
   constructor(private readonly registry: InternalToolRegistry) {}
 
   public async execute(intent: ParsedIntent, context: OrchestrationContext): Promise<any> {
-    const { targets, constraints, originalIntent } = intent;
-    const subject = constraints.goal || targets[0] || originalIntent;
-    const rawSessionId = typeof constraints.sessionId === "string" ? constraints.sessionId : undefined;
     const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
-    const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, subject);
-    const sessionPolicy = resolvedSessionId ? artifactManager?.getSession(resolvedSessionId)?.policy : undefined;
-    const resolvedOptions = OptionResolver.resolveUnderstandOptions(constraints, sessionPolicy);
-    const depth = resolvedOptions.effective.depth || 'standard';
-    const include = resolvedOptions.effective.include ?? {};
-    const traceEnabled = resolvedOptions.effective.traceEnabled;
-    const vibe = constraints.vibe as { extract?: boolean; scope?: string; includeNorms?: boolean } | undefined;
-    const wantsVibe = vibe?.extract === true;
-    const analysis = constraints.analysis as { clusters?: boolean; maxClusters?: number; maxFilesPerCluster?: number } | undefined;
-    const wantsAnalysis = analysis?.clusters === true;
-    const includeDependencies = include.dependencies === true || include.pageRank === true;
-    const includeCalls = include.callGraph === true;
-    const explicitPath = this.extractPath(subject) ?? (typeof originalIntent === 'string' ? this.extractPath(originalIntent) : null);
-    const symbolHint = extractSymbol(subject) ?? (typeof originalIntent === 'string' ? extractSymbol(originalIntent) : null);
-    let resolvedPath = explicitPath;
+    const {
+      constraints,
+      subject,
+      resolvedSessionId,
+      sessionPolicy,
+      resolvedOptions,
+      depth,
+      include,
+      traceEnabled,
+      vibe,
+      wantsVibe,
+      analysis,
+      wantsAnalysis,
+      includeDependencies,
+      includeCalls,
+      explicitPath,
+      symbolHint,
+      integrityOptions,
+      limits,
+      maxTokens
+    } = normalizeUnderstandInput(intent, {
+      resolveSessionId: (rawSessionId, fallback) => artifactManager?.resolveSessionId(rawSessionId, fallback),
+      getSessionPolicy: (sessionId) => (sessionId ? artifactManager?.getSession(sessionId)?.policy : undefined),
+      extractPath: (value) => this.extractPath(value ?? ""),
+      extractSymbol: (value) => extractSymbol(value ?? "")
+    });
+    let resolvedPath = explicitPath ?? null;
     const progress = resolveProgressState('Understand', constraints);
     const startedAt = Date.now();
-    const integrityOptions = IntegrityEngine.resolveOptions(constraints.integrity, "understand");
-    const envMaxTokens = Number.parseInt(process.env.KAIRO_UNDERSTAND_MAX_TOKENS ?? process.env.KAIRO_DEFAULT_MAX_TOKENS ?? "", 10);
-    const limits = constraints.limits ?? {};
-    const maxTokens = Number.isFinite(limits.maxTokens) && limits.maxTokens! > 0
-      ? limits.maxTokens
-      : (Number.isFinite(envMaxTokens) && envMaxTokens > 0 ? envMaxTokens : undefined);
 
     const metrics = analyzeQuery(subject);
     const initialProjectStats = context.getState<any>("project_profile");
@@ -191,7 +199,14 @@ export class UnderstandPillar {
     let deps: any = null;
     let hotSpots: any = [];
 
-    const allowGraphs = !isDocument && isStrongQuery(metrics) && (budget.profile !== 'safe' || includeCalls || includeDependencies || include.hotSpots === true);
+    const allowGraphs = resolveAllowGraphs({
+      isDocument,
+      strongQuery: isStrongQuery(metrics),
+      budgetProfile: budget.profile,
+      includeCalls,
+      includeDependencies,
+      includeHotSpots: include.hotSpots === true
+    });
     if (isDocument && (includeCalls || includeDependencies || include.hotSpots === true)) {
       degraded = true;
       refinementReason = refinementReason ?? 'document_file';
@@ -233,39 +248,23 @@ export class UnderstandPillar {
       refinementReason = refinementReason ?? 'budget_exceeded';
     }
 
-    if (!isDocument && this.shouldBuildFallbackGraph(degradedReasons)) {
+    if (!isDocument && shouldBuildFallbackGraph(degradedReasons)) {
       fallbackGraph = await this.buildFallbackGraph(filePath);
     }
 
-    const compression = applyTokenBudget(typeof skeleton === "string" ? skeleton : String(skeleton ?? ""), {
+    const compressionDecision = applySkeletonCompressionDecision({
+      skeleton: typeof skeleton === "string" ? skeleton : String(skeleton ?? ""),
+      filePath,
       maxTokens,
-      maxChars: undefined,
-      languageId: AstManager.getInstance().getLanguageId(filePath)
+      languageId: AstManager.getInstance().getLanguageId(filePath),
+      buildDigest: () => this.buildSkeletonDigest(profile),
+      applyTokenBudget
     });
-    const compressionDecisions: Array<{
-      item: string;
-      from: "full" | "skeleton" | "reference" | "summary";
-      to: "full" | "skeleton" | "reference" | "summary";
-      reason: "budget_exceeded" | "low_score" | "distance";
-    }> = [];
-    let compressionMode: "truncate" | "distill" = "truncate";
-    if (compression.applied && typeof skeleton === "string") {
-      const digest = this.buildSkeletonDigest(profile);
-      if (digest) {
-        skeleton = digest;
-        compressionMode = "distill";
-        compressionDecisions.push({
-          item: filePath,
-          from: "skeleton",
-          to: "summary",
-          reason: "budget_exceeded"
-        });
-      } else {
-        skeleton = compression.text;
-      }
+    skeleton = compressionDecision.skeleton;
+    if (compressionDecision.degraded) {
       degraded = true;
-      if (!degradedReasons.includes("budget_exceeded")) {
-        degradedReasons.push("budget_exceeded");
+      if (compressionDecision.degradedReason && !degradedReasons.includes(compressionDecision.degradedReason)) {
+        degradedReasons.push(compressionDecision.degradedReason);
       }
     }
 
@@ -355,18 +354,7 @@ export class UnderstandPillar {
       stylePack: wantsVibe ? await this.buildStylePack(filePath, vibe, indexSnapshot, resolvedSessionId, subject) : undefined,
       analysisPack,
       sessionId: resolvedSessionId,
-      compression: compression.applied
-        ? {
-            applied: true,
-            mode: compressionMode,
-            elasticWindowPct: compression.elasticWindowPct,
-            maxTokens: compression.maxTokens,
-            estimatedTokens: compression.estimatedTokens,
-            maxChars: compression.maxChars,
-            usedChars: compression.usedChars,
-            decisions: compressionDecisions.length > 0 ? compressionDecisions : undefined
-          }
-        : undefined
+      compression: compressionDecision.compression
     });
     if (traceEnabled) {
       response.effectiveOptions = {
@@ -621,17 +609,6 @@ export class UnderstandPillar {
     }
 
     return { results: [] };
-  }
-
-  private shouldBuildFallbackGraph(reasons: string[]): boolean {
-    return reasons.some((reason) =>
-      reason === "language_query_missing"
-      || reason === "language_parser_unavailable"
-      || reason === "unsupported_language"
-      || reason === "missing_query_pack"
-      || reason === "missing_wasm_grammar"
-      || reason === "missing_syntax_validator"
-    );
   }
 
   private filterSearchResults(result: any): any {

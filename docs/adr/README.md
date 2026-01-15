@@ -75,6 +75,7 @@ The entries below cover all ADRs from the project history. Items marked “retou
 - ADR-069: Search/index scalability without SQLite (baseline async, secondary index) → `docs/adr/ADR-069-search-index-scalability-without-sqlite.md`
 - ADR-070: Offline baseline policy (remote embeddings, model packaging) → `docs/adr/ADR-070-offline-baseline-policy-remote-embeddings-model-packaging.md`
 - ADR-071: IFileSystem boundary expansion & testability program → `docs/adr/ADR-071-ifilesystem-boundary-expansion-and-testability-program.md`
+- ADR-072: Pillar decomposition & module boundary hardening → `docs/adr/ADR-072-pillar-decomposition-and-module-boundary-hardening.md`
 - ADR-055-H: Adaptive trust policy (no curated summary)
 - ADR-055-L: Action guidance + Understand fallback graph (no curated summary)
 - ADR-033: “Six Pillars” precursor to ADR-040; introduced orchestration primitives and earlier public surface.
@@ -113,6 +114,7 @@ The entries below cover all ADRs from the project history. Items marked “retou
 - ADR-069: Search/index scalability without SQLite (baseline async, secondary index) → `docs/adr/ADR-069-search-index-scalability-without-sqlite.md`
 - ADR-070: Offline baseline policy (remote embeddings, model packaging) → `docs/adr/ADR-070-offline-baseline-policy-remote-embeddings-model-packaging.md`
 - ADR-071: IFileSystem boundary expansion & testability program → `docs/adr/ADR-071-ifilesystem-boundary-expansion-and-testability-program.md`
+- ADR-072: Pillar decomposition & module boundary hardening → `docs/adr/ADR-072-pillar-decomposition-and-module-boundary-hardening.md`
 - ADR-022: Scalable memory architecture (on-disk/lazy/streaming baseline ideas).
 - ADR-028: Performance + accuracy enhancements (historical deep dive).
 - ADR-029: Production readiness / system maturity (historical).

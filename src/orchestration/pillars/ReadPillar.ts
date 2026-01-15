@@ -10,26 +10,30 @@ import { getSupportForFilePath, SupportLevel } from '../../config/LanguageSuppor
 import { applyTokenBudget } from '../TokenBudget.js';
 import type { FileVersionManager } from '../../engine/FileVersionManager.js';
 import type { PathNormalizer } from '../../utils/PathNormalizer.js';
+import { normalizeReadInput } from './read/ReadInputNormalizer.js';
+import { formatReadBlockedResponse, formatReadResponse } from './read/ReadResponseFormatter.js';
 
 export class ReadPillar {
   constructor(private readonly registry: InternalToolRegistry) {}
 
   public async execute(intent: ParsedIntent, context: OrchestrationContext): Promise<any> {
-    const { targets, constraints, originalIntent } = intent;
-    const target = constraints.targetPath || targets[0] || originalIntent;
-    const view = constraints.view ?? (constraints.depth === 'deep' ? 'full' : 'skeleton');
-    const includeProfile = constraints.includeProfile === true;
-    const includeHash = constraints.includeHash === true;
-    const resolvedPath = await this.resolveTargetPath(target);
-    const lineRange = this.normalizeLineRange(constraints.lineRange);
-    const sectionId = constraints.sectionId;
-    const headingPath = constraints.headingPath;
-    const isDocument = this.isDocumentPath(resolvedPath);
-    const envMaxTokens = Number.parseInt(process.env.KAIRO_READ_MAX_TOKENS ?? process.env.KAIRO_DEFAULT_MAX_TOKENS ?? "", 10);
+    const {
+      constraints,
+      view,
+      includeProfile,
+      includeHash,
+      resolvedPath,
+      lineRange,
+      sectionId,
+      headingPath,
+      isDocument,
+      maxTokens
+    } = await normalizeReadInput(intent, {
+      resolveTargetPath: (value) => this.resolveTargetPath(value),
+      normalizeLineRange: (value) => this.normalizeLineRange(value),
+      isDocumentPath: (value) => this.isDocumentPath(value)
+    });
     const limits = constraints.limits ?? {};
-    const maxTokens = Number.isFinite(limits.maxTokens) && limits.maxTokens! > 0
-      ? limits.maxTokens
-      : (Number.isFinite(envMaxTokens) && envMaxTokens > 0 ? envMaxTokens : undefined);
 
     let content: string = '';
     let documentOutline: any = undefined;
@@ -67,13 +71,12 @@ export class ReadPillar {
               filePath: resolvedPath,
               languageId: AstManager.getInstance().getLanguageId(resolvedPath)
             });
-            return {
-              success: false,
+            return formatReadBlockedResponse({
               status: 'blocked',
               message: `Unable to read ${resolvedPath} for syntax validation.`,
               reasons: ["syntax_validation_failed"],
               degradedReasons
-            };
+            });
           }
 
           const validator = new SyntaxValidator();
@@ -87,13 +90,12 @@ export class ReadPillar {
               filePath: resolvedPath,
               languageId: validation.languageId
             });
-            return {
-              success: false,
+            return formatReadBlockedResponse({
               status: 'blocked',
               message: `Syntax validation failed for ${resolvedPath}.`,
               reasons: [reason],
               degradedReasons
-            };
+            });
           }
         }
       }
@@ -192,7 +194,7 @@ export class ReadPillar {
       languageId: metadata.language ?? undefined
     });
 
-    return {
+    return formatReadResponse({
       success: true,
       status: 'success',
       content,
@@ -229,7 +231,7 @@ export class ReadPillar {
               }
             ]
       }
-    };
+    });
   }
 
   private async resolveTargetPath(target: string): Promise<string> {
