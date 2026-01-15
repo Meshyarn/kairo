@@ -1,4 +1,5 @@
 import { applyTokenBudget } from "../../TokenBudget.js";
+import { metrics } from "../../../utils/MetricsCollector.js";
 
 export function resolveAllowGraphs(args: {
   isDocument: boolean;
@@ -8,12 +9,19 @@ export function resolveAllowGraphs(args: {
   includeDependencies: boolean;
   includeHotSpots: boolean;
 }): boolean {
+  const stopTimer = metrics.startTimer("decision.understand_allow_graphs_ms", "detailed");
+  try {
   if (args.isDocument) return false;
   if (!args.strongQuery) return false;
   return (args.budgetProfile ?? null) !== "safe" || args.includeCalls || args.includeDependencies || args.includeHotSpots;
+  } finally {
+    stopTimer();
+  }
 }
 
 export function shouldBuildFallbackGraph(degradedReasons: string[] | undefined): boolean {
+  const stopTimer = metrics.startTimer("decision.understand_fallback_ms", "detailed");
+  try {
   const reasons = Array.isArray(degradedReasons) ? degradedReasons : [];
   return reasons.some((reason) =>
     reason === "language_query_missing"
@@ -23,6 +31,9 @@ export function shouldBuildFallbackGraph(degradedReasons: string[] | undefined):
     || reason === "missing_wasm_grammar"
     || reason === "missing_syntax_validator"
   );
+  } finally {
+    stopTimer();
+  }
 }
 
 export function applySkeletonCompressionDecision(args: {
@@ -52,6 +63,8 @@ export function applySkeletonCompressionDecision(args: {
     }>;
   };
 } {
+  const stopTimer = metrics.startTimer("decision.understand_compression_ms", "detailed");
+  try {
   const budget = (args.applyTokenBudget ?? applyTokenBudget)(args.skeleton, {
     maxTokens: args.maxTokens,
     maxChars: undefined,
@@ -99,4 +112,7 @@ export function applySkeletonCompressionDecision(args: {
       decisions: decisions.length > 0 ? decisions : undefined
     }
   };
+  } finally {
+    stopTimer();
+  }
 }

@@ -1,3 +1,5 @@
+import { metrics } from "../../../utils/MetricsCollector.js";
+
 export function evaluateIntegrityGuardrailBlock(args: {
   guardrailResult: any;
   dryRun: boolean;
@@ -6,6 +8,8 @@ export function evaluateIntegrityGuardrailBlock(args: {
   warningMessage?: string;
   downgradeOnBypass?: boolean;
 }): { blocked: boolean; bypassed: boolean; guardrailResult: any } {
+  const stopTimer = metrics.startTimer("decision.integrity_guardrail_ms", "detailed");
+  try {
   if (args.dryRun) {
     return { blocked: false, bypassed: false, guardrailResult: args.guardrailResult };
   }
@@ -22,5 +26,7 @@ export function evaluateIntegrityGuardrailBlock(args: {
     return { blocked: false, bypassed: true, guardrailResult };
   }
   return { blocked: true, bypassed: false, guardrailResult: args.guardrailResult };
+  } finally {
+    stopTimer();
+  }
 }
-

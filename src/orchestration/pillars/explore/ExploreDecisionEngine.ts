@@ -1,6 +1,7 @@
 import { applyTokenBudget, estimateTokens } from "../../TokenBudget.js";
 import type { ExploreItem } from "./ResultFormatter.js";
 import { truncate } from "./ResultFormatter.js";
+import { metrics } from "../../../utils/MetricsCollector.js";
 
 export type ExploreCompressionDecision = {
   item: string;
@@ -39,6 +40,8 @@ export function applyBudgetToExploreItem(
     truncate?: typeof truncate;
   }
 ): ExploreItem {
+  const stopTimer = metrics.startTimer("decision.explore_item_budget_ms", "detailed");
+  try {
   const text = args.isFullContent ? item.content : item.preview;
   if (!text) return item;
 
@@ -74,6 +77,9 @@ export function applyBudgetToExploreItem(
   }
 
   return item;
+  } finally {
+    stopTimer();
+  }
 }
 
 export function applyBudgetToExploreItemsWithGlobalLimit(args: {
@@ -91,6 +97,8 @@ export function applyBudgetToExploreItemsWithGlobalLimit(args: {
   getLanguageId?: (filePath: string) => string | undefined;
   estimateTokens?: typeof estimateTokens;
 }): { items: ExploreItem[]; totalTokens: number; degraded: boolean } {
+  const stopTimer = metrics.startTimer("decision.explore_budget_global_ms", "detailed");
+  try {
   const results: ExploreItem[] = [];
   const estimate = args.estimateTokens ?? estimateTokens;
 
@@ -121,5 +129,7 @@ export function applyBudgetToExploreItemsWithGlobalLimit(args: {
   }
 
   return { items: results, totalTokens: args.totalTokens, degraded: args.degraded };
+  } finally {
+    stopTimer();
+  }
 }
-

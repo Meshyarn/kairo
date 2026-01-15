@@ -4,6 +4,7 @@ import {
   evaluateOverride,
   type OverrideTrace
 } from "../../../utils/GuardrailsOverride.js";
+import { metrics } from "../../../utils/MetricsCollector.js";
 
 type OverrideBlockedResponse = {
   success: false;
@@ -32,6 +33,8 @@ export async function evaluateOverrideDecision(params: {
   repoId?: string;
   auditLogAppend?: typeof AuditLog.append;
 }): Promise<OverrideDecisionResult> {
+  const stopTimer = metrics.startTimer("decision.override_ms", "detailed");
+  try {
   const auditLogAppend = params.auditLogAppend ?? AuditLog.append;
   const decision = evaluateOverride({
     override: params.constraints.override,
@@ -81,4 +84,7 @@ export async function evaluateOverrideDecision(params: {
       }
     : undefined;
   return { decision, trace, bypass, blockedResponse };
+  } finally {
+    stopTimer();
+  }
 }

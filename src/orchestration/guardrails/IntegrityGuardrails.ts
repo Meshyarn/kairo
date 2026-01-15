@@ -141,6 +141,8 @@ export function resolveIntegrityGuardrailsConfig(constraints?: any): IntegrityGu
 }
 
 export async function evaluateIntegrityGuardrails(args: GuardrailContext): Promise<IntegrityGuardrailsResult> {
+    const stopTimer = metrics.startTimer("guardrails.integrity_total_ms", "detailed");
+    try {
     const config = resolveIntegrityGuardrailsConfig(args.constraints);
     if (!config.enabled) {
         return { status: "pass" };
@@ -462,6 +464,9 @@ export async function evaluateIntegrityGuardrails(args: GuardrailContext): Promi
         parityConfidence,
         indexSnapshot
     };
+    } finally {
+        stopTimer();
+    }
 }
 
 type ParityResult = {
