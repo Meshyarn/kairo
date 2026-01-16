@@ -81,6 +81,7 @@ The entries below cover all ADRs from the project history. Items marked “retou
 - ADR-075: Adaptive Flow rollout plan (profile/scale gate) → `docs/adr/ADR-075-adaptive-flow-rollout-plan-ucg-lod-profile-based-enable.md`
 - ADR-076: Symbol semantic search E2E (opt-in) → `docs/adr/ADR-076-symbol-semantic-search-e2e-integrate-or-deprecate.md`
 - ADR-077: Mixed-workflow resilience (drift + checkpoints) → `docs/adr/ADR-077-mixed-workflow-resilience.md`
+- ADR-078 (summary): Cost stabilization & adaptive LOD (Lean-first) → `docs/adr/ADR-078-cost-stabilization-and-adaptive-lod.md`
 - ADR-055-H: Adaptive trust policy (no curated summary)
 - ADR-055-L: Action guidance + Understand fallback graph (no curated summary)
 - ADR-033: “Six Pillars” precursor to ADR-040; introduced orchestration primitives and earlier public surface.

@@ -30,7 +30,7 @@ Unified search + read interface for docs and code.
 |---|---|---:|---|
 | `query` | `string` |  | Search query for docs/code. |
 | `paths` | `string[]` |  | Explicit files/dirs to read. |
-| `profile` | `"fast" \| "balanced" \| "deep"` |  | Preset for depth/limits/include defaults. |
+| `profile` | `"lean" \| "fast" \| "balanced" \| "deep"` |  | Preset for depth/limits/include defaults. |
 | `sources` | `"code" \| "docs" \| "both"` |  | Prefer code vs docs search (default: both). |
 | `view` | `"auto" \| "preview" \| "section" \| "full"` |  | Defaults to token-safe previews. |
 | `section.sectionId` | `string` |  | Use when targeting a specific doc section. |
@@ -81,7 +81,7 @@ Deep analysis of structure and relationships (opt-in includes).
 | `goal` | `string` | ✓ | What you want to understand (symbol/file/free-text). |
 | `scope` | `"symbol" \| "file" \| "module" \| "project"` |  | Narrow the search mode. |
 | `depth` | `"shallow" \| "standard" \| "deep"` |  | Controls analysis depth. |
-| `profile` | `"fast" \| "balanced" \| "deep"` |  | Preset for analysis defaults. |
+| `profile` | `"lean" \| "fast" \| "balanced" \| "deep"` |  | Preset for analysis defaults. |
 | `sources` | `"code" \| "docs" \| "both"` |  | Prefer code vs docs (note: doc search support is rolling out). |
 | `include.callGraph` | `boolean` |  | Include call graph (default is conservative; enable explicitly). |
 | `include.dependencies` | `boolean` |  | Include dependency edges. |
@@ -98,6 +98,10 @@ Deep analysis of structure and relationships (opt-in includes).
 | `limits.maxTokens` | `number` |  | Token-first cap for structure payloads (may distill skeleton; emits `budget_exceeded` + `compression`). |
 | `trace` | `boolean` |  | Return v1 `effectiveOptions` + v1 `decisionTrace`. |
 
+**Notes**
+
+- `profile` may be automatically downshifted for cost stability unless explicitly provided; set `trace: true` to inspect the final decision (`decisionTrace`).
+
 ---
 
 ### `change`
@@ -113,7 +117,7 @@ Plan/apply safe edits with impact analysis.
 | `targetFiles` | `string[]` |  | Constrain the blast radius. |
 | `edits` | `object[]` |  | Structured edits (advanced). |
 | `fileVersions` | `object` |  | Advanced stale-guard: `{ [relPath]: { expectedVersion?, expectedHash? } }` (typically from `DraftPack.fileVersions` or a prior read). |
-| `profile` | `"fast" \| "balanced" \| "deep"` |  | Preset for review/limits defaults. |
+| `profile` | `"lean" \| "fast" \| "balanced" \| "deep"` |  | Preset for review/limits defaults. |
 | `safety` | `"plan" \| "apply"` |  | Maps to dry-run behavior (plan=true by default). |
 | `options.dryRun` | `boolean` |  | Default behavior is dry-run planning. |
 | `draftId` | `string` |  | Continue a refinement loop from a prior DraftPack. |
@@ -133,6 +137,10 @@ Plan/apply safe edits with impact analysis.
 | `options.suggestDocs` | `boolean` |  | Enable doc update suggestions on successful apply. |
 | `options.batchImpactLimit` | `number` |  | Max files to include in batch impact preview. |
 | `trace` | `boolean` |  | Return v1 `effectiveOptions` + v1 `decisionTrace`. |
+
+**Notes**
+
+- `profile` may be automatically downshifted for cost stability unless explicitly provided; set `trace: true` to inspect the final decision (`decisionTrace`).
 
 **Workflow output**
 
@@ -173,7 +181,7 @@ Create or scaffold files.
 | `template` | `string` |  | Template name/path (if supported). |
 | `content` | `string` |  | Explicit content overrides generation. |
 | `fileVersions` | `object` |  | Advanced stale-guard: `{ [relPath]: { expectedVersion?, expectedHash? } }` (typically from `DraftPack.fileVersions` or a prior read). |
-| `profile` | `"fast" \| "balanced" \| "deep"` |  | Preset for review/limits defaults. |
+| `profile` | `"lean" \| "fast" \| "balanced" \| "deep"` |  | Preset for review/limits defaults. |
 | `safety` | `"plan" \| "apply"` |  | Maps to dry-run behavior (plan=true by default). |
 | `dryRun` | `boolean` |  | Generate DraftPack only. |
 | `draftId` | `string` |  | Continue a refinement loop from a prior DraftPack. |
