@@ -266,10 +266,22 @@ export class SmartContextServer {
                     this.indexStateManager.markDirty(toRelative(filePath));
                     this.cacheInvalidationHub?.onEvent({ type: "file_changed", absPath: filePath });
                 },
-                onFileIndexed: (filePath) => this.indexStateManager.clearDirty(toRelative(filePath)),
+                onFileIndexed: (filePath) => {
+                    this.indexStateManager.clearDirty(toRelative(filePath));
+                    if (this.symbolEmbeddingIndex?.isReadyForIncremental()) {
+                        void this.symbolEmbeddingIndex.indexSymbolsForFile(filePath).catch((error) => {
+                            console.warn("[SmartContextServer] Symbol incremental index failed:", error);
+                        });
+                    }
+                },
                 onFileRemoved: (filePath) => {
                     this.indexStateManager.clearDirty(toRelative(filePath));
                     this.cacheInvalidationHub?.onEvent({ type: "file_deleted", absPath: filePath });
+                    if (this.symbolEmbeddingIndex?.isReadyForIncremental()) {
+                        void this.symbolEmbeddingIndex.clearSymbolsForFile(filePath).catch((error) => {
+                            console.warn("[SmartContextServer] Symbol incremental clear failed:", error);
+                        });
+                    }
                 },
                 onDirectoryRemoved: (dirPath) => {
                     this.cacheInvalidationHub?.onEvent({ type: "dir_deleted", absPath: dirPath });
@@ -770,6 +782,10 @@ export class SmartContextServer {
                     minSimilarity: this.parseNumberEnv(process.env.KAIRO_SYMBOL_EMBEDDINGS_MIN_SIMILARITY, 0.5),
                     maxResults: this.parseNumberEnv(process.env.KAIRO_SYMBOL_EMBEDDINGS_MAX_RESULTS, 20),
                     maxTextChars: this.parseNumberEnv(process.env.KAIRO_SYMBOL_EMBEDDINGS_MAX_TEXT_CHARS, 2000),
+                    maxFiles: this.parseNumberEnv(process.env.KAIRO_SYMBOL_EMBEDDINGS_MAX_FILES, 2000),
+                    maxSymbols: this.parseNumberEnv(process.env.KAIRO_SYMBOL_EMBEDDINGS_MAX_SYMBOLS, 20000),
+                    maxBytesPerSymbol: this.parseNumberEnv(process.env.KAIRO_SYMBOL_EMBEDDINGS_MAX_BYTES_PER_SYMBOL, 4000),
+                    timeoutMs: this.parseNumberEnv(process.env.KAIRO_SYMBOL_EMBEDDINGS_TIMEOUT_MS, 60000),
                     symbolModelKey
                 }
             );

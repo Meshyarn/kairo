@@ -4,6 +4,7 @@ import type { VectorIndexManager } from "../vector/VectorIndexManager.js";
 import { SymbolVectorRepository, type CodeSymbol, type SymbolWithSimilarity } from "./SymbolVectorRepository.js";
 import type { EmbeddingRepository } from "./EmbeddingRepository.js";
 import type { DefinitionSymbol, SymbolInfo } from "../types.js";
+import path from "path";
 
 /**
  * Configuration for SymbolEmbeddingIndex
@@ -23,6 +24,14 @@ export interface SymbolEmbeddingConfig {
     maxTextChars: number;
     /** Model key for symbol embeddings (separate from docs) */
     symbolModelKey: string;
+    /** Maximum files to index per build */
+    maxFiles: number;
+    /** Maximum symbols to index per build */
+    maxSymbols: number;
+    /** Maximum bytes per symbol text */
+    maxBytesPerSymbol: number;
+    /** Timeout for a build (ms) */
+    timeoutMs: number;
 }
 
 const DEFAULT_CONFIG: SymbolEmbeddingConfig = {
@@ -32,7 +41,11 @@ const DEFAULT_CONFIG: SymbolEmbeddingConfig = {
     minSimilarity: 0.5,
     maxResults: 20,
     maxTextChars: 2000,
-    symbolModelKey: "symbols_v1"
+    symbolModelKey: "symbols_v1",
+    maxFiles: 2000,
+    maxSymbols: 20000,
+    maxBytesPerSymbol: 4000,
+    timeoutMs: 60_000
 };
 
 /**
@@ -57,6 +70,7 @@ export class SymbolEmbeddingIndex {
     private readonly symbolVectorRepo: SymbolVectorRepository;
     private indexedSymbolCount: number = 0;
     private lastBuildAt?: number;
+    private lastBuildDegradedReasons: string[] = [];
 
     constructor(
         private readonly symbolIndex: SymbolIndex,
@@ -111,7 +125,9 @@ export class SymbolEmbeddingIndex {
         }
 
         this.indexedSymbolCount = 0;
-        const allSymbols = await this.extractAllSymbols();
+        this.lastBuildDegradedReasons = [];
+        const startedAt = Date.now();
+        const allSymbols = await this.extractAllSymbols(startedAt);
         await this.batchIndex(allSymbols);
         this.lastBuildAt = Date.now();
     }
@@ -132,6 +148,32 @@ export class SymbolEmbeddingIndex {
             removed: cleared.removed,
             durationMs: Date.now() - startedAt
         };
+    }
+
+    async indexSymbolsForFile(filePath: string): Promise<{ indexedSymbols: number; removed: number; durationMs: number }> {
+        if (!this.config.enabled) {
+            return { indexedSymbols: 0, removed: 0, durationMs: 0 };
+        }
+        const startedAt = Date.now();
+        const relativePath = this.toRelativePath(filePath);
+        const removed = await this.clearSymbolsForFile(relativePath);
+        const symbols = await this.symbolIndex.getSymbolsForFile(filePath);
+        const filtered = this.normalizeSymbolsForFile(relativePath, symbols);
+        await this.batchIndex(filtered);
+        return {
+            indexedSymbols: filtered.length,
+            removed,
+            durationMs: Date.now() - startedAt
+        };
+    }
+
+    async clearSymbolsForFile(filePath: string): Promise<number> {
+        const relativePath = this.toRelativePath(filePath);
+        return this.symbolVectorRepo.clearSymbolsForFile(relativePath);
+    }
+
+    isReadyForIncremental(): boolean {
+        return this.config.enabled && Boolean(this.lastBuildAt);
     }
 
     /**
@@ -222,6 +264,7 @@ export class SymbolEmbeddingIndex {
             symbolModelKey: this.config.symbolModelKey,
             indexedSymbolCount: this.indexedSymbolCount,
             lastBuildAt: this.lastBuildAt ? new Date(this.lastBuildAt).toISOString() : undefined,
+            degradedReasons: this.lastBuildDegradedReasons.length > 0 ? this.lastBuildDegradedReasons : undefined,
             vectorIndex: {
                 enabled: this.vectorIndexManager.isEnabled(),
                 mode: vectorConfig.mode,
@@ -240,20 +283,31 @@ export class SymbolEmbeddingIndex {
     /**
      * Extract all symbols from SymbolIndex and convert to CodeSymbol format
      */
-    private async extractAllSymbols(): Promise<CodeSymbol[]> {
+    private async extractAllSymbols(startedAt: number): Promise<CodeSymbol[]> {
         const symbols: CodeSymbol[] = [];
         const allSymbols = await this.symbolIndex.getAllSymbols();
+        let processedFiles = 0;
         for (const [filePath, fileSymbols] of allSymbols.entries()) {
+            if (processedFiles >= this.config.maxFiles) {
+                this.lastBuildDegradedReasons.push("budget_exceeded");
+                break;
+            }
+            if (Date.now() - startedAt > this.config.timeoutMs) {
+                this.lastBuildDegradedReasons.push("budget_exceeded");
+                break;
+            }
             for (const symbol of fileSymbols ?? []) {
+                if (symbols.length >= this.config.maxSymbols) {
+                    this.lastBuildDegradedReasons.push("budget_exceeded");
+                    break;
+                }
                 if (!isDefinitionSymbol(symbol)) continue;
                 const normalized = this.normalizeSymbolType(symbol.type);
                 if (!normalized) continue;
                 const content = typeof symbol.content === "string"
                     ? symbol.content
                     : (typeof symbol.doc === "string" ? symbol.doc : undefined);
-                const trimmedContent = content
-                    ? content.slice(0, this.config.maxTextChars)
-                    : undefined;
+                const trimmedContent = this.trimSymbolContent(content);
                 const codeSymbol: CodeSymbol = {
                     symbolId: SymbolVectorRepository.buildSymbolId({
                         filePath,
@@ -274,8 +328,64 @@ export class SymbolEmbeddingIndex {
                 };
                 symbols.push(codeSymbol);
             }
+            processedFiles += 1;
         }
         return symbols;
+    }
+
+    private normalizeSymbolsForFile(filePath: string, fileSymbols: SymbolInfo[]): CodeSymbol[] {
+        const symbols: CodeSymbol[] = [];
+        for (const symbol of fileSymbols ?? []) {
+            if (symbols.length >= this.config.maxSymbols) {
+                this.lastBuildDegradedReasons = ["budget_exceeded"];
+                break;
+            }
+            if (!isDefinitionSymbol(symbol)) continue;
+            const normalized = this.normalizeSymbolType(symbol.type);
+            if (!normalized) continue;
+            const content = typeof symbol.content === "string"
+                ? symbol.content
+                : (typeof symbol.doc === "string" ? symbol.doc : undefined);
+            const trimmedContent = this.trimSymbolContent(content);
+            symbols.push({
+                symbolId: SymbolVectorRepository.buildSymbolId({
+                    filePath,
+                    name: symbol.name,
+                    type: normalized,
+                    lineRange: { start: symbol.range.startLine, end: symbol.range.endLine },
+                    range: { startByte: symbol.range.startByte, endByte: symbol.range.endByte },
+                    signature: symbol.signature,
+                    content: trimmedContent
+                }),
+                name: symbol.name,
+                type: normalized,
+                filePath,
+                lineRange: { start: symbol.range.startLine, end: symbol.range.endLine },
+                range: { startByte: symbol.range.startByte, endByte: symbol.range.endByte },
+                signature: symbol.signature,
+                content: trimmedContent
+            });
+        }
+        return symbols;
+    }
+
+    private trimSymbolContent(content?: string): string | undefined {
+        if (!content) return undefined;
+        const trimmed = content.slice(0, this.config.maxTextChars);
+        if (Buffer.byteLength(trimmed, "utf8") <= this.config.maxBytesPerSymbol) {
+            return trimmed;
+        }
+        let sliced = trimmed;
+        while (Buffer.byteLength(sliced, "utf8") > this.config.maxBytesPerSymbol && sliced.length > 0) {
+            sliced = sliced.slice(0, Math.max(0, sliced.length - 50));
+        }
+        return sliced.length > 0 ? sliced : undefined;
+    }
+
+    private toRelativePath(filePath: string): string {
+        const rootPath = this.symbolIndex.getRootPath();
+        const normalized = path.resolve(filePath);
+        return path.relative(rootPath, normalized).replace(/\\/g, "/");
     }
 
     /**

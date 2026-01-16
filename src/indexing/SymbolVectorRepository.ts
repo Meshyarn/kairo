@@ -230,6 +230,19 @@ export class SymbolVectorRepository {
         return { removed };
     }
 
+    async clearSymbolsForFile(filePath: string): Promise<number> {
+        const encodedPath = base64UrlEncode(filePath);
+        const prefix = `sym:v1:${encodedPath}:`;
+        let removed = 0;
+        this.embeddingRepository.iterateEmbeddings(this.provider, this.model, (embedding) => {
+            if (!embedding.chunkId.startsWith(prefix)) return;
+            this.vectorIndexManager.removeChunk(embedding.chunkId);
+            this.embeddingRepository.deleteEmbedding(embedding.chunkId);
+            removed += 1;
+        });
+        return removed;
+    }
+
     public buildSymbolId(symbol: Omit<CodeSymbol, "symbolId">): string {
         return SymbolVectorRepository.buildSymbolId(symbol);
     }
