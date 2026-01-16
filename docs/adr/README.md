@@ -79,6 +79,7 @@ The entries below cover all ADRs from the project history. Items marked “retou
 - ADR-073: Option trace 표준화 (decisionTrace/effectiveOptions v1) → `docs/adr/ADR-073-option-trace-standardization-decisiontrace-effectiveoptions.md`
 - ADR-074: Token budget allocator v2 + summary reuse → `docs/adr/ADR-074-token-budget-allocator-v2-cross-pillar-summary-reuse.md`
 - ADR-075: Adaptive Flow rollout plan (profile/scale gate) → `docs/adr/ADR-075-adaptive-flow-rollout-plan-ucg-lod-profile-based-enable.md`
+- ADR-076: Symbol semantic search E2E (opt-in) → `docs/adr/ADR-076-symbol-semantic-search-e2e-integrate-or-deprecate.md`
 - ADR-055-H: Adaptive trust policy (no curated summary)
 - ADR-055-L: Action guidance + Understand fallback graph (no curated summary)
 - ADR-033: “Six Pillars” precursor to ADR-040; introduced orchestration primitives and earlier public surface.
