@@ -51,6 +51,13 @@ export class IndexDatabase implements IndexStore {
         return this.store.listFiles();
     }
 
+    public updateFileMeta(
+        relativePath: string,
+        updates: { lastModified?: number; language?: string | null; contentHash?: string; sizeBytes?: number }
+    ): FileRecord {
+        return this.store.updateFileMeta(relativePath, updates);
+    }
+
     public deleteFile(relativePath: string): void {
         this.store.deleteFile(relativePath);
     }
@@ -242,6 +249,10 @@ export class IndexDatabase implements IndexStore {
 
     public markTransactionRolledBack(id: string): void {
         this.store.markTransactionRolledBack(id);
+    }
+
+    public listTransactions(options?: { status?: "pending" | "committed" | "rolled_back"; limit?: number }): TransactionLogEntry[] {
+        return this.store.listTransactions(options);
     }
 
     public close(): void {

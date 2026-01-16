@@ -84,6 +84,22 @@ export interface TransactionLogEntry {
     timestamp: number;
     status: "pending" | "committed" | "rolled_back";
     description: string;
+    diffSummary?: {
+        fileCount: number;
+        linesAdded: number;
+        linesDeleted: number;
+        linesChanged: number;
+        skippedFiles?: number;
+    };
+    filesTouched?: Array<{
+        path: string;
+        beforeHash?: string;
+        afterHash?: string;
+        bytesBefore?: number;
+        bytesAfter?: number;
+    }>;
+    patchRef?: string;
+    patchFormat?: "unified_diff" | "structured_edits" | "both";
     snapshots: Array<{
         filePath: string;
         originalExists?: boolean;
@@ -101,6 +117,10 @@ export interface IndexStore {
     getOrCreateFile(relativePath: string, lastModified?: number, language?: string | null): FileRecord;
     getFile(relativePath: string): FileRecord | undefined;
     listFiles(): FileRecord[];
+    updateFileMeta(
+        relativePath: string,
+        updates: { lastModified?: number; language?: string | null; contentHash?: string; sizeBytes?: number }
+    ): FileRecord;
     deleteFile(relativePath: string): void;
     deleteFilesByPrefix(prefix: string): void;
 
@@ -160,6 +180,7 @@ export interface IndexStore {
     upsertPendingTransaction(entry: TransactionLogEntry): void;
     listPendingTransactions(): TransactionLogEntry[];
     markTransactionCommitted(id: string, entry: TransactionLogEntry): void;
+    listTransactions(options?: { status?: "pending" | "committed" | "rolled_back"; limit?: number }): TransactionLogEntry[];
     markTransactionRolledBack(id: string): void;
 
     close(): void;

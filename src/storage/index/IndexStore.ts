@@ -77,6 +77,32 @@ export class MemoryIndexStore implements IndexStore {
         return Array.from(this.files.values()).map(record => ({ ...record }));
     }
 
+    public updateFileMeta(
+        relativePath: string,
+        updates: { lastModified?: number; language?: string | null; contentHash?: string; sizeBytes?: number }
+    ): FileRecord {
+        const normalized = this.normalize(relativePath);
+        const record = this.files.get(normalized) ?? {
+            path: normalized,
+            last_modified: updates.lastModified ?? 0,
+            language: updates.language ?? null
+        };
+        if (updates.lastModified !== undefined) {
+            record.last_modified = updates.lastModified;
+        }
+        if (updates.language !== undefined) {
+            record.language = updates.language ?? null;
+        }
+        if (updates.contentHash !== undefined) {
+            record.content_hash = updates.contentHash;
+        }
+        if (updates.sizeBytes !== undefined) {
+            record.size_bytes = updates.sizeBytes;
+        }
+        this.files.set(normalized, record);
+        return { ...record };
+    }
+
     public deleteFile(relativePath: string): void {
         const normalized = this.normalize(relativePath);
         this.removeSecondaryIndexForFile(normalized);
@@ -487,7 +513,7 @@ export class MemoryIndexStore implements IndexStore {
         const entries: TransactionLogEntry[] = [];
         for (const entry of this.transactions.values()) {
             if (entry.status === "pending") {
-                entries.push({ ...entry, snapshots: entry.snapshots.map(snapshot => ({ ...snapshot })) });
+                entries.push(this.cloneTransaction(entry));
             }
         }
         return entries.sort((a, b) => a.timestamp - b.timestamp);
@@ -503,9 +529,32 @@ export class MemoryIndexStore implements IndexStore {
         this.transactions.set(id, { ...entry, status: "rolled_back" });
     }
 
+    public listTransactions(options?: { status?: "pending" | "committed" | "rolled_back"; limit?: number }): TransactionLogEntry[] {
+        const status = options?.status;
+        const entries: TransactionLogEntry[] = [];
+        for (const entry of this.transactions.values()) {
+            if (status && entry.status !== status) continue;
+            entries.push(this.cloneTransaction(entry));
+        }
+        entries.sort((a, b) => b.timestamp - a.timestamp);
+        if (typeof options?.limit === "number") {
+            return entries.slice(0, Math.max(0, options.limit));
+        }
+        return entries;
+    }
+
     public close(): void {}
 
     public dispose(): void {}
+
+    private cloneTransaction(entry: TransactionLogEntry): TransactionLogEntry {
+        return {
+            ...entry,
+            diffSummary: entry.diffSummary ? { ...entry.diffSummary } : undefined,
+            filesTouched: entry.filesTouched ? entry.filesTouched.map(item => ({ ...item })) : undefined,
+            snapshots: entry.snapshots.map(snapshot => ({ ...snapshot }))
+        };
+    }
 
     protected normalize(relPath: string): string {
         let normalized = relPath.replace(/\\/g, "/");
@@ -715,6 +764,15 @@ export class FileIndexStore extends MemoryIndexStore {
 
     public override getOrCreateFile(relativePath: string, lastModified?: number, language?: string | null): FileRecord {
         const record = super.getOrCreateFile(relativePath, lastModified, language);
+        this.persistFiles();
+        return record;
+    }
+
+    public override updateFileMeta(
+        relativePath: string,
+        updates: { lastModified?: number; language?: string | null; contentHash?: string; sizeBytes?: number }
+    ): FileRecord {
+        const record = super.updateFileMeta(relativePath, updates);
         this.persistFiles();
         return record;
     }

@@ -22,6 +22,7 @@ export type DegradedReason = {
   packageName?: string;
   filePath?: string;
   message: string;
+  severity?: "info" | "warning" | "critical";
   actionToolCall?: { tool: string; args: Record<string, unknown> };
   actionId?: string;
 };

@@ -415,9 +415,13 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
           },
           detail: { type: "string", enum: ["summary", "full"] },
           target: { type: "string" },
+          targetType: { type: "string", enum: ["artifact", "transaction", "patchRef"] },
+          format: { type: "string", enum: ["unified_diff", "structured_edits", "both"] },
+          paths: { type: "array", items: { type: "string" } },
           action: { type: "string", enum: ["tail", "query", "stats"] },
           limit: { type: "number" },
           since: { type: "string" },
+          checkpointLimit: { type: "number" },
           filter: {
             type: "object",
             properties: {

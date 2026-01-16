@@ -314,7 +314,10 @@ export class WritePillar {
             suggestedActions: [
               {
                 id: "manage.reindex",
+                priority: 1,
                 description: "Rebuild index before apply.",
+                rationale: "High stale risk reduces apply safety.",
+                tags: ["repair_ladder", "attempt_2"],
                 toolCall: { tool: "manage", args: { command: "reindex" } }
               }
             ]
@@ -716,6 +719,19 @@ export class WritePillar {
             expectedHash: existingContent ? this.computeHash(existingContent) : undefined
           };
 
+          if (fileVersions && fileVersionManager && pathNormalizer) {
+            const mismatch = await this.detectFileVersionMismatch(fileVersions, fileVersionManager, pathNormalizer);
+            if (mismatch) {
+              stopSafePatch();
+              return attachResponse(this.buildFileVersionMismatchResponse({
+                filePath: mismatch.filePath,
+                intent: originalIntent,
+                writeMode: "safe",
+                sessionId: resolvedSessionId
+              }));
+            }
+          }
+
           const result = await this.runTool(context, 'edit_transaction', {
             filePath: resolvedPath,
             edits: [edit],
@@ -1032,6 +1048,18 @@ export class WritePillar {
         });
       }
 
+      if (fileVersions && fileVersionManager && pathNormalizer) {
+        const mismatch = await this.detectFileVersionMismatch(fileVersions, fileVersionManager, pathNormalizer);
+        if (mismatch) {
+          return attachResponse(this.buildFileVersionMismatchResponse({
+            filePath: mismatch.filePath,
+            intent: originalIntent,
+            writeMode: "safe",
+            sessionId: resolvedSessionId
+          }));
+        }
+      }
+
       const editResult = await this.runTool(context, 'edit_transaction', {
         filePath: resolvedPath,
         edits: [edit],
@@ -1122,6 +1150,29 @@ export class WritePillar {
     return Object.keys(snapshot).length > 0 ? snapshot : undefined;
   }
 
+  private async detectFileVersionMismatch(
+    fileVersions: Record<string, { expectedVersion?: number; expectedHash?: string }>,
+    fileVersionManager: FileVersionManager,
+    pathNormalizer: PathNormalizer
+  ): Promise<{ filePath: string } | null> {
+    for (const [relPath, expected] of Object.entries(fileVersions)) {
+      if (!expected) continue;
+      try {
+        const absPath = pathNormalizer.toAbsolute(pathNormalizer.normalize(relPath));
+        const current = await fileVersionManager.getVersion(absPath);
+        if (typeof expected.expectedHash === "string" && expected.expectedHash.length > 0 && expected.expectedHash !== current.contentHash) {
+          return { filePath: relPath };
+        }
+        if (typeof expected.expectedVersion === "number" && expected.expectedVersion !== current.version) {
+          return { filePath: relPath };
+        }
+      } catch {
+        return { filePath: relPath };
+      }
+    }
+    return null;
+  }
+
   private buildFileVersionMismatchResponse(args: {
     filePath: string;
     intent: string;
@@ -1149,6 +1200,7 @@ export class WritePillar {
             priority: 1,
             description: "Re-read the latest file content.",
             rationale: "Refresh context before reapplying the write.",
+            tags: ["repair_ladder", "attempt_1"],
             toolCall: { tool: "read", args: { action: "view_full", target: args.filePath } }
           },
           {
@@ -1156,6 +1208,7 @@ export class WritePillar {
             priority: 2,
             description: "Re-run the write in dry-run mode.",
             rationale: "Validate the write against the current file state.",
+            tags: ["repair_ladder", "attempt_2"],
             toolCall: { tool: "write", args: { intent: args.intent, target: args.filePath, options: { dryRun: true } } }
           }
         ]
@@ -1511,6 +1564,19 @@ export class WritePillar {
         };
       }
       const edit = { targetString: existingContent, replacementString: finalContent, indexRange: { start: 0, end: existingContent.length }, expectedHash: existingContent ? this.computeHash(existingContent) : undefined };
+      const fileVersionManager = this.registry.getMetadata<FileVersionManager>("fileVersionManager");
+      const pathNormalizer = this.registry.getMetadata<PathNormalizer>("pathNormalizer");
+      if (fileVersions && fileVersionManager && pathNormalizer) {
+        const mismatch = await this.detectFileVersionMismatch(fileVersions, fileVersionManager, pathNormalizer);
+        if (mismatch) {
+          return this.buildFileVersionMismatchResponse({
+            filePath: mismatch.filePath,
+            intent,
+            writeMode: "quickGenerate",
+            sessionId
+          });
+        }
+      }
       const result = await this.runTool(context, 'edit_transaction', { filePath, edits: [edit], dryRun: false, fileVersions });
       if (result?.errorCode === "FILE_VERSION_MISMATCH") {
         return this.buildFileVersionMismatchResponse({
