@@ -314,7 +314,10 @@ export class WritePillar {
             suggestedActions: [
               {
                 id: "manage.reindex",
+                priority: 1,
                 description: "Rebuild index before apply.",
+                rationale: "High stale risk reduces apply safety.",
+                tags: ["repair_ladder", "attempt_2"],
                 toolCall: { tool: "manage", args: { command: "reindex" } }
               }
             ]
@@ -1149,6 +1152,7 @@ export class WritePillar {
             priority: 1,
             description: "Re-read the latest file content.",
             rationale: "Refresh context before reapplying the write.",
+            tags: ["repair_ladder", "attempt_1"],
             toolCall: { tool: "read", args: { action: "view_full", target: args.filePath } }
           },
           {
@@ -1156,6 +1160,7 @@ export class WritePillar {
             priority: 2,
             description: "Re-run the write in dry-run mode.",
             rationale: "Validate the write against the current file state.",
+            tags: ["repair_ladder", "attempt_2"],
             toolCall: { tool: "write", args: { intent: args.intent, target: args.filePath, options: { dryRun: true } } }
           }
         ]

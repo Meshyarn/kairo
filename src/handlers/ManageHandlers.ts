@@ -147,6 +147,9 @@ export class ManageHandlers extends BaseHandler {
             }
             checked += 1;
         }
+        metrics.gauge("drift.checked_files", checked);
+        metrics.gauge("drift.mismatched_files", mismatched);
+        metrics.inc(mismatched > 0 ? "drift.detected" : "drift.clean");
         const workspaceDrift = checked === 0 ? "unknown" : (mismatched > 0 ? "detected" : "clean");
         const scopeId = `workspace:${createHash("sha1").update(this.context.rootPath).digest("hex").slice(0, 8)}`;
         const scopes = [{

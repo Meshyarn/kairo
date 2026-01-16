@@ -402,6 +402,7 @@ export class ChangePillar {
                 priority: 1,
                 description: "Rebuild index before apply.",
                 rationale: "High stale risk reduces apply safety.",
+                tags: ["repair_ladder", "attempt_2"],
                 toolCall: { tool: "manage", args: { command: "reindex" } }
               }
             ]
@@ -853,6 +854,7 @@ export class ChangePillar {
                 priority: 1,
                 description: "Re-read the latest file content.",
                 rationale: "Refresh context before reapplying changes.",
+                tags: ["repair_ladder", "attempt_1"],
                 toolCall: { tool: "read", args: { action: "view_full", target: targetPath } }
               },
               {
@@ -860,6 +862,7 @@ export class ChangePillar {
                 priority: 2,
                 description: "Re-plan the change using the latest content.",
                 rationale: "Ensure edits are based on the current file state.",
+                tags: ["repair_ladder", "attempt_2"],
                 toolCall: { tool: "change", args: { action: "plan", intent: originalIntent, target: targetPath } }
               }
             ]
@@ -958,6 +961,7 @@ export class ChangePillar {
                     priority: 1,
                     description: "Re-read the latest file content.",
                     rationale: "Refresh context before reapplying changes.",
+                    tags: ["repair_ladder", "attempt_1"],
                     toolCall: { tool: "read", args: { action: "view_full", target: targetPath } }
                   },
                   {
@@ -965,6 +969,7 @@ export class ChangePillar {
                     priority: 2,
                     description: "Re-plan the change using the latest content.",
                     rationale: "Ensure edits are based on the current file state.",
+                    tags: ["repair_ladder", "attempt_2"],
                     toolCall: { tool: "change", args: { action: "plan", intent: originalIntent, target: targetPath } }
                   }
                 ]
