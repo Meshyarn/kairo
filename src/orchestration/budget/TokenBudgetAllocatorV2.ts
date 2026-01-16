@@ -37,7 +37,7 @@ export type BudgetPlan = {
 
 type BudgetPlanInput = {
   pillar: BudgetPillar;
-  profile?: "fast" | "balanced" | "deep";
+  profile?: "lean" | "fast" | "balanced" | "deep";
   sources?: "code" | "docs" | "both";
   maxTokens?: number;
   maxChars?: number;
@@ -71,6 +71,14 @@ const ZERO_WEIGHT_RECORD: Record<BudgetSection, number> = ALL_SECTIONS.reduce((a
 }, {} as Record<BudgetSection, number>);
 
 const EXPLORE_WEIGHTS: Record<Required<BudgetPlanInput>["profile"], Record<BudgetSection, number>> = {
+  lean: {
+    ...ZERO_WEIGHT_RECORD,
+    explore_items: 0.8,
+    doc_sections: 0.1,
+    research_pack: 0.0,
+    integrity_report: 0.05,
+    core_header: 0.05
+  },
   fast: {
     ...ZERO_WEIGHT_RECORD,
     explore_items: 0.8,
@@ -98,6 +106,18 @@ const EXPLORE_WEIGHTS: Record<Required<BudgetPlanInput>["profile"], Record<Budge
 };
 
 const UNDERSTAND_WEIGHTS: Record<Required<BudgetPlanInput>["profile"], Record<BudgetSection, number>> = {
+  lean: {
+    ...ZERO_WEIGHT_RECORD,
+    skeleton: 0.6,
+    file_profile: 0.1,
+    related_code: 0.1,
+    dependencies: 0.05,
+    call_graph: 0.05,
+    hot_spots: 0.02,
+    analysis_pack: 0.04,
+    style_pack: 0.03,
+    integrity_report: 0.01
+  },
   fast: {
     ...ZERO_WEIGHT_RECORD,
     skeleton: 0.6,
@@ -176,7 +196,7 @@ export function buildBudgetPlan(args: BudgetPlanInput): BudgetPlan {
     const includeDocs = args.include?.docs !== false || args.include?.comments === true;
     if (!includeDocs) {
       updateStrategy(sections, "doc_sections", "omit");
-    } else if (profile === "fast") {
+    } else if (profile === "lean" || profile === "fast") {
       updateStrategy(sections, "doc_sections", "summary");
     } else if (profile === "balanced") {
       updateStrategy(sections, "doc_sections", maxTokens && maxTokens < 900 ? "summary" : "preview");
@@ -195,7 +215,7 @@ export function buildBudgetPlan(args: BudgetPlanInput): BudgetPlan {
     if (maxTokens && maxTokens < 900) {
       updateStrategy(sections, "skeleton", "distill");
     }
-    if (profile === "fast" || (maxTokens && maxTokens < 1400)) {
+    if (profile === "lean" || profile === "fast" || (maxTokens && maxTokens < 1400)) {
       updateStrategy(sections, "dependencies", "omit");
       updateStrategy(sections, "call_graph", "omit");
       updateStrategy(sections, "hot_spots", "omit");

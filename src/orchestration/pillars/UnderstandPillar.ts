@@ -34,6 +34,7 @@ import type { OptionSource, TraceOptionResolution } from '../../types/option-tra
 import { TraceBuilder } from '../trace/TraceBuilder.js';
 import { buildBudgetPlan, getSectionPlan } from '../budget/TokenBudgetAllocatorV2.js';
 import { FeatureFlags } from "../../config/FeatureFlags.js";
+import { metrics } from "../../utils/MetricsCollector.js";
 import {
   computeAdaptiveFlowGate,
   recordAdaptiveFlowGateTrace,
@@ -76,6 +77,8 @@ export class UnderstandPillar {
   constructor(private readonly registry: InternalToolRegistry) {}
 
   public async execute(intent: ParsedIntent, context: OrchestrationContext): Promise<any> {
+    const stopTotal = metrics.startTimer("understand.total_ms");
+    try {
     const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
     const {
       constraints,
@@ -614,7 +617,9 @@ export class UnderstandPillar {
       }
     }
     return response;
-
+    } finally {
+      stopTotal();
+    }
   }
 
   private async buildStylePack(

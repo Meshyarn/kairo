@@ -24,6 +24,7 @@ import type { OptionSource, TraceOptionResolution } from "../../../types/option-
 import { TraceBuilder } from "../../trace/TraceBuilder.js";
 import { buildBudgetPlan, getSectionPlan } from "../../budget/TokenBudgetAllocatorV2.js";
 import { FeatureFlags } from "../../../config/FeatureFlags.js";
+import { metrics } from "../../../utils/MetricsCollector.js";
 import {
     computeAdaptiveFlowGate,
     recordAdaptiveFlowGateTrace,
@@ -104,7 +105,9 @@ export class ExplorePillar {
     constructor(private readonly registry: InternalToolRegistry) {}
 
     public async execute(intent: ParsedIntent, context: OrchestrationContext): Promise<ExploreResponse> {
+        const stopTotal = metrics.startTimer("explore.total_ms");
         const startedAt = Date.now();
+        try {
         const repoRegistry = this.registry.getMetadata<RepoRegistry>("repoRegistry");
         const pathNormalizer = this.registry.getMetadata<PathNormalizer>("pathNormalizer");
         const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
@@ -857,6 +860,9 @@ export class ExplorePillar {
         await this.attachIndexSnapshot(response);
 
         return response;
+        } finally {
+            stopTotal();
+        }
     }
 
     private addIndexStatusInsights(response: ExploreResponse): void {

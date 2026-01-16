@@ -2,7 +2,7 @@ import type { OrchestrationContext } from "../OrchestrationContext.js";
 import type { TraceBuilder } from "../trace/TraceBuilder.js";
 import type { LOD_LEVEL } from "../../types/ast.js";
 
-export type AdaptiveFlowProfile = "fast" | "balanced" | "deep";
+export type AdaptiveFlowProfile = "lean" | "fast" | "balanced" | "deep";
 
 export type AdaptiveFlowGate = {
   profile?: AdaptiveFlowProfile;
@@ -90,14 +90,14 @@ export function recordAdaptiveFlowGateTrace(
 }
 
 function normalizeProfile(profile?: string | null): AdaptiveFlowProfile {
-  if (profile === "fast" || profile === "balanced" || profile === "deep") {
+  if (profile === "lean" || profile === "fast" || profile === "balanced" || profile === "deep") {
     return profile;
   }
   return "balanced";
 }
 
 function resolveProfileMaxLOD(profile: AdaptiveFlowProfile): number {
-  if (profile === "fast") return 1;
+  if (profile === "lean" || profile === "fast") return 1;
   if (profile === "balanced") return 2;
   return 3;
 }
