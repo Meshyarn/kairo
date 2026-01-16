@@ -840,7 +840,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
         type: "object",
         properties: {
           goal: { type: "string" },
-          profile: { type: "string", enum: ["fast", "balanced", "deep"] },
+          profile: { type: "string", enum: ["lean", "fast", "balanced", "deep"] },
           sources: { type: "string", enum: ["code", "docs", "both"] },
           depth: { type: "string", enum: ["shallow", "standard", "deep"] },
           scope: { type: "string", enum: ["symbol", "file", "module", "project"] },
@@ -912,7 +912,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
         properties: {
           query: { type: "string" },
           paths: { type: "array", items: { type: "string" } },
-          profile: { type: "string", enum: ["fast", "balanced", "deep"] },
+          profile: { type: "string", enum: ["lean", "fast", "balanced", "deep"] },
           sources: { type: "string", enum: ["code", "docs", "both"] },
           view: { type: "string", enum: ["auto", "preview", "section", "full"] },
           include: {
@@ -1017,7 +1017,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
         type: "object",
         properties: {
           intent: { type: "string" },
-          profile: { type: "string", enum: ["fast", "balanced", "deep"] },
+          profile: { type: "string", enum: ["lean", "fast", "balanced", "deep"] },
           safety: { type: "string", enum: ["plan", "apply"] },
           target: { type: "string" },
           targetFiles: { type: "array", items: { type: "string" } },
@@ -1136,7 +1136,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
         type: "object",
         properties: {
           intent: { type: "string" },
-          profile: { type: "string", enum: ["fast", "balanced", "deep"] },
+          profile: { type: "string", enum: ["lean", "fast", "balanced", "deep"] },
           safety: { type: "string", enum: ["plan", "apply"] },
           targetPath: { type: "string" },
           template: { type: "string" },

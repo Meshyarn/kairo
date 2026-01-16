@@ -410,6 +410,30 @@ export class ManageHandlers extends BaseHandler {
         };
     }
 
+    private buildCostSummary(fileCount?: number) {
+        const snapshot = metrics.snapshot();
+        const getHist = (name: string) => snapshot.histograms[name];
+        const scaleTier = this.resolveScaleTier(fileCount);
+        return {
+            histograms: {
+                explore: getHist("explore.total_ms"),
+                understand: getHist("understand.total_ms"),
+                change: getHist("change.total_ms"),
+                write: getHist("write.total_ms")
+            },
+            ...(scaleTier ? { scaleTier } : {})
+        };
+    }
+
+    private resolveScaleTier(fileCount?: number): "S" | "M" | "L" | undefined {
+        if (typeof fileCount !== "number" || !Number.isFinite(fileCount)) return undefined;
+        const sMax = this.parseNumberEnv(process.env.KAIRO_SCALE_TIER_S_MAX_FILES, 5000);
+        const mMax = this.parseNumberEnv(process.env.KAIRO_SCALE_TIER_M_MAX_FILES, 50000);
+        if (fileCount < sMax) return "S";
+        if (fileCount < mMax) return "M";
+        return "L";
+    }
+
     private parseNumberEnv(raw: string | undefined, fallback: number): number {
         if (!raw) return fallback;
         const value = Number(raw);
@@ -496,6 +520,7 @@ export class ManageHandlers extends BaseHandler {
                         const rolloutStatus = this.buildRolloutStatus(status?.global?.totalFiles);
                         const symbolIndexStatus = this.buildSymbolIndexStatus();
                         const driftStatus = await this.buildWorkspaceDrift();
+                        const costSummary = this.buildCostSummary(status?.global?.totalFiles);
 
                         if (includePerFile) {
                             return {
@@ -509,6 +534,7 @@ export class ManageHandlers extends BaseHandler {
                                 indexSnapshot,
                                 symbolIndex: symbolIndexStatus,
                                 drift: driftStatus,
+                                cost: costSummary,
                                 rollout: rolloutStatus,
                                 activity: {
                                     reindexInProgress: this.reindexInProgress,
@@ -539,6 +565,7 @@ export class ManageHandlers extends BaseHandler {
                             indexSnapshot,
                             symbolIndex: symbolIndexStatus,
                             drift: driftStatus,
+                            cost: costSummary,
                             rollout: rolloutStatus,
                             activity: {
                                 reindexInProgress: this.reindexInProgress,
@@ -666,6 +693,7 @@ export class ManageHandlers extends BaseHandler {
                     const embeddingFindings = this.buildEmbeddingFindings(embeddingDiagnostics);
                     const rolloutStatus = this.buildRolloutStatus(fileCount);
                     const driftStatus = await this.buildWorkspaceDrift();
+                    const costSummary = this.buildCostSummary(fileCount);
                     return {
                         ...result,
                         output: "Config doctor completed.",
@@ -692,6 +720,7 @@ export class ManageHandlers extends BaseHandler {
                         ...(budgetSnapshot ? { budget: budgetSnapshot } : {}),
                         ...(metricsExportStatus ? { metricsExport: metricsExportStatus } : {}),
                         drift: driftStatus,
+                        cost: costSummary,
                         rollout: rolloutStatus
                     };
                 }

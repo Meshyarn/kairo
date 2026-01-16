@@ -25,6 +25,16 @@ Timeouts are primarily controlled by your MCP host (per-request timeout). Some o
 | `KAIRO_PATCH_STORAGE_WARN_FREE_PCT` | Patch ledger disk free warning threshold (%). | Default 8. |
 | `KAIRO_PATCH_STORAGE_BLOCK_FREE_PCT` | Patch ledger disk free block threshold (%). | Default 3. |
 | `.kairo/config/scopes.json` | Manual scope overrides. | Optional; defines `serviceRoot` scopes for drift grouping. |
+| `KAIRO_SCALE_TIER_S_MAX_FILES` | Max file count for scale tier S. | Default 5000. |
+| `KAIRO_SCALE_TIER_M_MAX_FILES` | Max file count for scale tier M. | Default 50000. |
+
+## Adaptive LOD (ADR-078)
+
+| Variable | Purpose | Notes |
+|---|---|---|
+| `KAIRO_ADAPTIVE_LOD_ENABLED` | Enable adaptive profile downshift. | Default `true`; set `false` to disable. |
+| `KAIRO_ADAPTIVE_LOD_WINDOW` | Sliding window size (calls). | Default 12. |
+| `KAIRO_ADAPTIVE_LOD_COOLDOWN_CALLS` | Cooldown before allowing recovery. | Default 20. |
 
 ## Storage maintenance (ADR-059)
 

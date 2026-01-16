@@ -10,6 +10,8 @@ export type MetricSpec = {
 };
 
 export const METRICS_CATALOG: MetricSpec[] = [
+    { name: "explore.total_ms", type: "histogram", unit: "ms", level: "basic", description: "explore pillar total latency" },
+    { name: "understand.total_ms", type: "histogram", unit: "ms", level: "basic", description: "understand pillar total latency" },
     { name: "change.total_ms", type: "histogram", unit: "ms", level: "basic", description: "change pillar total latency" },
     { name: "write.total_ms", type: "histogram", unit: "ms", level: "basic", description: "write pillar total latency" },
     { name: "search.scout.total_ms", type: "histogram", unit: "ms", level: "basic", description: "file search total latency" },

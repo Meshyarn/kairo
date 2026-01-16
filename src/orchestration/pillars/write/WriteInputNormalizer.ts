@@ -37,7 +37,8 @@ export function normalizeWriteInput(
     const template = constraints.template;
     const content = constraints.content ?? "";
     const hasExplicitContent = constraints.content !== undefined;
-    const safeWrite = Boolean((constraints as any).safeWrite);
+    const safeWriteExplicit = typeof (constraints as any).safeWrite === "boolean";
+    let safeWrite = Boolean((constraints as any).safeWrite);
     const quickGenerate = Boolean((constraints as any).quickGenerate);
     const smartWrite = Boolean((constraints as any).smartWrite);
     const styleReference = (constraints as any).styleReference as string[] | undefined;
@@ -45,6 +46,9 @@ export function normalizeWriteInput(
     const resolvedSessionId = helpers.resolveSessionId(rawSessionId, baseIntent);
     const sessionPolicy = helpers.getSessionPolicy(resolvedSessionId);
     const resolvedOptions = OptionResolver.resolveWriteOptions(constraints, resolvedSessionId, sessionPolicy);
+    if (!safeWriteExplicit && resolvedOptions.effective.profile === "lean") {
+        safeWrite = true;
+    }
     const dryRun = resolvedOptions.effective.dryRun;
     const traceEnabled = resolvedOptions.effective.traceEnabled;
     const draftOptions = (constraints as any).draftOptions as { skeletonOnly?: boolean } | undefined;

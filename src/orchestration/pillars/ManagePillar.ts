@@ -4,6 +4,7 @@ import { OrchestrationContext } from '../OrchestrationContext.js';
 import { ParsedIntent } from '../IntentRouter.js';
 import { buildDegradedReasons } from '../DegradedReasonMapper.js';
 import { TraceBuilder } from '../trace/TraceBuilder.js';
+import { AdaptiveLodController } from '../adaptive-flow/AdaptiveLodController.js';
 
 
 export class ManagePillar {
@@ -47,6 +48,7 @@ export class ManagePillar {
     const applyOptions = (constraints as any).applyOptions;
     const pruneOptions = (constraints as any).pruneOptions;
     const apply = (constraints as any).apply;
+    const adaptiveLod = this.registry.getMetadata<AdaptiveLodController>("adaptiveLodController");
     const execute = async (command: string) => {
       const started = Date.now();
         const output = await this.registry.execute('project_manage', {
@@ -118,9 +120,21 @@ export class ManagePillar {
     
     switch (action) {
       case 'undo':
-        return wrap('undo', await execute('undo'));
+        {
+          const result = await execute('undo');
+          if (result?.success !== false) {
+            adaptiveLod?.recordUndoRedo({ sessionId, tool: "change" });
+          }
+          return wrap('undo', result);
+        }
       case 'redo':
-        return wrap('redo', await execute('redo'));
+        {
+          const result = await execute('redo');
+          if (result?.success !== false) {
+            adaptiveLod?.recordUndoRedo({ sessionId, tool: "change" });
+          }
+          return wrap('redo', result);
+        }
       case 'status':
         return wrap('status', await execute('status'));
       case 'rebuild':

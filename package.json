@@ -1,6 +1,6 @@
 {
   "name": "kairo",
-  "version": "0.4.24",
+  "version": "0.4.25",
   "type": "module",
   "bin": {
     "kairo": "dist/index.js",
@@ -29,6 +29,7 @@
     "benchmark:lod-comp": "tsx benchmarks/lod-comparison.ts",
     "benchmark:lod-promo": "tsx benchmarks/lod-promotion-flow.ts",
     "benchmark:adr-072-metrics": "npm run build && node scripts/adr-072-decision-metrics.mjs",
+    "benchmark:adr-078-cost-slo": "npm run build && node scripts/adr-078-cost-slo-gate.mjs",
     "test:coverage": "NODE_OPTIONS=\"--experimental-vm-modules --max-old-space-size=8196\" jest dist --coverage",
     "test:coverage:orchestration": "NODE_OPTIONS=\"--experimental-vm-modules --max-old-space-size=8196\" jest dist --runInBand --coverage --collectCoverageFrom=\"dist/orchestration/**/*.js\" --coveragePathIgnorePatterns=\"/dist/tests/\"",
     "test:markdown-wasm-cli": "node scripts/test-markdown-wasm-cli.mjs",

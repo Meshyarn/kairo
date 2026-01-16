@@ -1,6 +1,6 @@
 {
   "name": "@kairo/core-rs",
-  "version": "0.4.24",
+  "version": "0.4.25",
   "main": "index.js",
   "types": "index.d.ts",
   "files": [

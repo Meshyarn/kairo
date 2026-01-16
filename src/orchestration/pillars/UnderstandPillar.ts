@@ -34,6 +34,9 @@ import type { OptionSource, TraceOptionResolution } from '../../types/option-tra
 import { TraceBuilder } from '../trace/TraceBuilder.js';
 import { buildBudgetPlan, getSectionPlan } from '../budget/TokenBudgetAllocatorV2.js';
 import { FeatureFlags } from "../../config/FeatureFlags.js";
+import { metrics } from "../../utils/MetricsCollector.js";
+import type { ToolProfile } from '../options/OptionResolver.js';
+import { AdaptiveLodController } from "../adaptive-flow/AdaptiveLodController.js";
 import {
   computeAdaptiveFlowGate,
   recordAdaptiveFlowGateTrace,
@@ -76,6 +79,8 @@ export class UnderstandPillar {
   constructor(private readonly registry: InternalToolRegistry) {}
 
   public async execute(intent: ParsedIntent, context: OrchestrationContext): Promise<any> {
+    const stopTotal = metrics.startTimer("understand.total_ms");
+    try {
     const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
     const {
       constraints,
@@ -83,8 +88,8 @@ export class UnderstandPillar {
       resolvedSessionId,
       sessionPolicy,
       resolvedOptions,
-      depth,
-      include,
+      depth: resolvedDepth,
+      include: resolvedInclude,
       traceEnabled,
       vibe,
       wantsVibe,
@@ -96,13 +101,41 @@ export class UnderstandPillar {
       symbolHint,
       integrityOptions,
       limits,
-      maxTokens
+      maxTokens: resolvedMaxTokens
     } = normalizeUnderstandInput(intent, {
       resolveSessionId: (rawSessionId, fallback) => artifactManager?.resolveSessionId(rawSessionId, fallback),
       getSessionPolicy: (sessionId) => (sessionId ? artifactManager?.getSession(sessionId)?.policy : undefined),
       extractPath: (value) => this.extractPath(value ?? ""),
       extractSymbol: (value) => extractSymbol(value ?? "")
     });
+    let depth = resolvedDepth;
+    const include = resolvedInclude;
+    let maxTokens = resolvedMaxTokens;
+    let profile: ToolProfile | undefined = resolvedOptions.effective.profile as ToolProfile | undefined;
+    const adaptiveLod = this.registry.getMetadata<AdaptiveLodController>("adaptiveLodController");
+    const profileExplicit = typeof constraints.profile === "string";
+    const adaptiveDecision = adaptiveLod?.resolveProfile({
+      sessionId: resolvedSessionId,
+      tool: "understand",
+      requestedProfile: profile ?? "balanced",
+      explicit: profileExplicit
+    });
+    if (adaptiveDecision?.downshifted) {
+      profile = adaptiveDecision.profile;
+      if (!profileExplicit && typeof constraints.depth !== "string") {
+        if (profile === "lean" || profile === "fast") depth = "shallow";
+        if (profile === "deep") depth = "deep";
+      }
+      if (profile === "lean") {
+        if (typeof limits.maxTokens !== "number") limits.maxTokens = 1600;
+        if (typeof limits.timeoutMs !== "number") limits.timeoutMs = 4000;
+        maxTokens = 1600;
+      }
+      if (profile === "fast" && typeof limits.maxTokens !== "number") {
+        maxTokens = maxTokens ?? 1600;
+      }
+    }
+    resolvedOptions.effective.profile = profile;
     let resolvedPath = explicitPath ?? null;
     const progress = resolveProgressState('Understand', constraints);
     const startedAt = Date.now();
@@ -113,7 +146,7 @@ export class UnderstandPillar {
         "understand",
         {
           profile: buildStringResolution(
-            resolvedOptions.effective.profile,
+            profile,
             typeof constraints.profile === "string",
             Boolean(sessionProfile),
             typeof constraints.profile === "string" ? constraints.profile : undefined
@@ -136,9 +169,23 @@ export class UnderstandPillar {
     if (traceBuilder) {
       traceBuilder.setBudget({ maxTokens });
     }
+    if (traceBuilder && adaptiveDecision?.downshifted) {
+      traceBuilder.recordEvent({
+        area: "budget",
+        code: "adaptive_lod.downshift",
+        data: {
+          from: resolvedOptions.effective.profile ?? "balanced",
+          to: profile,
+          violationStreak: adaptiveDecision.violationStreak,
+          stableScore: adaptiveDecision.stableScore,
+          cooldownRemaining: adaptiveDecision.cooldownRemaining,
+          reasonCodes: adaptiveDecision.reasonCodes
+        }
+      });
+    }
     const budgetPlan = buildBudgetPlan({
       pillar: "understand",
-      profile: resolvedOptions.effective.profile ?? "balanced",
+      profile: (profile ?? "balanced") as ToolProfile,
       sources: resolvedOptions.effective.sources,
       maxTokens
     });
@@ -226,7 +273,7 @@ export class UnderstandPillar {
     const searchBudget = this.resolveSearchBudget(constraints, subject, initialBudget);
 
     const gate = computeAdaptiveFlowGate({
-      profile: resolvedOptions.effective.profile,
+      profile,
       fileCount: typeof initialProjectStats?.fileCount === "number" ? initialProjectStats.fileCount : undefined
     });
     setAdaptiveFlowGate(context, gate);
@@ -385,7 +432,7 @@ export class UnderstandPillar {
       }
       skeleton = await this.runTool(context, 'code_read', { filePath, view: 'skeleton' }, progress);
     }
-    const profile = await this.runTool(context, 'file_profile', { filePath }, progress);
+    const fileProfile = await this.runTool(context, 'file_profile', { filePath }, progress);
 
     let calls: any = null;
     let deps: any = null;
@@ -599,7 +646,7 @@ export class UnderstandPillar {
       response.effectiveOptions = {
         version: 1,
         pillar: "understand",
-        profile: resolvedOptions.effective.profile,
+        profile,
         sources: resolvedOptions.effective.sources,
         depth,
         include
@@ -613,8 +660,16 @@ export class UnderstandPillar {
         response.decisionTrace = traceBuilder.finalize();
       }
     }
+    adaptiveLod?.recordOutcome({
+      sessionId: resolvedSessionId,
+      tool: "understand",
+      success: Boolean(response.success),
+      degradedReasons: response.degradedReasonDetails
+    });
     return response;
-
+    } finally {
+      stopTotal();
+    }
   }
 
   private async buildStylePack(

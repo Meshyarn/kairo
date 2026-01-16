@@ -376,7 +376,7 @@ export interface ArtifactManagerStatus {
 
 export type FlowSessionStatus = "active" | "completed" | "abandoned";
 
-export type ToolProfile = "fast" | "balanced" | "deep";
+export type ToolProfile = "lean" | "fast" | "balanced" | "deep";
 export type ToolSources = "code" | "docs" | "both";
 export type ToolSafety = "plan" | "apply";
 

@@ -23,7 +23,10 @@ import { resolveRepoInfo } from "../../../utils/RepoScope.js";
 import type { OptionSource, TraceOptionResolution } from "../../../types/option-trace.js";
 import { TraceBuilder } from "../../trace/TraceBuilder.js";
 import { buildBudgetPlan, getSectionPlan } from "../../budget/TokenBudgetAllocatorV2.js";
+import type { ToolProfile } from "../../options/OptionResolver.js";
 import { FeatureFlags } from "../../../config/FeatureFlags.js";
+import { metrics } from "../../../utils/MetricsCollector.js";
+import { AdaptiveLodController } from "../../adaptive-flow/AdaptiveLodController.js";
 import {
     computeAdaptiveFlowGate,
     recordAdaptiveFlowGateTrace,
@@ -104,7 +107,9 @@ export class ExplorePillar {
     constructor(private readonly registry: InternalToolRegistry) {}
 
     public async execute(intent: ParsedIntent, context: OrchestrationContext): Promise<ExploreResponse> {
+        const stopTotal = metrics.startTimer("explore.total_ms");
         const startedAt = Date.now();
+        try {
         const repoRegistry = this.registry.getMetadata<RepoRegistry>("repoRegistry");
         const pathNormalizer = this.registry.getMetadata<PathNormalizer>("pathNormalizer");
         const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
@@ -123,17 +128,35 @@ export class ExplorePillar {
             resolvedSessionId,
             sessionPolicy,
             resolvedOptions,
-            view,
+            view: resolvedView,
             include,
             includeExplicit,
             sourcesWantsDocs,
             traceEnabled,
-            profile,
+            profile: resolvedProfile,
             limits
         } = normalizeExploreInput(intent, {
             resolveSessionId: (rawSessionId, fallback) => artifactManager?.resolveSessionId(rawSessionId, fallback),
             getSessionPolicy: (sessionId) => (sessionId ? artifactManager?.getSession(sessionId)?.policy : undefined)
         });
+        let view = resolvedView;
+        let profile: ToolProfile | undefined = resolvedProfile as ToolProfile | undefined;
+        const adaptiveLod = this.registry.getMetadata<AdaptiveLodController>("adaptiveLodController");
+        const profileExplicit = typeof constraints.profile === "string";
+        const adaptiveDecision = adaptiveLod?.resolveProfile({
+            sessionId: resolvedSessionId,
+            tool: "explore",
+            requestedProfile: (profile ?? "balanced") as ToolProfile,
+            explicit: profileExplicit
+        });
+        if (adaptiveDecision?.downshifted) {
+            profile = adaptiveDecision.profile;
+            applyExploreProfileCaps(limits, profile);
+            if (!profileExplicit && typeof constraints.view !== "string") {
+                view = profile === "lean" || profile === "fast" ? "preview" : view;
+            }
+        }
+        resolvedOptions.effective.profile = profile;
 
         const queryMetrics = query ? analyzeQuery(query) : undefined;
         const queryTokens = query ? query.trim().split(/\s+/).filter(Boolean) : [];
@@ -206,7 +229,7 @@ export class ExplorePillar {
                 "explore",
                 {
                     profile: buildStringResolution(
-                        resolvedOptions.effective.profile,
+                        profile,
                         typeof constraints.profile === "string",
                         Boolean(sessionProfile),
                         typeof constraints.profile === "string" ? constraints.profile : undefined
@@ -229,8 +252,22 @@ export class ExplorePillar {
         if (traceBuilder) {
             traceBuilder.setBudget({ maxTokens, maxChars, timeoutMs });
         }
+        if (traceBuilder && adaptiveDecision?.downshifted) {
+            traceBuilder.recordEvent({
+                area: "budget",
+                code: "adaptive_lod.downshift",
+                data: {
+                    from: resolvedOptions.effective.profile ?? "balanced",
+                    to: profile,
+                    violationStreak: adaptiveDecision.violationStreak,
+                    stableScore: adaptiveDecision.stableScore,
+                    cooldownRemaining: adaptiveDecision.cooldownRemaining,
+                    reasonCodes: adaptiveDecision.reasonCodes
+                }
+            });
+        }
         const gate = computeAdaptiveFlowGate({
-            profile: resolvedOptions.effective.profile,
+            profile,
             fileCount: typeof projectStats?.fileCount === "number" ? projectStats.fileCount : undefined
         });
         setAdaptiveFlowGate(context, gate);
@@ -242,7 +279,7 @@ export class ExplorePillar {
         }
         const budgetPlan = buildBudgetPlan({
             pillar: "explore",
-            profile: resolvedOptions.effective.profile ?? "balanced",
+            profile: (profile ?? "balanced") as ToolProfile,
             sources: resolvedOptions.effective.sources,
             maxTokens,
             maxChars,
@@ -305,8 +342,9 @@ export class ExplorePillar {
             intent: constraints.intent,
             paths
         };
-        if (resolvedOptions.meta.profileAffectsPack && resolvedOptions.effective.profile) {
-            packOptions.profile = resolvedOptions.effective.profile;
+        const profileAffectsPack = resolvedOptions.meta.profileAffectsPack || Boolean(adaptiveDecision?.downshifted);
+        if (profileAffectsPack && profile) {
+            packOptions.profile = profile;
         }
         if (resolvedOptions.meta.sourcesAffectsPack && resolvedOptions.effective.sources) {
             packOptions.sources = resolvedOptions.effective.sources;
@@ -835,7 +873,7 @@ export class ExplorePillar {
             response.effectiveOptions = {
                 version: 1,
                 pillar: "explore",
-                profile: resolvedOptions.effective.profile,
+                profile,
                 sources: resolvedOptions.effective.sources,
                 include,
                 limits,
@@ -856,7 +894,16 @@ export class ExplorePillar {
         this.addIndexStatusInsights(response);
         await this.attachIndexSnapshot(response);
 
+        adaptiveLod?.recordOutcome({
+            sessionId: resolvedSessionId,
+            tool: "explore",
+            success: Boolean(response.success),
+            degradedReasons: response.degradedReasons
+        });
         return response;
+        } finally {
+            stopTotal();
+        }
     }
 
     private addIndexStatusInsights(response: ExploreResponse): void {
@@ -1058,6 +1105,39 @@ export class ExplorePillar {
         const hasSymbolToken = tokens.some(token => /[A-Z_]/.test(token) || /\d/.test(token));
         return tokens.length > 1 ? hasSymbolToken : hasSymbolToken;
     }
+}
+
+function applyExploreProfileCaps(limits: {
+    maxResults?: number;
+    maxChars?: number;
+    maxTokens?: number;
+    maxItemChars?: number;
+    maxBytes?: number;
+    maxFiles?: number;
+}, profile: string): void {
+    if (profile === "lean") {
+        limits.maxResults = clampToMax(limits.maxResults, 20);
+        limits.maxFiles = clampToMax(limits.maxFiles, 400);
+        limits.maxItemChars = clampToMax(limits.maxItemChars, 2400);
+        limits.maxChars = clampToMax(limits.maxChars, 20000);
+        limits.maxTokens = clampToMax(limits.maxTokens, 1500);
+        limits.maxBytes = clampToMax(limits.maxBytes, 400000);
+    }
+    if (profile === "fast") {
+        limits.maxResults = clampToMax(limits.maxResults, 5);
+        limits.maxFiles = clampToMax(limits.maxFiles, 80);
+        limits.maxChars = clampToMax(limits.maxChars, 6000);
+    }
+    if (profile === "deep") {
+        limits.maxResults = clampToMax(limits.maxResults, 12);
+        limits.maxFiles = clampToMax(limits.maxFiles, 300);
+        limits.maxChars = clampToMax(limits.maxChars, 12000);
+    }
+}
+
+function clampToMax(value: number | undefined, maxValue: number): number {
+    if (!Number.isFinite(value)) return maxValue;
+    return Math.min(value as number, maxValue);
 }
 
 function resolveSectionChars(plan: { chars?: number; tokens?: number } | undefined, fallback: number): number {
