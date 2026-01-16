@@ -336,7 +336,7 @@ export class EditCoordinator {
                 operations,
             };
 
-            transactionLog.commit(transactionId, snapshots);
+            await transactionLog.commit(transactionId, snapshots, { operations });
             await this.historyEngine.replaceOperation(transactionId, batchOperation as HistoryItem);
 
             return {

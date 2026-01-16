@@ -1,4 +1,5 @@
 import * as path from "path";
+import { promises as fs } from "fs";
 import { createHash } from "crypto";
 import { BaseHandler } from "./BaseHandler.js";
 import { HandlerContext } from "./HandlerContext.js";
@@ -16,6 +17,9 @@ import { FeatureFlags } from "../config/FeatureFlags.js";
 import { computeAdaptiveFlowGate, resolveRolloutPresetFromEnv } from "../orchestration/adaptive-flow/AdaptiveFlowGate.js";
 import { buildDegradedReasons } from "../orchestration/DegradedReasonMapper.js";
 import type { TransactionLogEntry } from "../engine/TransactionLog.js";
+import { hashContent } from "../utils/hash.js";
+import { detectServiceRoots } from "../utils/ServiceRootDetector.js";
+import { PatchStore } from "../engine/PatchStore.js";
 
 export class ManageHandlers extends BaseHandler {
     private reindexInProgress = false;
@@ -136,15 +140,69 @@ export class ManageHandlers extends BaseHandler {
         type ScopeStat = {
             scopeId: string;
             root: string;
-            kind: "workspaceRoot" | "repoRoot";
+            kind: "workspaceRoot" | "repoRoot" | "serviceRoot";
             repoId?: string;
             checkedFiles: number;
             mismatchedFiles: number;
+            untrackedFiles: number;
+            hashMismatches: number;
+            maxModified: number;
             mismatchedPaths: string[];
+            untrackedPaths: string[];
+            signals: Set<string>;
+            scopeConfidence: "high" | "medium" | "low" | "unknown";
         };
         const scopeStats = new Map<string, ScopeStat>();
 
+        const indexSnapshot = this.context.indexStateManager
+            ? await this.context.indexStateManager.getSnapshot().catch(() => undefined)
+            : undefined;
+        const serviceRoots = await detectServiceRoots({
+            rootPath: this.context.rootPath,
+            indexDatabase: this.context.indexDatabase,
+            fileSystem: this.context.fileSystem
+        });
+        const sortedServiceRoots = serviceRoots.sort((a, b) => b.root.length - a.root.length);
+
+        const shouldIgnoreRelative = (relativePath: string) => {
+            if (!relativePath || relativePath.startsWith("..")) return true;
+            const normalized = relativePath.split(path.sep).join("/");
+            const ignoredRoots = [".mcp", ".kairo", ".kairo-index"];
+            if (ignoredRoots.some(root => normalized === root || normalized.startsWith(`${root}/`))) {
+                return true;
+            }
+            return this.context.symbolIndex.shouldIgnore(relativePath);
+        };
+
+        const isSupportedPath = (absolutePath: string) => {
+            if (this.context.symbolIndex.isSupported(absolutePath)) return true;
+            return this.context.documentIndexer?.isSupported(absolutePath) ?? false;
+        };
+
         const getScope = (absPath: string) => {
+            for (const serviceRoot of sortedServiceRoots) {
+                if (absPath === serviceRoot.root || absPath.startsWith(`${serviceRoot.root}${path.sep}`)) {
+                    const scopeId = `service:${createHash("sha1").update(serviceRoot.root).digest("hex").slice(0, 8)}`;
+                    const existing = scopeStats.get(scopeId);
+                    if (existing) return existing;
+                    const created: ScopeStat = {
+                        scopeId,
+                        root: serviceRoot.root,
+                        kind: "serviceRoot" as const,
+                        checkedFiles: 0,
+                        mismatchedFiles: 0,
+                        untrackedFiles: 0,
+                        hashMismatches: 0,
+                        maxModified: 0,
+                        mismatchedPaths: [],
+                        untrackedPaths: [],
+                        signals: new Set(),
+                        scopeConfidence: serviceRoot.confidence
+                    };
+                    scopeStats.set(scopeId, created);
+                    return created;
+                }
+            }
             const repo = this.context.repoRegistry?.findRepoByPath?.(absPath);
             if (repo) {
                 const scopeId = `repo:${repo.id}`;
@@ -157,7 +215,13 @@ export class ManageHandlers extends BaseHandler {
                     repoId: repo.id,
                     checkedFiles: 0,
                     mismatchedFiles: 0,
-                    mismatchedPaths: []
+                    untrackedFiles: 0,
+                    hashMismatches: 0,
+                    maxModified: 0,
+                    mismatchedPaths: [],
+                    untrackedPaths: [],
+                    signals: new Set(),
+                    scopeConfidence: "low"
                 };
                 scopeStats.set(scopeId, created);
                 return created;
@@ -170,7 +234,13 @@ export class ManageHandlers extends BaseHandler {
                 kind: "workspaceRoot" as const,
                 checkedFiles: 0,
                 mismatchedFiles: 0,
-                mismatchedPaths: []
+                untrackedFiles: 0,
+                hashMismatches: 0,
+                maxModified: 0,
+                mismatchedPaths: [],
+                untrackedPaths: [],
+                signals: new Set(),
+                scopeConfidence: "unknown"
             };
             scopeStats.set(workspaceScopeId, created);
             return created;
@@ -181,15 +251,28 @@ export class ManageHandlers extends BaseHandler {
         for (const record of records) {
             if (checked >= maxFiles) break;
             const absPath = this.resolveAbsolutePath(record.path);
+            const relativePath = this.resolveRelativePath(record.path);
             const scope = getScope(absPath);
             let isMismatched = false;
             try {
                 const stat = await this.context.fileSystem.stat(absPath);
                 if (stat.mtime > (record.last_modified ?? 0)) {
                     isMismatched = true;
+                    scope.signals.add("mtime_changed");
+                }
+                scope.maxModified = Math.max(scope.maxModified, stat.mtime);
+                if (record.content_hash) {
+                    const currentContent = await this.context.fileSystem.readFile(absPath);
+                    const currentHash = hashContent(currentContent);
+                    if (currentHash !== record.content_hash) {
+                        scope.hashMismatches += 1;
+                        isMismatched = true;
+                        scope.signals.add("hash_mismatch");
+                    }
                 }
             } catch {
                 isMismatched = true;
+                scope.signals.add("mtime_changed");
             }
             scope.checkedFiles += 1;
             checked += 1;
@@ -197,7 +280,49 @@ export class ManageHandlers extends BaseHandler {
                 scope.mismatchedFiles += 1;
                 mismatched += 1;
                 if (scope.mismatchedPaths.length < 20) {
-                    scope.mismatchedPaths.push(record.path);
+                    scope.mismatchedPaths.push(relativePath);
+                }
+            }
+        }
+
+        const untrackedLimit = maxFiles;
+        const pendingDirs = [this.context.rootPath];
+        let scanned = 0;
+        while (pendingDirs.length > 0 && scanned < untrackedLimit) {
+            const dir = pendingDirs.pop()!;
+            let entries: string[];
+            try {
+                entries = await this.context.fileSystem.readDir(dir);
+            } catch {
+                continue;
+            }
+            for (const entry of entries) {
+                if (scanned >= untrackedLimit) break;
+                const absPath = path.join(dir, entry);
+                const relativePath = path.relative(this.context.rootPath, absPath);
+                if (shouldIgnoreRelative(relativePath)) {
+                    continue;
+                }
+                let stats: { isDirectory: () => boolean } | undefined;
+                try {
+                    stats = await this.context.fileSystem.stat(absPath);
+                } catch {
+                    continue;
+                }
+                if (stats.isDirectory()) {
+                    pendingDirs.push(absPath);
+                    continue;
+                }
+                if (!isSupportedPath(absPath)) continue;
+                scanned += 1;
+                const record = this.context.indexDatabase.getFile(relativePath);
+                if (!record) {
+                    const scope = getScope(absPath);
+                    scope.untrackedFiles += 1;
+                    scope.signals.add("untracked_write");
+                    if (scope.untrackedPaths.length < 20) {
+                        scope.untrackedPaths.push(relativePath);
+                    }
                 }
             }
         }
@@ -208,17 +333,24 @@ export class ManageHandlers extends BaseHandler {
 
         const scopes = Array.from(scopeStats.values()).map(entry => {
             const drift = entry.checkedFiles === 0 ? "unknown" : (entry.mismatchedFiles > 0 ? "detected" : "clean");
+            if (indexSnapshot && (entry.maxModified > indexSnapshot.indexedAt || indexSnapshot.dirtyFileCount > 0)) {
+                entry.signals.add("index_revision_mismatch");
+            }
+            if (entry.untrackedFiles > 0) {
+                entry.signals.add("untracked_write");
+            }
             return {
                 scopeId: entry.scopeId,
                 root: entry.root,
                 kind: entry.kind,
                 ...(entry.repoId ? { repoId: entry.repoId } : {}),
                 drift,
-                signals: entry.mismatchedFiles > 0 ? ["mtime_changed"] : [],
-                affectedPathsCount: entry.mismatchedFiles,
+                signals: Array.from(entry.signals.values()),
+                affectedPathsCount: entry.mismatchedFiles + entry.untrackedFiles,
                 indexStaleRatio: entry.checkedFiles > 0 ? entry.mismatchedFiles / entry.checkedFiles : undefined,
                 ...(entry.mismatchedPaths.length > 0 ? { samplePaths: entry.mismatchedPaths } : {}),
-                scopeConfidence: entry.checkedFiles > 0 ? "low" : "unknown"
+                ...(entry.untrackedPaths.length > 0 ? { untrackedPaths: entry.untrackedPaths } : {}),
+                scopeConfidence: entry.scopeConfidence
             };
         }).sort((a, b) => (b.affectedPathsCount ?? 0) - (a.affectedPathsCount ?? 0));
 
@@ -893,19 +1025,61 @@ export class ManageHandlers extends BaseHandler {
                 }
             case 'export':
                 {
+                    const targetType = args?.targetType ?? "artifact";
                     const target = args?.target;
+                    const format = args?.format ?? "both";
                     if (!target) {
-                        return { success: false, output: "Missing target artifact id." };
+                        return { success: false, output: "Missing target." };
                     }
-                    const artifact = this.context.flowArtifactManager.get(target);
-                    if (!artifact) {
-                        return { success: false, output: "Artifact not found." };
+                    if (targetType === "artifact") {
+                        const artifact = this.context.flowArtifactManager.get(target);
+                        if (!artifact) {
+                            return { success: false, output: "Artifact not found." };
+                        }
+                        const filePath = await this.context.flowArtifactManager.persist(target, artifact);
+                        return {
+                            success: true,
+                            output: "Artifact exported.",
+                            path: filePath
+                        };
                     }
-                    const filePath = await this.context.flowArtifactManager.persist(target, artifact);
+
+                    const patchStore = new PatchStore();
+                    let patchRef = target;
+                    if (targetType === "transaction") {
+                        const transactions = this.context.indexDatabase.listTransactions({ status: "committed" });
+                        const entry = transactions.find(item => item.id === target);
+                        patchRef = entry?.patchRef ?? "";
+                    }
+                    if (!patchRef) {
+                        return { success: false, output: "Patch not found." };
+                    }
+                    const manifest = await patchStore.loadManifest(patchRef);
+                    if (!manifest) {
+                        return { success: false, output: "Patch manifest not found." };
+                    }
+                    const exportDir = path.join(PathManager.getHistoryDir(), "exports");
+                    await fs.mkdir(exportDir, { recursive: true });
+                    const filesToCopy: string[] = [];
+                    const manifestPath = patchStore.resolveManifestPath(patchRef);
+                    filesToCopy.push(manifestPath);
+                    if ((format === "unified_diff" || format === "both") && manifest.diffPath) {
+                        filesToCopy.push(patchStore.resolvePayloadPath(manifest.diffPath));
+                    }
+                    if ((format === "structured_edits" || format === "both") && manifest.editsPath) {
+                        filesToCopy.push(patchStore.resolvePayloadPath(manifest.editsPath));
+                    }
+                    const exportedPaths: string[] = [];
+                    for (const filePath of filesToCopy) {
+                        const targetPath = path.join(exportDir, path.basename(filePath));
+                        await fs.copyFile(filePath, targetPath);
+                        exportedPaths.push(targetPath);
+                    }
                     return {
                         success: true,
-                        output: "Artifact exported.",
-                        path: filePath
+                        output: "Patch exported.",
+                        paths: exportedPaths,
+                        format
                     };
                 }
             case 'import':

@@ -2,6 +2,8 @@ import { createLogger } from "../utils/StructuredLogger.js";
 import { metrics } from "../utils/MetricsCollector.js";
 import { IndexDatabase } from "../indexing/IndexDatabase.js";
 import { PatienceDiff } from "./PatienceDiff.js";
+import { PatchStore, type PatchFormat } from "./PatchStore.js";
+import type { EditOperation } from "../types.js";
 
 export interface TransactionSnapshot {
     filePath: string;
@@ -23,6 +25,8 @@ export interface TransactionLogEntry {
     snapshots: TransactionSnapshot[];
     diffSummary?: TransactionDiffSummary;
     filesTouched?: TransactionFileSummary[];
+    patchRef?: string;
+    patchFormat?: PatchFormat;
 }
 
 export interface TransactionDiffSummary {
@@ -44,7 +48,7 @@ export interface TransactionFileSummary {
 export class TransactionLog {
     private readonly logger = createLogger("TransactionLog");
 
-    constructor(private readonly store: IndexDatabase) {}
+    constructor(private readonly store: IndexDatabase, private readonly patchStore?: PatchStore) {}
 
     public begin(id: string, description: string, snapshots: TransactionSnapshot[]): void {
         const entry: TransactionLogEntry = {
@@ -59,10 +63,28 @@ export class TransactionLog {
         this.logger.info("Transaction begun", { transactionId: id, fileCount: snapshots.length });
     }
 
-    public commit(id: string, snapshots: TransactionSnapshot[]): void {
+    public async commit(id: string, snapshots: TransactionSnapshot[], options?: { operations?: EditOperation[] }): Promise<void> {
         const pending = this.store.listPendingTransactions().find(entry => entry.id === id);
         const summary = this.buildDiffSummary(snapshots);
         const filesTouched = this.buildFileSummaries(snapshots);
+        let patchRef: string | undefined;
+        let patchFormat: PatchFormat | undefined;
+        if (this.patchStore) {
+            try {
+                const stored = await this.patchStore.storePatch({
+                    snapshots,
+                    operations: options?.operations,
+                    diffSummary: summary,
+                    filesTouched
+                });
+                patchRef = stored.patchRef;
+                patchFormat = stored.patchFormat;
+                metrics.inc("transactions.patch_stored");
+            } catch (error: any) {
+                metrics.inc("transactions.patch_store_failed");
+                this.logger.warn("Patch store failed", { transactionId: id, error: error?.message ?? "unknown" });
+            }
+        }
         const entry: TransactionLogEntry = {
             id,
             timestamp: pending?.timestamp ?? Date.now(),
@@ -70,7 +92,9 @@ export class TransactionLog {
             description: pending?.description ?? "committed",
             snapshots,
             diffSummary: summary,
-            filesTouched
+            filesTouched,
+            patchRef,
+            patchFormat
         };
         this.store.markTransactionCommitted(id, entry);
         metrics.inc("transactions.commit");

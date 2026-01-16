@@ -51,6 +51,13 @@ export class IndexDatabase implements IndexStore {
         return this.store.listFiles();
     }
 
+    public updateFileMeta(
+        relativePath: string,
+        updates: { lastModified?: number; language?: string | null; contentHash?: string; sizeBytes?: number }
+    ): FileRecord {
+        return this.store.updateFileMeta(relativePath, updates);
+    }
+
     public deleteFile(relativePath: string): void {
         this.store.deleteFile(relativePath);
     }

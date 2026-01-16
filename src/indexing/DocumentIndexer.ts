@@ -12,6 +12,7 @@ import { EmbeddingProviderFactory } from "../embeddings/EmbeddingProviderFactory
 import { applyEmbeddingPrefix } from "../embeddings/EmbeddingText.js";
 import { VectorIndexManager } from "../vector/VectorIndexManager.js";
 import { DocumentContentLoader } from "../documents/DocumentContentLoader.js";
+import { hashContent } from "../utils/hash.js";
 
 const SUPPORTED_DOC_EXTENSIONS = new Set<string>([
     ".md",
@@ -121,7 +122,13 @@ export class DocumentIndexer {
         }
         const contentForChunking = extracted.contentForSearch;
 
-        this.indexDatabase.getOrCreateFile(relativePath, stats.mtime, extracted.kind);
+        const fileHash = hashContent(extracted.profileContent ?? extracted.contentForSearch ?? "");
+        this.indexDatabase.updateFileMeta(relativePath, {
+            lastModified: stats.mtime,
+            language: extracted.kind,
+            contentHash: fileHash,
+            sizeBytes: stats.size
+        });
         const previousChunks = this.chunkRepo.listChunksForFile(relativePath);
         if (previousChunks.length > 0) {
             this.vectorIndexManager?.removeChunks(previousChunks.map(chunk => chunk.id));

@@ -37,6 +37,8 @@ export class ManagePillar {
     const paths = (constraints as any).paths;
     const checkpointLimit = (constraints as any).checkpointLimit;
     const mode = (constraints as any).mode;
+    const targetType = (constraints as any).targetType;
+    const format = (constraints as any).format;
     const configTargets = (constraints as any).targets;
     const root = (constraints as any).root;
     const multiRepo = (constraints as any).multiRepo;
@@ -50,6 +52,8 @@ export class ManagePillar {
         const output = await this.registry.execute('project_manage', {
           command,
           target,
+          targetType,
+          format,
           paths,
           scope,
           detail,
@@ -76,6 +80,8 @@ export class ManagePillar {
         args: {
           command,
           target,
+          targetType,
+          format,
           paths,
           scope,
           detail,

@@ -98,6 +98,8 @@ export interface TransactionLogEntry {
         bytesBefore?: number;
         bytesAfter?: number;
     }>;
+    patchRef?: string;
+    patchFormat?: "unified_diff" | "structured_edits" | "both";
     snapshots: Array<{
         filePath: string;
         originalExists?: boolean;
@@ -115,6 +117,10 @@ export interface IndexStore {
     getOrCreateFile(relativePath: string, lastModified?: number, language?: string | null): FileRecord;
     getFile(relativePath: string): FileRecord | undefined;
     listFiles(): FileRecord[];
+    updateFileMeta(
+        relativePath: string,
+        updates: { lastModified?: number; language?: string | null; contentHash?: string; sizeBytes?: number }
+    ): FileRecord;
     deleteFile(relativePath: string): void;
     deleteFilesByPrefix(prefix: string): void;
 

@@ -43,6 +43,7 @@ import { DocumentChunkRepository } from "../indexing/DocumentChunkRepository.js"
 import { EvidencePackRepository } from "../indexing/EvidencePackRepository.js";
 import { StorageMaintenanceService, type StoragePruneTarget } from "../indexing/StorageMaintenanceService.js";
 import { TransactionLog } from "../engine/TransactionLog.js";
+import { PatchStore } from "../engine/PatchStore.js";
 import { ConfigurationManager } from "../config/ConfigurationManager.js";
 import { RepoRegistry } from "../config/RepoRegistry.js";
 import { PackageAliasMap } from "../config/PackageAliasMap.js";
@@ -342,7 +343,7 @@ export class SmartContextServer {
         const historyEngine = new HistoryEngine(this.rootPath, this.fileSystem);
         this.historyEngine = historyEngine;
         const editorEngine = new EditorEngine(this.rootPath, this.fileSystem, new AstAwareDiff(this.skeletonGenerator));
-        const transactionLog = new TransactionLog(this.indexDatabase);
+        const transactionLog = new TransactionLog(this.indexDatabase, new PatchStore());
 
         this.editCoordinator = new EditCoordinator(editorEngine, historyEngine, {
             rootPath: this.rootPath,

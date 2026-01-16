@@ -16,6 +16,7 @@ import type { ProjectIndex, FileIndexEntry } from './ProjectIndex.js';
 import { UnifiedExtractor } from '../ast/extraction/UnifiedExtractor.js';
 import { DocumentIndexer } from './DocumentIndexer.js';
 import type { IndexingActivity } from './IndexStateManager.js';
+import { hashContent } from '../utils/hash.js';
 
 export interface IncrementalIndexerOptions {
     watch?: boolean;
@@ -379,6 +380,14 @@ export class IncrementalIndexer {
                                         }
                                     };
                                     this.indexManager.updateFileEntry(this.currentIndex, filePath, entry);
+                                    if (this.indexDatabase) {
+                                        const relPath = path.relative(this.rootPath, filePath);
+                                        this.indexDatabase.updateFileMeta(relPath, {
+                                            lastModified: stat.mtime,
+                                            contentHash: hashContent(content),
+                                            sizeBytes: stat.size
+                                        });
+                                    }
                                 }
                             }
                         } finally {
