@@ -78,6 +78,7 @@ import { VectorIndexManager } from "../vector/VectorIndexManager.js";
 import { SymbolEmbeddingIndex } from "../indexing/SymbolEmbeddingIndex.js";
 import { AdaptiveFlowReporter } from "../utils/AdaptiveFlowReporter.js";
 import { AlertDispatcher } from "../utils/AlertDispatcher.js";
+import { AdaptiveLodController } from "../orchestration/adaptive-flow/AdaptiveLodController.js";
 import { MetricsExportService } from "../utils/metrics/MetricsExportService.js";
 import { CacheInvalidationHub } from "./CacheInvalidationHub.js";
 
@@ -388,6 +389,7 @@ export class SmartContextServer {
         this.internalRegistry.setMetadata('impactAnalyzer', this.impactAnalyzer);
         this.internalRegistry.setMetadata('propertyAccessIndex', propertyAccessIndex);
         this.internalRegistry.setMetadata('fileVersionManager', this.fileVersionManager);
+        this.internalRegistry.setMetadata('adaptiveLodController', new AdaptiveLodController());
         
         this.setupHandlers();
         this.initializeModularHandlers();

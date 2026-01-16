@@ -23,6 +23,7 @@ export type UnderstandInput = {
     integrityOptions: ReturnType<typeof IntegrityEngine.resolveOptions>;
     limits: {
         maxTokens?: number;
+        timeoutMs?: number;
     };
     maxTokens?: number;
 };
