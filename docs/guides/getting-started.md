@@ -139,7 +139,7 @@ Some MCP hosts support allow/deny lists for tool names and shell commands. If yo
 - `explore({ query: "entrypoint" })`
 - `explore({ paths: ["README.md"], view: "preview" })`
 - `understand({ goal: "Explain the project architecture" })`
-- `change({ intent: "…", options: { dryRun: true } })`
+- `change({ intent: "Update greeting", targetFiles: ["src/greeting.ts"], edits: [{ targetString: "\"hello\"", replacementString: "\"hi\"" }], options: { dryRun: true } })`
 
 ## Writer's Flow (sessions) quickstart
 

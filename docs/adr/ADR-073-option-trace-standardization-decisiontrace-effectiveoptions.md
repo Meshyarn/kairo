@@ -1,5 +1,7 @@
 # ADR-073 (요약): Option Trace 표준화
 
+**Status:** Implemented (Phase A/B/C)
+
 ## 의도
 
 - pillar별로 들쭉날쭉했던 `effectiveOptions`/`decisionTrace`를 v1 스키마로 통일한다.

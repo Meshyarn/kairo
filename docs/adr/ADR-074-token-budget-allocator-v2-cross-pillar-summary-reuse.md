@@ -1,5 +1,7 @@
 # ADR-074 (요약): Token Budget Allocator v2 + summary reuse
 
+**Status:** Implemented (Phase A/B/C)
+
 ## 의도
 
 - Explore/Understand의 예산 배분을 섹션별 계획(Plan)으로 표준화해 응답 크기/구성을 안정화한다.

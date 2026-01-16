@@ -242,6 +242,23 @@ When `KAIRO_VECTOR_INDEX_REBUILD=manual`, use the CLI `kairo-build-vector-index`
 | `KAIRO_MODULAR_ROLLOUT_PERCENT` | Percentage rollout for the modular flags. | `0-100`; uses rollout user hashing. |
 | `KAIRO_ROLLOUT_USER` | Default user ID for rollout hashing. | Use if the host does not pass a user ID. |
 
+## Adaptive flow rollout (ADR-075)
+
+| Variable | Purpose | Notes |
+|---|---|---|
+| `KAIRO_ROLLOUT_MODE` | Rollout preset (`legacy|shadow|canary|beta|full`). | Primary preset switch. |
+| `KAIRO_ROLLOUT_PHASE` | Alias for `KAIRO_ROLLOUT_MODE`. | Kept for backward compatibility. |
+| `KAIRO_ROLLOUT_CANARY_USERS` | Canary allowlist. | Comma-separated user IDs. |
+| `KAIRO_ROLLOUT_BETA_PERCENT` | Beta rollout percent. | `0-100`. |
+| `KAIRO_ROLLOUT_FORCE` | Force preset application. | Applies even with explicit env overrides. |
+| `KAIRO_ADAPTIVE_FLOW_ENABLED` | Override Adaptive Flow flag. | `on|off|canary|beta|full` (optional payload). |
+| `KAIRO_UCG_ENABLED` | Override UCG flag. | Same format as above. |
+| `KAIRO_TOPOLOGY_SCANNER_ENABLED` | Override topology scanner flag. | Same format as above. |
+| `KAIRO_DUAL_WRITE_VALIDATION` | Toggle dual-write validation. | Same format as above. |
+| `KAIRO_TOPOLOGY_SUCCESS_MIN` | Alert threshold for topology success rate. | Default `0.95`. |
+| `KAIRO_UCG_MEMORY_MAX_MB` | Alert threshold for UCG memory estimate. | Default `500`. |
+| `KAIRO_L3_PROMOTION_RATIO_MAX` | Alert threshold for L3 promotion ratio. | Default `0.5`. |
+
 ## Writer's flow defaults (ADR-051)
 
 | Variable | Purpose | Notes |

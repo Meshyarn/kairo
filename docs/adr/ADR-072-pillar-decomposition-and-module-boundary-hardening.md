@@ -1,5 +1,7 @@
 # ADR-072 (요약): Pillar 분해 & 모듈 경계 강화
 
+**Status:** Implemented (Phase A/B/C)
+
 ## 의도
 
 - pillar 내부를 입력 정규화/계획/수집/결정/포맷/후처리로 분리해 테스트 가능한 경계를 고정한다.
