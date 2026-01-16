@@ -22,7 +22,7 @@ const XXH: any = importedXxhash ? (importedXxhash.default ?? importedXxhash) : n
 
 export class EditHandlers extends BaseHandler {
     constructor(private context: HandlerContext) {
-        super();
+        super(context.toolSpecRegistry);
     }
 
     async handle(name: string, args: any): Promise<any> {
@@ -30,11 +30,7 @@ export class EditHandlers extends BaseHandler {
         const internalTools = new Set(['edit_apply', 'file_edit', 'edit_transaction', 'edit_guidance', 'file_write']);
 
         if (pillarTools.has(name)) {
-            const requiredMap: Record<string, string[]> = {
-                change: ['intent'],
-                write: ['intent']
-            };
-            const missing = this.validateRequiredArgs(name, args, requiredMap);
+            const missing = this.validateRequiredArgs(name, args);
             if (missing.length > 0) {
                 return this.errorResponse("MissingParameter", `Missing required parameter(s): ${missing.join(', ')}`);
             }
@@ -43,14 +39,7 @@ export class EditHandlers extends BaseHandler {
         }
 
         if (internalTools.has(name)) {
-            const requiredMap: Record<string, string[]> = {
-                edit_apply: ['edits'],
-                file_edit: ['filePath', 'edits'],
-                edit_transaction: ['edits'],
-                edit_guidance: ['filePaths'],
-                file_write: ['filePath', 'content']
-            };
-            const missing = this.validateRequiredArgs(name, args, requiredMap);
+            const missing = this.validateRequiredArgs(name, args);
             if (missing.length > 0) {
                 return this.errorResponse("MissingParameter", `Missing required parameter(s): ${missing.join(', ')}`);
             }

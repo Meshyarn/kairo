@@ -29,6 +29,7 @@ import type { RepoRegistry } from "../config/RepoRegistry.js";
 import type { FlowArtifactManager } from "../orchestration/flow-artifact-manager.js";
 import type { MetricsExportService } from "../utils/metrics/MetricsExportService.js";
 import type { CacheInvalidationHub } from "../server/CacheInvalidationHub.js";
+import type { ToolSpecRegistry } from "../server/tools/ToolSpecRegistry.js";
 
 export interface HandlerContext {
     rootPath: string;
@@ -63,6 +64,7 @@ export interface HandlerContext {
     flowArtifactManager: FlowArtifactManager;
     metricsExportService?: MetricsExportService;
     cacheInvalidationHub?: CacheInvalidationHub;
+    toolSpecRegistry: ToolSpecRegistry;
     isTestEnv: () => boolean;
     metadata?: Record<string, unknown>;
 }

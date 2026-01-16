@@ -76,10 +76,10 @@ export async function executeBatchChange(
     if (normalization.edits.length === 0) {
       return {
         success: false,
-        message: `No valid edits provided for ${filePath}. Ensure targetContent/targetString and replacement/template are set.`,
+        message: `No valid edits provided for ${filePath}. Ensure targetContent/targetString and replacement/template are set. Example: { edits: [{ targetString: "old", replacementString: "new" }] }.`,
         invalidEdits: normalization.invalidEdits,
         guidance: {
-          message: `Use read to copy exact text or provide a shorter targetString for ${filePath}.`,
+          message: `Use read to copy exact text or provide a shorter targetString for ${filePath}. Example edits: [{ targetString: "old", replacementString: "new" }].`,
           suggestedActions: [
             {
               id: 'read.view_fragment',

@@ -2,6 +2,7 @@ import { describe, it, expect, jest, beforeEach } from "@jest/globals";
 import { EditHandlers } from "../../handlers/EditHandlers.js";
 import { NodeFileSystem } from "../../platform/FileSystem.js";
 import { PathNormalizer } from "../../utils/PathNormalizer.js";
+import { createDefaultToolSpecRegistry } from "../../server/tools/ToolSpecRegistry.js";
 
 const makeContext = () => {
   const fs = {
@@ -24,7 +25,8 @@ const makeContext = () => {
     indexStateManager: { markDirty: jest.fn(), clearDirty: jest.fn() } as any,
     incrementalIndexer: { enqueuePaths: jest.fn(), notifyDeletion: jest.fn() } as any,
     historyEngine: { pushOperation: jest.fn() } as any,
-    orchestrationEngine: { executePillar: jest.fn() } as any
+    orchestrationEngine: { executePillar: jest.fn() } as any,
+    toolSpecRegistry: createDefaultToolSpecRegistry()
   };
 };
 

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "@jest/globals";
 import { NavigateHandlers } from "../../handlers/NavigateHandlers.js";
 import type { HandlerContext } from "../../handlers/HandlerContext.js";
+import { createDefaultToolSpecRegistry } from "../../server/tools/ToolSpecRegistry.js";
 
 describe("NavigateHandlers", () => {
     it("delegates navigate pillar calls to orchestration engine", async () => {
@@ -11,7 +12,7 @@ describe("NavigateHandlers", () => {
                 return { ok: true };
             }
         } as any;
-        const context = { orchestrationEngine } as HandlerContext;
+        const context = { orchestrationEngine, toolSpecRegistry: createDefaultToolSpecRegistry() } as HandlerContext;
         const handler = new NavigateHandlers(context);
         const result = await handler.handle("navigate", { target: "UserService" });
         expect(calls).toEqual([["navigate", { target: "UserService" }]]);

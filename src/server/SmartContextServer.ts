@@ -434,6 +434,7 @@ export class SmartContextServer {
             flowArtifactManager: this.flowArtifactManager,
             metricsExportService: this.metricsExportService,
             cacheInvalidationHub: this.cacheInvalidationHub,
+            toolSpecRegistry: this.toolSpecRegistry,
             isTestEnv: () => this.isTestEnv()
         });
         this.handlerContext = handlerContext;
@@ -462,12 +463,14 @@ export class SmartContextServer {
     private registerInternalTools(): void {
         this.internalRegistry.register('code_read', (args) => (this.codeHandlers as any).readCodeRaw(args));
         this.internalRegistry.register('project_search', (args) => (this.searchHandlers as any).searchProjectRaw(args));
+        this.internalRegistry.register('symbol_semantic_search', (args) => (this.searchHandlers as any).searchSymbolSemanticRaw(args));
         this.internalRegistry.register('file_search', (args) => (this.searchHandlers as any).searchFilesRaw(args));
         this.internalRegistry.register('file_scout', (args) => (this.searchHandlers as any).scoutFilesRaw(args));
         this.internalRegistry.register('file_list', (args) => (this.codeHandlers as any).listFilesRaw(args));
         this.internalRegistry.register('file_stat', (args) => (this.codeHandlers as any).statFileRaw(args));
         this.internalRegistry.register('relationship_analyze', (args) => (this.codeHandlers as any).analyzeRelationshipRaw(args));
         this.internalRegistry.register('edit_apply', (args) => (this.editHandlers as any).editCodeRaw(args));
+        this.internalRegistry.register('file_edit', (args) => (this.editHandlers as any).editFileRaw(args));
         this.internalRegistry.register('project_manage', (args) => (this.manageHandlers as any).manageProjectRaw(args));
         this.internalRegistry.register('file_profile', (args) => (this.codeHandlers as any).readFileProfileRaw(args));
         this.internalRegistry.register('file_write', (args) => (this.editHandlers as any).executeWriteFile(args));
@@ -913,18 +916,22 @@ export class SmartContextServer {
                     }
                 }
                 const useModularHandlers = FeatureFlags.isEnabled(FeatureFlags.MODULAR_HANDLERS_ENABLED, rolloutContext);
+                let result: any | null = null;
                 if (useModularHandlers) {
-                    const result = await this.handlerRegistry.handle(name, normalized.args);
-                    if (result !== null) {
-                        return this.attachContractMeta(result, toolSpec, mode, normalized);
+                    const handlerResult = await this.handlerRegistry.handle(name, normalized.args);
+                    if (handlerResult !== null) {
+                        result = this.attachContractMeta(handlerResult, toolSpec, mode, normalized);
                     }
                 } else {
                     const legacyResult = await this.handleCallToolLegacy(name, normalized.args);
                     if (legacyResult !== null) {
-                        return this.attachContractMeta(legacyResult, toolSpec, mode, normalized);
+                        result = this.attachContractMeta(legacyResult, toolSpec, mode, normalized);
                     }
                 }
-
+                if (result !== null) {
+                    this.ensureResponseHasIsError(result);
+                    return result;
+                }
                 throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
             } catch (error: any) {
                 if (error instanceof McpError) {
@@ -950,13 +957,37 @@ export class SmartContextServer {
     }
 
     private wrapLegacyResult(result: any): any {
+        let response: any;
         if (result && typeof result === 'object' && Array.isArray(result.content)) {
-            return result;
+            response = result;
+        } else if (typeof result === 'string') {
+            response = this.textResponse(result);
+        } else {
+            response = this.jsonResponse(result);
         }
-        if (typeof result === 'string') {
-            return this.textResponse(result);
+        const derivedError = this.deriveLegacyIsError(result);
+        if (typeof derivedError === "boolean" && response && typeof response === "object") {
+            if (response.isError === undefined) {
+                response.isError = derivedError;
+            }
         }
-        return this.jsonResponse(result);
+        return response;
+    }
+
+    private deriveLegacyIsError(result: any): boolean | undefined {
+        if (!result || typeof result !== "object") {
+            return undefined;
+        }
+        if (typeof result.isError === "boolean") {
+            return result.isError;
+        }
+        if (typeof result.success === "boolean") {
+            return !result.success;
+        }
+        if (typeof result.errorCode === "string") {
+            return true;
+        }
+        return undefined;
     }
 
     private attachContractMeta(
@@ -997,6 +1028,34 @@ export class SmartContextServer {
             }
         }
         return this.jsonResponse(payload);
+    }
+
+    private ensureResponseHasIsError(response: any): void {
+        if (!response || typeof response !== "object") return;
+        if (typeof response.isError === "boolean") return;
+        if (typeof response.success === "boolean") {
+            response.isError = response.success === false;
+            return;
+        }
+        const text = response.content?.[0]?.text;
+        if (typeof text !== "string") return;
+        try {
+            const payload = JSON.parse(text);
+            if (!payload || typeof payload !== "object") return;
+            if (typeof payload.isError === "boolean") {
+                response.isError = payload.isError;
+                return;
+            }
+            if (typeof payload.success === "boolean") {
+                response.isError = payload.success === false;
+                return;
+            }
+            if (typeof payload.errorCode === "string") {
+                response.isError = true;
+            }
+        } catch {
+            // ignore parsing errors
+        }
     }
 
     private isPillarTool(name: string): boolean {

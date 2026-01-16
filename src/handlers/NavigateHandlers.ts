@@ -3,14 +3,14 @@ import { HandlerContext } from "./HandlerContext.js";
 
 export class NavigateHandlers extends BaseHandler {
     constructor(private context: HandlerContext) {
-        super();
+        super(context.toolSpecRegistry);
     }
 
     async handle(name: string, args: any): Promise<any> {
         const pillarTools = new Set(['navigate']);
 
         if (pillarTools.has(name)) {
-            const missing = this.validateRequiredArgs(name, args, { navigate: ['target'] });
+            const missing = this.validateRequiredArgs(name, args);
             if (missing.length > 0) {
                 return this.errorResponse("MissingParameter", `Missing required parameter(s): ${missing.join(', ')}`);
             }

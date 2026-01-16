@@ -3,6 +3,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { ManageHandlers } from "../../handlers/ManageHandlers.js";
+import { createDefaultToolSpecRegistry } from "../../server/tools/ToolSpecRegistry.js";
 
 const makeTempDir = () => {
     return fs.mkdtempSync(path.join(os.tmpdir(), "kairo-config-"));
@@ -10,6 +11,7 @@ const makeTempDir = () => {
 
 const makeContext = (rootPath: string) => ({
     rootPath,
+    toolSpecRegistry: createDefaultToolSpecRegistry(),
     isTestEnv: () => true
 });
 

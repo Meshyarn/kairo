@@ -58,6 +58,20 @@ export function normalizeArgs(toolSpec: ToolSpec, rawArgs: any, mode: ToolSchema
     });
   }
 
+  const valueAliases = toolSpec.compat?.valueAliases ?? [];
+  for (const alias of valueAliases) {
+    const value = getPathValue(args, alias.path);
+    if (value === undefined) continue;
+    if (value !== alias.from) continue;
+    setPathValue(args, alias.path, alias.to);
+    findings.push({
+      severity: alias.policy === "error" ? "critical" : "warning",
+      code: alias.policy === "deprecate" ? "DEPRECATED_FIELD_USED" : "SCHEMA_ALIAS_USED",
+      message: alias.message,
+      details: { path: alias.path, from: alias.from, to: alias.to }
+    });
+  }
+
   const coercions = toolSpec.compat?.coercions ?? [];
   for (const coercion of coercions) {
     const value = getPathValue(args, coercion.path);

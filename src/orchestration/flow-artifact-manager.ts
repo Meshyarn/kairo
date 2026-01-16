@@ -266,6 +266,44 @@ export class FlowArtifactManager {
         return { deletedFiles, fixedIndexEntries, removedSessions };
     }
 
+    async planPrunePersisted(options: { removeOrphans?: boolean } = {}): Promise<{ deletedFiles: number; fixedIndexEntries: number; removedSessions: number }> {
+        const removeOrphans = options.removeOrphans !== false;
+        const index = await this.readIndex();
+        if (!index) {
+            return { deletedFiles: 0, fixedIndexEntries: 0, removedSessions: 0 };
+        }
+
+        let fixedIndexEntries = 0;
+        let deletedFiles = 0;
+        let removedSessions = 0;
+
+        const artifactEntries = Object.entries(index.artifacts ?? {});
+        for (const [id, entry] of artifactEntries) {
+            const absPath = entry.path
+                ? this.toAbsolutePersistPath(entry.path)
+                : await this.resolvePersistPath(id as ArtifactId, entry.type);
+            if (!await this.fileSystem.exists(absPath)) {
+                fixedIndexEntries += 1;
+            }
+        }
+
+        const sessionEntries = Object.entries(index.sessions ?? {});
+        for (const [sessionId, entry] of sessionEntries) {
+            if (!entry?.path) continue;
+            const absPath = this.toAbsolutePersistPath(entry.path);
+            if (!await this.fileSystem.exists(absPath)) {
+                removedSessions += 1;
+            }
+        }
+
+        if (removeOrphans) {
+            deletedFiles += await this.countOrphanedArtifacts(index);
+            deletedFiles += await this.countOrphanedSessions(index);
+        }
+
+        return { deletedFiles, fixedIndexEntries, removedSessions };
+    }
+
     status(): ArtifactManagerStatus {
         const artifacts = Array.from(this.cache.values());
         return {
@@ -449,6 +487,25 @@ export class FlowArtifactManager {
         return deleted;
     }
 
+    private async countOrphanedArtifacts(index: FlowArtifactIndex): Promise<number> {
+        let count = 0;
+        const entries = await this.safeReadDirEntries(this.persistPath);
+        for (const entry of entries) {
+            if (!entry.isDirectory) continue;
+            if (entry.name === "sessions") continue;
+            const dirPath = path.join(this.persistPath, entry.name);
+            const files = await this.safeReadDirEntries(dirPath);
+            for (const file of files) {
+                if (!file.isFile || !file.name.endsWith(".json")) continue;
+                const artifactId = file.name.replace(/\.json$/, "");
+                if (!index.artifacts[artifactId]) {
+                    count += 1;
+                }
+            }
+        }
+        return count;
+    }
+
     private async removeOrphanedSessions(): Promise<number> {
         let deleted = 0;
         const sessionDir = path.join(this.persistPath, "sessions");
@@ -465,6 +522,20 @@ export class FlowArtifactManager {
             }
         }
         return deleted;
+    }
+
+    private async countOrphanedSessions(index: FlowArtifactIndex): Promise<number> {
+        let count = 0;
+        const sessionDir = path.join(this.persistPath, "sessions");
+        const entries = await this.safeReadDirEntries(sessionDir);
+        for (const entry of entries) {
+            if (!entry.isFile || !entry.name.endsWith(".json")) continue;
+            const sessionId = entry.name.replace(/\.json$/, "");
+            if (!index.sessions[sessionId]) {
+                count += 1;
+            }
+        }
+        return count;
     }
 
     private async safeReadDirEntries(dirPath: string): Promise<Array<{ name: string; isFile: boolean; isDirectory: boolean }>> {

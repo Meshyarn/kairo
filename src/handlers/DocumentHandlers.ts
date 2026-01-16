@@ -13,7 +13,7 @@ export class DocumentHandlers extends BaseHandler {
     private readonly contentLoader: DocumentContentLoader;
 
     constructor(private context: HandlerContext) {
-        super();
+        super(context.toolSpecRegistry);
         this.contentLoader = new DocumentContentLoader(context.rootPath, context.fileSystem);
     }
 
@@ -21,15 +21,7 @@ export class DocumentHandlers extends BaseHandler {
         const tools = new Set(['document_references', 'document_search', 'document_toc', 'document_skeleton', 'document_analyze', 'document_section']);
         if (!tools.has(name)) return null;
 
-        const requiredMap: Record<string, string[]> = {
-            document_references: ['filePath'],
-            document_search: ['query'],
-            document_toc: ['filePath'],
-            document_skeleton: ['filePath'],
-            document_analyze: ['filePath'],
-            document_section: ['filePath']
-        };
-        const missing = this.validateRequiredArgs(name, args, requiredMap);
+        const missing = this.validateRequiredArgs(name, args);
         if (missing.length > 0) {
             return this.errorResponse("MissingParameter", `Missing required parameter(s): ${missing.join(', ')}`);
         }

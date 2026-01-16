@@ -523,10 +523,10 @@ export class ChangePillar {
         if (edits.length === 0) {
           return attachWorkflow({
             success: false,
-            message: 'No valid edits provided. Ensure targetContent/targetString and replacement/template are set.',
+            message: 'No valid edits provided. Ensure targetContent/targetString and replacement/template are set. Example: { edits: [{ targetString: "old", replacementString: "new" }] }.',
             invalidEdits: normalization.invalidEdits,
             guidance: {
-              message: 'Use read to copy exact text or provide a shorter targetString.',
+              message: 'Use read to copy exact text or provide a shorter targetString. Example edits: [{ targetString: "old", replacementString: "new" }].',
               suggestedActions: [
                 {
                   id: 'read.view_fragment',

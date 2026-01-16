@@ -5,13 +5,14 @@ import { CodeHandlers } from "../../handlers/CodeHandlers.js";
 import { EditHandlers } from "../../handlers/EditHandlers.js";
 import { DocumentHandlers } from "../../handlers/DocumentHandlers.js";
 import { ManageHandlers } from "../../handlers/ManageHandlers.js";
+import { createDefaultToolSpecRegistry } from "../../server/tools/ToolSpecRegistry.js";
 
 describe("Core Handlers", () => {
     it("handles file_search using the search engine", async () => {
         const searchEngine = {
             scout: async () => [{ filePath: "src/app.ts", preview: "hit", score: 1 }]
         } as any;
-        const context = { searchEngine } as HandlerContext;
+        const context = { searchEngine, toolSpecRegistry: createDefaultToolSpecRegistry() } as HandlerContext;
         const handler = new SearchHandlers(context);
 
         const result = await handler.handle("file_search", { query: "hit" });
@@ -32,7 +33,7 @@ describe("Core Handlers", () => {
             normalize: (value: string) => value,
             toAbsolute: (value: string) => value
         };
-        const context = { fileSystem, pathNormalizer } as HandlerContext;
+        const context = { fileSystem, pathNormalizer, toolSpecRegistry: createDefaultToolSpecRegistry() } as HandlerContext;
         const handler = new CodeHandlers(context);
 
         const result = await handler.handle("file_stat", { path: "src/app.ts" });
@@ -59,7 +60,14 @@ describe("Core Handlers", () => {
             normalize: (value: string) => value,
             toAbsolute: (value: string) => `/abs/${value}`
         };
-        const context = { fileSystem, fileVersionManager, pathNormalizer, indexStateManager, incrementalIndexer } as HandlerContext;
+        const context = {
+            fileSystem,
+            fileVersionManager,
+            pathNormalizer,
+            indexStateManager,
+            incrementalIndexer,
+            toolSpecRegistry: createDefaultToolSpecRegistry()
+        } as HandlerContext;
         const handler = new EditHandlers(context);
 
         const result = await handler.handle("file_write", { filePath: "notes.txt", content: "hello" });
@@ -73,7 +81,7 @@ describe("Core Handlers", () => {
         const documentSearchEngine = {
             search: async () => ({ results: [{ id: "doc-1" }] })
         } as any;
-        const context = { documentSearchEngine } as HandlerContext;
+        const context = { documentSearchEngine, toolSpecRegistry: createDefaultToolSpecRegistry() } as HandlerContext;
         const handler = new DocumentHandlers(context);
 
         const result = await handler.handle("document_search", { query: "hello" });
@@ -82,7 +90,7 @@ describe("Core Handlers", () => {
     });
 
     it("handles project_manage metrics", async () => {
-        const context = {} as HandlerContext;
+        const context = { toolSpecRegistry: createDefaultToolSpecRegistry() } as HandlerContext;
         const handler = new ManageHandlers(context);
 
         const result = await handler.handle("project_manage", { command: "metrics" });

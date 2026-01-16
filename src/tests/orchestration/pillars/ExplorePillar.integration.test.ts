@@ -7,6 +7,13 @@ import { SmartContextServer } from '../../../index.js';
 const runTool = async (server: SmartContextServer, toolName: string, args: any) => {
   const response = await (server as any).handleCallTool(toolName, args);
   expect(response).toBeDefined();
+
+  if (response.content?.[0]?.text) {
+      try {
+          return JSON.parse(response.content[0].text);
+      } catch {}
+  }
+
   if (response.isError) {
       return response;
   }

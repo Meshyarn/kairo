@@ -9,7 +9,7 @@ export class CodeHandlers extends BaseHandler {
     private readonly deps: CodeHandlerDeps;
 
     constructor(private context: HandlerContext) {
-        super();
+        super(context.toolSpecRegistry);
         this.deps = createCodeHandlerDeps(context);
     }
 
@@ -18,7 +18,7 @@ export class CodeHandlers extends BaseHandler {
         const internalTools = new Set(['code_read', 'file_read', 'file_fragment_read', 'relationship_analyze', 'interface_reconstruct', 'file_analyze', 'file_list', 'file_stat', 'reference_find']);
 
         if (pillarTools.has(name)) {
-            const missing = this.validateRequiredArgs(name, args, { understand: ['goal'] });
+            const missing = this.validateRequiredArgs(name, args);
             if (missing.length > 0) {
                 return this.errorResponse("MissingParameter", `Missing required parameter(s): ${missing.join(', ')}`);
             }
@@ -27,18 +27,7 @@ export class CodeHandlers extends BaseHandler {
         }
 
         if (internalTools.has(name)) {
-            const requiredMap: Record<string, string[]> = {
-                code_read: ['filePath'],
-                file_read: ['filePath'],
-                file_fragment_read: ['filePath'],
-                relationship_analyze: ['target', 'mode'],
-                interface_reconstruct: ['symbolName'],
-                file_analyze: ['filePath'],
-                file_list: [],
-                file_stat: ['path'],
-                reference_find: ['symbolName']
-            };
-            const missing = this.validateRequiredArgs(name, args, requiredMap);
+            const missing = this.validateRequiredArgs(name, args);
             if (missing.length > 0) {
                 return this.errorResponse("MissingParameter", `Missing required parameter(s): ${missing.join(', ')}`);
             }

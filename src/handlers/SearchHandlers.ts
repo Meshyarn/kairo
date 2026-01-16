@@ -9,15 +9,15 @@ import { metrics } from "../utils/MetricsCollector.js";
 
 export class SearchHandlers extends BaseHandler {
     constructor(private context: HandlerContext) {
-        super();
+        super(context.toolSpecRegistry);
     }
 
     async handle(name: string, args: any): Promise<any> {
         const pillarTools = new Set(['explore']);
-        const internalTools = new Set(['project_search', 'file_search', 'file_scout']);
+        const internalTools = new Set(['project_search', 'file_search', 'file_scout', 'symbol_semantic_search']);
 
         if (pillarTools.has(name)) {
-            const missing = this.validateRequiredArgs(name, args, { explore: [] });
+            const missing = this.validateRequiredArgs(name, args);
             if (missing.length > 0) {
                 return this.errorResponse("MissingParameter", `Missing required parameter(s): ${missing.join(', ')}`);
             }
@@ -26,12 +26,7 @@ export class SearchHandlers extends BaseHandler {
         }
 
         if (internalTools.has(name)) {
-            const requiredMap: Record<string, string[]> = {
-                project_search: ['query'],
-                file_search: [],
-                file_scout: []
-            };
-            const missing = this.validateRequiredArgs(name, args, requiredMap);
+            const missing = this.validateRequiredArgs(name, args);
             if (missing.length > 0) {
                 return this.errorResponse("MissingParameter", `Missing required parameter(s): ${missing.join(', ')}`);
             }
@@ -43,6 +38,8 @@ export class SearchHandlers extends BaseHandler {
                     return this.jsonResponse(await this.searchFilesRaw(args));
                 case 'file_scout':
                     return this.jsonResponse(await this.scoutFilesRaw(args));
+                case 'symbol_semantic_search':
+                    return this.jsonResponse(await this.searchSymbolSemanticRaw(args));
                 default:
                     break;
             }
@@ -243,6 +240,91 @@ export class SearchHandlers extends BaseHandler {
             inferredType,
             degraded: (usage?.degraded ?? false) || degradedReasons.length > 0,
             budget: budget ? { ...budget, used: usage } : undefined,
+            degradedReasons: buildDegradedReasons(degradedReasons)
+        };
+    }
+
+    private async searchSymbolSemanticRaw(args: any) {
+        const query = args?.query ?? args?.text ?? args?.keywords?.join?.(" ");
+        if (!query) {
+            throw new Error("Missing required parameter: query");
+        }
+        const maxResults = typeof args?.maxResults === "number"
+            ? args.maxResults
+            : (typeof args?.limit === "number" ? args.limit : 20);
+        const minSimilarity = typeof args?.minSimilarity === "number" ? args.minSimilarity : undefined;
+        const rawSymbolTypes = Array.isArray(args?.symbolTypes) ? args.symbolTypes.filter(Boolean) : [];
+        const filteredSymbolTypes = rawSymbolTypes.filter((entry: string) => entry !== "any");
+        const symbolTypes = filteredSymbolTypes.length > 0 ? filteredSymbolTypes : undefined;
+        const degradedReasons: string[] = [];
+
+        const semanticEnabled = (process.env.KAIRO_SYMBOL_SEMANTIC_SEARCH_ENABLED ?? "false").toLowerCase() === "true";
+        const semanticMode = (process.env.KAIRO_SYMBOL_SEMANTIC_SEARCH_MODE ?? "manual").toLowerCase();
+        if (!semanticEnabled || semanticMode === "off") {
+            degradedReasons.push("symbol_semantic_search_disabled");
+        } else if (!this.context.symbolEmbeddingIndex) {
+            degradedReasons.push("embedding_provider_disabled");
+        } else {
+            const status = this.context.symbolEmbeddingIndex.getStatus();
+            if (!status.lastBuildAt) {
+                degradedReasons.push("symbol_embeddings_not_built");
+            } else {
+                metrics.inc("symbol_search.semantic.count");
+                const stopTimer = metrics.startTimer("symbol_search.semantic_ms");
+                const semantic = await this.context.symbolEmbeddingIndex.searchSymbolsWithDiagnostics(String(query), {
+                    topK: maxResults,
+                    minSimilarity,
+                    symbolTypes
+                });
+                stopTimer();
+                if (semantic.degraded && semantic.reason) {
+                    degradedReasons.push(semantic.reason);
+                    metrics.inc("symbol_search.semantic.degraded.count");
+                    metrics.inc(`symbol_search.semantic.degraded_reason.${semantic.reason}`);
+                }
+                const results = semantic.results.slice(0, maxResults).map(match => ({
+                    type: "symbol",
+                    path: match.symbol.filePath,
+                    score: match.relevanceScore,
+                    context: `${match.symbol.type} ${match.symbol.name}`,
+                    line: match.symbol.lineRange?.start,
+                    symbol: match.symbol,
+                    semantic: {
+                        similarity: match.similarity,
+                        relevanceScore: match.relevanceScore,
+                        modelKey: status.symbolModelKey,
+                        backend: semantic.backend
+                    }
+                }));
+                const normalizedResults = results
+                    .map((item) => {
+                        if (!item?.path || typeof item.path !== "string") return null;
+                        try {
+                            const repoInfo = resolveRepoInfo(item.path, this.context.repoRegistry, this.context.pathNormalizer);
+                            return {
+                                ...item,
+                                path: repoInfo.workspacePath,
+                                repoId: repoInfo.repoId,
+                                repoRelativePath: repoInfo.repoRelativePath
+                            };
+                        } catch {
+                            return null;
+                        }
+                    })
+                    .filter(Boolean) as any[];
+                return {
+                    query: String(query),
+                    results: normalizedResults,
+                    degraded: degradedReasons.length > 0,
+                    degradedReasons: buildDegradedReasons(degradedReasons)
+                };
+            }
+        }
+
+        return {
+            query: String(query),
+            results: [],
+            degraded: degradedReasons.length > 0,
             degradedReasons: buildDegradedReasons(degradedReasons)
         };
     }

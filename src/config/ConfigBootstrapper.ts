@@ -1224,7 +1224,8 @@ export class ConfigBootstrapper {
             return hint.includes(".kairo/contracts") || hint.includes("contracts");
         }
         if (scope === "parity") {
-            return hint.includes("query") || hint.includes("WASM") || hint.includes("language");
+            const normalized = hint.toLowerCase();
+            return normalized.includes("query") || normalized.includes("wasm") || normalized.includes("validator");
         }
         return true;
     }

@@ -361,12 +361,15 @@ export class StorageMaintenanceService {
             return { prunedInMemory: 0 };
         }
         if (mode === "plan") {
-            warnings.push({
-                severity: "info",
-                code: "flow_artifacts_plan_unsupported",
-                message: "Flow artifact pruning is applied directly; plan mode reports are approximate."
+            const planned = await this.flowArtifactManager.planPrunePersisted({
+                removeOrphans: options.flowArtifacts?.removeOrphans !== false
             });
-            return { prunedInMemory: 0 };
+            return {
+                prunedInMemory: 0,
+                deletedFiles: planned.deletedFiles,
+                fixedIndexEntries: planned.fixedIndexEntries,
+                removedSessions: planned.removedSessions
+            };
         }
         const prunedInMemory = this.flowArtifactManager.prune();
         const persisted = await this.flowArtifactManager.prunePersisted({

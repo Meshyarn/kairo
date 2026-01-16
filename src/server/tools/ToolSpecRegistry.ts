@@ -24,6 +24,15 @@ export type ToolSpec = {
       since?: ToolSchemaVersion;
       removeAfter?: ToolSchemaVersion;
     }>;
+    valueAliases?: Array<{
+      path: string;
+      from: string;
+      to: string;
+      policy: "warn" | "deprecate" | "error";
+      message: string;
+      since?: ToolSchemaVersion;
+      removeAfter?: ToolSchemaVersion;
+    }>;
     coercions?: Array<{
       path: string;
       from: "string";
@@ -71,6 +80,18 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
         },
         required: ["filePath"],
         additionalProperties: DEFAULT_ADDITIONAL_PROPERTIES
+      },
+      compat: {
+        valueAliases: [
+          {
+            path: "view",
+            from: "raw",
+            to: "full",
+            policy: "deprecate",
+            message: "Use view=full instead of view=raw.",
+            since: SCHEMA_VERSION
+          }
+        ]
       }
     },
     {
@@ -97,6 +118,26 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
           repoIds: { type: "array", items: { type: "string" } },
           maxResults: { type: "number" },
           limit: { type: "number" }
+        },
+        required: ["query"],
+        additionalProperties: DEFAULT_ADDITIONAL_PROPERTIES
+      }
+    },
+    {
+      name: "symbol_semantic_search",
+      description: "Semantic search over code symbols (opt-in).",
+      schemaVersion: SCHEMA_VERSION,
+      visibility: "internal",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string" },
+          maxResults: { type: "number" },
+          minSimilarity: { type: "number" },
+          symbolTypes: {
+            type: "array",
+            items: { type: "string", enum: ["class", "function", "method", "interface", "type", "any"] }
+          }
         },
         required: ["query"],
         additionalProperties: DEFAULT_ADDITIONAL_PROPERTIES
@@ -305,6 +346,22 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
       }
     },
     {
+      name: "file_edit",
+      description: "Apply structured edits to a single file.",
+      schemaVersion: SCHEMA_VERSION,
+      visibility: "internal",
+      inputSchema: {
+        type: "object",
+        properties: {
+          filePath: { type: "string" },
+          edits: { type: "array", items: { type: "object" } },
+          dryRun: { type: "boolean" }
+        },
+        required: ["filePath", "edits"],
+        additionalProperties: DEFAULT_ADDITIONAL_PROPERTIES
+      }
+    },
+    {
       name: "edit_guidance",
       description: "Suggests batch edit groupings and companion changes.",
       schemaVersion: SCHEMA_VERSION,
@@ -356,6 +413,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
               "import"
             ]
           },
+          detail: { type: "string", enum: ["summary", "full"] },
           target: { type: "string" },
           action: { type: "string", enum: ["tail", "query", "stats"] },
           limit: { type: "number" },
@@ -926,6 +984,16 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
             since: SCHEMA_VERSION
           }
         ],
+        valueAliases: [
+          {
+            path: "view",
+            from: "raw",
+            to: "full",
+            policy: "deprecate",
+            message: "Use view=full instead of view=raw.",
+            since: SCHEMA_VERSION
+          }
+        ],
         coercions: [
           {
             path: "limits.maxTokens",
@@ -1272,6 +1340,31 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
           }
         },
         required: ["command"],
+        additionalProperties: DEFAULT_ADDITIONAL_PROPERTIES
+      }
+    },
+    {
+      name: "navigate",
+      description: "Find relevant files, symbols, or docs for a target.",
+      schemaVersion: SCHEMA_VERSION,
+      visibility: "internal",
+      inputSchema: {
+        type: "object",
+        properties: {
+          target: { type: "string" },
+          limit: { type: "number" },
+          context: { type: "string", enum: ["all", "definitions", "usages", "tests", "docs"] },
+          include: {
+            type: "object",
+            properties: {
+              hotSpots: { type: "boolean" },
+              pageRank: { type: "boolean" },
+              relatedSymbols: { type: "boolean" }
+            }
+          },
+          trace: { type: "boolean" }
+        },
+        required: ["target"],
         additionalProperties: DEFAULT_ADDITIONAL_PROPERTIES
       }
     }

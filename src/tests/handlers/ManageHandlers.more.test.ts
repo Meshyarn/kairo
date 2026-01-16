@@ -2,6 +2,7 @@ import { describe, it, expect, jest } from "@jest/globals";
 import { ManageHandlers } from "../../handlers/ManageHandlers.js";
 import { MemoryFileSystem } from "../../platform/FileSystem.js";
 import { FeatureFlags } from "../../config/FeatureFlags.js";
+import { createDefaultToolSpecRegistry } from "../../server/tools/ToolSpecRegistry.js";
 
 const makeContext = () => {
     return {
@@ -49,6 +50,7 @@ const makeContext = () => {
             normalize: (value: string) => value,
             toAbsolute: (value: string) => `/abs/${value}`
         },
+        toolSpecRegistry: createDefaultToolSpecRegistry(),
         isTestEnv: () => true
     };
 };

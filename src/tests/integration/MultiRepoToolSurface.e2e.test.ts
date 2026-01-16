@@ -7,6 +7,16 @@ import { SmartContextServer } from '../../index.js';
 const runJsonTool = async (server: SmartContextServer, toolName: string, args: any) => {
   const response = await (server as any).handleCallTool(toolName, args);
   expect(response).toBeDefined();
+
+  // Try parsing JSON first, even if isError is true, as structured errors are common
+  if (response.content?.[0]?.text) {
+      try {
+          return JSON.parse(response.content[0].text);
+      } catch {
+          // Fall through if not JSON
+      }
+  }
+
   if (response.isError) {
     throw new Error(response.content?.[0]?.text ?? "Tool error");
   }

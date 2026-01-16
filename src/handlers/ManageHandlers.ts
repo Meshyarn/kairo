@@ -21,7 +21,7 @@ export class ManageHandlers extends BaseHandler {
     private reindexLastResult?: { success: boolean; output: string; startedAt: string; finishedAt?: string };
 
     constructor(private context: HandlerContext) {
-        super();
+        super(context.toolSpecRegistry);
     }
 
     async handle(name: string, args: any): Promise<any> {
@@ -29,7 +29,7 @@ export class ManageHandlers extends BaseHandler {
         const internalTools = new Set(['project_manage']);
 
         if (pillarTools.has(name)) {
-            const missing = this.validateRequiredArgs(name, args, { manage: ['command'] });
+            const missing = this.validateRequiredArgs(name, args);
             if (missing.length > 0) {
                 return this.errorResponse("MissingParameter", `Missing required parameter(s): ${missing.join(', ')}`);
             }
@@ -38,7 +38,7 @@ export class ManageHandlers extends BaseHandler {
         }
 
         if (internalTools.has(name)) {
-            const missing = this.validateRequiredArgs(name, args, { project_manage: ['command'] });
+            const missing = this.validateRequiredArgs(name, args);
             if (missing.length > 0) {
                 return this.errorResponse("MissingParameter", `Missing required parameter(s): ${missing.join(', ')}`);
             }
@@ -338,6 +338,8 @@ export class ManageHandlers extends BaseHandler {
                         scope: args?.scope,
                         root: args?.root
                     });
+                    const detail = args?.detail === "full" ? "full" : "summary";
+                    const capabilityDetail = detail === "full" || args?.scope === "capabilities" ? "full" : "summary";
                     let fileCount: number | undefined;
                     const dependencyGraph = this.context.dependencyGraph;
                     if (dependencyGraph?.getIndexStatus) {
@@ -356,12 +358,12 @@ export class ManageHandlers extends BaseHandler {
                         || args?.scope === "parity";
                     const capabilityDiagnostics = includeCapabilities
                         ? EngineManager.getDiagnosticsSnapshot({
-                            detail: args?.detail === "full" ? "full" : "summary",
+                            detail: capabilityDetail,
                             rootPath: this.context.rootPath
                         })
                         : undefined;
                     const capabilityHints = includeCapabilities && capabilityDiagnostics
-                        ? this.buildCapabilityHints(capabilityDiagnostics)
+                        ? this.buildCapabilityHints(capabilityDiagnostics, { detail: capabilityDetail })
                         : undefined;
                     const overridePolicy = ConfigurationManager.getOverridePolicy();
                     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
@@ -394,7 +396,10 @@ export class ManageHandlers extends BaseHandler {
                         overrideAudit: {
                             lastEventAt: auditStats.lastEventAt,
                             totalEvents: auditStats.total,
-                            acceptedLast24h: recentAccepted.length
+                            acceptedLast24h: recentAccepted.length,
+                            ...(overridePolicy.enabled
+                                ? {}
+                                : { note: "Override policy is disabled; audit events are historical only." })
                         },
                         ...(indexSnapshot ? { indexSnapshot } : {}),
                         ...(staleGuidance ? { staleGuidance } : {}),
@@ -543,16 +548,21 @@ export class ManageHandlers extends BaseHandler {
             case 'history':
                 {
                     const history = await this.context.historyEngine.getHistory();
+                    const detail = args?.detail === "full" ? "full" : "summary";
                     const log = this.context.editCoordinator.getTransactionLog();
                     const pending = log ? log.getPendingTransactions() : [];
+                    const sanitized = this.sanitizeHistoryStacks(history, { includeExternal: detail === "full" });
                     return {
                         success: true,
                         output: "History retrieved.",
                         history: {
-                            undo: history.undoStack,
-                            redo: history.redoStack,
+                            undo: sanitized.undoStack,
+                            redo: sanitized.redoStack,
                             pendingTransactions: pending
-                        }
+                        },
+                        ...(sanitized.hiddenCount > 0
+                            ? { historyMeta: { externalPathsHidden: sanitized.hiddenCount, detail } }
+                            : {})
                     };
                 }
             case 'test':
@@ -727,8 +737,18 @@ export class ManageHandlers extends BaseHandler {
         }
     }
 
-    private buildCapabilityHints(snapshot: ReturnType<typeof EngineManager.getDiagnosticsSnapshot>): string[] {
+    private buildCapabilityHints(
+        snapshot: ReturnType<typeof EngineManager.getDiagnosticsSnapshot>,
+        options?: { detail?: "summary" | "full" }
+    ): string[] {
         const hints: string[] = [];
+        const actionHints: Record<string, string> = {
+            CAP_CHUNKING_TOKENS: "Enable Rust chunking (KAIRO_RUST_CORE_ENABLED/KAIRO_RUST_CHUNKING_ENABLED) or WASM chunking (KAIRO_WASM_CHUNKING_ENABLED).",
+            CAP_DIFF_UNIFIED: "Enable Rust diffing (KAIRO_RUST_CORE_ENABLED/KAIRO_RUST_DIFF_ENABLED) or rely on JS diffing (default).",
+            CAP_SYNTAX_VALIDATE: "Enable Rust syntax (KAIRO_RUST_CORE_ENABLED/KAIRO_RUST_SYNTAX_ENABLED) or ensure tree-sitter WASM assets are available.",
+            CAP_VECTOR_COSINE_BATCH: "Enable Rust vector math (KAIRO_RUST_CORE_ENABLED/KAIRO_RUST_VECTOR_ENABLED) or rely on JS vector math (default).",
+            CAP_TEXT_STATS: "Ensure JsTextStatsProvider is registered (default)."
+        };
         if (!snapshot.rustCore.available && snapshot.rustCore.error) {
             hints.push(`Rust core unavailable: ${snapshot.rustCore.error}`);
         }
@@ -736,7 +756,79 @@ export class ManageHandlers extends BaseHandler {
         if (tokenizer?.missingReason) {
             hints.push(tokenizer.missingReason);
         }
-        return hints;
+        if (snapshot.coverage?.missing?.length) {
+            for (const capabilityId of snapshot.coverage.missing) {
+                const action = actionHints[capabilityId];
+                hints.push(
+                    action
+                        ? `Capability ${capabilityId} has no registered providers. ${action}`
+                        : `Capability ${capabilityId} has no registered providers.`
+                );
+            }
+        }
+        if (options?.detail === "full") {
+            for (const status of Object.values(snapshot.capabilities ?? {})) {
+                if (!status.candidates || status.candidates.length === 0) continue;
+                const available = status.candidates.some(candidate => candidate.available);
+                if (available) continue;
+                const reasons = status.candidates
+                    .map(candidate => candidate.reason)
+                    .filter((reason): reason is string => typeof reason === "string" && reason.length > 0);
+                const reasonText = reasons.length > 0 ? ` Reasons: ${Array.from(new Set(reasons)).join("; ")}.` : "";
+                const action = actionHints[status.capabilityId];
+                hints.push(
+                    action
+                        ? `Capability ${status.capabilityId} has no available providers.${reasonText} ${action}`
+                        : `Capability ${status.capabilityId} has no available providers.${reasonText}`
+                );
+            }
+        }
+        return Array.from(new Set(hints));
+    }
+
+    private sanitizeHistoryStacks(
+        history: { undoStack: any[]; redoStack: any[] },
+        options: { includeExternal: boolean }
+    ): { undoStack: any[]; redoStack: any[]; hiddenCount: number } {
+        const pathNormalizer = this.context.pathNormalizer;
+        if (options.includeExternal || typeof pathNormalizer?.isWithinRoot !== "function") {
+            return { undoStack: history.undoStack, redoStack: history.redoStack, hiddenCount: 0 };
+        }
+        const mask = (op: any): { op: any; hidden: number } => {
+            if (typeof op?.filePath === "string" && !pathNormalizer.isWithinRoot(op.filePath)) {
+                return { op: { ...op, filePath: "<external>" }, hidden: 1 };
+            }
+            return { op, hidden: 0 };
+        };
+        const sanitizeItem = (item: any): { item: any; hidden: number } => {
+            if (Array.isArray(item?.operations)) {
+                let hidden = 0;
+                const operations = item.operations.map((op: any) => {
+                    const masked = mask(op);
+                    hidden += masked.hidden;
+                    return masked.op;
+                });
+                return { item: { ...item, operations }, hidden };
+            }
+            const masked = mask(item);
+            return { item: masked.op, hidden: masked.hidden };
+        };
+        const sanitizeStack = (stack: any[]) => {
+            let hiddenCount = 0;
+            const items = stack.map((entry) => {
+                const sanitized = sanitizeItem(entry);
+                hiddenCount += sanitized.hidden;
+                return sanitized.item;
+            });
+            return { items, hiddenCount };
+        };
+        const undo = sanitizeStack(Array.isArray(history.undoStack) ? history.undoStack : []);
+        const redo = sanitizeStack(Array.isArray(history.redoStack) ? history.redoStack : []);
+        return {
+            undoStack: undo.items,
+            redoStack: redo.items,
+            hiddenCount: undo.hiddenCount + redo.hiddenCount
+        };
     }
 
     private recordIndexMetrics(snapshot: { epoch: number; dirtyFileCount: number; coverageRatio: number; staleRisk: "low" | "medium" | "high" }): void {
@@ -839,7 +931,14 @@ export class ManageHandlers extends BaseHandler {
             findings.push({
                 code: "EMBEDDINGS_REMOTE_ENABLED",
                 severity: "warning",
-                message: "Remote embeddings downloads are enabled; offline baseline is not guaranteed."
+                message: "Remote embeddings downloads are enabled; offline baseline is not guaranteed (level=none)."
+            });
+        }
+        if (!diagnostics.remoteDownloadsAllowed && diagnostics.offlineBaselineLevel === "A-core") {
+            findings.push({
+                code: "EMBEDDINGS_OFFLINE_BASELINE_CORE",
+                severity: "info",
+                message: "Offline baseline is core-only; add a local model to reach embeddings-ready (see docs/guides/getting-started.md)."
             });
         }
         const modelId = diagnostics.modelId;

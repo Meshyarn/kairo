@@ -5,6 +5,7 @@ import { MemoryFileSystem } from "../../platform/FileSystem.js";
 import { PathNormalizer } from "../../utils/PathNormalizer.js";
 import type { DocumentProfile } from "../../types.js";
 import type { HandlerContext } from "../../handlers/HandlerContext.js";
+import { createDefaultToolSpecRegistry } from "../../server/tools/ToolSpecRegistry.js";
 
 const buildOutline = (filePath: string, kind: DocumentProfile["kind"]): DocumentProfile["outline"] => [
     {
@@ -61,7 +62,8 @@ const buildContext = (rootPath: string, fileSystem: MemoryFileSystem): HandlerCo
         rootPath,
         fileSystem: fileSystem as any,
         documentProfiler: documentProfiler as any,
-        pathNormalizer: new PathNormalizer(rootPath)
+        pathNormalizer: new PathNormalizer(rootPath),
+        toolSpecRegistry: createDefaultToolSpecRegistry()
     } as HandlerContext;
 };
 
