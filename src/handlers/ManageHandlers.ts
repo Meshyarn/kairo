@@ -1062,12 +1062,27 @@ export class ManageHandlers extends BaseHandler {
                 }
             case 'sessions':
                 {
-                    const limit = typeof args?.limit === "number" ? args.limit : (args?.artifactOptions?.limit ?? 10);
-                    const sessions = this.context.flowArtifactManager.listSessions(limit);
+                    const options = args?.artifactOptions ?? {};
+                    const limit = typeof args?.limit === "number" ? args.limit : (options?.limit ?? 10);
+                    const statusFilter = typeof options?.status === "string" ? options.status : undefined;
+                    const sort = options?.sort === "updated" ? "updated" : "recent";
+                    let sessions = this.context.flowArtifactManager.listSessions(limit * 2);
+                    if (statusFilter) {
+                        sessions = sessions.filter((session) => session.status === statusFilter);
+                    }
+                    sessions = sessions
+                        .sort((a, b) => {
+                            const aTime = a.updatedAt ?? a.startedAt;
+                            const bTime = b.updatedAt ?? b.startedAt;
+                            return sort === "updated" ? bTime - aTime : bTime - aTime;
+                        })
+                        .slice(0, limit);
+                    const summary = this.buildWorkflowSummary();
                     return {
                         success: true,
                         output: "Sessions listed.",
-                        sessions
+                        sessions,
+                        ...(summary.recommendedActions ? { recommendedActions: summary.recommendedActions } : {})
                     };
                 }
             case 'session':
@@ -1122,7 +1137,8 @@ export class ManageHandlers extends BaseHandler {
                 {
                     const options = args?.artifactOptions ?? {};
                     const limit = typeof options.limit === "number" ? options.limit : 10;
-                    let artifacts = this.context.flowArtifactManager.getRecent(limit);
+                    const sort = options?.sort === "expiring" ? "expiring" : "recent";
+                    let artifacts = this.context.flowArtifactManager.getRecent(limit * 2);
                     if (options.type) {
                         artifacts = artifacts.filter((artifact) => artifact.type === options.type);
                     }
@@ -1133,10 +1149,16 @@ export class ManageHandlers extends BaseHandler {
                         const now = Date.now();
                         artifacts = artifacts.filter((artifact) => !artifact.expiresAt || artifact.expiresAt > now);
                     }
+                    if (sort === "expiring") {
+                        artifacts = artifacts.sort((a, b) => (a.expiresAt ?? Infinity) - (b.expiresAt ?? Infinity));
+                    }
+                    artifacts = artifacts.slice(0, limit);
+                    const summary = this.buildWorkflowSummary();
                     return {
                         success: true,
                         output: "Artifacts listed.",
-                        artifacts
+                        artifacts,
+                        ...(summary.recommendedActions ? { recommendedActions: summary.recommendedActions } : {})
                     };
                 }
             case 'artifact':

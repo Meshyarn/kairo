@@ -1426,7 +1426,7 @@ export class ChangePillar {
       return reviewOptions;
     }
     const defaults = hasSession
-      ? { preApply: true, postApply: false, strictness: "balanced", blockOn: ["syntax", "guardrails", "vibe"] }
+      ? { preApply: true, postApply: false, strictness: "balanced", blockOn: ["syntax", "guardrails"] }
       : { preApply: true, postApply: false, strictness: "permissive", blockOn: ["syntax"] };
     const hasBlockOn = Array.isArray(reviewOptions?.blockOn);
     return {
