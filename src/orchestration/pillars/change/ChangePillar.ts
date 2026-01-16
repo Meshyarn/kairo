@@ -425,6 +425,42 @@ export class ChangePillar {
         const batchFileVersions = dryRun
           ? await this.buildFileVersionsSnapshot(targetFiles, fileVersionManager, pathNormalizer)
           : expectedFileVersions;
+        if (!dryRun && batchFileVersions && fileVersionManager && pathNormalizer) {
+          const mismatch = await this.detectFileVersionMismatch(batchFileVersions, fileVersionManager, pathNormalizer);
+          if (mismatch) {
+            const degradedReasons = buildDegradedReasons(["file_version_mismatch"], { filePath: mismatch.filePath });
+            return attachWorkflow({
+              success: false,
+              status: "blocked",
+              message: "File version mismatch detected. Re-read the file(s) before retrying the change.",
+              errorCode: "FILE_VERSION_MISMATCH",
+              blockedReason: "file_version_mismatch",
+              degradedReasons,
+              guidance: {
+                message: "One or more files changed since planning. Re-read and re-plan before applying.",
+                suggestedActions: [
+                  {
+                    id: "read.view_full",
+                    priority: 1,
+                    description: "Re-read the latest file content.",
+                    rationale: "Refresh context before reapplying changes.",
+                    tags: ["repair_ladder", "attempt_1"],
+                    toolCall: { tool: "read", args: { action: "view_full", target: mismatch.filePath } }
+                  },
+                  {
+                    id: "change.plan",
+                    priority: 2,
+                    description: "Re-plan the change using the latest content.",
+                    rationale: "Ensure edits are based on the current file state.",
+                    tags: ["repair_ladder", "attempt_2"],
+                    toolCall: { tool: "change", args: { action: "plan", intent: originalIntent, target: mismatch.filePath } }
+                  }
+                ]
+              },
+              sessionId: resolvedSessionId
+            });
+          }
+        }
         const result = await executeBatchChange(
           { intent, context, rawEdits, targetFiles, dryRun, includeImpact, dependencyGraph, indexStateManager, constraints, diffMode, fileVersions: batchFileVersions },
           (ctx, tool, args) => this.runTool(ctx, tool, args),
@@ -818,6 +854,43 @@ export class ChangePillar {
         : Promise.resolve(null);
 
       const fileVersions = !dryRun ? expectedFileVersions : undefined;
+      if (!dryRun && fileVersions && fileVersionManager && pathNormalizer) {
+        const mismatch = await this.detectFileVersionMismatch(fileVersions, fileVersionManager, pathNormalizer);
+        if (mismatch) {
+          const degradedReasons = buildDegradedReasons(["file_version_mismatch"], { filePath: mismatch.filePath });
+          return attachWorkflow({
+            success: false,
+            status: "blocked",
+            message: "File version mismatch detected. Re-read the file before retrying the change.",
+            targetFile: mismatch.filePath,
+            errorCode: "FILE_VERSION_MISMATCH",
+            blockedReason: "file_version_mismatch",
+            degradedReasons,
+            guidance: {
+              message: "The file changed since it was read. Re-read and re-plan before applying.",
+              suggestedActions: [
+                {
+                  id: "read.view_full",
+                  priority: 1,
+                  description: "Re-read the latest file content.",
+                  rationale: "Refresh context before reapplying changes.",
+                  tags: ["repair_ladder", "attempt_1"],
+                  toolCall: { tool: "read", args: { action: "view_full", target: mismatch.filePath } }
+                },
+                {
+                  id: "change.plan",
+                  priority: 2,
+                  description: "Re-plan the change using the latest content.",
+                  rationale: "Ensure edits are based on the current file state.",
+                  tags: ["repair_ladder", "attempt_2"],
+                  toolCall: { tool: "change", args: { action: "plan", intent: originalIntent, target: mismatch.filePath } }
+                }
+              ]
+            },
+            sessionId: resolvedSessionId
+          });
+        }
+      }
       const stopEdit = metrics.startTimer("change.edit_coordinator_ms");
       let editResult: any;
       try {
@@ -1367,6 +1440,29 @@ export class ChangePillar {
       }
     }
     return Object.keys(snapshot).length > 0 ? snapshot : undefined;
+  }
+
+  private async detectFileVersionMismatch(
+    fileVersions: Record<string, { expectedVersion?: number; expectedHash?: string }>,
+    fileVersionManager: FileVersionManager,
+    pathNormalizer: PathNormalizer
+  ): Promise<{ filePath: string } | null> {
+    for (const [relPath, expected] of Object.entries(fileVersions)) {
+      if (!expected) continue;
+      try {
+        const absPath = pathNormalizer.toAbsolute(pathNormalizer.normalize(relPath));
+        const current = await fileVersionManager.getVersion(absPath);
+        if (typeof expected.expectedHash === "string" && expected.expectedHash.length > 0 && expected.expectedHash !== current.contentHash) {
+          return { filePath: relPath };
+        }
+        if (typeof expected.expectedVersion === "number" && expected.expectedVersion !== current.version) {
+          return { filePath: relPath };
+        }
+      } catch {
+        return { filePath: relPath };
+      }
+    }
+    return null;
   }
 
   private extractTargetFromEdits(edits: any[]): string | undefined {

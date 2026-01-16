@@ -132,39 +132,114 @@ export class ManageHandlers extends BaseHandler {
                 mismatchedFiles: 0
             };
         }
+        const workspaceScopeId = `workspace:${createHash("sha1").update(this.context.rootPath).digest("hex").slice(0, 8)}`;
+        type ScopeStat = {
+            scopeId: string;
+            root: string;
+            kind: "workspaceRoot" | "repoRoot";
+            repoId?: string;
+            checkedFiles: number;
+            mismatchedFiles: number;
+            mismatchedPaths: string[];
+        };
+        const scopeStats = new Map<string, ScopeStat>();
+
+        const getScope = (absPath: string) => {
+            const repo = this.context.repoRegistry?.findRepoByPath?.(absPath);
+            if (repo) {
+                const scopeId = `repo:${repo.id}`;
+                const existing = scopeStats.get(scopeId);
+                if (existing) return existing;
+                const created: ScopeStat = {
+                    scopeId,
+                    root: repo.path,
+                    kind: "repoRoot" as const,
+                    repoId: repo.id,
+                    checkedFiles: 0,
+                    mismatchedFiles: 0,
+                    mismatchedPaths: []
+                };
+                scopeStats.set(scopeId, created);
+                return created;
+            }
+            const existing = scopeStats.get(workspaceScopeId);
+            if (existing) return existing;
+            const created: ScopeStat = {
+                scopeId: workspaceScopeId,
+                root: this.context.rootPath,
+                kind: "workspaceRoot" as const,
+                checkedFiles: 0,
+                mismatchedFiles: 0,
+                mismatchedPaths: []
+            };
+            scopeStats.set(workspaceScopeId, created);
+            return created;
+        };
+
         let checked = 0;
         let mismatched = 0;
         for (const record of records) {
             if (checked >= maxFiles) break;
             const absPath = this.resolveAbsolutePath(record.path);
+            const scope = getScope(absPath);
+            let isMismatched = false;
             try {
                 const stat = await this.context.fileSystem.stat(absPath);
                 if (stat.mtime > (record.last_modified ?? 0)) {
-                    mismatched += 1;
+                    isMismatched = true;
                 }
             } catch {
-                mismatched += 1;
+                isMismatched = true;
             }
+            scope.checkedFiles += 1;
             checked += 1;
+            if (isMismatched) {
+                scope.mismatchedFiles += 1;
+                mismatched += 1;
+                if (scope.mismatchedPaths.length < 20) {
+                    scope.mismatchedPaths.push(record.path);
+                }
+            }
         }
+
         metrics.gauge("drift.checked_files", checked);
         metrics.gauge("drift.mismatched_files", mismatched);
         metrics.inc(mismatched > 0 ? "drift.detected" : "drift.clean");
+
+        const scopes = Array.from(scopeStats.values()).map(entry => {
+            const drift = entry.checkedFiles === 0 ? "unknown" : (entry.mismatchedFiles > 0 ? "detected" : "clean");
+            return {
+                scopeId: entry.scopeId,
+                root: entry.root,
+                kind: entry.kind,
+                ...(entry.repoId ? { repoId: entry.repoId } : {}),
+                drift,
+                signals: entry.mismatchedFiles > 0 ? ["mtime_changed"] : [],
+                affectedPathsCount: entry.mismatchedFiles,
+                indexStaleRatio: entry.checkedFiles > 0 ? entry.mismatchedFiles / entry.checkedFiles : undefined,
+                ...(entry.mismatchedPaths.length > 0 ? { samplePaths: entry.mismatchedPaths } : {}),
+                scopeConfidence: entry.checkedFiles > 0 ? "low" : "unknown"
+            };
+        }).sort((a, b) => (b.affectedPathsCount ?? 0) - (a.affectedPathsCount ?? 0));
+
         const workspaceDrift = checked === 0 ? "unknown" : (mismatched > 0 ? "detected" : "clean");
-        const scopeId = `workspace:${createHash("sha1").update(this.context.rootPath).digest("hex").slice(0, 8)}`;
-        const scopes = [{
-            scopeId,
-            root: this.context.rootPath,
-            kind: "workspaceRoot",
-            drift: workspaceDrift,
-            signals: mismatched > 0 ? ["mtime_changed"] : [],
-            affectedPathsCount: mismatched,
-            indexStaleRatio: checked > 0 ? mismatched / checked : undefined,
-            scopeConfidence: checked > 0 ? "low" : "unknown"
-        }];
-        const repairActions = mismatched > 0 ? [
-            { tool: "project_manage", args: { command: "reindex", scope: "project" } }
-        ] : [];
+        const targetPaths = scopes.flatMap(scope => (scope as any).samplePaths ?? []).slice(0, 50);
+        const repairActions = mismatched > 0
+            ? [
+                ...(targetPaths.length > 0
+                    ? [{
+                        tool: "manage",
+                        args: { command: "reindex", paths: targetPaths },
+                        tags: ["repair_ladder", "attempt_2"]
+                    }]
+                    : []),
+                {
+                    tool: "manage",
+                    args: { command: "reindex" },
+                    tags: ["repair_ladder", "attempt_3"]
+                }
+            ]
+            : [];
         return {
             workspaceDrift,
             scopes,
@@ -555,6 +630,39 @@ export class ManageHandlers extends BaseHandler {
                         this.context.dependencyGraph.setLoggingEnabled(false);
                     }
                     try {
+                        const paths: string[] = Array.isArray(args?.paths)
+                            ? (args.paths as unknown[])
+                                .map((value: unknown) => String(value).trim())
+                                .filter(Boolean)
+                            : [];
+                        if (paths.length > 0) {
+                            if (!this.context.incrementalIndexer) {
+                                return {
+                                    success: false,
+                                    output: "Incremental indexer is unavailable; use full reindex instead.",
+                                    suggestedActions: [
+                                        {
+                                            id: "manage.reindex.full",
+                                            priority: 1,
+                                            description: "Run a full reindex.",
+                                            rationale: "Incremental indexing is not available in this runtime.",
+                                            toolCall: { tool: "manage", args: { command: "reindex" } },
+                                            tags: ["repair_ladder", "attempt_3"]
+                                        }
+                                    ]
+                                };
+                            }
+                            const absPaths = paths.map((entry: string) => this.resolveAbsolutePath(entry));
+                            const enqueued = this.context.incrementalIndexer.enqueuePaths(absPaths, "high");
+                            this.context.cacheInvalidationHub?.onEvent({ type: "reindex_start" });
+                            return {
+                                success: true,
+                                output: "Reindex enqueued (paths).",
+                                scope: "paths",
+                                enqueued,
+                                paths
+                            };
+                        }
                         if (this.reindexInProgress) {
                             return { success: false, output: "Reindex already in progress." };
                         }

@@ -415,9 +415,11 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
           },
           detail: { type: "string", enum: ["summary", "full"] },
           target: { type: "string" },
+          paths: { type: "array", items: { type: "string" } },
           action: { type: "string", enum: ["tail", "query", "stats"] },
           limit: { type: "number" },
           since: { type: "string" },
+          checkpointLimit: { type: "number" },
           filter: {
             type: "object",
             properties: {
