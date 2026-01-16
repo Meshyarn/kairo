@@ -39,6 +39,7 @@ export async function fetchCallGraph(args: {
     contextPath: filePath,
     mode: "calls",
     direction: "both",
-    maxDepth: depth === "deep" ? 3 : 1
+    maxDepth: depth === "deep" ? 3 : 1,
+    semanticSymbols: depth === "deep"
   }, progress);
 }

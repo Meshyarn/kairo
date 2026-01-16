@@ -5,6 +5,7 @@ import { SymbolVectorRepository, type CodeSymbol, type SymbolWithSimilarity } fr
 import type { EmbeddingRepository } from "./EmbeddingRepository.js";
 import type { DefinitionSymbol, SymbolInfo } from "../types.js";
 import path from "path";
+import { metrics } from "../utils/MetricsCollector.js";
 
 /**
  * Configuration for SymbolEmbeddingIndex
@@ -71,6 +72,7 @@ export class SymbolEmbeddingIndex {
     private indexedSymbolCount: number = 0;
     private lastBuildAt?: number;
     private lastBuildDegradedReasons: string[] = [];
+    private readonly fileMtimeCache = new Map<string, number>();
 
     constructor(
         private readonly symbolIndex: SymbolIndex,
@@ -134,6 +136,8 @@ export class SymbolEmbeddingIndex {
 
     async buildIndex(): Promise<{ indexedSymbols: number; removed: number; durationMs: number }> {
         const startedAt = Date.now();
+        const stopTimer = metrics.startTimer("symbol_index.build_ms");
+        metrics.inc("symbol_index.build.count");
         const cleared = await this.clearIndex();
         await this.indexAllSymbols();
         const vectorConfig = this.vectorIndexManager.getConfig();
@@ -143,6 +147,8 @@ export class SymbolEmbeddingIndex {
                 this.config.symbolModelKey
             );
         }
+        stopTimer();
+        metrics.gauge("symbol_index.indexed_symbols", this.indexedSymbolCount);
         return {
             indexedSymbols: this.indexedSymbolCount,
             removed: cleared.removed,
@@ -150,16 +156,31 @@ export class SymbolEmbeddingIndex {
         };
     }
 
-    async indexSymbolsForFile(filePath: string): Promise<{ indexedSymbols: number; removed: number; durationMs: number }> {
+    async indexSymbolsForFile(
+        filePath: string,
+        options: { mtime?: number; force?: boolean } = {}
+    ): Promise<{ indexedSymbols: number; removed: number; durationMs: number }> {
         if (!this.config.enabled) {
             return { indexedSymbols: 0, removed: 0, durationMs: 0 };
         }
         const startedAt = Date.now();
         const relativePath = this.toRelativePath(filePath);
+        if (!options.force && typeof options.mtime === "number") {
+            const cachedMtime = this.fileMtimeCache.get(relativePath);
+            if (cachedMtime === options.mtime) {
+                metrics.inc("symbol_index.incremental.skip.count");
+                return { indexedSymbols: 0, removed: 0, durationMs: Date.now() - startedAt };
+            }
+        }
+        metrics.inc("symbol_index.incremental.count");
         const removed = await this.clearSymbolsForFile(relativePath);
         const symbols = await this.symbolIndex.getSymbolsForFile(filePath);
         const filtered = this.normalizeSymbolsForFile(relativePath, symbols);
         await this.batchIndex(filtered);
+        if (typeof options.mtime === "number") {
+            this.fileMtimeCache.set(relativePath, options.mtime);
+        }
+        metrics.observe("symbol_index.incremental_ms", Date.now() - startedAt);
         return {
             indexedSymbols: filtered.length,
             removed,
@@ -169,6 +190,7 @@ export class SymbolEmbeddingIndex {
 
     async clearSymbolsForFile(filePath: string): Promise<number> {
         const relativePath = this.toRelativePath(filePath);
+        this.fileMtimeCache.delete(relativePath);
         return this.symbolVectorRepo.clearSymbolsForFile(relativePath);
     }
 
@@ -277,6 +299,7 @@ export class SymbolEmbeddingIndex {
         const result = await this.symbolVectorRepo.clearIndex();
         this.indexedSymbolCount = 0;
         this.lastBuildAt = undefined;
+        this.fileMtimeCache.clear();
         return result;
     }
 

@@ -205,7 +205,8 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
           direction: { type: "string", enum: ["upstream", "downstream", "both"] },
           contextPath: { type: "string" },
           maxDepth: { type: "number" },
-          fromLine: { type: "number" }
+          fromLine: { type: "number" },
+          semanticSymbols: { type: "boolean" }
         },
         required: ["target", "mode"],
         additionalProperties: DEFAULT_ADDITIONAL_PROPERTIES

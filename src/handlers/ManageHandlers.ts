@@ -214,6 +214,7 @@ export class ManageHandlers extends BaseHandler {
                             rootPath: this.context.rootPath
                         });
                         const rolloutStatus = this.buildRolloutStatus(status?.global?.totalFiles);
+                        const symbolIndexStatus = this.buildSymbolIndexStatus();
 
                         if (includePerFile) {
                             return {
@@ -225,6 +226,7 @@ export class ManageHandlers extends BaseHandler {
                                 embeddingFindings,
                                 capabilityDiagnostics,
                                 indexSnapshot,
+                                symbolIndex: symbolIndexStatus,
                                 rollout: rolloutStatus,
                                 activity: {
                                     reindexInProgress: this.reindexInProgress,
@@ -253,6 +255,7 @@ export class ManageHandlers extends BaseHandler {
                             embeddingFindings,
                             capabilityDiagnostics,
                             indexSnapshot,
+                            symbolIndex: symbolIndexStatus,
                             rollout: rolloutStatus,
                             activity: {
                                 reindexInProgress: this.reindexInProgress,

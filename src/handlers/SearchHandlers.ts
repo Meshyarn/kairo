@@ -5,6 +5,7 @@ import { ErrorEnhancer } from "../errors/ErrorEnhancer.js";
 import * as path from "path";
 import { normalizeRepoScope, resolveRepoInfo, isRepoIdInScope } from "../utils/RepoScope.js";
 import { buildDegradedReasons } from "../orchestration/DegradedReasonMapper.js";
+import { metrics } from "../utils/MetricsCollector.js";
 
 export class SearchHandlers extends BaseHandler {
     constructor(private context: HandlerContext) {
@@ -83,6 +84,7 @@ export class SearchHandlers extends BaseHandler {
             results = await this.context.searchEngine.searchFilenames(query, { maxResults });
         } else if (inferredType === 'symbol') {
             if (semanticSymbols) {
+                metrics.inc("symbol_search.semantic.count");
                 const semanticEnabled = (process.env.KAIRO_SYMBOL_SEMANTIC_SEARCH_ENABLED ?? "false").toLowerCase() === "true";
                 const semanticMode = (process.env.KAIRO_SYMBOL_SEMANTIC_SEARCH_MODE ?? "manual").toLowerCase();
                 if (!semanticEnabled || semanticMode === "off") {
@@ -94,11 +96,15 @@ export class SearchHandlers extends BaseHandler {
                     if (!status.lastBuildAt) {
                         degradedReasons.push("symbol_embeddings_not_built");
                     } else {
+                        const stopTimer = metrics.startTimer("symbol_search.semantic_ms");
                         const semantic = await this.context.symbolEmbeddingIndex.searchSymbolsWithDiagnostics(query, {
                             topK: maxResults
                         });
+                        stopTimer();
                         if (semantic.degraded && semantic.reason) {
                             degradedReasons.push(semantic.reason);
+                            metrics.inc("symbol_search.semantic.degraded.count");
+                            metrics.inc(`symbol_search.semantic.degraded_reason.${semantic.reason}`);
                         }
                         if (semantic.results.length > 0) {
                             results = semantic.results.slice(0, maxResults).map(match => ({
@@ -116,6 +122,7 @@ export class SearchHandlers extends BaseHandler {
                             }));
                         } else {
                             degradedReasons.push("symbol_search_fallback_name");
+                            metrics.inc("symbol_search.semantic.fallback_name.count");
                         }
                     }
                 }

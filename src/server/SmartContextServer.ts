@@ -269,9 +269,14 @@ export class SmartContextServer {
                 onFileIndexed: (filePath) => {
                     this.indexStateManager.clearDirty(toRelative(filePath));
                     if (this.symbolEmbeddingIndex?.isReadyForIncremental()) {
-                        void this.symbolEmbeddingIndex.indexSymbolsForFile(filePath).catch((error) => {
-                            console.warn("[SmartContextServer] Symbol incremental index failed:", error);
-                        });
+                        void (async () => {
+                            try {
+                                const stat = await this.fileSystem.stat(filePath).catch(() => undefined);
+                                await this.symbolEmbeddingIndex!.indexSymbolsForFile(filePath, { mtime: stat?.mtime });
+                            } catch (error) {
+                                console.warn("[SmartContextServer] Symbol incremental index failed:", error);
+                            }
+                        })();
                     }
                 },
                 onFileRemoved: (filePath) => {
