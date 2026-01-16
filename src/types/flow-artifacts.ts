@@ -137,7 +137,25 @@ export interface StylePack {
     createdAt: number;
     expiresAt?: number;
     localOverrides?: Array<{ glob: string; profile: Partial<VibeProfile>; reason?: string }>;
+    references?: StylePackReference[];
+    configDetections?: StylePackConfigDetection[];
+    confidence?: number;
+    exceptions?: Array<{ glob: string; reason?: string }>;
 }
+
+export type StylePackReference = {
+    filePath: string;
+    lineStart?: number;
+    lineEnd?: number;
+    reason?: string;
+};
+
+export type StylePackConfigDetection = {
+    kind: string;
+    path: string;
+    scope: "serviceRoot" | "repoRoot" | "workspaceRoot";
+    details?: Record<string, unknown>;
+};
 
 export type DraftPackId = string;
 

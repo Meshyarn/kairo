@@ -88,6 +88,10 @@ export class FlowArtifactManager {
         return Array.from(this.cache.values()).filter((artifact) => artifact.type === type) as T[];
     }
 
+    listArtifacts(): FlowArtifact[] {
+        return Array.from(this.cache.values());
+    }
+
     getRecent(limit: number = 10): FlowArtifact[] {
         return Array.from(this.cache.values())
             .sort((a, b) => b.createdAt - a.createdAt)

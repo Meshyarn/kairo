@@ -560,8 +560,14 @@ export class ChangePillar {
         if (edits.length === 0) {
           return attachWorkflow({
             success: false,
+            errorCode: "SCHEMA_VALIDATION_FAILED",
             message: 'No valid edits provided. Ensure targetContent/targetString and replacement/template are set. Example: { edits: [{ targetString: "old", replacementString: "new" }] }.',
             invalidEdits: normalization.invalidEdits,
+            schemaCoaching: this.buildSchemaCoaching({
+              errorCode: "SCHEMA_VALIDATION_FAILED",
+              targetPath,
+              intent: originalIntent
+            }),
             guidance: {
               message: 'Use read to copy exact text or provide a shorter targetString. Example edits: [{ targetString: "old", replacementString: "new" }].',
               suggestedActions: [
@@ -1376,6 +1382,38 @@ export class ChangePillar {
       if (p) paths.add(p);
     }
     return Array.from(paths);
+  }
+
+  private buildSchemaCoaching(args: { errorCode: string; targetPath?: string; intent?: string }) {
+    return {
+      errorCode: args.errorCode,
+      retryable: true,
+      nextAttemptHints: [
+        "Provide edits with targetString and replacementString.",
+        "Use read to capture exact target text before retry."
+      ],
+      requiredFields: ["edits[].targetString", "edits[].replacementString"],
+      unknownFields: [],
+      editsTemplate: {
+        edits: [
+          {
+            targetString: "<exact text>",
+            replacementString: "<replacement>"
+          }
+        ]
+      },
+      schemaExample: {
+        edits: [
+          {
+            targetString: "old",
+            replacementString: "new"
+          }
+        ]
+      },
+      helpUrl: "docs/guides/getting-started.md",
+      targetPath: args.targetPath,
+      intent: args.intent
+    };
   }
 
   private shouldUseBatch(constraints: any, targetFiles: string[], editPaths: string[]): boolean {
