@@ -217,7 +217,11 @@ Project/session state utilities.
 
 - `manage({ command: "status" })`는 `rollout` 필드로 preset/userIdHash/flag mode + adaptive flow gate 요약을 함께 반환한다.
 - `manage({ command: "status" })`는 `symbolIndex` 필드로 심볼 시맨틱 검색 인덱스 상태(활성/빌드 시각/degraded)를 함께 반환한다.
+- `manage({ command: "status" })`는 `drift` 필드로 workspace 드리프트 상태 요약을 함께 반환한다.
 - `manage({ command: "doctor" })`도 `rollout` 필드로 동일한 운영 진단 정보를 반환한다.
+- `manage({ command: "history" })`는 최근 커밋된 트랜잭션 체크포인트 요약(`checkpoints`)을 함께 반환한다.
+- `manage({ command: "reindex", paths: [...] })`는 지정한 파일들의 국소 재인덱싱을 시도한다(가능한 런타임에서만).
+- `manage({ command: "export", targetType: "transaction", target: "<txId>" })`는 patch export를 반환한다.
 
 **Parameters**
 
@@ -226,6 +230,8 @@ Project/session state utilities.
 | `command` | `"status" \| "undo" \| "redo" \| "reindex" \| "rebuild" \| "history" \| "test" \| "sessions" \| "session" \| "session_complete" \| "session_update" \| "artifacts" \| "artifact" \| "discard" \| "prune" \| "export" \| "import"` | ✓ | `rebuild` maps to `reindex`. |
 | `scope` | `"file" \| "transaction" \| "project" \| "config" \| "languages" \| "wasm" \| "host" \| "contracts" \| "parity" \| "capabilities"` |  | Used by `test`/`doctor`. |
 | `target` | `string` |  | Mainly used by `test`. |
+| `targetType` | `"artifact" \| "transaction" \| "patchRef"` |  | `export` 대상 유형. |
+| `format` | `"unified_diff" \| "structured_edits" \| "both"` |  | `export` 결과 형식. |
 | `limit` | `number` |  | Max items for list commands (sessions). |
 | `detail` | `"summary" \| "full"` |  | Detail level for `status`/`doctor`. |
 | `trace` | `boolean` |  | Return v1 `effectiveOptions` + v1 `decisionTrace`. |

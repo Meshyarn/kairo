@@ -134,6 +134,17 @@ Prefer a read-first workflow:
 
 Some MCP hosts support allow/deny lists for tool names and shell commands. If yours does, start with read-only and expand gradually.
 
+## Mixed-workflow resilience (ADR-077)
+
+Kairo assumes external edits can happen at any time. When drift is detected, follow the repair ladder:
+
+1) Re-read the target file (`read`/`explore` view=full) and retry in dry-run.
+2) Reindex only the changed paths when possible (`manage({ command: "reindex", paths: [...] })`).
+3) Reindex the project (`manage({ command: "reindex" })`) if drift persists.
+4) If still blocked, narrow the scope and provide explicit edits (targetString/replacementString).
+
+Use `manage({ command: "status" })` to check `drift`, and `manage({ command: "history" })` to see recent checkpoints.
+
 ## First calls
 
 - `explore({ query: "entrypoint" })`
