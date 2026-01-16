@@ -161,6 +161,32 @@ const PARITY_REASON_MAP: Record<string, {
   file_version_mismatch: {
     type: "degraded",
     message: "File version mismatch detected; re-read the file before retrying."
+  },
+  symbol_semantic_search_disabled: {
+    type: "degraded",
+    message: "Symbol semantic search is disabled."
+  },
+  symbol_embeddings_not_built: {
+    type: "degraded",
+    message: "Symbol embeddings are not built; run a build to enable semantic symbol search.",
+    actionToolCall: { tool: "project_manage", args: { command: "symbol_index_build" } },
+    actionId: "project_manage.symbol_index_build"
+  },
+  embedding_provider_disabled: {
+    type: "degraded",
+    message: "Embedding provider is disabled or hash-only; semantic symbol search is unavailable."
+  },
+  vector_index_disabled: {
+    type: "degraded",
+    message: "Vector index is disabled; semantic symbol search is unavailable."
+  },
+  vector_index_unavailable: {
+    type: "degraded",
+    message: "Vector index is unavailable; rebuild the vector index."
+  },
+  symbol_search_fallback_name: {
+    type: "degraded",
+    message: "Semantic symbol search returned no results; fell back to name search."
   }
 };
 

@@ -14,6 +14,7 @@ import { buildCatalogCoverage } from "../utils/MetricsCatalog.js";
 import { PathManager } from "../utils/PathManager.js";
 import { FeatureFlags } from "../config/FeatureFlags.js";
 import { computeAdaptiveFlowGate, resolveRolloutPresetFromEnv } from "../orchestration/adaptive-flow/AdaptiveFlowGate.js";
+import { buildDegradedReasons } from "../orchestration/DegradedReasonMapper.js";
 
 export class ManageHandlers extends BaseHandler {
     private reindexInProgress = false;
@@ -119,6 +120,34 @@ export class ManageHandlers extends BaseHandler {
         };
     }
 
+    private resolveSymbolSemanticSearchFlags(): { enabled: boolean; mode: "off" | "manual" } {
+        const enabled = (process.env.KAIRO_SYMBOL_SEMANTIC_SEARCH_ENABLED ?? "false").toLowerCase() === "true";
+        const modeRaw = (process.env.KAIRO_SYMBOL_SEMANTIC_SEARCH_MODE ?? "manual").toLowerCase();
+        const mode = modeRaw === "off" ? "off" : "manual";
+        return { enabled: enabled && mode !== "off", mode };
+    }
+
+    private buildSymbolIndexStatus() {
+        const config = this.resolveSymbolSemanticSearchFlags();
+        const degraded: string[] = [];
+        if (!config.enabled) {
+            degraded.push("symbol_semantic_search_disabled");
+        }
+        if (config.enabled && !this.context.symbolEmbeddingIndex) {
+            degraded.push("embedding_provider_disabled");
+        }
+        const status = this.context.symbolEmbeddingIndex?.getStatus();
+        if (config.enabled && status && !status.lastBuildAt) {
+            degraded.push("symbol_embeddings_not_built");
+        }
+        return {
+            enabled: config.enabled,
+            mode: config.mode,
+            ...(status ?? {}),
+            degradedReasons: buildDegradedReasons(degraded)
+        };
+    }
+
     private parseNumberEnv(raw: string | undefined, fallback: number): number {
         if (!raw) return fallback;
         const value = Number(raw);
@@ -185,6 +214,7 @@ export class ManageHandlers extends BaseHandler {
                             rootPath: this.context.rootPath
                         });
                         const rolloutStatus = this.buildRolloutStatus(status?.global?.totalFiles);
+                        const symbolIndexStatus = this.buildSymbolIndexStatus();
 
                         if (includePerFile) {
                             return {
@@ -196,6 +226,7 @@ export class ManageHandlers extends BaseHandler {
                                 embeddingFindings,
                                 capabilityDiagnostics,
                                 indexSnapshot,
+                                symbolIndex: symbolIndexStatus,
                                 rollout: rolloutStatus,
                                 activity: {
                                     reindexInProgress: this.reindexInProgress,
@@ -224,6 +255,7 @@ export class ManageHandlers extends BaseHandler {
                             embeddingFindings,
                             capabilityDiagnostics,
                             indexSnapshot,
+                            symbolIndex: symbolIndexStatus,
                             rollout: rolloutStatus,
                             activity: {
                                 reindexInProgress: this.reindexInProgress,
@@ -371,6 +403,66 @@ export class ManageHandlers extends BaseHandler {
                         ...(budgetSnapshot ? { budget: budgetSnapshot } : {}),
                         ...(metricsExportStatus ? { metricsExport: metricsExportStatus } : {}),
                         rollout: rolloutStatus
+                    };
+                }
+            case 'symbol_index_status':
+                {
+                    const status = this.buildSymbolIndexStatus();
+                    return {
+                        success: true,
+                        output: "Symbol index status.",
+                        status,
+                        ...(status.degradedReasons ? { degradedReasons: status.degradedReasons } : {})
+                    };
+                }
+            case 'symbol_index_build':
+                {
+                    const config = this.resolveSymbolSemanticSearchFlags();
+                    const reasons: string[] = [];
+                    if (!config.enabled) {
+                        reasons.push("symbol_semantic_search_disabled");
+                    }
+                    if (config.enabled && !this.context.symbolEmbeddingIndex) {
+                        reasons.push("embedding_provider_disabled");
+                    }
+                    if (reasons.length > 0) {
+                        return {
+                            success: false,
+                            output: "Symbol semantic search is not available.",
+                            degradedReasons: buildDegradedReasons(reasons)
+                        };
+                    }
+                    const result = await this.context.symbolEmbeddingIndex!.buildIndex();
+                    return {
+                        success: true,
+                        output: "Symbol index build completed.",
+                        result,
+                        status: this.context.symbolEmbeddingIndex!.getStatus()
+                    };
+                }
+            case 'symbol_index_clear':
+                {
+                    const config = this.resolveSymbolSemanticSearchFlags();
+                    const reasons: string[] = [];
+                    if (!config.enabled) {
+                        reasons.push("symbol_semantic_search_disabled");
+                    }
+                    if (config.enabled && !this.context.symbolEmbeddingIndex) {
+                        reasons.push("embedding_provider_disabled");
+                    }
+                    if (reasons.length > 0) {
+                        return {
+                            success: false,
+                            output: "Symbol semantic search is not available.",
+                            degradedReasons: buildDegradedReasons(reasons)
+                        };
+                    }
+                    const result = await this.context.symbolEmbeddingIndex!.clearIndex();
+                    return {
+                        success: true,
+                        output: "Symbol index cleared.",
+                        result,
+                        status: this.context.symbolEmbeddingIndex!.getStatus()
                     };
                 }
             case 'reindex':

@@ -4,6 +4,8 @@ import { ResourceUsage, FileSearchResult } from "../types.js";
 import { ErrorEnhancer } from "../errors/ErrorEnhancer.js";
 import * as path from "path";
 import { normalizeRepoScope, resolveRepoInfo, isRepoIdInScope } from "../utils/RepoScope.js";
+import { buildDegradedReasons } from "../orchestration/DegradedReasonMapper.js";
+import { metrics } from "../utils/MetricsCollector.js";
 
 export class SearchHandlers extends BaseHandler {
     constructor(private context: HandlerContext) {
@@ -75,19 +77,68 @@ export class SearchHandlers extends BaseHandler {
         const declaredType = (args.type ?? 'auto') as string;
         const inferredType = this.inferSearchType(query, declaredType);
         let results: any[] = [];
+        const degradedReasons: string[] = [];
+        const semanticSymbols = args?.semanticSymbols === true;
 
         if (inferredType === 'filename') {
             results = await this.context.searchEngine.searchFilenames(query, { maxResults });
         } else if (inferredType === 'symbol') {
-            const matches = await this.context.symbolIndex.search(query);
-            results = matches.slice(0, maxResults).map(match => ({
-                type: 'symbol',
-                path: match.filePath,
-                score: 1,
-                context: `${match.symbol.type} ${match.symbol.name}`,
-                line: typeof match.symbol?.range?.startLine === 'number' ? match.symbol.range.startLine : undefined,
-                symbol: match.symbol
-            }));
+            if (semanticSymbols) {
+                metrics.inc("symbol_search.semantic.count");
+                const semanticEnabled = (process.env.KAIRO_SYMBOL_SEMANTIC_SEARCH_ENABLED ?? "false").toLowerCase() === "true";
+                const semanticMode = (process.env.KAIRO_SYMBOL_SEMANTIC_SEARCH_MODE ?? "manual").toLowerCase();
+                if (!semanticEnabled || semanticMode === "off") {
+                    degradedReasons.push("symbol_semantic_search_disabled");
+                } else if (!this.context.symbolEmbeddingIndex) {
+                    degradedReasons.push("embedding_provider_disabled");
+                } else {
+                    const status = this.context.symbolEmbeddingIndex.getStatus();
+                    if (!status.lastBuildAt) {
+                        degradedReasons.push("symbol_embeddings_not_built");
+                    } else {
+                        const stopTimer = metrics.startTimer("symbol_search.semantic_ms");
+                        const semantic = await this.context.symbolEmbeddingIndex.searchSymbolsWithDiagnostics(query, {
+                            topK: maxResults
+                        });
+                        stopTimer();
+                        if (semantic.degraded && semantic.reason) {
+                            degradedReasons.push(semantic.reason);
+                            metrics.inc("symbol_search.semantic.degraded.count");
+                            metrics.inc(`symbol_search.semantic.degraded_reason.${semantic.reason}`);
+                        }
+                        if (semantic.results.length > 0) {
+                            results = semantic.results.slice(0, maxResults).map(match => ({
+                                type: "symbol",
+                                path: match.symbol.filePath,
+                                score: match.relevanceScore,
+                                context: `${match.symbol.type} ${match.symbol.name}`,
+                                line: match.symbol.lineRange?.start,
+                                symbol: match.symbol,
+                                semantic: {
+                                    similarity: match.similarity,
+                                    relevanceScore: match.relevanceScore,
+                                    modelKey: status.symbolModelKey
+                                }
+                            }));
+                        } else {
+                            degradedReasons.push("symbol_search_fallback_name");
+                            metrics.inc("symbol_search.semantic.fallback_name.count");
+                        }
+                    }
+                }
+            }
+
+            if (results.length === 0) {
+                const matches = await this.context.symbolIndex.search(query);
+                results = matches.slice(0, maxResults).map(match => ({
+                    type: 'symbol',
+                    path: match.filePath,
+                    score: 1,
+                    context: `${match.symbol.type} ${match.symbol.name}`,
+                    line: typeof match.symbol?.range?.startLine === 'number' ? match.symbol.range.startLine : undefined,
+                    symbol: match.symbol
+                }));
+            }
         } else if (inferredType === 'directory') {
             const files = await this.context.fileSystem.listFiles(this.context.rootPath);
             const dirs = new Set<string>();
@@ -115,6 +166,7 @@ export class SearchHandlers extends BaseHandler {
                 deduplicateByContent: args.deduplicateByContent,
                 basePath: args.basePath,
                 maxResults,
+                semanticSymbols: args?.semanticSymbols === true,
                 budget,
                 usage
             });
@@ -180,16 +232,18 @@ export class SearchHandlers extends BaseHandler {
                 message: `No results found for "${query}".`,
                 suggestions: enhanced.toolSuggestions,
                 nextActionHint: enhanced.nextActionHint,
-                degraded: usage?.degraded ?? false,
-                budget: budget ? { ...budget, used: usage } : undefined
+                degraded: (usage?.degraded ?? false) || degradedReasons.length > 0,
+                budget: budget ? { ...budget, used: usage } : undefined,
+                degradedReasons: buildDegradedReasons(degradedReasons)
             };
         }
 
         return {
             results: normalizedResults,
             inferredType,
-            degraded: usage?.degraded ?? false,
-            budget: budget ? { ...budget, used: usage } : undefined
+            degraded: (usage?.degraded ?? false) || degradedReasons.length > 0,
+            budget: budget ? { ...budget, used: usage } : undefined,
+            degradedReasons: buildDegradedReasons(degradedReasons)
         };
     }
 

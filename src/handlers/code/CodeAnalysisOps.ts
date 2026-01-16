@@ -9,7 +9,13 @@ export const analyzeRelationshipRaw = async (deps: CodeHandlerDeps, args: any) =
     const maxDepth = typeof args?.maxDepth === "number" ? args.maxDepth : 2;
     const contextPath = args?.contextPath;
 
-    const resolved = await resolveRelationshipTarget(deps, target, args?.targetType ?? "auto", contextPath);
+    const resolved = await resolveRelationshipTarget(
+        deps,
+        target,
+        args?.targetType ?? "auto",
+        contextPath,
+        { semanticSymbols: args?.semanticSymbols === true }
+    );
     if (resolved.isError) {
         const error = new Error(resolved.message ?? "Unable to resolve target.");
         (error as any).code = resolved.errorCode ?? "InternalError";
@@ -127,7 +133,8 @@ const resolveRelationshipTarget = async (
     deps: CodeHandlerDeps,
     target: string,
     targetType: string,
-    contextPath?: string
+    contextPath?: string,
+    options: { semanticSymbols?: boolean } = {}
 ): Promise<{ isError?: boolean; errorCode?: string; message?: string; details?: any; filePath?: string; symbolName?: string; resolvedType: "file" | "symbol" | "variable" }> => {
     const { context, resolveRelativePath } = deps;
     if (!target) {
@@ -150,6 +157,24 @@ const resolveRelationshipTarget = async (
         const matches = await context.symbolIndex.search(symbolName);
         if (matches.length > 0) {
             filePath = matches[0].filePath;
+        }
+    }
+    if (!filePath && options.semanticSymbols && context.symbolEmbeddingIndex) {
+        const semantic = await context.symbolEmbeddingIndex.searchSymbolsWithDiagnostics(symbolName, { topK: 3 });
+        if (!semantic.degraded && semantic.results.length > 0) {
+            const best = semantic.results[0];
+            filePath = resolveRelativePath(best.symbol.filePath);
+            return { filePath, symbolName: best.symbol.name, resolvedType: "symbol" };
+        }
+        if (semantic.degraded) {
+            const enhanced = ErrorEnhancer.enhanceSymbolNotFound(symbolName, context.symbolIndex);
+            return {
+                isError: true,
+                errorCode: "SymbolNotFound",
+                message: `Symbol '${symbolName}' not found.`,
+                details: { ...enhanced, semanticSearch: { degraded: true, reason: semantic.reason } },
+                resolvedType: "symbol"
+            };
         }
     }
     if (!filePath) {

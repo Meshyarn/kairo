@@ -97,6 +97,10 @@ describe("ManageHandlers additional paths", () => {
         const config = await raw({ command: "config" });
         expect(config.config.embedding.provider).toBeDefined();
 
+        const symbolStatus = await raw({ command: "symbol_index_status" });
+        expect(symbolStatus.success).toBe(true);
+        expect(symbolStatus.status).toBeDefined();
+
         const reindex = await raw({ command: "reindex", suppressLogs: true });
         expect(reindex.success).toBe(true);
         expect(context.skeletonCache.clearAll).toHaveBeenCalled();
