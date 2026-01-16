@@ -13,7 +13,8 @@ const makeContext = () => {
             undo: jest.fn(async () => ({ success: true, message: "undo" })),
             redo: jest.fn(async () => ({ success: true, message: "redo" })),
             getTransactionLog: jest.fn(() => ({
-                getPendingTransactions: () => ["t1"]
+                getPendingTransactions: () => [{ id: "t1", timestamp: Date.now(), status: "pending", description: "pending", snapshots: [] }],
+                listTransactions: () => [{ id: "c1", timestamp: Date.now(), status: "committed", description: "commit", snapshots: [] }]
             }))
         },
         dependencyGraph: {
@@ -40,6 +41,9 @@ const makeContext = () => {
         },
         documentSearchEngine: {
             getEmbeddingStatus: jest.fn(async () => ({ available: true }))
+        },
+        indexDatabase: {
+            listFiles: jest.fn(() => [])
         },
         skeletonCache: { clearAll: jest.fn(async () => undefined) },
         searchEngine: { rebuild: jest.fn(async () => undefined) },
@@ -82,7 +86,8 @@ describe("ManageHandlers additional paths", () => {
         expect(status.rollout.adaptiveFlow.alertThresholds).toBeDefined();
 
         const history = await raw({ command: "history" });
-        expect(history.history.pendingTransactions).toContain("t1");
+        expect(history.history.pendingTransactions[0]?.id).toBe("t1");
+        expect(history.history.checkpoints[0]?.id).toBe("c1");
     });
 
     it("handles metrics, config, and reindex commands", async () => {

@@ -15,6 +15,7 @@ import { PathManager } from "../utils/PathManager.js";
 import { FeatureFlags } from "../config/FeatureFlags.js";
 import { computeAdaptiveFlowGate, resolveRolloutPresetFromEnv } from "../orchestration/adaptive-flow/AdaptiveFlowGate.js";
 import { buildDegradedReasons } from "../orchestration/DegradedReasonMapper.js";
+import type { TransactionLogEntry } from "../engine/TransactionLog.js";
 
 export class ManageHandlers extends BaseHandler {
     private reindexInProgress = false;
@@ -120,6 +121,57 @@ export class ManageHandlers extends BaseHandler {
         };
     }
 
+    private async buildWorkspaceDrift(options?: { maxFiles?: number }) {
+        const maxFiles = options?.maxFiles ?? this.parseNumberEnv(process.env.KAIRO_DRIFT_CHECK_MAX_FILES, 200);
+        const records = this.context.indexDatabase.listFiles();
+        if (!records.length) {
+            return {
+                workspaceDrift: "unknown",
+                scopes: [],
+                checkedFiles: 0,
+                mismatchedFiles: 0
+            };
+        }
+        let checked = 0;
+        let mismatched = 0;
+        for (const record of records) {
+            if (checked >= maxFiles) break;
+            const absPath = this.resolveAbsolutePath(record.path);
+            try {
+                const stat = await this.context.fileSystem.stat(absPath);
+                if (stat.mtime > (record.last_modified ?? 0)) {
+                    mismatched += 1;
+                }
+            } catch {
+                mismatched += 1;
+            }
+            checked += 1;
+        }
+        const workspaceDrift = checked === 0 ? "unknown" : (mismatched > 0 ? "detected" : "clean");
+        const scopeId = `workspace:${createHash("sha1").update(this.context.rootPath).digest("hex").slice(0, 8)}`;
+        const scopes = [{
+            scopeId,
+            root: this.context.rootPath,
+            kind: "workspaceRoot",
+            drift: workspaceDrift,
+            signals: mismatched > 0 ? ["mtime_changed"] : [],
+            affectedPathsCount: mismatched,
+            indexStaleRatio: checked > 0 ? mismatched / checked : undefined,
+            scopeConfidence: checked > 0 ? "low" : "unknown"
+        }];
+        const repairActions = mismatched > 0 ? [
+            { tool: "project_manage", args: { command: "reindex", scope: "project" } }
+        ] : [];
+        return {
+            workspaceDrift,
+            scopes,
+            checkedFiles: checked,
+            mismatchedFiles: mismatched,
+            ...(records.length > checked ? { sampled: true, totalFiles: records.length } : {}),
+            ...(repairActions.length > 0 ? { repairActions } : {})
+        };
+    }
+
     private resolveSymbolSemanticSearchFlags(): { enabled: boolean; mode: "off" | "manual" } {
         const enabled = (process.env.KAIRO_SYMBOL_SEMANTIC_SEARCH_ENABLED ?? "false").toLowerCase() === "true";
         const modeRaw = (process.env.KAIRO_SYMBOL_SEMANTIC_SEARCH_MODE ?? "manual").toLowerCase();
@@ -152,6 +204,24 @@ export class ManageHandlers extends BaseHandler {
         if (!raw) return fallback;
         const value = Number(raw);
         return Number.isFinite(value) ? value : fallback;
+    }
+
+    private summarizeCheckpoints(entries: TransactionLogEntry[]): Array<{
+        id: string;
+        timestamp: string;
+        status: string;
+        description: string;
+        diffSummary?: TransactionLogEntry["diffSummary"];
+        filesTouched?: TransactionLogEntry["filesTouched"];
+    }> {
+        return entries.map(entry => ({
+            id: entry.id,
+            timestamp: new Date(entry.timestamp).toISOString(),
+            status: entry.status,
+            description: entry.description,
+            diffSummary: entry.diffSummary,
+            filesTouched: entry.filesTouched
+        }));
     }
 
     private async manageProjectRaw(args: any) {
@@ -215,6 +285,7 @@ export class ManageHandlers extends BaseHandler {
                         });
                         const rolloutStatus = this.buildRolloutStatus(status?.global?.totalFiles);
                         const symbolIndexStatus = this.buildSymbolIndexStatus();
+                        const driftStatus = await this.buildWorkspaceDrift();
 
                         if (includePerFile) {
                             return {
@@ -227,6 +298,7 @@ export class ManageHandlers extends BaseHandler {
                                 capabilityDiagnostics,
                                 indexSnapshot,
                                 symbolIndex: symbolIndexStatus,
+                                drift: driftStatus,
                                 rollout: rolloutStatus,
                                 activity: {
                                     reindexInProgress: this.reindexInProgress,
@@ -256,6 +328,7 @@ export class ManageHandlers extends BaseHandler {
                             capabilityDiagnostics,
                             indexSnapshot,
                             symbolIndex: symbolIndexStatus,
+                            drift: driftStatus,
                             rollout: rolloutStatus,
                             activity: {
                                 reindexInProgress: this.reindexInProgress,
@@ -382,6 +455,7 @@ export class ManageHandlers extends BaseHandler {
                     const embeddingDiagnostics = computeEmbeddingDiagnostics();
                     const embeddingFindings = this.buildEmbeddingFindings(embeddingDiagnostics);
                     const rolloutStatus = this.buildRolloutStatus(fileCount);
+                    const driftStatus = await this.buildWorkspaceDrift();
                     return {
                         ...result,
                         output: "Config doctor completed.",
@@ -407,6 +481,7 @@ export class ManageHandlers extends BaseHandler {
                         ...(embeddingFindings.length > 0 ? { embeddingFindings } : {}),
                         ...(budgetSnapshot ? { budget: budgetSnapshot } : {}),
                         ...(metricsExportStatus ? { metricsExport: metricsExportStatus } : {}),
+                        drift: driftStatus,
                         rollout: rolloutStatus
                     };
                 }
@@ -551,6 +626,8 @@ export class ManageHandlers extends BaseHandler {
                     const detail = args?.detail === "full" ? "full" : "summary";
                     const log = this.context.editCoordinator.getTransactionLog();
                     const pending = log ? log.getPendingTransactions() : [];
+                    const checkpointLimit = typeof args?.checkpointLimit === "number" ? args.checkpointLimit : 10;
+                    const committed = log ? log.listTransactions({ status: "committed", limit: checkpointLimit }) : [];
                     const sanitized = this.sanitizeHistoryStacks(history, { includeExternal: detail === "full" });
                     return {
                         success: true,
@@ -558,7 +635,8 @@ export class ManageHandlers extends BaseHandler {
                         history: {
                             undo: sanitized.undoStack,
                             redo: sanitized.redoStack,
-                            pendingTransactions: pending
+                            pendingTransactions: pending,
+                            checkpoints: this.summarizeCheckpoints(committed)
                         },
                         ...(sanitized.hiddenCount > 0
                             ? { historyMeta: { externalPathsHidden: sanitized.hiddenCount, detail } }

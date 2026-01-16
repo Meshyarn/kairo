@@ -244,6 +244,10 @@ export class IndexDatabase implements IndexStore {
         this.store.markTransactionRolledBack(id);
     }
 
+    public listTransactions(options?: { status?: "pending" | "committed" | "rolled_back"; limit?: number }): TransactionLogEntry[] {
+        return this.store.listTransactions(options);
+    }
+
     public close(): void {
         this.store.close();
     }

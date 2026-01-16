@@ -12,7 +12,10 @@ const makeTempDir = () => {
 const makeContext = (rootPath: string) => ({
     rootPath,
     toolSpecRegistry: createDefaultToolSpecRegistry(),
-    isTestEnv: () => true
+    isTestEnv: () => true,
+    indexDatabase: {
+        listFiles: () => []
+    }
 });
 
 const readJson = (filePath: string) => JSON.parse(fs.readFileSync(filePath, "utf-8"));
