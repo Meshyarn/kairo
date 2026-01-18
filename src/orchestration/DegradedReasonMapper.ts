@@ -215,6 +215,26 @@ const PARITY_REASON_MAP: Record<string, {
     type: "degraded",
     message: "Semantic symbol search returned no results; fell back to name search.",
     severity: "warning"
+  },
+  graphrag_disabled: {
+    type: "degraded",
+    message: "GraphRAG is disabled; cluster retrieval skipped.",
+    severity: "warning"
+  },
+  graphrag_budget_exceeded: {
+    type: "budget_exceeded",
+    message: "GraphRAG budget exceeded; cluster results may be partial.",
+    severity: "warning"
+  },
+  graphrag_cross_boundary_blocked: {
+    type: "degraded",
+    message: "Cross-boundary expansion is blocked by policy.",
+    severity: "warning"
+  },
+  graphrag_policy_degraded: {
+    type: "degraded",
+    message: "GraphRAG seed policy fell back to lexical retrieval.",
+    severity: "warning"
   }
 };
 

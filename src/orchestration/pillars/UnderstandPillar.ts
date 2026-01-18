@@ -49,6 +49,7 @@ import {
   resolveAllowGraphs,
   shouldBuildFallbackGraph
 } from "./understand/UnderstandDecisionEngine.js";
+import { GraphRagClusterService, type GraphRagClusterResult } from "../cluster/GraphRagClusterService.js";
 
 const resolveOptionSource = (explicit: boolean, hasSession: boolean): OptionSource => {
   if (explicit) return "explicit";
@@ -103,6 +104,8 @@ export class UnderstandPillar {
       wantsVibe,
       analysis,
       wantsAnalysis,
+      includeClusters,
+      clusterOptions,
       includeDependencies,
       includeCalls,
       explicitPath,
@@ -647,6 +650,40 @@ export class UnderstandPillar {
       }
     }
 
+    let graphRagClusters: GraphRagClusterResult | null = null;
+    if (includeClusters) {
+      const graphRagService = this.registry.getMetadata<GraphRagClusterService>("graphRagClusterService")
+        ?? new GraphRagClusterService(this.registry);
+      if (!this.registry.getMetadata("graphRagClusterService")) {
+        this.registry.setMetadata("graphRagClusterService", graphRagService);
+      }
+      graphRagClusters = await graphRagService.buildClusters({
+        query: subject,
+        clusterOptions,
+        projectFileCount: projectStats?.fileCount,
+        docHint: isDocument,
+        repoScope: (constraints as any).repoScope,
+        repoId: (constraints as any).repoId,
+        repoIds: (constraints as any).repoIds,
+        allowCrossRepoEdits: (constraints as any).allowCrossRepoEdits
+      });
+      if (graphRagClusters && traceBuilder) {
+        traceBuilder.recordEvent({
+          area: "policy",
+          code: "graphrag_clusters",
+          data: {
+            policy: graphRagClusters.policy,
+            clusters: graphRagClusters.clusters.length,
+            degradedReasons: graphRagClusters.degradedReasons
+          }
+        });
+      }
+      if (graphRagClusters?.degradedReasons?.length) {
+        degraded = true;
+        degradedReasons.push(...graphRagClusters.degradedReasons);
+      }
+    }
+
     const response = buildUnderstandResponse({
       subject,
       filePath,
@@ -674,6 +711,8 @@ export class UnderstandPillar {
       indexSnapshot,
       stylePack,
       analysisPack,
+      clusters: graphRagClusters?.clusters,
+      clusterPolicy: graphRagClusters?.policy,
       sessionId: resolvedSessionId,
       compression: compressionDecision.compression
     });

@@ -143,6 +143,10 @@ export function enforceExploreResponseBudget(args: {
   if (!withinBudget(usage, options)) dropField("indexSnapshot");
   usage = estimateResponseUsage(response);
   if (!withinBudget(usage, options)) dropField("insights");
+  usage = estimateResponseUsage(response);
+  if (!withinBudget(usage, options)) dropField("clusters");
+  usage = estimateResponseUsage(response);
+  if (!withinBudget(usage, options)) dropField("clusterPolicy");
 
   if (!withinBudget(usage, options)) {
     const before = { docs: response.data.docs.length, code: response.data.code.length };
@@ -250,6 +254,10 @@ export function enforceUnderstandResponseBudget(args: {
   if (!withinBudget(usage, options)) dropField("integrity");
   usage = estimateResponseUsage(response);
   if (!withinBudget(usage, options)) dropField("indexSnapshot");
+  usage = estimateResponseUsage(response);
+  if (!withinBudget(usage, options)) dropField("clusters");
+  usage = estimateResponseUsage(response);
+  if (!withinBudget(usage, options)) dropField("clusterPolicy");
 
   const trimList = (key: string, limit: number) => {
     const list = response[key];

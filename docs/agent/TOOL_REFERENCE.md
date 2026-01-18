@@ -40,6 +40,11 @@ Unified search + read interface for docs and code.
 | `include.code` | `boolean` |  | Include code results. |
 | `include.comments` | `boolean` |  | Include code-comment corpus (doc search). |
 | `include.logs` | `boolean` |  | Include `.log` documents. |
+| `include.clusters` | `boolean` |  | Include GraphRAG cluster summaries (when enabled). |
+| `clusterOptions.maxClusters` | `number` |  | Max clusters returned (defaults depend on profile). |
+| `clusterOptions.expansionDepth` | `number` |  | Depth for expensive graph expansions (best-effort). |
+| `clusterOptions.includePreview` | `boolean` |  | Include preview/signature fields in clusters (best-effort). |
+| `allowCrossRepoEdits` | `boolean` |  | Allows cross-repo cluster expansion when repo config also allows it. |
 | `sessionId` | `string` |  | Flow session id (`"new"` to start). |
 | `research.sketch` | `boolean` |  | Include ResearchPack sketch. |
 | `research.topN` | `number` |  | Limit top modules for the sketch. |
@@ -87,6 +92,7 @@ Deep analysis of structure and relationships (opt-in includes).
 | `include.dependencies` | `boolean` |  | Include dependency edges. |
 | `include.hotSpots` | `boolean` |  | Include hotspot signals. |
 | `include.pageRank` | `boolean` |  | Include architectural importance signals. |
+| `include.clusters` | `boolean` |  | Include GraphRAG cluster summaries (when enabled). |
 | `sessionId` | `string` |  | Flow session id (`"new"` to start). |
 | `vibe.extract` | `boolean` |  | Produce a StylePack. |
 | `vibe.scope` | `string` |  | Glob scope for style sampling. |
@@ -94,6 +100,10 @@ Deep analysis of structure and relationships (opt-in includes).
 | `analysis.clusters` | `boolean` |  | Produce an AnalysisPack. |
 | `analysis.maxClusters` | `number` |  | Max cluster count. |
 | `analysis.maxFilesPerCluster` | `number` |  | Max files per cluster. |
+| `clusterOptions.maxClusters` | `number` |  | Max clusters returned (GraphRAG). |
+| `clusterOptions.expansionDepth` | `number` |  | Depth for expensive graph expansions (best-effort). |
+| `clusterOptions.includePreview` | `boolean` |  | Include preview/signature fields in clusters (best-effort). |
+| `allowCrossRepoEdits` | `boolean` |  | Allows cross-repo cluster expansion when repo config also allows it. |
 | `limits.timeoutMs` | `number` |  | Per-call timeout budget (best-effort). |
 | `limits.maxTokens` | `number` |  | Response envelope token budget cap (final tool output JSON). |
 | `limits.maxChars` | `number` |  | Hard cap on response JSON size (chars). |

@@ -1,4 +1,5 @@
 import type { DegradedReason } from "../../../types/tool-responses.js";
+import type { ClusterSummary } from "../../../types/cluster.js";
 
 export function buildUnderstandResponse(args: {
   subject: string;
@@ -37,6 +38,8 @@ export function buildUnderstandResponse(args: {
   indexSnapshot?: any;
   stylePack?: any;
   analysisPack?: any;
+  clusters?: ClusterSummary[];
+  clusterPolicy?: string;
   sessionId?: string;
   compression?: {
     applied: boolean;
@@ -81,6 +84,8 @@ export function buildUnderstandResponse(args: {
     indexSnapshot,
     stylePack,
     analysisPack,
+    clusters,
+    clusterPolicy,
     sessionId,
     compression
   } = args;
@@ -124,6 +129,8 @@ export function buildUnderstandResponse(args: {
       dependencies: deps
     },
     hotSpots: hotSpots ?? [],
+    clusters,
+    clusterPolicy,
     report: {
       summary: `Analysis summary for ${filePath}.`,
       architecturalRole: "utility",

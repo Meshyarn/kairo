@@ -47,6 +47,7 @@ import { PatchStore } from "../engine/PatchStore.js";
 import { ConfigurationManager } from "../config/ConfigurationManager.js";
 import { RepoRegistry } from "../config/RepoRegistry.js";
 import { PackageAliasMap } from "../config/PackageAliasMap.js";
+import { GraphRagConfigLoader } from "../config/GraphRagConfig.js";
 import { PropertyAccessIndex } from "../ast/PropertyAccessIndex.js";
 import { FieldAccessIndex } from "../ast/FieldAccessIndex.js";
 import { FeatureFlags, FeatureFlagContext } from "../config/FeatureFlags.js";
@@ -81,6 +82,8 @@ import { AlertDispatcher } from "../utils/AlertDispatcher.js";
 import { AdaptiveLodController } from "../orchestration/adaptive-flow/AdaptiveLodController.js";
 import { MetricsExportService } from "../utils/metrics/MetricsExportService.js";
 import { CacheInvalidationHub } from "./CacheInvalidationHub.js";
+import { BoundaryAdapterRegistry } from "../contracts/BoundaryAdapterRegistry.js";
+import { ContractRegistry } from "../contracts/ContractRegistry.js";
 
 // Orchestration Imports
 import { OrchestrationEngine } from "../orchestration/OrchestrationEngine.js";
@@ -114,6 +117,9 @@ export class SmartContextServer {
     private historyEngine: HistoryEngine;
     private configurationManager: ConfigurationManager;
     private repoRegistry: RepoRegistry;
+    private boundaryAdapterRegistry: BoundaryAdapterRegistry;
+    private contractRegistry: ContractRegistry;
+    private graphRagConfig: GraphRagConfigLoader;
     private astManager: AstManager;
     private skeletonGenerator: SkeletonGenerator;
     private skeletonCache: SkeletonCache;
@@ -205,7 +211,13 @@ export class SmartContextServer {
         this.astManager = AstManager.getInstance();
         this.pathNormalizer = new PathNormalizer(this.rootPath);
         this.configurationManager = new ConfigurationManager(this.rootPath);
+        this.graphRagConfig = new GraphRagConfigLoader(this.rootPath);
         this.repoRegistry = new RepoRegistry(this.rootPath);
+        this.boundaryAdapterRegistry = BoundaryAdapterRegistry.createDefault(this.rootPath, this.repoRegistry);
+        this.contractRegistry = new ContractRegistry(this.rootPath, this.repoRegistry);
+        for (const adapter of this.boundaryAdapterRegistry.getAll()) {
+            this.contractRegistry.registerAdapter(adapter);
+        }
         const packageAliasMap = new PackageAliasMap(this.repoRegistry);
         packageAliasMap.build();
         const initialIgnorePatterns = this.configurationManager.getIgnoreGlobs();
@@ -325,6 +337,11 @@ export class SmartContextServer {
             dependencyGraph: this.dependencyGraph,
             fileSystem: this.fileSystem
         });
+        if (!this.isTestEnv()) {
+            this.graphRagConfig.watch(() => {
+                this.clusterSearchEngine.clearCache();
+            });
+        }
 
         this.cacheStrategy = new CachingStrategy(this.rootPath);
         this.cacheInvalidationHub = new CacheInvalidationHub({
@@ -383,13 +400,19 @@ export class SmartContextServer {
         this.internalRegistry.setMetadata('indexStateManager', this.indexStateManager);
         this.internalRegistry.setMetadata('dependencyGraph', this.dependencyGraph);
         this.internalRegistry.setMetadata('flowArtifactManager', this.flowArtifactManager);
+        this.internalRegistry.setMetadata('rootPath', this.rootPath);
         this.internalRegistry.setMetadata('repoRegistry', this.repoRegistry);
+        this.internalRegistry.setMetadata('boundaryAdapterRegistry', this.boundaryAdapterRegistry);
+        this.internalRegistry.setMetadata('contractRegistry', this.contractRegistry);
         this.internalRegistry.setMetadata('pathNormalizer', this.pathNormalizer);
         this.internalRegistry.setMetadata('packageAliasMap', packageAliasMap);
         this.internalRegistry.setMetadata('impactAnalyzer', this.impactAnalyzer);
         this.internalRegistry.setMetadata('propertyAccessIndex', propertyAccessIndex);
         this.internalRegistry.setMetadata('fileVersionManager', this.fileVersionManager);
         this.internalRegistry.setMetadata('adaptiveLodController', new AdaptiveLodController());
+        this.internalRegistry.setMetadata('clusterSearchEngine', this.clusterSearchEngine);
+        this.internalRegistry.setMetadata('symbolIndex', this.symbolIndex);
+        this.internalRegistry.setMetadata('graphRagConfig', this.graphRagConfig);
         
         this.setupHandlers();
         this.initializeModularHandlers();
@@ -804,6 +827,7 @@ export class SmartContextServer {
             if (this.handlerContext) {
                 this.handlerContext.symbolEmbeddingIndex = this.symbolEmbeddingIndex;
             }
+            this.internalRegistry.setMetadata('symbolEmbeddingIndex', this.symbolEmbeddingIndex);
         } catch (error) {
             console.warn("[SmartContextServer] Symbol semantic search init failed:", error);
         }
@@ -1212,6 +1236,7 @@ export class SmartContextServer {
         await this.skeletonCache.close();
         await this.astManager.dispose();
         await this.configurationManager.dispose();
+        this.graphRagConfig.dispose();
         this.repoRegistry.dispose();
         this.indexDatabase.close();
     }

@@ -66,6 +66,7 @@ import {
     collectTopologyMetadata,
     buildItemForPath
 } from "./PathExpansion.js";
+import { GraphRagClusterService } from "../../cluster/GraphRagClusterService.js";
 
 const DEFAULT_MAX_RESULTS = 8;
 const DEFAULT_MAX_CHARS = 8000;
@@ -132,6 +133,8 @@ export class ExplorePillar {
             view: resolvedView,
             include,
             includeExplicit,
+            includeClusters,
+            clusterOptions,
             sourcesWantsDocs,
             traceEnabled,
             profile: resolvedProfile,
@@ -223,6 +226,7 @@ export class ExplorePillar {
         const includeCode = include.code !== false;
         const includeComments = include.comments === true;
         const includeLogs = include.logs === true;
+        const docHint = includeDocs && !includeCode;
         const sessionProfile = sessionPolicy?.explore?.profile ?? sessionPolicy?.profile;
         const sessionSources = sessionPolicy?.explore?.sources ?? sessionPolicy?.sources;
         const traceBuilder = traceEnabled
@@ -844,7 +848,44 @@ export class ExplorePillar {
             }
         }
 
-        if (response.data.docs.length === 0 && response.data.code.length === 0) {
+        if (includeClusters && query) {
+            const graphRagService = this.registry.getMetadata<GraphRagClusterService>("graphRagClusterService")
+                ?? new GraphRagClusterService(this.registry);
+            if (!this.registry.getMetadata("graphRagClusterService")) {
+                this.registry.setMetadata("graphRagClusterService", graphRagService);
+            }
+            const clusterResult = await graphRagService.buildClusters({
+                query,
+                clusterOptions,
+                projectFileCount: projectStats?.fileCount,
+                docHint,
+                repoScope: (constraints as any).repoScope,
+                repoId: (constraints as any).repoId,
+                repoIds: (constraints as any).repoIds,
+                allowCrossRepoEdits: (constraints as any).allowCrossRepoEdits
+            });
+            if (clusterResult) {
+                response.clusters = clusterResult.clusters;
+                response.clusterPolicy = clusterResult.policy;
+                if (traceBuilder) {
+                    traceBuilder.recordEvent({
+                        area: "policy",
+                        code: "graphrag_clusters",
+                        data: {
+                            policy: clusterResult.policy,
+                            clusters: clusterResult.clusters.length,
+                            degradedReasons: clusterResult.degradedReasons
+                        }
+                    });
+                }
+                if (clusterResult.degradedReasons?.length) {
+                    degraded = true;
+                    reasons.push(...clusterResult.degradedReasons);
+                }
+            }
+        }
+
+        if (response.data.docs.length === 0 && response.data.code.length === 0 && (!response.clusters || response.clusters.length === 0)) {
             response.status = "no_results";
             response.message = "No results found.";
         }

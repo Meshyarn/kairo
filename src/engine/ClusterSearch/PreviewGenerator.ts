@@ -34,6 +34,7 @@ export class PreviewGenerator {
             this.applySignaturePreviews(cluster.related.callers.data);
             this.applySignaturePreviews(cluster.related.callees.data);
             this.applySignaturePreviews(cluster.related.typeFamily.data);
+            this.applyMinimalPreviews(cluster.related.dependency.data);
             this.applyMinimalPreviews(cluster.related.colocated.data);
             this.applyMinimalPreviews(cluster.related.siblings.data);
         }

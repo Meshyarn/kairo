@@ -120,7 +120,7 @@ export function teardownUser(name: string) {
         const createUserSymbol = userFileSymbols!.find(symbol => symbol.name === 'createUser');
         expect(createUserSymbol).toBeDefined();
 
-        const builder = new ClusterBuilder(testDir, symbolIndex, callGraphBuilder, typeDependencyTracker);
+        const builder = new ClusterBuilder(testDir, symbolIndex, callGraphBuilder, typeDependencyTracker, dependencyGraph);
         const cluster = await builder.buildCluster({
             filePath: 'services/user_service.ts',
             symbol: createUserSymbol!,
@@ -140,7 +140,7 @@ export function teardownUser(name: string) {
         const allSymbols = await symbolIndex.getAllSymbols();
         const userFileSymbols = allSymbols.get('services/user_service.ts');
         const createUserSymbol = userFileSymbols!.find(symbol => symbol.name === 'createUser');
-        const builder = new ClusterBuilder(testDir, symbolIndex, callGraphBuilder, typeDependencyTracker);
+        const builder = new ClusterBuilder(testDir, symbolIndex, callGraphBuilder, typeDependencyTracker, dependencyGraph);
         const cluster = await builder.buildCluster({
             filePath: 'services/user_service.ts',
             symbol: createUserSymbol!,
@@ -170,7 +170,11 @@ export function teardownUser(name: string) {
         const [cluster] = response.clusters;
         expect(cluster.related.callers.state).toBe(ExpansionState.NOT_LOADED);
         expect(response.expansionHints.recommendedExpansions).toEqual(
-            expect.arrayContaining([`${cluster.clusterId}:callers`, `${cluster.clusterId}:callees`, `${cluster.clusterId}:typeFamily`])
+            expect.arrayContaining([
+                `${cluster.clusterId}:callers`,
+                `${cluster.clusterId}:callees`,
+                `${cluster.clusterId}:typeFamily`
+            ])
         );
         expect(cluster.metadata.clusterType).toBe('module-boundary');
     });

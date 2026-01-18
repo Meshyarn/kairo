@@ -11,7 +11,7 @@ export type ToolSafety = "plan" | "apply";
 type ExploreEffective = {
   profile?: ToolProfile;
   sources?: ToolSources;
-  include: { docs?: boolean; code?: boolean; comments?: boolean; logs?: boolean };
+  include: { docs?: boolean; code?: boolean; comments?: boolean; logs?: boolean; clusters?: boolean };
   limits: {
     maxResults?: number;
     maxChars?: number;
@@ -47,6 +47,7 @@ type UnderstandEffective = {
     hotSpots?: boolean;
     pageRank?: boolean;
     dependencies?: boolean;
+    clusters?: boolean;
   };
   traceEnabled: boolean;
 };
@@ -91,7 +92,7 @@ export class OptionResolver {
     const limits = isRecord(args.limits) ? { ...args.limits } : {};
     const view = typeof args.view === "string" ? args.view : "auto";
     const traceEnabled = args.trace === true;
-    const includeExplicit = Object.keys(include).length > 0;
+    const includeExplicit = Object.keys(include).some((key) => key !== "clusters");
     const limitsExplicit = Object.keys(limits).length > 0;
     const viewExplicit = typeof args.view === "string";
 

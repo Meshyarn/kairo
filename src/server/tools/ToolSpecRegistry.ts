@@ -850,7 +850,8 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
               callGraph: { type: "boolean" },
               hotSpots: { type: "boolean" },
               pageRank: { type: "boolean" },
-              dependencies: { type: "boolean" }
+              dependencies: { type: "boolean" },
+              clusters: { type: "boolean" }
             }
           },
           sessionId: { type: "string" },
@@ -871,6 +872,15 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
               maxFilesPerCluster: { type: "number" }
             }
           },
+          clusterOptions: {
+            type: "object",
+            properties: {
+              maxClusters: { type: "number" },
+              expansionDepth: { type: "number" },
+              includePreview: { type: "boolean" }
+            }
+          },
+          allowCrossRepoEdits: { type: "boolean" },
           limits: {
             type: "object",
             properties: {
@@ -922,7 +932,8 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
               docs: { type: "boolean" },
               code: { type: "boolean" },
               comments: { type: "boolean" },
-              logs: { type: "boolean" }
+              logs: { type: "boolean" },
+              clusters: { type: "boolean" }
             }
           },
           sessionId: { type: "string" },
@@ -944,6 +955,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
           },
           repoId: { type: "string" },
           repoIds: { type: "array", items: { type: "string" } },
+          allowCrossRepoEdits: { type: "boolean" },
           section: {
             type: "object",
             properties: {
@@ -970,6 +982,14 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
               maxFiles: { type: "number" },
               maxTokens: { type: "number" },
               timeoutMs: { type: "number" }
+            }
+          },
+          clusterOptions: {
+            type: "object",
+            properties: {
+              maxClusters: { type: "number" },
+              expansionDepth: { type: "number" },
+              includePreview: { type: "boolean" }
             }
           },
           fullPaths: { type: "array", items: { type: "string" } },
@@ -1371,9 +1391,19 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
             properties: {
               hotSpots: { type: "boolean" },
               pageRank: { type: "boolean" },
-              relatedSymbols: { type: "boolean" }
+              relatedSymbols: { type: "boolean" },
+              clusters: { type: "boolean" }
             }
           },
+          clusterOptions: {
+            type: "object",
+            properties: {
+              maxClusters: { type: "number" },
+              expansionDepth: { type: "number" },
+              includePreview: { type: "boolean" }
+            }
+          },
+          allowCrossRepoEdits: { type: "boolean" },
           trace: { type: "boolean" }
         },
         required: ["target"],

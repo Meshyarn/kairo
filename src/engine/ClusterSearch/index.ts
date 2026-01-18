@@ -1,8 +1,9 @@
+import { createHash } from "crypto";
 import { SymbolIndex } from "../../ast/SymbolIndex.js";
 import { CallGraphBuilder } from "../../ast/CallGraphBuilder.js";
 import { TypeDependencyTracker } from "../../ast/TypeDependencyTracker.js";
 import { DependencyGraph } from "../../ast/DependencyGraph.js";
-import { ClusterSearchResponse, ExpansionState, SearchCluster } from "../../types/cluster.js";
+import { ClusterSearchResponse, ClusterSeed, ExpansionState, SearchCluster } from "../../types/cluster.js";
 import { QueryParser } from "./QueryParser.js";
 import { SeedFinder } from "./SeedFinder.js";
 import { ClusterBuilder, BuildClusterOptions, ExpandableRelationship, ExpandRelationshipOptions as BuilderExpandRelationshipOptions } from "./ClusterBuilder.js";
@@ -59,7 +60,8 @@ export class ClusterSearchEngine {
             deps.rootPath,
             deps.symbolIndex,
             deps.callGraphBuilder,
-            deps.typeDependencyTracker
+            deps.typeDependencyTracker,
+            deps.dependencyGraph
         );
         this.previewGenerator = new PreviewGenerator(deps.rootPath, deps.fileSystem);
         this.clusterCache = new ClusterCache(deps.rootPath, config.cache);
@@ -141,6 +143,62 @@ export class ClusterSearchEngine {
         return response;
     }
 
+    async searchWithSeeds(seeds: ClusterSeed[], options: ClusterSearchOptions = {}): Promise<ClusterSearchResponse> {
+        const start = Date.now();
+        const maxClusters = options.maxClusters ?? DEFAULT_MAX_CLUSTERS;
+        if (!Array.isArray(seeds) || seeds.length === 0) {
+            return this.emptyResponse(start, options.tokenBudget);
+        }
+
+        const seedLimit = Math.max(maxClusters * 2, maxClusters);
+        const rankedSeeds = seeds
+            .slice()
+            .sort((left, right) => right.matchScore - left.matchScore)
+            .slice(0, seedLimit);
+        if (rankedSeeds.length === 0) {
+            return this.emptyResponse(start, options.tokenBudget);
+        }
+
+        const includePreview = options.includePreview !== false;
+        const clusters = await Promise.all(
+            rankedSeeds.map(seed => this.clusterBuilder.buildCluster(seed, {
+                expandRelationships: options.expandRelationships,
+                depth: options.expansionDepth
+            }))
+        );
+
+        const ranked = this.clusterRanker.rank(clusters).slice(0, maxClusters);
+        if (includePreview) {
+            await this.previewGenerator.applyPreviews(ranked);
+        }
+
+        const perCluster = ranked.map(cluster => cluster.metadata.tokenEstimate);
+        const estimatedTokens = perCluster.reduce((sum, value) => sum + value, 0);
+        const tokenBudget = options.tokenBudget ?? DEFAULT_TOKEN_BUDGET;
+        const searchTime = `${Date.now() - start}ms (seeded)`;
+        const truncatedRelationships = this.collectTruncatedRelationships(ranked);
+
+        const response: ClusterSearchResponse = {
+            clusters: ranked,
+            totalMatches: rankedSeeds.length,
+            searchTime,
+            tokenUsage: {
+                estimated: estimatedTokens,
+                budget: tokenBudget,
+                perCluster
+            },
+            expansionHints: {
+                truncatedRelationships,
+                recommendedExpansions: this.collectRecommendedExpansions(ranked)
+            }
+        };
+
+        const cacheOptions = this.buildCacheableOptions(options);
+        const cacheKey = this.buildSeedCacheKey(rankedSeeds);
+        this.clusterCache.storeResponse(cacheKey, cacheOptions, response);
+        return response;
+    }
+
     async expandClusterRelationship(
         clusterId: string,
         relationship: ExpandableRelationship,
@@ -195,7 +253,7 @@ export class ClusterSearchEngine {
     }
 
     private collectRecommendedExpansions(clusters: SearchCluster[]): string[] {
-        const relationships: ExpandableRelationship[] = ["callers", "callees", "typeFamily"];
+        const relationships: ExpandableRelationship[] = ["callers", "callees", "typeFamily", "dependency"];
         const recommendations: string[] = [];
         for (const cluster of clusters) {
             for (const relationship of relationships) {
@@ -251,5 +309,13 @@ export class ClusterSearchEngine {
             includePreview: options.includePreview !== false,
             expandRelationships: options.expandRelationships
         };
+    }
+
+    private buildSeedCacheKey(seeds: ClusterSeed[]): string {
+        const base = seeds
+            .map(seed => `${seed.filePath}:${seed.symbol?.name ?? ""}`)
+            .join("|");
+        const hash = createHash("sha1").update(base).digest("hex").slice(0, 12);
+        return `seed:${hash}`;
     }
 }

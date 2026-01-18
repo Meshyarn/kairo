@@ -36,6 +36,17 @@ export interface IntentConstraints {
     hotSpots?: boolean;
     pageRank?: boolean;
     dependencies?: boolean;
+    clusters?: boolean;
+    docs?: boolean;
+    code?: boolean;
+    comments?: boolean;
+    logs?: boolean;
+    relatedSymbols?: boolean;
+  };
+  clusterOptions?: {
+    maxClusters?: number;
+    expansionDepth?: number;
+    includePreview?: boolean;
   };
   vibe?: {
     extract?: boolean;
