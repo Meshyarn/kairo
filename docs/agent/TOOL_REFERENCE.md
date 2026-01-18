@@ -49,7 +49,7 @@ Unified search + read interface for docs and code.
 | `cursor.content` | `string` |  | Expand content from a pack without re-search. |
 | `limits.maxResults` | `number` |  | Per-group result cap. |
 | `limits.maxChars` | `number` |  | Total content budget. |
-| `limits.maxTokens` | `number` |  | Token-first budget cap (may distill results; emits `budget_exceeded` + `compression`). |
+| `limits.maxTokens` | `number` |  | Response envelope token budget cap (final tool output JSON). |
 | `limits.maxItemChars` | `number` |  | Per-item cap. |
 | `limits.maxBytes` | `number` |  | Hard cap for full reads. |
 | `limits.maxFiles` | `number` |  | Cap the number of files scanned/considered. |
@@ -95,12 +95,14 @@ Deep analysis of structure and relationships (opt-in includes).
 | `analysis.maxClusters` | `number` |  | Max cluster count. |
 | `analysis.maxFilesPerCluster` | `number` |  | Max files per cluster. |
 | `limits.timeoutMs` | `number` |  | Per-call timeout budget (best-effort). |
-| `limits.maxTokens` | `number` |  | Token-first cap for structure payloads (may distill skeleton; emits `budget_exceeded` + `compression`). |
+| `limits.maxTokens` | `number` |  | Response envelope token budget cap (final tool output JSON). |
+| `limits.maxChars` | `number` |  | Hard cap on response JSON size (chars). |
 | `trace` | `boolean` |  | Return v1 `effectiveOptions` + v1 `decisionTrace`. |
 
 **Notes**
 
 - `profile` may be automatically downshifted for cost stability unless explicitly provided; set `trace: true` to inspect the final decision (`decisionTrace`).
+- When `include.callGraph=true`, `understand` returns a summary `callGraph` plus `callGraphArtifactId`/`callGraphSummary` so the full graph can be fetched via `manage({ command: "artifact", target: <id> })`.
 
 ---
 
@@ -237,6 +239,8 @@ Project/session state utilities.
 - `manage({ command: "history" })`는 최근 커밋된 트랜잭션 체크포인트 요약(`checkpoints`)을 함께 반환한다.
 - `manage({ command: "reindex", paths: [...] })`는 지정한 파일들의 국소 재인덱싱을 시도한다(가능한 런타임에서만).
 - `manage({ command: "export", targetType: "transaction", target: "<txId>" })`는 patch export를 반환한다.
+- `manage({ command: "artifact", detail: "summary" | "full" })`는 graph artifact일 때 요약/전체 view를 반환한다.
+- graph 원문 전체가 필요하면 `manage({ command: "export", targetType: "artifact", target: "<artifactId>" })`를 사용한다.
 
 **Parameters**
 
@@ -247,8 +251,10 @@ Project/session state utilities.
 | `target` | `string` |  | Mainly used by `test`. |
 | `targetType` | `"artifact" \| "transaction" \| "patchRef"` |  | `export` 대상 유형. |
 | `format` | `"unified_diff" \| "structured_edits" \| "both"` |  | `export` 결과 형식. |
-| `limit` | `number` |  | Max items for list commands (sessions). |
+| `limit` | `number` |  | Max items for list commands (sessions); graph artifact view caps node count. |
 | `detail` | `"summary" \| "full"` |  | Detail level for `status`/`doctor`. |
+| `limits.maxTokens` | `number` |  | Response envelope token budget for `artifact` retrieval. |
+| `limits.maxChars` | `number` |  | Response envelope char budget for `artifact` retrieval. |
 | `trace` | `boolean` |  | Return v1 `effectiveOptions` + v1 `decisionTrace`. |
 | `sessionId` | `string` |  | Session id for `session` / `session_complete`. |
 | `outcome` | `object` |  | Used by `session_complete` (e.g. `{ summary, status, nextSteps }`). |
