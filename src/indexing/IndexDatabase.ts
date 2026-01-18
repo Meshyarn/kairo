@@ -6,6 +6,7 @@ import {
     type StoredUnresolvedDependency,
     type StoredGhostSymbol,
     type StoredDocumentChunk,
+    type StoredDocumentMeta,
     type StoredEmbedding,
     type EmbeddingKey,
     type TransactionLogEntry
@@ -19,6 +20,7 @@ export type {
     StoredUnresolvedDependency,
     StoredGhostSymbol,
     StoredDocumentChunk,
+    StoredDocumentMeta,
     StoredEmbedding,
     EmbeddingKey,
     TransactionLogEntry
@@ -49,6 +51,13 @@ export class IndexDatabase implements IndexStore {
         return this.store.listFiles();
     }
 
+    public updateFileMeta(
+        relativePath: string,
+        updates: { lastModified?: number; language?: string | null; contentHash?: string; sizeBytes?: number }
+    ): FileRecord {
+        return this.store.updateFileMeta(relativePath, updates);
+    }
+
     public deleteFile(relativePath: string): void {
         this.store.deleteFile(relativePath);
     }
@@ -71,6 +80,10 @@ export class IndexDatabase implements IndexStore {
 
     public searchSymbols(pattern: string, limit?: number): Array<{ path: string; data_json: string }> {
         return this.store.searchSymbols(pattern, limit);
+    }
+
+    public getSecondaryIndexStatus(): { enabled: boolean; bytes?: number } {
+        return this.store.getSecondaryIndexStatus();
     }
 
     public replaceDependencies(args: {
@@ -146,6 +159,14 @@ export class IndexDatabase implements IndexStore {
         this.store.deleteDocumentChunks(filePath);
     }
 
+    public upsertDocumentMeta(filePath: string, meta: StoredDocumentMeta): void {
+        this.store.upsertDocumentMeta(filePath, meta);
+    }
+
+    public getDocumentMeta(filePath: string): StoredDocumentMeta | null {
+        return this.store.getDocumentMeta(filePath);
+    }
+
     public upsertEmbedding(chunkId: string, key: EmbeddingKey, embedding: { dims: number; vector: Float32Array; norm?: number }): void {
         this.store.upsertEmbedding(chunkId, key, embedding);
     }
@@ -182,12 +203,36 @@ export class IndexDatabase implements IndexStore {
         this.store.deleteEvidencePack(packId);
     }
 
+    public iterateEvidencePacks(visitor: (packId: string, payload: unknown) => void): void {
+        this.store.iterateEvidencePacks(visitor);
+    }
+
+    public compactEvidencePacks(): void {
+        this.store.compactEvidencePacks();
+    }
+
     public getChunkSummary(chunkId: string, style: "preview" | "summary"): { summary: string; contentHash?: string } | null {
         return this.store.getChunkSummary(chunkId, style);
     }
 
     public upsertChunkSummary(chunkId: string, style: "preview" | "summary", summary: string, contentHash?: string): void {
         this.store.upsertChunkSummary(chunkId, style, summary, contentHash);
+    }
+
+    public deleteChunkSummary(chunkId: string, style: "preview" | "summary"): void {
+        this.store.deleteChunkSummary(chunkId, style);
+    }
+
+    public deleteChunkSummaries(chunkId: string): void {
+        this.store.deleteChunkSummaries(chunkId);
+    }
+
+    public iterateChunkSummaries(visitor: (chunkId: string, styles: Record<"preview" | "summary", { summary: string; contentHash?: string }>) => void): void {
+        this.store.iterateChunkSummaries(visitor);
+    }
+
+    public compactChunkSummaries(): void {
+        this.store.compactChunkSummaries();
     }
 
     public upsertPendingTransaction(entry: TransactionLogEntry): void {
@@ -204,6 +249,10 @@ export class IndexDatabase implements IndexStore {
 
     public markTransactionRolledBack(id: string): void {
         this.store.markTransactionRolledBack(id);
+    }
+
+    public listTransactions(options?: { status?: "pending" | "committed" | "rolled_back"; limit?: number }): TransactionLogEntry[] {
+        return this.store.listTransactions(options);
     }
 
     public close(): void {

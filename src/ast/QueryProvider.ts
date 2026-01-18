@@ -1,7 +1,7 @@
-import * as fs from 'fs';
 import * as path from 'path';
 import { Query, Language } from 'web-tree-sitter';
 import { fileURLToPath } from 'url';
+import { NodeFileSystem, type IFileSystem } from '../platform/FileSystem.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -9,6 +9,7 @@ const __dirname = path.dirname(__filename);
 export class QueryProvider {
     private queryCache = new Map<string, Query>();
     private queriesRoot: string;
+    private readonly fileSystem: IFileSystem;
     private readonly languageAliases: Record<string, string[]> = {
         ts: ['typescript'],
         tsx: ['typescript'],
@@ -20,10 +21,11 @@ export class QueryProvider {
         rs: ['rust']
     };
 
-    constructor(queriesRoot?: string) {
+    constructor(queriesRoot?: string, fileSystem?: IFileSystem) {
         // Default to src/queries in dev, dist/queries in prod
+        this.fileSystem = fileSystem ?? new NodeFileSystem(process.cwd());
         this.queriesRoot = queriesRoot || path.resolve(__dirname, '..', 'queries');
-        if (!fs.existsSync(this.queriesRoot)) {
+        if (!this.fileSystem.existsSync?.(this.queriesRoot)) {
             // Fallback for different build structures
             this.queriesRoot = path.resolve(process.cwd(), 'src', 'queries');
         }
@@ -44,12 +46,12 @@ export class QueryProvider {
             }
 
             const queryPath = path.join(this.queriesRoot, candidate, `${queryName}.scm`);
-            if (!fs.existsSync(queryPath)) {
+            if (!this.fileSystem.existsSync?.(queryPath)) {
                 continue;
             }
 
             try {
-                const source = fs.readFileSync(queryPath, 'utf-8');
+                const source = this.fileSystem.readFileSync?.(queryPath) ?? await this.fileSystem.readFile(queryPath);
                 const query = new Query(lang, source);
                 this.queryCache.set(cacheKey, query);
                 return query;

@@ -54,6 +54,7 @@ export interface ScoutArgs extends SearchOptions {
     deduplicateByContent?: boolean;
     budget?: ResourceBudget;
     usage?: ResourceUsage;
+    semanticSymbols?: boolean;
 }
 
 export interface SearchEngineOptions {
@@ -94,8 +95,8 @@ export class SearchEngine {
     private filenameScorer: FilenameScorer;
     private commentParser: CommentParser;
     private queryIntentDetector: QueryIntentDetector;
-    private readonly symbolEmbeddingIndex?: SymbolEmbeddingIndex;
-    private readonly intentToSymbolMapper?: IntentToSymbolMapper;
+    private symbolEmbeddingIndex?: SymbolEmbeddingIndex;
+    private intentToSymbolMapper?: IntentToSymbolMapper;
 
     constructor(rootPath: string, fileSystem: IFileSystem, initialExcludeGlobs: string[] = [], options: SearchEngineOptions = {}) {
         this.rootPath = path.resolve(rootPath);
@@ -205,6 +206,14 @@ export class SearchEngine {
         await this.trigramIndex.ensureReady();
     }
 
+    public setSymbolEmbeddingIndex(index?: SymbolEmbeddingIndex): void {
+        this.symbolEmbeddingIndex = index;
+        this.intentToSymbolMapper = index ? new IntentToSymbolMapper(index) : undefined;
+        if (index) {
+            this.logger.info('[Search] Symbol embedding search enabled');
+        }
+    }
+
     public isIndexReady(): boolean {
         return this.trigramIndex.isReadyState();
     }
@@ -306,7 +315,7 @@ export class SearchEngine {
         });
 
         // Phase 1 Smart Fuzzy Match: Symbol-based search for symbol queries
-        if (intent === "symbol" && this.intentToSymbolMapper && this.symbolEmbeddingIndex) {
+        if (intent === "symbol" && args.semanticSymbols === true && this.intentToSymbolMapper && this.symbolEmbeddingIndex) {
             try {
                 const stopSymbolSearch = metrics.startTimer("search.scout.symbol_search_ms");
                 const symbolResults = await this.intentToSymbolMapper.mapToSymbols(effectiveQuery, {
@@ -320,7 +329,11 @@ export class SearchEngine {
                     
                     // Add symbol file locations to candidates
                     for (const result of symbolResults) {
-                        const relativePath = path.relative(this.rootPath, result.symbol.filePath);
+                        const rawPath = result.symbol.filePath;
+                        const absolutePath = path.isAbsolute(rawPath)
+                            ? rawPath
+                            : path.join(this.rootPath, rawPath);
+                        const relativePath = path.relative(this.rootPath, absolutePath);
                         candidates.add(relativePath);
                     }
                     

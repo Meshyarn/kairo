@@ -8,9 +8,12 @@ export type DegradedReasonType =
   | "unsupported_language"
   | "missing_query_pack"
   | "missing_wasm_grammar"
+  | "missing_syntax_validator"
   | "syntax_validation_failed"
   | "skeleton_extraction_failed"
   | "symbol_index_unavailable"
+  | "cross_repo_scope_mismatch"
+  | "cross_repo_edit_blocked"
   | "degraded";
 
 export type DegradedReason = {
@@ -19,5 +22,7 @@ export type DegradedReason = {
   packageName?: string;
   filePath?: string;
   message: string;
-  action?: string;
+  severity?: "info" | "warning" | "critical";
+  actionToolCall?: { tool: string; args: Record<string, unknown> };
+  actionId?: string;
 };

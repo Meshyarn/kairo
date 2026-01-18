@@ -1,5 +1,4 @@
 import path from "path";
-import * as fs from "fs";
 import { OrchestrationContext } from "../../OrchestrationContext.js";
 import { InternalToolRegistry } from "../../InternalToolRegistry.js";
 import { UnifiedContextGraph } from "../../context/UnifiedContextGraph.js";
@@ -8,8 +7,10 @@ import { checkQuerySupport, checkSkeletonSupport } from "../../../ast/LanguageSu
 import { SyntaxValidator } from "../../../engine/validators/syntax-validator.js";
 import { getSupportForFilePath, SupportLevel } from "../../../config/LanguageSupportLevels.js";
 import { TopologyInfo } from "../../../types.js";
+import type { LOD_LEVEL } from "../../../types/ast.js";
 import { ExploreItem, truncate } from "./ResultFormatter.js";
 import { isDocPath, isGlob } from "./FilteringStrategy.js";
+import { NodeFileSystem, type IFileSystem } from "../../../platform/FileSystem.js";
 
 const DEFAULT_DEPTH = 5;
 
@@ -68,19 +69,22 @@ export async function expandPaths(
 
 export async function collectTopologyMetadata(
     ucg: UnifiedContextGraph | undefined,
-    filePath: string
+    filePath: string,
+    fileSystem?: IFileSystem,
+    minLOD: LOD_LEVEL = 1
 ): Promise<{ topology?: TopologyInfo; lod?: number; dependencyCount?: number; dependents?: number }> {
     if (!filePath) {
         return {};
     }
 
     const astManager = AstManager.getInstance();
+    const fsAdapter = fileSystem ?? new NodeFileSystem(process.cwd());
     let topology: TopologyInfo | undefined;
     let lod = 0;
 
     if (ucg) {
         try {
-            await ucg.ensureLOD({ path: filePath, minLOD: 1 });
+            await ucg.ensureLOD({ path: filePath, minLOD });
             const node = ucg.getNode(filePath);
             if (node && node.topology) {
                 topology = node.topology;
@@ -93,7 +97,7 @@ export async function collectTopologyMetadata(
 
     if (!topology) {
         try {
-            const content = fs.readFileSync(filePath, "utf-8");
+            const content = await fsAdapter.readFile(filePath);
             topology = await astManager.extractUniversalTopology(filePath, content);
             lod = 1;
         } catch (error) {
@@ -125,10 +129,12 @@ export async function buildItemForPath(
         section?: { sectionId?: string; headingPath?: string[]; includeSubsections?: boolean };
     },
     context: OrchestrationContext,
-    runTool: (context: OrchestrationContext, tool: string, args: any) => Promise<any>
+    runTool: (context: OrchestrationContext, tool: string, args: any) => Promise<any>,
+    fileSystem?: IFileSystem
 ): Promise<{ value?: ExploreItem; degraded?: boolean; reason?: string; blocked?: boolean; message?: string }> {
     const docPath = isDocPath(filePath);
     const safePreview = (value: string) => truncate(value ?? "", options.maxItemChars);
+    const fsAdapter = fileSystem ?? new NodeFileSystem(process.cwd());
 
     if (options.wantsFull) {
         if (docPath) {
@@ -216,24 +222,24 @@ export async function buildItemForPath(
         if (requiredQueries.length > 0) {
             const querySupport = await checkQuerySupport(filePath, requiredQueries, { required: true });
             if (querySupport.degraded) {
-                // ADR-040/041: L3 level missing queries must block to preserve system integrity
-                const languageId = AstManager.getInstance().getLanguageId(filePath);
-                const missing = Array.isArray(querySupport.missing) ? querySupport.missing : [];
-                const missingSummary = missing.length > 0 ? ` (${missing.join(", ")})` : "";
-                const message = querySupport.reason === "language_parser_unavailable"
-                    ? `Language parser unavailable for ${filePath}.`
-                    : `Missing query pack for ${languageId}${missingSummary}.`;
-                return {
-                    blocked: true,
-                    message,
-                    reason: querySupport.reason
-                };
+                if (querySupport.reason === "missing_query_pack") {
+                    const languageId = AstManager.getInstance().getLanguageId(filePath);
+                    const missing = Array.isArray(querySupport.missing) ? querySupport.missing : [];
+                    const missingSummary = missing.length > 0 ? ` (${missing.join(", ")})` : "";
+                    return {
+                        blocked: true,
+                        message: `Missing query pack for ${languageId}${missingSummary}.`,
+                        reason: querySupport.reason
+                    };
+                }
+                queryDegraded = true;
+                queryReason = querySupport.reason;
             }
         }
 
         if (supportSpec.editPolicy.requireSyntaxValidation) {
             try {
-                l3Content = fs.readFileSync(path.resolve(filePath), "utf-8");
+                l3Content = await fsAdapter.readFile(path.resolve(filePath));
             } catch {
                 if (options.wantsFull) {
                     return {
@@ -269,12 +275,27 @@ export async function buildItemForPath(
                 const validator = new SyntaxValidator();
                 const validation = await validator.validate(filePath, l3Content);
                 if (!validation.success) {
-                    // Syntax validation failure is always blocking for L3
-                    return {
-                        blocked: true,
-                        message: `Syntax validation failed for ${filePath}.`,
-                        reason: "syntax_validation_failed"
-                    };
+                    const codes = (validation.blockingErrors ?? []).map((error) => error.code);
+                    const hasSyntaxError = codes.includes("SYNTAX_ERROR");
+                    const hasValidatorUnavailable = codes.includes("SYNTAX_VALIDATOR_UNAVAILABLE");
+                    const hasLanguageUnavailable = codes.includes("SYNTAX_LANGUAGE_UNAVAILABLE");
+
+                    if (hasSyntaxError && !options.wantsFull) {
+                        return {
+                            blocked: true,
+                            message: `Syntax validation failed for ${filePath}.`,
+                            reason: "syntax_validation_failed"
+                        };
+                    }
+
+                    queryDegraded = true;
+                    if (hasValidatorUnavailable) {
+                        queryReason = "missing_syntax_validator";
+                    } else if (hasLanguageUnavailable) {
+                        queryReason = "missing_wasm_grammar";
+                    } else {
+                        queryReason = "syntax_validation_failed";
+                    }
                 }
             }
         }

@@ -310,7 +310,9 @@ export class EditExecutor {
         }
 
         let result = await this.syntaxValidator.validate(filePath, content);
-        if (!result.success && this.hasSyntaxLanguageUnavailable(result)) {
+        const support = getSupportForFilePath(filePath);
+        const isStrictL3 = support?.level === SupportLevel.L3 && support.editPolicy.requireSyntaxValidation;
+        if (!result.success && this.hasSyntaxLanguageUnavailable(result) && mode === "warn" && !isStrictL3) {
             result = {
                 ...result,
                 success: true,
@@ -326,7 +328,9 @@ export class EditExecutor {
     }
 
     private hasSyntaxLanguageUnavailable(result: ValidationResult): boolean {
-        return (result.blockingErrors ?? []).some((error) => error.code === "SYNTAX_LANGUAGE_UNAVAILABLE");
+        return (result.blockingErrors ?? []).some((error) =>
+            error.code === "SYNTAX_LANGUAGE_UNAVAILABLE" || error.code === "SYNTAX_VALIDATOR_UNAVAILABLE"
+        );
     }
 
     private async runSemanticValidation(

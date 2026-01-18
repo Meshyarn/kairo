@@ -59,6 +59,8 @@ interface GlobalIndexData {
 export class CallGraphBuilder {
     private readonly fileContextCache = new Map<string, FileSymbolContext>();
     private globalIndexData: GlobalIndexData | null = null;
+    private readonly maxCallGraphNodes: number | undefined = this.resolveCap("KAIRO_CALLGRAPH_MAX_NODES");
+    private readonly maxCallGraphEdges: number | undefined = this.resolveCap("KAIRO_CALLGRAPH_MAX_EDGES");
 
     constructor(
         private readonly rootPath: string,
@@ -98,6 +100,10 @@ export class CallGraphBuilder {
         const visitedNodes: Record<string, CallGraphNode> = { [symbolId]: root };
         const definitionCache = new Map<string, DefinitionLocation>();
         definitionCache.set(symbolId, { definition, absPath, relativePath: normalizedPath });
+        const budget = this.createBudgetTracker();
+        if (budget) {
+            budget.nodeCount = 1;
+        }
 
         const queue: Array<{ symbolId: string; depth: number }> = [];
         const depthBySymbol = new Map<string, number>();
@@ -108,6 +114,7 @@ export class CallGraphBuilder {
         const needsUpstream = direction === "upstream" || direction === "both";
         const needsDownstream = direction === "downstream" || direction === "both";
         let truncated = false;
+        let truncatedReason: "cap" | "depth" | "unknown" | undefined;
 
         const ensureGlobalData = async (): Promise<GlobalIndexData> => {
             if (!this.globalIndexData) {
@@ -117,6 +124,11 @@ export class CallGraphBuilder {
         };
 
         while (queue.length > 0) {
+            if (budget?.exhausted) {
+                truncated = true;
+                truncatedReason = truncatedReason ?? "cap";
+                break;
+            }
             const { symbolId: currentId, depth } = queue.shift()!;
             const recordedDepth = depthBySymbol.get(currentId);
             if (recordedDepth !== undefined && depth > recordedDepth) {
@@ -144,10 +156,14 @@ export class CallGraphBuilder {
                     queue,
                     depthBySymbol,
                     processed,
+                    budget,
                     getGlobalDefinitions: async () => (await ensureGlobalData()).definitionsByName
                 });
                 if (downstream.truncated) {
                     truncated = true;
+                    if (downstream.truncatedReason) {
+                        truncatedReason = truncatedReason ?? downstream.truncatedReason;
+                    }
                 }
             }
 
@@ -162,10 +178,14 @@ export class CallGraphBuilder {
                     queue,
                     depthBySymbol,
                     processed,
+                    budget,
                     getGlobalData: ensureGlobalData
                 });
                 if (upstream.truncated) {
                     truncated = true;
+                    if (upstream.truncatedReason) {
+                        truncatedReason = truncatedReason ?? upstream.truncatedReason;
+                    }
                 }
             }
         }
@@ -173,7 +193,8 @@ export class CallGraphBuilder {
         return {
             root,
             visitedNodes,
-            truncated
+            truncated: truncated || budget?.truncated === true,
+            truncatedReason: truncatedReason ?? (budget?.truncated ? "cap" : undefined)
         };
     }
 
@@ -245,7 +266,16 @@ export class CallGraphBuilder {
         queue.push({ symbolId, depth });
     }
 
-    private addEdge(fromNode: CallGraphNode, toNode: CallGraphNode, edge: Omit<CallGraphEdge, "fromSymbolId" | "toSymbolId">) {
+    private addEdge(
+        fromNode: CallGraphNode,
+        toNode: CallGraphNode,
+        edge: Omit<CallGraphEdge, "fromSymbolId" | "toSymbolId">,
+        budget?: CallGraphBudget
+    ): boolean {
+        if (budget?.exhausted) {
+            budget.truncated = true;
+            return false;
+        }
         const newEdge: CallGraphEdge = {
             fromSymbolId: fromNode.symbolId,
             toSymbolId: toNode.symbolId,
@@ -253,11 +283,24 @@ export class CallGraphBuilder {
         };
 
         if (!fromNode.callees.some(existing => this.sameEdge(existing, newEdge))) {
+            if (budget?.maxEdges && budget.edgeCount >= budget.maxEdges) {
+                budget.truncated = true;
+                budget.exhausted = true;
+                return false;
+            }
             fromNode.callees.push(newEdge);
+            if (budget) {
+                budget.edgeCount += 1;
+                if (budget.maxEdges && budget.edgeCount >= budget.maxEdges) {
+                    budget.truncated = true;
+                    budget.exhausted = true;
+                }
+            }
         }
         if (!toNode.callers.some(existing => this.sameEdge(existing, newEdge))) {
             toNode.callers.push(newEdge);
         }
+        return true;
     }
 
     private sameEdge(left: CallGraphEdge, right: CallGraphEdge): boolean {
@@ -280,56 +323,80 @@ export class CallGraphBuilder {
         queue: Array<{ symbolId: string; depth: number }>;
         depthBySymbol: Map<string, number>;
         processed: Set<string>;
+        budget?: CallGraphBudget;
         getGlobalDefinitions?: () => Promise<Map<string, DefinitionLocation[]>>;
-    }): Promise<{ truncated: boolean }> {
-        const { node, location, depth, maxDepth, visitedNodes, definitionCache, queue, depthBySymbol, processed } = params;
+    }): Promise<{ truncated: boolean; truncatedReason?: "cap" | "depth" | "unknown" }> {
+        const { node, location, depth, maxDepth, visitedNodes, definitionCache, queue, depthBySymbol, processed, budget } = params;
         const definition = location.definition;
         if (!definition.calls || definition.calls.length === 0) {
             return { truncated: false };
         }
 
         if (depth >= maxDepth) {
-            return { truncated: true };
+            return { truncated: true, truncatedReason: "depth" };
         }
 
         const context = await this.getFileContext(location.absPath);
         if (!context) {
-            return { truncated: true };
+            return { truncated: true, truncatedReason: "unknown" };
         }
 
         let truncated = false;
+        let truncatedReason: "cap" | "depth" | "unknown" | undefined;
         for (const call of definition.calls) {
+            if (budget?.exhausted) {
+                truncated = true;
+                truncatedReason = truncatedReason ?? "cap";
+                break;
+            }
             const targets = await this.resolveCallTargets(call, context, params.getGlobalDefinitions);
             if (targets.length === 0) {
                 truncated = true;
+                truncatedReason = truncatedReason ?? "unknown";
                 continue;
             }
 
             for (const target of targets) {
+                if (budget?.exhausted) {
+                    truncated = true;
+                    truncatedReason = truncatedReason ?? "cap";
+                    break;
+                }
                 const nextDepth = depth + 1;
                 if (nextDepth > maxDepth) {
                     truncated = true;
+                    truncatedReason = truncatedReason ?? "depth";
                     continue;
                 }
 
                 const symbolId = this.makeSymbolId(target.relativePath, target.definition.name);
-                const calleeNode = this.getOrCreateNode(symbolId, target.definition, target.relativePath, visitedNodes);
+                const calleeNode = this.getOrCreateNodeWithBudget(symbolId, target.definition, target.relativePath, visitedNodes, budget);
+                if (!calleeNode) {
+                    truncated = true;
+                    truncatedReason = truncatedReason ?? "cap";
+                    continue;
+                }
                 if (!definitionCache.has(symbolId)) {
                     definitionCache.set(symbolId, target);
                 }
 
-                this.addEdge(node, calleeNode, {
+                const added = this.addEdge(node, calleeNode, {
                     callType: call.callType,
                     confidence: target.confidence,
                     line: call.line,
                     column: call.column
-                });
+                }, budget);
+                if (!added && budget?.exhausted) {
+                    truncated = true;
+                    truncatedReason = truncatedReason ?? "cap";
+                    break;
+                }
 
                 this.enqueueNode(symbolId, nextDepth, maxDepth, queue, depthBySymbol, processed);
             }
         }
 
-        return { truncated };
+        return { truncated, ...(truncatedReason ? { truncatedReason } : {}) };
     }
 
     private async populateUpstream(params: {
@@ -342,9 +409,10 @@ export class CallGraphBuilder {
         queue: Array<{ symbolId: string; depth: number }>;
         depthBySymbol: Map<string, number>;
         processed: Set<string>;
+        budget?: CallGraphBudget;
         getGlobalData: () => Promise<GlobalIndexData>;
-    }): Promise<{ truncated: boolean }> {
-        const { node, location, depth, maxDepth, visitedNodes, definitionCache, queue, depthBySymbol, processed } = params;
+    }): Promise<{ truncated: boolean; truncatedReason?: "cap" | "depth" | "unknown" }> {
+        const { node, location, depth, maxDepth, visitedNodes, definitionCache, queue, depthBySymbol, processed, budget } = params;
         const globalData = await params.getGlobalData();
         const candidates = globalData.callSitesByName.get(location.definition.name);
         if (!candidates || candidates.length === 0) {
@@ -352,11 +420,17 @@ export class CallGraphBuilder {
         }
 
         if (depth >= maxDepth) {
-            return { truncated: true };
+            return { truncated: true, truncatedReason: "depth" };
         }
 
         let truncated = false;
+        let truncatedReason: "cap" | "depth" | "unknown" | undefined;
         for (const site of candidates) {
+            if (budget?.exhausted) {
+                truncated = true;
+                truncatedReason = truncatedReason ?? "cap";
+                break;
+            }
             const resolvedTargets = await this.resolveCallTargets(site.call, site.context, async () => globalData.definitionsByName);
             const match = resolvedTargets.find(target =>
                 target.relativePath === location.relativePath &&
@@ -369,11 +443,17 @@ export class CallGraphBuilder {
             const nextDepth = depth + 1;
             if (nextDepth > maxDepth) {
                 truncated = true;
+                truncatedReason = truncatedReason ?? "depth";
                 continue;
             }
 
             const callerId = this.makeSymbolId(site.context.relativePath, site.definition.name);
-            const callerNode = this.getOrCreateNode(callerId, site.definition, site.context.relativePath, visitedNodes);
+            const callerNode = this.getOrCreateNodeWithBudget(callerId, site.definition, site.context.relativePath, visitedNodes, budget);
+            if (!callerNode) {
+                truncated = true;
+                truncatedReason = truncatedReason ?? "cap";
+                continue;
+            }
             if (!definitionCache.has(callerId)) {
                 definitionCache.set(callerId, {
                     definition: site.definition,
@@ -382,17 +462,22 @@ export class CallGraphBuilder {
                 });
             }
 
-            this.addEdge(callerNode, node, {
+            const added = this.addEdge(callerNode, node, {
                 callType: site.call.callType,
                 confidence: match.confidence,
                 line: site.call.line,
                 column: site.call.column
-            });
+            }, budget);
+            if (!added && budget?.exhausted) {
+                truncated = true;
+                truncatedReason = truncatedReason ?? "cap";
+                break;
+            }
 
             this.enqueueNode(callerId, nextDepth, maxDepth, queue, depthBySymbol, processed);
         }
 
-        return { truncated };
+        return { truncated, ...(truncatedReason ? { truncatedReason } : {}) };
     }
 
     private async resolveCallTargets(
@@ -656,4 +741,61 @@ export class CallGraphBuilder {
         }
         this.globalIndexData = null;
     }
+
+    private resolveCap(envKey: string): number | undefined {
+        const raw = process.env[envKey];
+        if (!raw) return undefined;
+        const parsed = Number(raw);
+        if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+        return Math.floor(parsed);
+    }
+
+    private createBudgetTracker(): CallGraphBudget | undefined {
+        if (!this.maxCallGraphNodes && !this.maxCallGraphEdges) {
+            return undefined;
+        }
+        return {
+            maxNodes: this.maxCallGraphNodes,
+            maxEdges: this.maxCallGraphEdges,
+            nodeCount: 0,
+            edgeCount: 0,
+            truncated: false,
+            exhausted: false
+        };
+    }
+
+    private getOrCreateNodeWithBudget(
+        symbolId: string,
+        definition: DefinitionSymbol,
+        relativePath: string,
+        visitedNodes: Record<string, CallGraphNode>,
+        budget?: CallGraphBudget
+    ): CallGraphNode | null {
+        const existing = visitedNodes[symbolId];
+        if (existing) {
+            return existing;
+        }
+        if (budget?.maxNodes && budget.nodeCount >= budget.maxNodes) {
+            budget.truncated = true;
+            budget.exhausted = true;
+            return null;
+        }
+        const node = this.getOrCreateNode(symbolId, definition, relativePath, visitedNodes);
+        if (budget) {
+            budget.nodeCount += 1;
+            if (budget.maxNodes && budget.nodeCount >= budget.maxNodes) {
+                budget.truncated = true;
+            }
+        }
+        return node;
+    }
 }
+
+type CallGraphBudget = {
+    maxNodes?: number;
+    maxEdges?: number;
+    nodeCount: number;
+    edgeCount: number;
+    truncated: boolean;
+    exhausted: boolean;
+};

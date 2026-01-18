@@ -1,8 +1,7 @@
 import type { EmbeddingProvider } from "../types.js";
 import type { EmbeddingProviderClient } from "./EmbeddingProviderFactory.js";
 import type { EmbeddingQueue } from "./EmbeddingQueue.js";
-import path from "path";
-import url from "url";
+import { resolveEmbeddingModelSearchPaths } from "./ModelPaths.js";
 
 type TransformersPipeline = (inputs: string[] | string, options?: Record<string, unknown>) => Promise<any>;
 
@@ -97,11 +96,12 @@ export class TransformersEmbeddingProvider implements EmbeddingProviderClient {
         if (explicit && explicit.trim()) {
             return explicit.trim();
         }
-        const currentDir = path.dirname(url.fileURLToPath(import.meta.url));
-        // dist/embeddings -> dist -> project_root
-        const projectRoot = path.resolve(currentDir, "..", "..");
-        const candidate = path.join(projectRoot, "models");
-        return candidate;
+        const searched = resolveEmbeddingModelSearchPaths({
+            modelId: this.model,
+            modelDir: this.modelDir,
+            modelCacheDir: this.modelCacheDir
+        });
+        return searched.resolved;
     }
 
     public async dispose(): Promise<void> {

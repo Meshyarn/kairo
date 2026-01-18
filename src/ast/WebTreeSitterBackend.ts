@@ -1,11 +1,11 @@
 import * as path from 'path';
-import * as fs from 'fs';
 import * as WebTreeSitterModule from 'web-tree-sitter';
 import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
 import { AstBackend, AstDocument } from './AstBackend.js';
 import { LRUCache } from '../utils/LRUCache.js';
 import { BUILTIN_LANGUAGE_MAPPINGS } from '../config/LanguageConfig.js';
+import { NodeFileSystem, type IFileSystem } from '../platform/FileSystem.js';
 
 function resolveParserConstructor(moduleRef: any): any {
     if (typeof moduleRef === 'function') {
@@ -54,8 +54,10 @@ export class WebTreeSitterBackend implements AstBackend {
     private languageLoader: any;
     private cleanupInterval?: NodeJS.Timeout;
     private readonly localRequire = createRequire(import.meta.url);
+    private readonly fileSystem: IFileSystem;
 
-    constructor() {
+    constructor(options?: { fileSystem?: IFileSystem }) {
+        this.fileSystem = options?.fileSystem ?? new NodeFileSystem(process.cwd());
         this.parserCtor = resolveParserConstructor(WebTreeSitterModule);
         this.initFn = resolveInitFn(WebTreeSitterModule, this.parserCtor);
         this.languageLoader = resolveLanguageLoader(WebTreeSitterModule, this.parserCtor);
@@ -193,7 +195,7 @@ export class WebTreeSitterBackend implements AstBackend {
         candidates.push(path.resolve(process.cwd(), 'wasm', `tree-sitter-${langName}.wasm`));
 
         for (const candidate of candidates) {
-            if (candidate && fs.existsSync(candidate)) {
+            if (candidate && this.fileSystem.existsSync?.(candidate)) {
                 return candidate;
             }
         }

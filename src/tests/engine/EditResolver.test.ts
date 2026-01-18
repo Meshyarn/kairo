@@ -17,6 +17,18 @@ class MockFileSystem implements IFileSystem {
         return this.files.has(absPath);
     }
 
+    existsSync(absPath: string): boolean {
+        return this.files.has(absPath);
+    }
+
+    async realpath(targetPath: string): Promise<string> {
+        return targetPath;
+    }
+
+    realpathSync(targetPath: string): string {
+        return targetPath;
+    }
+
     async readFile(absPath: string): Promise<string> {
         const content = this.files.get(absPath);
         if (!content) throw new Error(`File not found: ${absPath}`);
@@ -48,7 +60,7 @@ class MockFileSystem implements IFileSystem {
     }
 
     async stat(absPath: string): Promise<any> {
-        return { isDirectory: false, isFile: true, size: 0 };
+        return { size: 0, mtime: Date.now(), isDirectory: () => false };
     }
 
     async listFiles(basePath: string): Promise<string[]> {

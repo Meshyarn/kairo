@@ -26,7 +26,7 @@ describe("Language support: Markdown", () => {
       const symbols = await backend.extractSymbols({ filePath: "README.md", content, languageId, doc });
       const skeleton = await manager.generateUniversalSkeleton("README.md", content);
 
-      expect(getSupportForLanguageId(languageId)?.level).toBe("understand-grade");
+      expect(getSupportForLanguageId(languageId)?.level).toBe("L2");
       expected.imports?.forEach((specifier) => {
         expect(imports.map((entry) => entry.specifier)).toContain(specifier);
       });

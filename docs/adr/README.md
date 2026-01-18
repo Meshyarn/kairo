@@ -61,6 +61,28 @@ The entries below cover all ADRs from the project history. Items marked “retou
 - ADR-054-H (summary): Contract hardening & bootstrap alignment (NAPI) → `docs/adr/ADR-054-H-contract-hardening-and-bootstrap.md`
 - ADR-055 (summary): Universal parity & standardization program → `docs/adr/ADR-055-universal-parity-and-standardization.md`
 - ADR-056 (summary): Token-aware dynamic context compression (maxTokens + distill) → `docs/adr/ADR-056-token-aware-dynamic-context-compression.md`
+- ADR-057: Unified degradedReasons + action guidance v1 → `docs/adr/ADR-057-unified-degraded-reasons-and-action-guidance-v1.md`
+- ADR-058: Tool schema contract + compatibility layer → `docs/adr/ADR-058-tool-schema-contract-and-compatibility-layer.md`
+- ADR-059: EvidencePack/Summaries lifecycle (prune/compact) → `docs/adr/ADR-059-evidence-pack-and-summaries-lifecycle-prune-compact.md`
+- ADR-060: Document tool parity (PDF/XLSX) → `docs/adr/ADR-060-document-tool-parity-pdf-xlsx.md`
+- ADR-062: Multi-repo E2E UX + safety boundaries → `docs/adr/ADR-062-multi-repo-e2e-ux-and-safety-boundaries.md`
+- ADR-063: Capability diagnostics + provider policy integration → `docs/adr/ADR-063-capability-diagnostics-and-provider-policy-integration.md`
+- ADR-064: FileVersion handshake (read↔apply) → `docs/adr/ADR-064-fileversion-handshake-read-apply.md`
+- ADR-065: Change execution contract (atomic apply + delete policy) → `docs/adr/ADR-065-change-execution-contract-atomic-apply-partial-opt-in-delete-policy.md`
+- ADR-066: Guardrails override & audit trail → `docs/adr/ADR-066-guardrails-override-and-audit-trail.md`
+- ADR-067: Observability baseline (bench accuracy + minimal metrics + optional OTel) → `docs/adr/ADR-067-observability-baseline-bench-accuracy-min-metrics-otel.md`
+- ADR-068: Index freshness & cache invalidation program → `docs/adr/ADR-068-index-freshness-cache-invalidation-program.md`
+- ADR-069: Search/index scalability without SQLite (baseline async, secondary index) → `docs/adr/ADR-069-search-index-scalability-without-sqlite.md`
+- ADR-070: Offline baseline policy (remote embeddings, model packaging) → `docs/adr/ADR-070-offline-baseline-policy-remote-embeddings-model-packaging.md`
+- ADR-071: IFileSystem boundary expansion & testability program → `docs/adr/ADR-071-ifilesystem-boundary-expansion-and-testability-program.md`
+- ADR-072: Pillar decomposition & module boundary hardening → `docs/adr/ADR-072-pillar-decomposition-and-module-boundary-hardening.md`
+- ADR-073: Option trace 표준화 (decisionTrace/effectiveOptions v1) → `docs/adr/ADR-073-option-trace-standardization-decisiontrace-effectiveoptions.md`
+- ADR-074: Token budget allocator v2 + summary reuse → `docs/adr/ADR-074-token-budget-allocator-v2-cross-pillar-summary-reuse.md`
+- ADR-075: Adaptive Flow rollout plan (profile/scale gate) → `docs/adr/ADR-075-adaptive-flow-rollout-plan-ucg-lod-profile-based-enable.md`
+- ADR-076: Symbol semantic search E2E (opt-in) → `docs/adr/ADR-076-symbol-semantic-search-e2e-integrate-or-deprecate.md`
+- ADR-077: Mixed-workflow resilience (drift + checkpoints) → `docs/adr/ADR-077-mixed-workflow-resilience.md`
+- ADR-078 (summary): Cost stabilization & adaptive LOD (Lean-first) → `docs/adr/ADR-078-cost-stabilization-and-adaptive-lod.md`
+- ADR-079 (summary): Workflow UX & style reliability v2 → `docs/adr/ADR-079-workflow-ux-and-style-reliability-v2.md`
 - ADR-055-H: Adaptive trust policy (no curated summary)
 - ADR-055-L: Action guidance + Understand fallback graph (no curated summary)
 - ADR-033: “Six Pillars” precursor to ADR-040; introduced orchestration primitives and earlier public surface.
@@ -69,6 +91,9 @@ The entries below cover all ADRs from the project history. Items marked “retou
 ### Safety, validation, and reliability
 
 - ADR-041 (retouched): Integrity audit modes integrated into pillars → `docs/adr/ADR-041-integrity-audit-and-guardrails.md`
+- ADR-064: FileVersion handshake (read↔apply) → `docs/adr/ADR-064-fileversion-handshake-read-apply.md`
+- ADR-065: Change execution contract (atomic apply + delete policy) → `docs/adr/ADR-065-change-execution-contract-atomic-apply-partial-opt-in-delete-policy.md`
+- ADR-066: Guardrails override & audit trail → `docs/adr/ADR-066-guardrails-override-and-audit-trail.md`
 - ADR-048: Sync feedback loop + architectural safety guardrails (tighten preflight/apply checks).
 - ADR-049: Defensive hardening for integrity engine and audit logging.
 - ADR-046 (retouched): Semantic validation layer for edit operations (go beyond text-match correctness) → `docs/adr/ADR-046-semantic-validation-layer.md`
@@ -91,6 +116,12 @@ The entries below cover all ADRs from the project history. Items marked “retou
 - ADR-055-H: Adaptive trust policy (archived; no curated summary)
 - ADR-055-L: Action guidance + Understand fallback graph (archived; no curated summary)
 - ADR-056 (summary): Token-aware dynamic context compression (maxTokens + distill) → `docs/adr/ADR-056-token-aware-dynamic-context-compression.md`
+- ADR-067: Observability baseline (bench accuracy + minimal metrics + optional OTel) → `docs/adr/ADR-067-observability-baseline-bench-accuracy-min-metrics-otel.md`
+- ADR-068: Index freshness & cache invalidation program → `docs/adr/ADR-068-index-freshness-cache-invalidation-program.md`
+- ADR-069: Search/index scalability without SQLite (baseline async, secondary index) → `docs/adr/ADR-069-search-index-scalability-without-sqlite.md`
+- ADR-070: Offline baseline policy (remote embeddings, model packaging) → `docs/adr/ADR-070-offline-baseline-policy-remote-embeddings-model-packaging.md`
+- ADR-071: IFileSystem boundary expansion & testability program → `docs/adr/ADR-071-ifilesystem-boundary-expansion-and-testability-program.md`
+- ADR-072: Pillar decomposition & module boundary hardening → `docs/adr/ADR-072-pillar-decomposition-and-module-boundary-hardening.md`
 - ADR-022: Scalable memory architecture (on-disk/lazy/streaming baseline ideas).
 - ADR-028: Performance + accuracy enhancements (historical deep dive).
 - ADR-029: Production readiness / system maturity (historical).
@@ -99,6 +130,7 @@ The entries below cover all ADRs from the project history. Items marked “retou
 ### Retrieval, search, and context construction
 
 - ADR-043 (retouched): Adaptive Context Architecture (LOD + UCG) → `docs/adr/ADR-043-adaptive-context-architecture.md`
+- ADR-069: Search/index scalability without SQLite (baseline async, secondary index) → `docs/adr/ADR-069-search-index-scalability-without-sqlite.md`
 - ADR-017/017-addendum: Context-aware clustered search; token control; caching refinements.
 - ADR-018: Consolidated clustered search (refinement / merged design).
 - ADR-014: Smart File Profile (token-efficient default reads, skeleton-first).
@@ -108,6 +140,7 @@ The entries below cover all ADRs from the project history. Items marked “retou
 
 - ADR-044 (retouched): Universal language parity via Tree-sitter WASM + query packs → `docs/adr/ADR-044-universal-language-parity.md`
 - ADR-047 (retouched): Multi-repo + multi-language expansion → `docs/adr/ADR-047-multi-repo-multi-language.md`
+- ADR-062: Multi-repo E2E UX + safety boundaries → `docs/adr/ADR-062-multi-repo-e2e-ux-and-safety-boundaries.md`
 - ADR-023: Architectural gap remediation (historic analysis driving extraction/indexing cleanup).
 - ADR-031: Unified runtime/testing data layout (historical; influences `.kairo/` shape).
 
@@ -174,6 +207,15 @@ This list captures every ADR title from the project history and where it’s cov
 - ADR-048: Sync Feedback Loop & Architectural Safety Guardrails → summarized in this index (see “Safety”)
 - ADR-049: Integrity Engine Defensive Hardening → summarized in this index (see “Safety”)
 - ADR-050: Writer's Flow (Research → Analyze → Skeleton → Write → Review → Manage) → `docs/adr/ADR-050-writers-flow.md`
+- ADR-061: Language Parity Gates (L2/L3) & Silent-pass 제거 → `docs/adr/ADR-061-language-parity-gates-and-silent-pass-removal.md`
+- ADR-064: FileVersion Handshake (read↔apply) → `docs/adr/ADR-064-fileversion-handshake-read-apply.md`
+- ADR-065: Change Execution Contract (atomic apply + delete policy) → `docs/adr/ADR-065-change-execution-contract-atomic-apply-partial-opt-in-delete-policy.md`
+- ADR-066: Guardrails override & audit trail → `docs/adr/ADR-066-guardrails-override-and-audit-trail.md`
+- ADR-067: Observability baseline (bench accuracy + minimal metrics + optional OTel) → `docs/adr/ADR-067-observability-baseline-bench-accuracy-min-metrics-otel.md`
+- ADR-068: Index freshness & cache invalidation program → `docs/adr/ADR-068-index-freshness-cache-invalidation-program.md`
+- ADR-063: Capability Diagnostics & Provider Policy Integration → `docs/adr/ADR-063-capability-diagnostics-and-provider-policy-integration.md`
+- ADR-062: Multi-Repo E2E UX & Safety Boundaries → `docs/adr/ADR-062-multi-repo-e2e-ux-and-safety-boundaries.md`
+- ADR-063: Capability Diagnostics & Provider Policy Integration → `docs/adr/ADR-063-capability-diagnostics-and-provider-policy-integration.md`
 
 ### Archive ADRs (historical)
 

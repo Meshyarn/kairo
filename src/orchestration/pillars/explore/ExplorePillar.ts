@@ -14,9 +14,33 @@ import { AstManager } from "../../../ast/AstManager.js";
 import { ProjectSketchBuilder } from "../../../generation/project-sketch-builder.js";
 import type { ResearchPack } from "../../../types/flow-artifacts.js";
 import type { FlowArtifactManager } from "../../flow-artifact-manager.js";
-import { OptionResolver } from "../../options/OptionResolver.js";
+import type { IFileSystem } from "../../../platform/FileSystem.js";
 import { buildDegradedReasons } from "../../DegradedReasonMapper.js";
 import { applyTokenBudget, estimateTokens } from "../../TokenBudget.js";
+import type { RepoRegistry } from "../../../config/RepoRegistry.js";
+import type { PathNormalizer } from "../../../utils/PathNormalizer.js";
+import { resolveRepoInfo } from "../../../utils/RepoScope.js";
+import type { OptionSource, TraceOptionResolution } from "../../../types/option-trace.js";
+import { TraceBuilder } from "../../trace/TraceBuilder.js";
+import { buildBudgetPlan, getSectionPlan } from "../../budget/TokenBudgetAllocatorV2.js";
+import { enforceExploreResponseBudget } from "../../budget/ResponseEnvelopeBudgeter.js";
+import type { ToolProfile } from "../../options/OptionResolver.js";
+import { FeatureFlags } from "../../../config/FeatureFlags.js";
+import { metrics } from "../../../utils/MetricsCollector.js";
+import { AdaptiveLodController } from "../../adaptive-flow/AdaptiveLodController.js";
+import {
+    computeAdaptiveFlowGate,
+    recordAdaptiveFlowGateTrace,
+    resolveAdaptiveFlowLOD,
+    resolveRolloutPresetFromEnv,
+    setAdaptiveFlowGate
+} from "../../adaptive-flow/AdaptiveFlowGate.js";
+import { normalizeExploreInput } from "./ExploreInputNormalizer.js";
+import {
+    applyBudgetToExploreItemsWithGlobalLimit,
+    applyBudgetToExploreItem,
+    createExploreBudgetState
+} from "./ExploreDecisionEngine.js";
 
 import { 
     ExploreItem, 
@@ -53,6 +77,24 @@ const DEFAULT_PACK_CACHE_SIZE = Number.parseInt(process.env.KAIRO_EXPLORE_PACK_C
 const DEFAULT_RESEARCH_TTL_MS = Number.parseInt(process.env.KAIRO_RESEARCH_PACK_TTL_MS ?? "1800000", 10) || 1800000;
 const DEFAULT_RESEARCH_CACHE_SIZE = Number.parseInt(process.env.KAIRO_RESEARCH_PACK_CACHE_SIZE ?? "50", 10) || 50;
 
+const resolveOptionSource = (explicit: boolean, hasSession: boolean): OptionSource => {
+    if (explicit) return "explicit";
+    if (hasSession) return "session";
+    return "default";
+};
+
+const buildStringResolution = (
+    resolved: string | undefined,
+    explicit: boolean,
+    hasSession: boolean,
+    requested?: unknown
+): TraceOptionResolution<string | null> => ({
+    source: resolveOptionSource(explicit, hasSession),
+    explicit,
+    resolved: resolved ?? null,
+    ...(requested !== undefined ? { requested } : {})
+});
+
 export class ExplorePillar {
     private static packCache = new LRUCache<string, ExplorePack>({
         max: DEFAULT_PACK_CACHE_SIZE,
@@ -66,43 +108,56 @@ export class ExplorePillar {
     constructor(private readonly registry: InternalToolRegistry) {}
 
     public async execute(intent: ParsedIntent, context: OrchestrationContext): Promise<ExploreResponse> {
+        const stopTotal = metrics.startTimer("explore.total_ms");
         const startedAt = Date.now();
-        const constraints = intent.constraints as any;
-        const query = typeof constraints.query === "string" ? constraints.query : undefined;
-        const paths = Array.isArray(constraints.paths) ? constraints.paths : [];
-        const research = constraints.research as {
-            sketch?: boolean;
-            topN?: number;
-            format?: "ascii" | "mermaid" | "both";
-        } | undefined;
-        const rawSessionId = typeof constraints.sessionId === "string" ? constraints.sessionId : undefined;
-        const researchRequested = !!research && research?.sketch !== false;
-        const packId = typeof constraints.packId === "string" ? constraints.packId : undefined;
-        const fullPaths = Array.isArray(constraints.fullPaths) ? constraints.fullPaths : [];
-        const allowSensitive = constraints.allowSensitive === true;
-        const allowBinary = constraints.allowBinary === true;
-        const allowGlobs = constraints.allowGlobs === true;
-        const integrityOptions = IntegrityEngine.resolveOptions(constraints.integrity, "explore");
+        try {
+        const repoRegistry = this.registry.getMetadata<RepoRegistry>("repoRegistry");
+        const pathNormalizer = this.registry.getMetadata<PathNormalizer>("pathNormalizer");
         const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
-        const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, intent.originalIntent ?? query ?? "explore");
-        const sessionPolicy = resolvedSessionId ? artifactManager?.getSession(resolvedSessionId)?.policy : undefined;
-
-        const resolvedOptions = OptionResolver.resolveExploreOptions(constraints, sessionPolicy);
-        const view = resolvedOptions.effective.view;
-        const include = resolvedOptions.effective.include;
-        const includeExplicit = resolvedOptions.meta.includeExplicit;
-        const sourcesWantsDocs = resolvedOptions.meta.sourcesWantsDocs;
-        const traceEnabled = resolvedOptions.effective.traceEnabled;
-        const profile = resolvedOptions.effective.profile;
-        const limits = resolvedOptions.effective.limits as {
-            maxResults?: number;
-            maxChars?: number;
-            maxTokens?: number;
-            maxItemChars?: number;
-            maxBytes?: number;
-            maxFiles?: number;
-            timeoutMs?: number;
-        };
+        const {
+            constraints,
+            query,
+            paths,
+            research,
+            researchRequested,
+            packId,
+            fullPaths,
+            allowSensitive,
+            allowBinary,
+            allowGlobs,
+            integrityOptions,
+            resolvedSessionId,
+            sessionPolicy,
+            resolvedOptions,
+            view: resolvedView,
+            include,
+            includeExplicit,
+            sourcesWantsDocs,
+            traceEnabled,
+            profile: resolvedProfile,
+            limits
+        } = normalizeExploreInput(intent, {
+            resolveSessionId: (rawSessionId, fallback) => artifactManager?.resolveSessionId(rawSessionId, fallback),
+            getSessionPolicy: (sessionId) => (sessionId ? artifactManager?.getSession(sessionId)?.policy : undefined)
+        });
+        let view = resolvedView;
+        let profile: ToolProfile | undefined = resolvedProfile as ToolProfile | undefined;
+        const adaptiveLod = this.registry.getMetadata<AdaptiveLodController>("adaptiveLodController");
+        const profileExplicit = typeof constraints.profile === "string";
+        const adaptiveDecision = adaptiveLod?.resolveProfile({
+            sessionId: resolvedSessionId,
+            tool: "explore",
+            requestedProfile: (profile ?? "balanced") as ToolProfile,
+            explicit: profileExplicit
+        });
+        if (adaptiveDecision?.downshifted) {
+            profile = adaptiveDecision.profile;
+            applyExploreProfileCaps(limits, profile);
+            if (!profileExplicit && typeof constraints.view !== "string") {
+                view = profile === "lean" || profile === "fast" ? "preview" : view;
+            }
+        }
+        resolvedOptions.effective.profile = profile;
 
         const queryMetrics = query ? analyzeQuery(query) : undefined;
         const queryTokens = query ? query.trim().split(/\s+/).filter(Boolean) : [];
@@ -168,6 +223,106 @@ export class ExplorePillar {
         const includeCode = include.code !== false;
         const includeComments = include.comments === true;
         const includeLogs = include.logs === true;
+        const sessionProfile = sessionPolicy?.explore?.profile ?? sessionPolicy?.profile;
+        const sessionSources = sessionPolicy?.explore?.sources ?? sessionPolicy?.sources;
+        const traceBuilder = traceEnabled
+            ? new TraceBuilder(
+                "explore",
+                {
+                    profile: buildStringResolution(
+                        profile,
+                        typeof constraints.profile === "string",
+                        Boolean(sessionProfile),
+                        typeof constraints.profile === "string" ? constraints.profile : undefined
+                    ),
+                    sources: buildStringResolution(
+                        resolvedOptions.effective.sources,
+                        typeof constraints.sources === "string",
+                        Boolean(sessionSources),
+                        typeof constraints.sources === "string" ? constraints.sources : undefined
+                    ),
+                    trace: {
+                        source: constraints.trace === true ? "explicit" : "default",
+                        explicit: constraints.trace === true,
+                        resolved: traceEnabled
+                    }
+                },
+                { startedAtMs: startedAt }
+            )
+            : undefined;
+        if (traceBuilder) {
+            traceBuilder.setBudget({ maxTokens, maxChars, timeoutMs });
+        }
+        if (traceBuilder && adaptiveDecision?.downshifted) {
+            traceBuilder.recordEvent({
+                area: "budget",
+                code: "adaptive_lod.downshift",
+                data: {
+                    from: resolvedOptions.effective.profile ?? "balanced",
+                    to: profile,
+                    violationStreak: adaptiveDecision.violationStreak,
+                    stableScore: adaptiveDecision.stableScore,
+                    cooldownRemaining: adaptiveDecision.cooldownRemaining,
+                    reasonCodes: adaptiveDecision.reasonCodes
+                }
+            });
+        }
+        const gate = computeAdaptiveFlowGate({
+            profile,
+            fileCount: typeof projectStats?.fileCount === "number" ? projectStats.fileCount : undefined
+        });
+        setAdaptiveFlowGate(context, gate);
+        if (traceBuilder) {
+            recordAdaptiveFlowGateTrace(traceBuilder, gate, {
+                rolloutMode: resolveRolloutPresetFromEnv() ?? FeatureFlags.getMode(FeatureFlags.ADAPTIVE_FLOW_ENABLED),
+                userIdResolved: Boolean(FeatureFlags.getContext()?.userId)
+            });
+        }
+        const budgetPlan = buildBudgetPlan({
+            pillar: "explore",
+            profile: (profile ?? "balanced") as ToolProfile,
+            sources: resolvedOptions.effective.sources,
+            maxTokens,
+            maxChars,
+            timeoutMs,
+            include,
+            view
+        });
+        const docSectionPlan = getSectionPlan(budgetPlan, "doc_sections");
+        const docSectionStrategy = docSectionPlan?.strategy ?? "raw";
+        const docSectionMaxChars = Math.min(
+            maxChars,
+            resolveSectionChars(docSectionPlan, maxChars)
+        );
+        const allowDocSectionExpand = docSectionStrategy !== "omit";
+        const researchPlan = getSectionPlan(budgetPlan, "research_pack");
+        const researchOmitted = researchPlan?.strategy === "omit";
+        if (traceBuilder) {
+            traceBuilder.recordEvent({
+                area: "budget",
+                code: "allocator.plan_created",
+                data: {
+                    maxTokens: budgetPlan.maxTokens,
+                    maxChars: budgetPlan.maxChars,
+                    sectionCount: budgetPlan.sections.length
+                }
+            });
+            for (const section of budgetPlan.sections) {
+                traceBuilder.recordEvent({
+                    area: "budget",
+                    code: "allocator.section_strategy",
+                    data: {
+                        section: section.section,
+                        strategy: section.strategy,
+                        tokens: section.tokens,
+                        chars: section.chars
+                    }
+                });
+                if (section.strategy === "omit") {
+                    traceBuilder.recordSkip(section.section, "budget_exceeded", "allocator omitted section");
+                }
+            }
+        }
 
         if (searchBudget) {
             const desiredFileBudget = Math.min(
@@ -188,8 +343,9 @@ export class ExplorePillar {
             intent: constraints.intent,
             paths
         };
-        if (resolvedOptions.meta.profileAffectsPack && resolvedOptions.effective.profile) {
-            packOptions.profile = resolvedOptions.effective.profile;
+        const profileAffectsPack = resolvedOptions.meta.profileAffectsPack || Boolean(adaptiveDecision?.downshifted);
+        if (profileAffectsPack && profile) {
+            packOptions.profile = profile;
         }
         if (resolvedOptions.meta.sourcesAffectsPack && resolvedOptions.effective.sources) {
             packOptions.sources = resolvedOptions.effective.sources;
@@ -220,16 +376,15 @@ export class ExplorePillar {
             data: { docs: [], code: [] },
             sessionId: resolvedSessionId
         };
-        const decisionTrace = traceEnabled ? {
-            cache: {} as Record<string, unknown>,
-            docSearch: {} as Record<string, unknown>,
-            heuristic: { symbolLikeQuery: symbolQuery },
-            budget: { timeoutMs }
-        } : undefined;
-
         if (researchRequested) {
-            response.researchPack = await this.buildResearchPack(research, resolvedSessionId, intent.originalIntent).catch(() => undefined);
-            if (!response.researchPack) {
+            if (researchOmitted) {
+                if (traceBuilder) {
+                    traceBuilder.recordSkip("research_pack", "budget_exceeded", "allocator omitted research pack");
+                }
+            } else {
+                response.researchPack = await this.buildResearchPack(research, resolvedSessionId, intent.originalIntent).catch(() => undefined);
+            }
+            if (!response.researchPack && !researchOmitted) {
                 response.insights = response.insights || [];
                 response.insights.push({
                     type: "warning",
@@ -262,51 +417,21 @@ export class ExplorePillar {
 
         const reasons: string[] = [];
         let degraded = false;
-        let budgetExceeded = false;
         let totalChars = 0;
         let totalTokens = 0;
-        let compressionEstimatedTokens = 0;
-        let compressionUsedChars = 0;
-        const compressionDecisions: Array<{
-            item: string;
-            from: "full" | "skeleton" | "reference" | "summary";
-            to: "full" | "skeleton" | "reference" | "summary";
-            reason: "budget_exceeded" | "low_score" | "distance";
-        }> = [];
-
-        const applyBudgetToItem = (
-            item: ExploreItem,
-            isFullContent: boolean,
-            allowDistill: boolean
-        ): ExploreItem => {
-            const text = isFullContent ? item.content : item.preview;
-            if (!text) return item;
-            const languageId = isDocPath(item.filePath) ? undefined : AstManager.getInstance().getLanguageId(item.filePath);
-            const budget = applyTokenBudget(text, {
-                maxTokens: maxItemTokens,
-                maxChars: isFullContent ? maxChars : maxItemChars,
-                languageId
+        const budgetState = createExploreBudgetState();
+        const getLanguageId = (filePath: string) => isDocPath(filePath) ? undefined : AstManager.getInstance().getLanguageId(filePath);
+        const applyBudgetToItem = (item: ExploreItem, isFullContent: boolean, allowDistill: boolean): ExploreItem => {
+            return applyBudgetToExploreItem(budgetState, item, {
+                isFullContent,
+                allowDistill,
+                maxItemTokens,
+                maxChars,
+                maxItemChars,
+                getLanguageId,
+                applyTokenBudget,
+                truncate
             });
-            compressionEstimatedTokens += budget.estimatedTokens ?? 0;
-            compressionUsedChars += budget.usedChars;
-            if (budget.applied) {
-                budgetExceeded = true;
-            }
-            if (isFullContent && allowDistill && budget.applied) {
-                item.preview = truncate(budget.text, maxItemChars);
-                item.content = undefined;
-                compressionDecisions.push({
-                    item: item.filePath,
-                    from: "full",
-                    to: "skeleton",
-                    reason: "budget_exceeded"
-                });
-            } else if (isFullContent) {
-                item.content = budget.text;
-            } else {
-                item.preview = budget.text;
-            }
-            return item;
         };
 
         if (query) {
@@ -314,36 +439,36 @@ export class ExplorePillar {
             const contentCursorState = parseItemsCursor(constraints.cursor?.content);
             const cachedPack = effectivePackId ? ExplorePillar.packCache.get(effectivePackId) : undefined;
             if (cachedPack) {
-                if (decisionTrace) {
-                    decisionTrace.cache = { packHit: true, packId: cachedPack.packId };
-                    decisionTrace.docSearch = { attempted: false, skippedReason: "cache_hit" };
+                if (traceBuilder) {
+                    traceBuilder.setCache({ used: true, hit: true, keyHint: "explore.pack:v1" });
+                    traceBuilder.recordSkip("doc_search", "cache_hit", "explore pack cache hit");
                 }
                 if (constraints.cursor?.content) {
                     const sliced = slicePack(cachedPack, contentCursorState, maxResults, includeDocs, includeCode, includeComments, includeLogs);
-                    const expandedDocs = await Promise.all(sliced.docs.map((item) => this.expandDocContent(item, maxChars, context)));
+                    const expandedDocs = allowDocSectionExpand
+                        ? await Promise.all(sliced.docs.map((item) => this.expandDocContent(item, docSectionMaxChars, context, docSectionStrategy, query)))
+                        : sliced.docs;
                     const expandedCode = await Promise.all(sliced.code.map((item) => this.expandCodeContent(item, maxChars, context)));
 
                     const applyBudgetWithGlobalLimit = (items: ExploreItem[]) => {
-                        const results: ExploreItem[] = [];
-                        for (const item of items) {
-                            if (degraded && reasons.includes("budget_exceeded")) break;
-
-                            const processed = applyBudgetToItem(item, true, view !== "full");
-                            if (maxTokens) {
-                                const content = processed.content ?? processed.preview ?? "";
-                                const itemTokens = estimateTokens(content, {
-                                    languageId: isDocPath(processed.filePath) ? undefined : AstManager.getInstance().getLanguageId(processed.filePath)
-                                });
-                                if (totalTokens + itemTokens > maxTokens) {
-                                    degraded = true;
-                                    reasons.push("budget_exceeded");
-                                    break;
-                                }
-                                totalTokens += itemTokens;
-                            }
-                            results.push(processed);
-                        }
-                        return results;
+                        const result = applyBudgetToExploreItemsWithGlobalLimit({
+                            state: budgetState,
+                            items,
+                            isFullContent: true,
+                            allowDistill: view !== "full",
+                            maxItemTokens,
+                            maxChars,
+                            maxItemChars,
+                            maxTokens,
+                            totalTokens,
+                            degraded,
+                            reasons,
+                            getLanguageId,
+                            estimateTokens
+                        });
+                        totalTokens = result.totalTokens;
+                        degraded = result.degraded;
+                        return result.items;
                     };
 
                     response.data.docs = applyBudgetWithGlobalLimit(expandedDocs);
@@ -366,8 +491,8 @@ export class ExplorePillar {
                     expiresAt: cachedPack.expiresAt
                 };
             } else {
-                if (decisionTrace) {
-                    decisionTrace.cache = { packHit: false };
+                if (traceBuilder) {
+                    traceBuilder.setCache({ used: true, hit: false, keyHint: "explore.pack:v1" });
                 }
                 const isDeepProfile = profile === "deep";
                 const packMaxResults = Math.max(maxResults, DEFAULT_PACK_RESULTS, isDeepProfile ? 40 : 0);
@@ -377,14 +502,33 @@ export class ExplorePillar {
                 const ucg = context.getState<UnifiedContextGraph>('ucg');
 
                 if (includeCode) {
-                    const codeResults = await this.runTool(context, "project_search", {
-                        query,
-                        maxResults: packMaxResults,
-                        type: "file",
-                        budget: searchBudget
-                    });
+                    let codeResults: any;
+                    try {
+                        codeResults = await this.runTool(context, "project_search", {
+                            query,
+                            maxResults: packMaxResults,
+                            type: "file",
+                            repoScope: (constraints as any).repoScope,
+                            repoId: (constraints as any).repoId,
+                            repoIds: (constraints as any).repoIds,
+                            budget: searchBudget
+                        });
+                    } catch (error) {
+                        degraded = true;
+                        reasons.push("code_search_failed");
+                        if (traceBuilder) {
+                            traceBuilder.recordEvent({
+                                area: "io",
+                                code: "project_search_failed",
+                                message: "project_search failed",
+                                data: { error: String((error as any)?.message ?? "unknown").slice(0, 120) }
+                            });
+                        }
+                        codeResults = { results: [] };
+                    }
                     const results = Array.isArray(codeResults?.results) ? codeResults.results : [];
                     
+                    const topologyMinLOD = resolveAdaptiveFlowLOD(context, 1);
                     const codeItems = await Promise.all(results.map(async (item: any) => {
                         const codeItem: ExploreItem = {
                             kind: "file_preview",
@@ -393,12 +537,16 @@ export class ExplorePillar {
                             range: item.line ? { startLine: item.line, endLine: item.line } : undefined,
                             score: item.score,
                             why: [item.type ?? "project_search"],
-                            metadata: {}
+                            metadata: {
+                                ...(item?.repoId ? { repoId: item.repoId } : {}),
+                                ...(item?.repoRelativePath ? { repoRelativePath: item.repoRelativePath } : {})
+                            }
                         };
 
                         try {
                             if (item.path) {
-                                const graphSnapshot = await collectTopologyMetadata(ucg, item.path);
+                                const fileSystem = this.registry.getMetadata<IFileSystem>("fileSystem");
+                                const graphSnapshot = await collectTopologyMetadata(ucg, item.path, fileSystem, topologyMinLOD);
                                 if (graphSnapshot.topology) {
                                     codeItem.metadata = {
                                         ...codeItem.metadata,
@@ -432,8 +580,12 @@ export class ExplorePillar {
                     && (!hasDeadline || timeRemaining() > 400);
 
                 if (shouldRunDocSearch) {
-                    if (decisionTrace) {
-                        decisionTrace.docSearch = { attempted: true };
+                    if (traceBuilder) {
+                        traceBuilder.recordEvent({
+                            area: "policy",
+                            code: "doc_search_attempted",
+                            data: { includeDocs, includeComments }
+                        });
                     }
                     const docCandidateMultiplier = isDeepProfile ? 6 : 3;
                     const docMaxCandidatesBase = Math.max(packMaxResults * docCandidateMultiplier, isDeepProfile ? 48 : 24);
@@ -448,20 +600,38 @@ export class ExplorePillar {
                         : undefined;
                     const disableEmbeddings = symbolQuery
                         || (hasDeadline && typeof docEmbeddingBudgetMs === "number" && docEmbeddingBudgetMs < 400);
-                    const docResults = await this.runTool(context, "document_search", {
-                        query,
-                        output: "compact",
-                        maxResults: packMaxResults,
-                        maxCandidates: docMaxCandidates,
-                        maxChunkCandidates: docMaxChunkCandidates,
-                        maxChunksEmbeddedPerRequest: disableEmbeddings ? 8 : 24,
-                        maxEmbeddingTimeMs: docEmbeddingBudgetMs,
-                        includeEvidence: false,
-                        packId: undefined,
-                        includeComments,
-                        includeLogs,
-                        embedding: disableEmbeddings ? { provider: "disabled" } : undefined
-                    });
+                    let docResults: any;
+                    try {
+                        docResults = await this.runTool(context, "document_search", {
+                            query,
+                            output: "compact",
+                            maxResults: packMaxResults,
+                            maxCandidates: docMaxCandidates,
+                            maxChunkCandidates: docMaxChunkCandidates,
+                            maxChunksEmbeddedPerRequest: disableEmbeddings ? 8 : 24,
+                            maxEmbeddingTimeMs: docEmbeddingBudgetMs,
+                            includeEvidence: false,
+                            packId: undefined,
+                            includeComments,
+                            includeLogs,
+                            repoScope: (constraints as any).repoScope,
+                            repoId: (constraints as any).repoId,
+                            repoIds: (constraints as any).repoIds,
+                            embedding: disableEmbeddings ? { provider: "disabled" } : undefined
+                        });
+                    } catch (error) {
+                        degraded = true;
+                        reasons.push("doc_search_failed");
+                        if (traceBuilder) {
+                            traceBuilder.recordEvent({
+                                area: "io",
+                                code: "document_search_failed",
+                                message: "document_search failed",
+                                data: { error: String((error as any)?.message ?? "unknown").slice(0, 120) }
+                            });
+                        }
+                        docResults = { results: [] };
+                    }
                     const sections = Array.isArray(docResults?.results) ? docResults.results : [];
                     const filtered = sections.filter((section: any) => {
                         if (section?.kind === "code_comment") return includeComments;
@@ -494,11 +664,12 @@ export class ExplorePillar {
                 } else if (includeDocs || includeComments) {
                     degraded = true;
                     reasons.push(shouldPreferCode ? "doc_search_skipped" : "budget_exceeded");
-                    if (decisionTrace) {
-                        decisionTrace.docSearch = {
-                            attempted: false,
-                            skippedReason: shouldPreferCode ? "doc_search_skipped" : "budget_exceeded"
-                        };
+                    if (traceBuilder) {
+                        traceBuilder.recordSkip(
+                            "doc_search",
+                            shouldPreferCode ? "sources_filtered" : "budget_exceeded",
+                            shouldPreferCode ? "symbol query prefers code" : "budget/time limit"
+                        );
                     }
                 }
 
@@ -575,11 +746,16 @@ export class ExplorePillar {
                     }
                 }
 
-                const item = await buildItemForPath(entry.path, { view, maxChars, maxItemChars, allowSensitive, allowBinary, wantsFull, section: constraints.section }, context, (ctx, tool, args) => this.runTool(ctx, tool, args));
+                const fileSystem = this.registry.getMetadata<IFileSystem>("fileSystem");
+                const item = await buildItemForPath(entry.path, { view, maxChars, maxItemChars, allowSensitive, allowBinary, wantsFull, section: constraints.section }, context, (ctx, tool, args) => this.runTool(ctx, tool, args), fileSystem);
 
                 if (item.blocked) {
-                    const reasons = item.reason ? [item.reason] : undefined;
-                    const languageId = item.reason ? AstManager.getInstance().getLanguageId(entry.path) : undefined;
+                    let reason = item.reason;
+                    if (!reason && typeof item.message === "string" && item.message.includes("Syntax validation failed")) {
+                        reason = "syntax_validation_failed";
+                    }
+                    const reasons = reason ? [reason] : undefined;
+                    const languageId = reason ? AstManager.getInstance().getLanguageId(entry.path) : undefined;
                     const degradedReasons = reasons
                         ? buildDegradedReasons(reasons, { languageId, filePath: entry.path })
                         : undefined;
@@ -604,6 +780,19 @@ export class ExplorePillar {
 
                 const isFullContent = typeof payloadItem.content === "string";
                 applyBudgetToItem(payloadItem, isFullContent, view !== "full");
+
+                if (repoRegistry && pathNormalizer) {
+                    try {
+                        const repoInfo = resolveRepoInfo(payloadItem.filePath, repoRegistry, pathNormalizer);
+                        payloadItem.metadata = {
+                            ...(payloadItem.metadata ?? {}),
+                            repoId: repoInfo.repoId,
+                            ...(repoInfo.repoRelativePath ? { repoRelativePath: repoInfo.repoRelativePath } : {})
+                        };
+                    } catch {
+                        // ignore repo scope metadata failures
+                    }
+                }
 
                 const contentText = payloadItem.content ?? payloadItem.preview ?? "";
                 const contentLength = contentText.length;
@@ -660,18 +849,18 @@ export class ExplorePillar {
             response.message = "No results found.";
         }
 
-        if (budgetExceeded) {
+        if (budgetState.budgetExceeded) {
             degraded = true;
             reasons.push("budget_exceeded");
             response.compression = {
                 applied: true,
-                mode: compressionDecisions.length > 0 ? "distill" : "truncate",
+                mode: budgetState.compressionDecisions.length > 0 ? "distill" : "truncate",
                 elasticWindowPct: maxTokens ? 0.05 : undefined,
                 maxTokens,
-                estimatedTokens: compressionEstimatedTokens > 0 ? compressionEstimatedTokens : undefined,
+                estimatedTokens: budgetState.compressionEstimatedTokens > 0 ? budgetState.compressionEstimatedTokens : undefined,
                 maxChars,
-                usedChars: compressionUsedChars > 0 ? compressionUsedChars : undefined,
-                decisions: compressionDecisions.length > 0 ? compressionDecisions : undefined
+                usedChars: budgetState.compressionUsedChars > 0 ? budgetState.compressionUsedChars : undefined,
+                decisions: budgetState.compressionDecisions.length > 0 ? budgetState.compressionDecisions : undefined
             };
         }
 
@@ -681,21 +870,47 @@ export class ExplorePillar {
             response.degradedReasons = buildDegradedReasons(response.reasons);
         }
 
+        enforceExploreResponseBudget({
+            response,
+            maxTokens,
+            maxChars,
+            traceBuilder
+        });
+
         if (traceEnabled) {
             response.effectiveOptions = {
-                profile: resolvedOptions.effective.profile,
+                version: 1,
+                pillar: "explore",
+                profile,
                 sources: resolvedOptions.effective.sources,
                 include,
                 limits,
                 view
             };
-            response.decisionTrace = decisionTrace;
+            if (traceBuilder) {
+                traceBuilder.setBudget({
+                    maxTokens,
+                    maxChars,
+                    timeoutMs,
+                    compressionApplied: response.compression?.applied,
+                    compressionMode: response.compression?.mode === "none" ? undefined : response.compression?.mode
+                });
+                response.decisionTrace = traceBuilder.finalize();
+            }
         }
-
         this.addIndexStatusInsights(response);
         await this.attachIndexSnapshot(response);
 
+        adaptiveLod?.recordOutcome({
+            sessionId: resolvedSessionId,
+            tool: "explore",
+            success: Boolean(response.success),
+            degradedReasons: response.degradedReasons
+        });
         return response;
+        } finally {
+            stopTotal();
+        }
     }
 
     private addIndexStatusInsights(response: ExploreResponse): void {
@@ -835,14 +1050,24 @@ export class ExplorePillar {
         return `rp_${Date.now().toString(36)}_${suffix}`;
     }
 
-    private async expandDocContent(item: ExploreItem, maxChars: number, context: OrchestrationContext): Promise<ExploreItem> {
+    private async expandDocContent(
+        item: ExploreItem,
+        maxChars: number,
+        context: OrchestrationContext,
+        strategy: "raw" | "preview" | "summary" | "distill" | "truncate",
+        query?: string
+    ): Promise<ExploreItem> {
         const headingPath = Array.isArray(item.metadata?.headingPath) ? item.metadata?.headingPath : undefined;
+        const mode = strategy === "summary" || strategy === "distill"
+            ? "summary"
+            : (strategy === "preview" || strategy === "truncate" ? "preview" : "raw");
         const result = await this.runTool(context, "document_section", {
             filePath: item.filePath,
             headingPath,
             includeSubsections: false,
-            mode: "raw",
-            maxChars
+            mode,
+            maxChars,
+            ...(query ? { query } : {})
         });
         return {
             ...item,
@@ -887,4 +1112,48 @@ export class ExplorePillar {
         const hasSymbolToken = tokens.some(token => /[A-Z_]/.test(token) || /\d/.test(token));
         return tokens.length > 1 ? hasSymbolToken : hasSymbolToken;
     }
+}
+
+function applyExploreProfileCaps(limits: {
+    maxResults?: number;
+    maxChars?: number;
+    maxTokens?: number;
+    maxItemChars?: number;
+    maxBytes?: number;
+    maxFiles?: number;
+}, profile: string): void {
+    if (profile === "lean") {
+        limits.maxResults = clampToMax(limits.maxResults, 20);
+        limits.maxFiles = clampToMax(limits.maxFiles, 400);
+        limits.maxItemChars = clampToMax(limits.maxItemChars, 2400);
+        limits.maxChars = clampToMax(limits.maxChars, 20000);
+        limits.maxTokens = clampToMax(limits.maxTokens, 1500);
+        limits.maxBytes = clampToMax(limits.maxBytes, 400000);
+    }
+    if (profile === "fast") {
+        limits.maxResults = clampToMax(limits.maxResults, 5);
+        limits.maxFiles = clampToMax(limits.maxFiles, 80);
+        limits.maxChars = clampToMax(limits.maxChars, 6000);
+    }
+    if (profile === "deep") {
+        limits.maxResults = clampToMax(limits.maxResults, 12);
+        limits.maxFiles = clampToMax(limits.maxFiles, 300);
+        limits.maxChars = clampToMax(limits.maxChars, 12000);
+    }
+}
+
+function clampToMax(value: number | undefined, maxValue: number): number {
+    if (!Number.isFinite(value)) return maxValue;
+    return Math.min(value as number, maxValue);
+}
+
+function resolveSectionChars(plan: { chars?: number; tokens?: number } | undefined, fallback: number): number {
+    if (!plan) return fallback;
+    if (Number.isFinite(plan.chars) && (plan.chars ?? 0) > 0) {
+        return Math.max(64, plan.chars ?? fallback);
+    }
+    if (Number.isFinite(plan.tokens) && (plan.tokens ?? 0) > 0) {
+        return Math.max(64, Math.floor((plan.tokens ?? 0) * 4));
+    }
+    return fallback;
 }

@@ -1,4 +1,3 @@
-import * as fs from 'fs';
 import * as path from 'path';
 import ignore from 'ignore';
 import { LRUCache } from 'lru-cache';
@@ -6,6 +5,7 @@ import { SkeletonGenerator } from './SkeletonGenerator.js';
 import { SymbolInfo } from '../types.js';
 import { IndexDatabase } from '../indexing/IndexDatabase.js';
 import { CommentIndexer } from '../indexing/CommentIndexer.js';
+import { NodeFileSystem, type IFileSystem, type FileStats } from '../platform/FileSystem.js';
 
 const SUPPORTED_EXTENSIONS = new Set<string>(['.ts', '.tsx', '.js', '.jsx', '.py']);
 const HOT_CACHE_SIZE = 50;
@@ -24,12 +24,15 @@ export class SymbolIndex {
     private readonly cache: LRUCache<string, CacheEntry>;
     private readonly rootPath: string;
     private readonly skeletonGenerator: SkeletonGenerator;
+    private readonly fileSystem: IFileSystem;
     private ignoreFilter: ReturnType<typeof ignore.default>;
     private readonly db: IndexDatabase;
     private readonly commentIndexer: CommentIndexer;
     private userIgnorePatterns: string[];
 
     private baselinePromise?: Promise<void>;
+    private baselineRequested = false;
+    private readonly waitForBaselineByDefault: boolean;
     private editTracker: Map<string, number> = new Map();
     private pendingUpdates: Set<string> = new Set();
     private updateDebounceTimer?: NodeJS.Timeout;
@@ -37,14 +40,22 @@ export class SymbolIndex {
     private incrementalUpdatePromise: Promise<void> | null = null;
 
 
-    constructor(rootPath: string, skeletonGenerator: SkeletonGenerator, ignorePatterns: string[], db?: IndexDatabase) {
+    constructor(
+        rootPath: string,
+        skeletonGenerator: SkeletonGenerator,
+        ignorePatterns: string[],
+        db?: IndexDatabase,
+        fileSystem?: IFileSystem
+    ) {
         this.rootPath = rootPath;
         this.skeletonGenerator = skeletonGenerator;
+        this.fileSystem = fileSystem ?? new NodeFileSystem(this.rootPath);
         this.userIgnorePatterns = [...ignorePatterns];
         this.ignoreFilter = this.createIgnoreFilter(this.userIgnorePatterns);
         this.db = db ?? new IndexDatabase(this.rootPath);
         this.commentIndexer = new CommentIndexer(this.db);
         this.cache = new LRUCache({ max: HOT_CACHE_SIZE });
+        this.waitForBaselineByDefault = this.resolveBaselineWaitMode();
     }
 
     public invalidateFile(filePath: string) {
@@ -108,7 +119,9 @@ export class SymbolIndex {
         if (results.length > 0) {
             return results;
         }
-
+        if (!this.shouldRunFuzzySearch()) {
+            return [];
+        }
         return this.fuzzySearch(query, { maxEditDistance: 2 });
     }
 
@@ -133,14 +146,19 @@ export class SymbolIndex {
     }
 
     public async getSymbolsForFile(filePath: string): Promise<SymbolInfo[]> {
-        let stats: fs.Stats;
+        let stats: FileStats;
         try {
-            stats = fs.statSync(filePath);
+            const snapshot = this.fileSystem.statSync?.(filePath);
+            if (!snapshot) {
+                this.dropFileFromIndex(filePath);
+                return [];
+            }
+            stats = snapshot;
         } catch {
             this.dropFileFromIndex(filePath);
             return [];
         }
-        const currentMtime = stats.mtimeMs;
+        const currentMtime = stats.mtime;
         const relativePath = this.toRelative(filePath);
         const cached = this.cache.get(relativePath);
         if (cached && cached.mtime === currentMtime) {
@@ -167,7 +185,7 @@ export class SymbolIndex {
             return [];
         }
 
-        const content = fs.readFileSync(filePath, 'utf-8');
+        const content = this.fileSystem.readFileSync?.(filePath) ?? await this.fileSystem.readFile(filePath);
         const symbols = await this.extractSymbols(filePath, content);
         this.cache.set(relativePath, { mtime: currentMtime, symbols });
         this.db.replaceSymbols({
@@ -230,9 +248,16 @@ export class SymbolIndex {
         return path.relative(this.rootPath, absPath).replace(/\\/g, '/');
     }
 
-    private async ensureBaselineIndex(): Promise<void> {
+    private async ensureBaselineIndex(waitForBaseline: boolean = this.waitForBaselineByDefault): Promise<void> {
         if (this.baselinePromise) {
-            return this.baselinePromise;
+            if (waitForBaseline) {
+                await this.baselinePromise;
+            }
+            return;
+        }
+        if (!waitForBaseline) {
+            this.startBaselineSync();
+            return;
         }
         this.baselinePromise = this.syncWithDisk();
         try {
@@ -240,6 +265,17 @@ export class SymbolIndex {
         } finally {
             this.baselinePromise = undefined;
         }
+    }
+
+    private startBaselineSync(): void {
+        if (this.baselinePromise || this.baselineRequested) {
+            return;
+        }
+        this.baselineRequested = true;
+        this.baselinePromise = this.syncWithDiskAsync();
+        this.baselinePromise.finally(() => {
+            this.baselinePromise = undefined;
+        });
     }
 
     private async syncWithDisk(): Promise<void> {
@@ -251,14 +287,16 @@ export class SymbolIndex {
         for (const filePath of files) {
             const relative = this.toRelative(filePath);
             seen.add(relative);
-            let stats: fs.Stats;
+            let stats: FileStats;
             try {
-                stats = fs.statSync(filePath);
+                const snapshot = this.fileSystem.statSync?.(filePath);
+                if (!snapshot) continue;
+                stats = snapshot;
             } catch {
                 continue;
             }
             const record = recordMap.get(relative);
-            if (!record || record.last_modified !== stats.mtimeMs) {
+            if (!record || record.last_modified !== stats.mtime) {
                 await this.getSymbolsForFile(filePath);
             }
         }
@@ -272,11 +310,40 @@ export class SymbolIndex {
 
     }
 
+    private async syncWithDiskAsync(): Promise<void> {
+        const records = this.db.listFiles();
+        const recordMap = new Map(records.map(record => [record.path, record]));
+        const files = await this.scanFilesAsync(this.rootPath);
+        const seen = new Set<string>();
+
+        for (const filePath of files) {
+            const relative = this.toRelative(filePath);
+            seen.add(relative);
+            let stats: FileStats;
+            try {
+                stats = await this.fileSystem.stat(filePath);
+            } catch {
+                continue;
+            }
+            const record = recordMap.get(relative);
+            if (!record || record.last_modified !== stats.mtime) {
+                await this.getSymbolsForFile(filePath);
+            }
+        }
+
+        for (const record of recordMap.values()) {
+            if (!seen.has(record.path)) {
+                this.db.deleteFile(record.path);
+                this.cache.delete(record.path);
+            }
+        }
+    }
+
     private scanFiles(dir: string): string[] {
         let results: string[] = [];
         let list: string[] = [];
         try {
-            list = fs.readdirSync(dir);
+            list = this.fileSystem.readDirSync?.(dir) ?? [];
         } catch {
             return [];
         }
@@ -287,8 +354,8 @@ export class SymbolIndex {
                 continue;
             }
             try {
-                const stat = fs.statSync(absPath);
-                if (stat.isDirectory()) {
+                const stat = this.fileSystem.statSync?.(absPath);
+                if (stat?.isDirectory()) {
                     results = results.concat(this.scanFiles(absPath));
                 } else if (this.isSupported(absPath)) {
                     results.push(absPath);
@@ -298,6 +365,59 @@ export class SymbolIndex {
             }
         }
         return results;
+    }
+
+    private async scanFilesAsync(dir: string): Promise<string[]> {
+        const results: string[] = [];
+        const stack: string[] = [dir];
+        while (stack.length > 0) {
+            const current = stack.pop()!;
+            let list: string[] = [];
+            try {
+                list = await this.fileSystem.readDir(current);
+            } catch {
+                continue;
+            }
+            for (const entry of list) {
+                const absPath = path.join(current, entry);
+                const relPath = path.relative(this.rootPath, absPath);
+                if (relPath && this.shouldIgnore(relPath)) {
+                    continue;
+                }
+                try {
+                    const stat = await this.fileSystem.stat(absPath);
+                    if (stat.isDirectory()) {
+                        stack.push(absPath);
+                    } else if (this.isSupported(absPath)) {
+                        results.push(absPath);
+                    }
+                } catch {
+                    continue;
+                }
+            }
+            await this.yieldToEventLoop();
+        }
+        return results;
+    }
+
+    private async yieldToEventLoop(): Promise<void> {
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
+    }
+
+    private resolveBaselineWaitMode(): boolean {
+        const raw = (process.env.KAIRO_BASELINE_BLOCKING ?? "").trim().toLowerCase();
+        if (raw === "true" || raw === "1") return true;
+        if (raw === "false" || raw === "0") return false;
+        return process.env.NODE_ENV === "test" || process.env.JEST_WORKER_ID !== undefined;
+    }
+
+    private shouldRunFuzzySearch(): boolean {
+        const mode = (process.env.KAIRO_SYMBOL_FUZZY_SEARCH ?? "auto").trim().toLowerCase();
+        if (mode === "off" || mode === "false") return false;
+        if (mode === "on" || mode === "true") return true;
+        const maxFilesRaw = Number.parseInt(process.env.KAIRO_SYMBOL_FUZZY_MAX_FILES ?? "2000", 10);
+        const maxFiles = Number.isFinite(maxFilesRaw) ? maxFilesRaw : 2000;
+        return this.db.listFiles().length <= maxFiles;
     }
 
     public fuzzySearch(
@@ -440,14 +560,14 @@ export class SymbolIndex {
             try {
                 // Check if file still exists
                 const fullPath = path.join(this.rootPath, relativePath);
-                if (!fs.existsSync(fullPath)) {
+                if (!this.fileSystem.existsSync?.(fullPath)) {
                     this.db.deleteFile(relativePath);
                     this.cache.delete(relativePath);
                     continue;
                 }
 
                 // Re-index this file only
-                const content = fs.readFileSync(fullPath, 'utf-8');
+                const content = this.fileSystem.readFileSync?.(fullPath) ?? await this.fileSystem.readFile(fullPath);
                 const symbols = await this.extractSymbols(fullPath, content);
                 this.cache.set(relativePath, { mtime: Date.now(), symbols });
                 this.db.replaceSymbols({

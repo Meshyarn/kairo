@@ -12,7 +12,8 @@ import { TextNormalizer } from "../../utils/textNormalization.js";
 import type { ImportInfo, ExportInfo } from "../../indexing/ProjectIndex.js";
 import { normalizePath, toRelativePath } from "../../utils/PathHelpers.js";
 import { AstDiffEngine, type AstChange } from "../../ast/AstDiffEngine.js";
-import { getSupportForFilePath } from "../../config/LanguageSupportLevels.js";
+import { getSupportForFilePath, SupportLevel } from "../../config/LanguageSupportLevels.js";
+import { metrics } from "../../utils/MetricsCollector.js";
 
 type GuardrailStatus = "pass" | "warn" | "block";
 type LanguageParityMode = "strict" | "balanced" | "permissive";
@@ -140,6 +141,8 @@ export function resolveIntegrityGuardrailsConfig(constraints?: any): IntegrityGu
 }
 
 export async function evaluateIntegrityGuardrails(args: GuardrailContext): Promise<IntegrityGuardrailsResult> {
+    const stopTimer = metrics.startTimer("guardrails.integrity_total_ms", "detailed");
+    try {
     const config = resolveIntegrityGuardrailsConfig(args.constraints);
     if (!config.enabled) {
         return { status: "pass" };
@@ -189,7 +192,7 @@ export async function evaluateIntegrityGuardrails(args: GuardrailContext): Promi
             details: { languageId, supportLevel: support.level }
         });
     }
-    if (support?.level === "edit-safe" && Array.isArray(support.editPolicy.requireQueries)) {
+    if (support?.level === SupportLevel.L3 && Array.isArray(support.editPolicy.requireQueries)) {
         for (const queryName of support.editPolicy.requireQueries) {
             const availability = await resolveParityAvailability(astManager, args.targetPath, languageId, queryName);
             if (!availability.available) {
@@ -441,6 +444,12 @@ export async function evaluateIntegrityGuardrails(args: GuardrailContext): Promi
         status = "warn";
     }
 
+    if (status === "block") {
+        metrics.inc("guardrails.blocked_total");
+    } else if (status === "warn") {
+        metrics.inc("guardrails.warn_total");
+    }
+
     return {
         status,
         architecturalRisk,
@@ -455,6 +464,9 @@ export async function evaluateIntegrityGuardrails(args: GuardrailContext): Promi
         parityConfidence,
         indexSnapshot
     };
+    } finally {
+        stopTimer();
+    }
 }
 
 type ParityResult = {

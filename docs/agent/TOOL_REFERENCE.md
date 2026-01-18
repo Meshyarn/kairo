@@ -16,6 +16,10 @@ The agent-facing interface is the **Five Pillars**:
 
 The following reflects the **current inputs** as exposed by `src/index.ts`.
 
+> Note: When `trace: true` is provided, tools return `effectiveOptions` and `decisionTrace` using the v1 schema:
+> - `effectiveOptions.version = 1` (and `pillar`)
+> - `decisionTrace.version = 1` (and `pillar`, `optionResolution`, `skips`, `events`)
+
 ### `explore`
 
 Unified search + read interface for docs and code.
@@ -26,7 +30,7 @@ Unified search + read interface for docs and code.
 |---|---|---:|---|
 | `query` | `string` |  | Search query for docs/code. |
 | `paths` | `string[]` |  | Explicit files/dirs to read. |
-| `profile` | `"fast" \| "balanced" \| "deep"` |  | Preset for depth/limits/include defaults. |
+| `profile` | `"lean" \| "fast" \| "balanced" \| "deep"` |  | Preset for depth/limits/include defaults. |
 | `sources` | `"code" \| "docs" \| "both"` |  | Prefer code vs docs search (default: both). |
 | `view` | `"auto" \| "preview" \| "section" \| "full"` |  | Defaults to token-safe previews. |
 | `section.sectionId` | `string` |  | Use when targeting a specific doc section. |
@@ -45,7 +49,7 @@ Unified search + read interface for docs and code.
 | `cursor.content` | `string` |  | Expand content from a pack without re-search. |
 | `limits.maxResults` | `number` |  | Per-group result cap. |
 | `limits.maxChars` | `number` |  | Total content budget. |
-| `limits.maxTokens` | `number` |  | Token-first budget cap (may distill results; emits `budget_exceeded` + `compression`). |
+| `limits.maxTokens` | `number` |  | Response envelope token budget cap (final tool output JSON). |
 | `limits.maxItemChars` | `number` |  | Per-item cap. |
 | `limits.maxBytes` | `number` |  | Hard cap for full reads. |
 | `limits.maxFiles` | `number` |  | Cap the number of files scanned/considered. |
@@ -54,7 +58,7 @@ Unified search + read interface for docs and code.
 | `allowSensitive` | `boolean` |  | Opt-in for sensitive files. |
 | `allowBinary` | `boolean` |  | Opt-in for binary files. |
 | `allowGlobs` | `boolean` |  | Opt-in for glob paths. |
-| `trace` | `boolean` |  | Return `effectiveOptions` + `decisionTrace`. |
+| `trace` | `boolean` |  | Return v1 `effectiveOptions` + v1 `decisionTrace`. |
 
 **Usage**
 
@@ -77,7 +81,7 @@ Deep analysis of structure and relationships (opt-in includes).
 | `goal` | `string` | ✓ | What you want to understand (symbol/file/free-text). |
 | `scope` | `"symbol" \| "file" \| "module" \| "project"` |  | Narrow the search mode. |
 | `depth` | `"shallow" \| "standard" \| "deep"` |  | Controls analysis depth. |
-| `profile` | `"fast" \| "balanced" \| "deep"` |  | Preset for analysis defaults. |
+| `profile` | `"lean" \| "fast" \| "balanced" \| "deep"` |  | Preset for analysis defaults. |
 | `sources` | `"code" \| "docs" \| "both"` |  | Prefer code vs docs (note: doc search support is rolling out). |
 | `include.callGraph` | `boolean` |  | Include call graph (default is conservative; enable explicitly). |
 | `include.dependencies` | `boolean` |  | Include dependency edges. |
@@ -91,8 +95,14 @@ Deep analysis of structure and relationships (opt-in includes).
 | `analysis.maxClusters` | `number` |  | Max cluster count. |
 | `analysis.maxFilesPerCluster` | `number` |  | Max files per cluster. |
 | `limits.timeoutMs` | `number` |  | Per-call timeout budget (best-effort). |
-| `limits.maxTokens` | `number` |  | Token-first cap for structure payloads (may distill skeleton; emits `budget_exceeded` + `compression`). |
-| `trace` | `boolean` |  | Return `effectiveOptions` + `decisionTrace`. |
+| `limits.maxTokens` | `number` |  | Response envelope token budget cap (final tool output JSON). |
+| `limits.maxChars` | `number` |  | Hard cap on response JSON size (chars). |
+| `trace` | `boolean` |  | Return v1 `effectiveOptions` + v1 `decisionTrace`. |
+
+**Notes**
+
+- `profile` may be automatically downshifted for cost stability unless explicitly provided; set `trace: true` to inspect the final decision (`decisionTrace`).
+- When `include.callGraph=true`, `understand` returns a summary `callGraph` plus `callGraphArtifactId`/`callGraphSummary` so the full graph can be fetched via `manage({ command: "artifact", target: <id> })`.
 
 ---
 
@@ -108,7 +118,8 @@ Plan/apply safe edits with impact analysis.
 | `target` | `string` |  | Optional hint (file/symbol). |
 | `targetFiles` | `string[]` |  | Constrain the blast radius. |
 | `edits` | `object[]` |  | Structured edits (advanced). |
-| `profile` | `"fast" \| "balanced" \| "deep"` |  | Preset for review/limits defaults. |
+| `fileVersions` | `object` |  | Advanced stale-guard: `{ [relPath]: { expectedVersion?, expectedHash? } }` (typically from `DraftPack.fileVersions` or a prior read). |
+| `profile` | `"lean" \| "fast" \| "balanced" \| "deep"` |  | Preset for review/limits defaults. |
 | `safety` | `"plan" \| "apply"` |  | Maps to dry-run behavior (plan=true by default). |
 | `options.dryRun` | `boolean` |  | Default behavior is dry-run planning. |
 | `draftId` | `string` |  | Continue a refinement loop from a prior DraftPack. |
@@ -127,7 +138,12 @@ Plan/apply safe edits with impact analysis.
 | `options.batchMode` | `boolean` |  | Reserved (implementation-dependent). |
 | `options.suggestDocs` | `boolean` |  | Enable doc update suggestions on successful apply. |
 | `options.batchImpactLimit` | `number` |  | Max files to include in batch impact preview. |
-| `trace` | `boolean` |  | Return `effectiveOptions` + `decisionTrace`. |
+| `options.formatter` | `"auto" \| "off" \| "prettier"` |  | Opt-in formatter run after apply. |
+| `trace` | `boolean` |  | Return v1 `effectiveOptions` + v1 `decisionTrace`. |
+
+**Notes**
+
+- `profile` may be automatically downshifted for cost stability unless explicitly provided; set `trace: true` to inspect the final decision (`decisionTrace`).
 
 **Workflow output**
 
@@ -167,7 +183,8 @@ Create or scaffold files.
 | `targetPath` | `string` |  | Where to create it. |
 | `template` | `string` |  | Template name/path (if supported). |
 | `content` | `string` |  | Explicit content overrides generation. |
-| `profile` | `"fast" \| "balanced" \| "deep"` |  | Preset for review/limits defaults. |
+| `fileVersions` | `object` |  | Advanced stale-guard: `{ [relPath]: { expectedVersion?, expectedHash? } }` (typically from `DraftPack.fileVersions` or a prior read). |
+| `profile` | `"lean" \| "fast" \| "balanced" \| "deep"` |  | Preset for review/limits defaults. |
 | `safety` | `"plan" \| "apply"` |  | Maps to dry-run behavior (plan=true by default). |
 | `dryRun` | `boolean` |  | Generate DraftPack only. |
 | `draftId` | `string` |  | Continue a refinement loop from a prior DraftPack. |
@@ -184,7 +201,12 @@ Create or scaffold files.
 | `options.quickGenerate` | `boolean` |  | Generate content from intent when `content` is not provided. |
 | `options.smartWrite` | `boolean` |  | Pattern-aware generation using similar files (when possible). |
 | `options.styleReference` | `string[]` |  | Optional explicit reference files for pattern extraction. |
-| `trace` | `boolean` |  | Return `effectiveOptions` + `decisionTrace`. |
+| `options.formatter` | `"auto" \| "off" \| "prettier"` |  | Opt-in formatter run after apply. |
+| `trace` | `boolean` |  | Return v1 `effectiveOptions` + v1 `decisionTrace`. |
+
+**Notes**
+
+- `change(plan)` failure may include `schemaCoaching` with `requiredFields`, `editsTemplate`, and `helpUrl` to guide a retry.
 
 **Workflow output**
 
@@ -209,14 +231,31 @@ When `options.safeWrite=true`:
 
 Project/session state utilities.
 
+- `manage({ command: "status" })`는 `rollout` 필드로 preset/userIdHash/flag mode + adaptive flow gate 요약을 함께 반환한다.
+- `manage({ command: "status" })`는 `symbolIndex` 필드로 심볼 시맨틱 검색 인덱스 상태(활성/빌드 시각/degraded)를 함께 반환한다.
+- `manage({ command: "status" })`는 `drift` 필드로 workspace 드리프트 상태 요약을 함께 반환한다.
+- `manage({ command: "status" })`는 `styleDrift` 필드로 StylePack 근거/신뢰도 요약을 함께 반환한다.
+- `manage({ command: "doctor" })`도 `rollout` 필드로 동일한 운영 진단 정보를 반환한다.
+- `manage({ command: "history" })`는 최근 커밋된 트랜잭션 체크포인트 요약(`checkpoints`)을 함께 반환한다.
+- `manage({ command: "reindex", paths: [...] })`는 지정한 파일들의 국소 재인덱싱을 시도한다(가능한 런타임에서만).
+- `manage({ command: "export", targetType: "transaction", target: "<txId>" })`는 patch export를 반환한다.
+- `manage({ command: "artifact", detail: "summary" | "full" })`는 graph artifact일 때 요약/전체 view를 반환한다.
+- graph 원문 전체가 필요하면 `manage({ command: "export", targetType: "artifact", target: "<artifactId>" })`를 사용한다.
+
 **Parameters**
 
 | Field | Type | Required | Notes |
 |---|---|---:|---|
 | `command` | `"status" \| "undo" \| "redo" \| "reindex" \| "rebuild" \| "history" \| "test" \| "sessions" \| "session" \| "session_complete" \| "session_update" \| "artifacts" \| "artifact" \| "discard" \| "prune" \| "export" \| "import"` | ✓ | `rebuild` maps to `reindex`. |
-| `scope` | `"file" \| "transaction" \| "project"` |  | Mainly used by `test`. |
+| `scope` | `"file" \| "transaction" \| "project" \| "config" \| "languages" \| "wasm" \| "host" \| "contracts" \| "parity" \| "capabilities"` |  | Used by `test`/`doctor`. |
 | `target` | `string` |  | Mainly used by `test`. |
-| `limit` | `number` |  | Max items for list commands (sessions). |
+| `targetType` | `"artifact" \| "transaction" \| "patchRef"` |  | `export` 대상 유형. |
+| `format` | `"unified_diff" \| "structured_edits" \| "both"` |  | `export` 결과 형식. |
+| `limit` | `number` |  | Max items for list commands (sessions); graph artifact view caps node count. |
+| `detail` | `"summary" \| "full"` |  | Detail level for `status`/`doctor`. |
+| `limits.maxTokens` | `number` |  | Response envelope token budget for `artifact` retrieval. |
+| `limits.maxChars` | `number` |  | Response envelope char budget for `artifact` retrieval. |
+| `trace` | `boolean` |  | Return v1 `effectiveOptions` + v1 `decisionTrace`. |
 | `sessionId` | `string` |  | Session id for `session` / `session_complete`. |
 | `outcome` | `object` |  | Used by `session_complete` (e.g. `{ summary, status, nextSteps }`). |
 | `policy` | `object` |  | SessionPolicy update for `session_update`. |
@@ -225,6 +264,34 @@ Project/session state utilities.
 | `artifactOptions.sessionId` | `string` |  | Filter artifacts by session. |
 | `artifactOptions.limit` | `number` |  | Max artifacts to return. |
 | `artifactOptions.includeExpired` | `boolean` |  | Include expired artifacts. |
+| `mode` | `"plan" \| "apply"` |  | Used by `init`/`doctor`/`prune` to preview or apply. |
+| `targets` | `("kairo" \| "vscode")[]` |  | Used by `init` to decide which config to write. |
+| `root` | `string` |  | Config root override for `init`/`doctor`. |
+| `multiRepo` | `"auto" \| "single" \| "detect"` |  | Multi-repo config behavior for `init`. |
+| `presets` | `"minimal" \| "recommended"` |  | Config preset for `init`. |
+| `languageScan.maxFiles` | `number` |  | Max files scanned by `init`. |
+| `languageScan.sampleBytesPerFile` | `number` |  | Sample size per file for `init`. |
+| `languageScan.includeDocs` | `boolean` |  | Include docs in scan for `init`. |
+| `applyOptions.backup` | `boolean` |  | Keep backup when writing config. |
+| `applyOptions.legacyMcpConfig` | `boolean` |  | Write legacy `.mcp-config.json`. |
+| `pruneOptions` | `object` |  | Storage prune options (see below). |
+
+---
+
+**Prune options (`manage` command = `prune`)**
+
+| Field | Type | Notes |
+|---|---|---|
+| `pruneOptions.targets` | `("evidence_packs" \| "chunk_summaries" \| "flow_artifacts")[]` | Defaults to all. |
+| `pruneOptions.includeExpired` | `boolean` | Include expired entries (default true). |
+| `pruneOptions.includeStale` | `boolean` | Include stale entries (default true). |
+| `pruneOptions.enforceCaps` | `boolean` | Enforce max count/bytes caps (default true). |
+| `pruneOptions.compact` | `boolean` | Rewrite store after prune. |
+| `pruneOptions.limits.maxPacks` | `number` | Max evidence packs. |
+| `pruneOptions.limits.maxPackBytes` | `number` | Max evidence pack bytes. |
+| `pruneOptions.limits.maxSummaryChunks` | `number` | Max summary chunks. |
+| `pruneOptions.limits.maxSummaryBytes` | `number` | Max summary bytes. |
+| `pruneOptions.flowArtifacts.removeOrphans` | `boolean` | Remove orphaned artifact files. |
 
 ---
 
@@ -252,6 +319,11 @@ What do you need?
 - Review output
 - `change(options.dryRun=false)` to apply
 
+### Multi-repo safety (default deny)
+- `project_search`/`document_search` accept `repoScope` to narrow results.
+- `explore` accepts `repoScope` to scope discovery results (passed through to underlying search tools).
+- `change`/`write` block cross-repo edits by default; require `allowCrossRepoEdits: true` plus repo config `allowCrossRepoEdits: true`.
+
 ### Recover
 - If edits go wrong: `manage({ command: "undo" })`
 - If results look stale: `manage({ command: "reindex" })`
@@ -261,6 +333,7 @@ What do you need?
 - `manage({ command: "init", mode: "apply" })` to write config files
 - `manage({ command: "doctor" })` to diagnose missing/misplaced settings
 - `manage({ command: "doctor", scope: "parity" })` to check query packs + WASM grammar availability
+- `manage({ command: "doctor", scope: "capabilities" })` to inspect provider/tier diagnostics (native/wasm/js) and tokenizer hints
 - `manage({ command: "doctor", scope: "contracts" })` to check `.kairo/contracts` health
 
 ---

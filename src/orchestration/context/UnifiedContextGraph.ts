@@ -1,4 +1,3 @@
-import * as fs from 'fs';
 import * as path from 'path';
 import { performance } from 'perf_hooks';
 import { ContextNode } from './ContextNode.js';
@@ -10,6 +9,7 @@ import { FeatureFlags } from '../../config/FeatureFlags.js';
 import { ModuleResolver } from '../../ast/ModuleResolver.js';
 import { FileWatcher } from './FileWatcher.js';
 import { AdaptiveFlowMetrics } from '../../utils/AdaptiveFlowMetrics.js';
+import { NodeFileSystem, type IFileSystem } from '../../platform/FileSystem.js';
 
 /**
  * Unified Context Graph: Centralized state for all file analysis.
@@ -23,6 +23,7 @@ export class UnifiedContextGraph {
     private astManager: AstManager;
     private moduleResolver: ModuleResolver;
     private rootPath: string;
+    private fileSystem: IFileSystem;
     private fileWatcher?: FileWatcher;
     private persistPath: string;
     private saveTimeout?: NodeJS.Timeout;
@@ -33,11 +34,12 @@ export class UnifiedContextGraph {
         cascadeInvalidations: 0
     };
     
-    constructor(rootPath: string, maxNodes: number = 5000, enableWatcher: boolean = false) {
+    constructor(rootPath: string, maxNodes: number = 5000, enableWatcher: boolean = false, fileSystem?: IFileSystem) {
         this.nodes = new Map();
         this.lruQueue = [];
         this.maxNodes = maxNodes;
         this.rootPath = rootPath;
+        this.fileSystem = fileSystem ?? new NodeFileSystem(rootPath);
         this.skeletonGenerator = new SkeletonGenerator();
         this.skeletonCache = new SkeletonCache(rootPath);
         this.astManager = AstManager.getInstance();
@@ -55,34 +57,37 @@ export class UnifiedContextGraph {
     private async save() {
         if (this.saveTimeout) clearTimeout(this.saveTimeout);
         this.saveTimeout = setTimeout(() => {
-            try {
-                const data = {
-                    nodes: Array.from(this.nodes.entries()).map(([path, node]) => ({
-                        path,
-                        lod: node.lod,
-                        topology: node.topology,
-                        structure: node.structure,
-                        lastModified: node.lastModified,
-                        size: node.size,
-                        dependencies: Array.from(node.dependencies),
-                        dependents: Array.from(node.dependents)
-                    })),
-                    lruQueue: this.lruQueue
-                };
-                if (!fs.existsSync(path.dirname(this.persistPath))) {
-                    fs.mkdirSync(path.dirname(this.persistPath), { recursive: true });
-                }
-                fs.writeFileSync(this.persistPath, JSON.stringify(data, null, 2));
-            } catch (e) {
-                console.error('[UCG] Failed to save graph state:', e);
-            }
+            const data = {
+                nodes: Array.from(this.nodes.entries()).map(([path, node]) => ({
+                    path,
+                    lod: node.lod,
+                    topology: node.topology,
+                    structure: node.structure,
+                    lastModified: node.lastModified,
+                    size: node.size,
+                    dependencies: Array.from(node.dependencies),
+                    dependents: Array.from(node.dependents)
+                })),
+                lruQueue: this.lruQueue
+            };
+            void this.persistGraph(data);
         }, 2000);
+    }
+
+    private async persistGraph(data: any): Promise<void> {
+        try {
+            await this.fileSystem.createDir(path.dirname(this.persistPath));
+            await this.fileSystem.writeFile(this.persistPath, JSON.stringify(data, null, 2));
+        } catch (e) {
+            console.error('[UCG] Failed to save graph state:', e);
+        }
     }
 
     private async load() {
         try {
-            if (!fs.existsSync(this.persistPath)) return;
-            const content = fs.readFileSync(this.persistPath, 'utf-8');
+            const exists = await this.fileSystem.exists(this.persistPath);
+            if (!exists) return;
+            const content = await this.fileSystem.readFile(this.persistPath);
             const data = JSON.parse(content);
             
             for (const n of data.nodes) {
@@ -150,12 +155,12 @@ export class UnifiedContextGraph {
     
     private async promoteToLOD1(node: ContextNode) {
         if (!FeatureFlags.isEnabled(FeatureFlags.TOPOLOGY_SCANNER_ENABLED)) return { fallbackUsed: true, confidence: 1.0 };
-        const content = fs.readFileSync(node.path, 'utf-8');
+        const content = await this.fileSystem.readFile(node.path);
         const topology = await this.astManager.extractUniversalTopology(node.path, content);
         topology.path = topology.path || node.path;
         node.setTopology(topology);
-        const stats = fs.statSync(node.path);
-        node.lastModified = stats.mtimeMs;
+        const stats = await this.fileSystem.stat(node.path);
+        node.lastModified = stats.mtime;
         node.size = stats.size;
         this.buildDependencyEdges(node, topology);
         return {
@@ -165,7 +170,7 @@ export class UnifiedContextGraph {
     }
     
     private async promoteToLOD2(node: ContextNode) {
-        const content = fs.readFileSync(node.path, 'utf-8');
+        const content = await this.fileSystem.readFile(node.path);
         const skeleton = await this.skeletonCache.getSkeleton(
             node.path,
             { detailLevel: 'standard' },
@@ -183,7 +188,7 @@ export class UnifiedContextGraph {
     }
     
     private async promoteToLOD3(node: ContextNode) {
-        const content = fs.readFileSync(node.path, 'utf-8');
+        const content = await this.fileSystem.readFile(node.path);
         await this.astManager.parseFile(node.path, content);
         node.setAstDoc("ast:" + node.path + ":" + Date.now());
     }

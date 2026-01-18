@@ -92,7 +92,7 @@ export interface IntentConstraints {
     strictness?: "strict" | "balanced" | "permissive";
     blockOn?: Array<"syntax" | "semantic" | "guardrails" | "vibe">;
   };
-  profile?: "fast" | "balanced" | "deep";
+  profile?: "lean" | "fast" | "balanced" | "deep";
   sources?: "code" | "docs" | "both";
   safety?: "plan" | "apply";
   trace?: boolean;

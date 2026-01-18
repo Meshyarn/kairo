@@ -28,10 +28,14 @@ export class MemoryIndexStore implements IndexStore {
 
     protected readonly files = new Map<string, FileRecord>();
     protected readonly symbols = new Map<string, SymbolInfo[]>();
+    protected readonly symbolRefsByTrigram = new Map<string, Set<string>>();
+    protected symbolSecondaryIndexEnabled = this.resolveSecondaryIndexEnabled();
+    protected symbolSecondaryIndexBytes = 0;
     protected readonly dependencies = new Map<string, DependencySnapshot>();
     protected readonly ghosts = new Map<string, StoredGhostSymbol>();
     protected readonly documentChunks = new Map<string, StoredDocumentChunk[]>();
     protected readonly chunkIndex = new Map<string, { filePath: string; contentHash: string }>();
+    protected readonly documentMeta = new Map<string, { sourceFormat: string; extractor?: string; warnings?: string[]; reasons?: string[]; stats?: Record<string, unknown>; updatedAt: number }>();
     protected readonly embeddings = new Map<string, Map<string, StoredEmbedding>>();
     protected readonly evidencePacks = new Map<string, unknown>();
     protected readonly chunkSummaries = new Map<string, Map<string, { summary: string; contentHash?: string }>>();
@@ -73,11 +77,39 @@ export class MemoryIndexStore implements IndexStore {
         return Array.from(this.files.values()).map(record => ({ ...record }));
     }
 
+    public updateFileMeta(
+        relativePath: string,
+        updates: { lastModified?: number; language?: string | null; contentHash?: string; sizeBytes?: number }
+    ): FileRecord {
+        const normalized = this.normalize(relativePath);
+        const record = this.files.get(normalized) ?? {
+            path: normalized,
+            last_modified: updates.lastModified ?? 0,
+            language: updates.language ?? null
+        };
+        if (updates.lastModified !== undefined) {
+            record.last_modified = updates.lastModified;
+        }
+        if (updates.language !== undefined) {
+            record.language = updates.language ?? null;
+        }
+        if (updates.contentHash !== undefined) {
+            record.content_hash = updates.contentHash;
+        }
+        if (updates.sizeBytes !== undefined) {
+            record.size_bytes = updates.sizeBytes;
+        }
+        this.files.set(normalized, record);
+        return { ...record };
+    }
+
     public deleteFile(relativePath: string): void {
         const normalized = this.normalize(relativePath);
+        this.removeSecondaryIndexForFile(normalized);
         this.files.delete(normalized);
         this.symbols.delete(normalized);
         this.dependencies.delete(normalized);
+        this.documentMeta.delete(normalized);
         this.deleteEmbeddingsForFile(normalized);
         this.deleteDocumentChunks(normalized);
         this.cleanupIncomingDependencies(normalized);
@@ -94,8 +126,10 @@ export class MemoryIndexStore implements IndexStore {
 
     public replaceSymbols(args: { relativePath: string; lastModified: number; language?: string | null; symbols: SymbolInfo[] }): void {
         const normalized = this.normalize(args.relativePath);
+        this.removeSecondaryIndexForFile(normalized);
         this.getOrCreateFile(normalized, args.lastModified, args.language);
         this.symbols.set(normalized, [...(args.symbols ?? [])]);
+        this.addSecondaryIndexForFile(normalized, args.symbols ?? []);
     }
 
     public readSymbols(relativePath: string): SymbolInfo[] | undefined {
@@ -114,19 +148,37 @@ export class MemoryIndexStore implements IndexStore {
 
     public searchSymbols(pattern: string, limit: number = 100): Array<{ path: string; data_json: string }> {
         const query = normalizeLikePattern(pattern);
+        if (!query) return [];
+        if (!this.symbolSecondaryIndexEnabled || query.length < 3) {
+            return this.searchSymbolsLinear(query, limit);
+        }
+        if (this.symbolRefsByTrigram.size === 0) {
+            return this.searchSymbolsLinear(query, limit);
+        }
+        const candidates = this.collectSecondaryCandidates(query);
+        if (!candidates) {
+            return this.searchSymbolsLinear(query, limit);
+        }
+        const cap = this.resolveSymbolSearchMaxCandidates();
+        const sliced = cap > 0 && candidates.length > cap ? candidates.slice(0, cap) : candidates;
         const results: Array<{ path: string; data_json: string }> = [];
-        if (!query) return results;
-        for (const [filePath, symbols] of this.symbols.entries()) {
-            for (const symbol of symbols) {
-                if (!symbol?.name) continue;
-                if (!symbol.name.toLowerCase().includes(query)) continue;
-                results.push({ path: filePath, data_json: JSON.stringify(symbol) });
-                if (results.length >= limit) {
-                    return results;
-                }
+        for (const ref of sliced) {
+            const resolved = this.resolveSymbolRef(ref);
+            if (!resolved?.symbol?.name) continue;
+            if (!resolved.symbol.name.toLowerCase().includes(query)) continue;
+            results.push({ path: resolved.filePath, data_json: JSON.stringify(resolved.symbol) });
+            if (results.length >= limit) {
+                return results;
             }
         }
         return results;
+    }
+
+    public getSecondaryIndexStatus(): { enabled: boolean; bytes?: number } {
+        return {
+            enabled: this.symbolSecondaryIndexEnabled,
+            bytes: this.symbolSecondaryIndexBytes
+        };
     }
 
     public replaceDependencies(args: {
@@ -290,6 +342,33 @@ export class MemoryIndexStore implements IndexStore {
         this.documentChunks.delete(normalized);
     }
 
+    public upsertDocumentMeta(filePath: string, meta: { filePath: string; sourceFormat: string; extractor?: string; warnings?: string[]; reasons?: string[]; stats?: Record<string, unknown>; updatedAt: number }): void {
+        const normalized = this.normalize(filePath);
+        this.documentMeta.set(normalized, {
+            sourceFormat: meta.sourceFormat,
+            extractor: meta.extractor,
+            warnings: meta.warnings ? [...meta.warnings] : undefined,
+            reasons: meta.reasons ? [...meta.reasons] : undefined,
+            stats: meta.stats ? { ...meta.stats } : undefined,
+            updatedAt: meta.updatedAt
+        });
+    }
+
+    public getDocumentMeta(filePath: string): { filePath: string; sourceFormat: string; extractor?: string; warnings?: string[]; reasons?: string[]; stats?: Record<string, unknown>; updatedAt: number } | null {
+        const normalized = this.normalize(filePath);
+        const stored = this.documentMeta.get(normalized);
+        if (!stored) return null;
+        return {
+            filePath: normalized,
+            sourceFormat: stored.sourceFormat,
+            extractor: stored.extractor,
+            warnings: stored.warnings ? [...stored.warnings] : undefined,
+            reasons: stored.reasons ? [...stored.reasons] : undefined,
+            stats: stored.stats ? { ...stored.stats } : undefined,
+            updatedAt: stored.updatedAt
+        };
+    }
+
     public upsertEmbedding(chunkId: string, key: EmbeddingKey, embedding: { dims: number; vector: Float32Array; norm?: number }): void {
         const mapKey = embeddingKey(key);
         const entry: StoredEmbedding = {
@@ -373,6 +452,16 @@ export class MemoryIndexStore implements IndexStore {
         this.evidencePacks.delete(packId);
     }
 
+    public iterateEvidencePacks(visitor: (packId: string, payload: unknown) => void): void {
+        for (const [packId, payload] of this.evidencePacks.entries()) {
+            visitor(packId, payload);
+        }
+    }
+
+    public compactEvidencePacks(): void {
+        // No-op for in-memory store.
+    }
+
     public getChunkSummary(chunkId: string, style: "preview" | "summary"): { summary: string; contentHash?: string } | null {
         const entry = this.chunkSummaries.get(chunkId)?.get(style);
         if (!entry) return null;
@@ -386,6 +475,36 @@ export class MemoryIndexStore implements IndexStore {
         this.chunkSummaries.get(chunkId)!.set(style, { summary, contentHash });
     }
 
+    public deleteChunkSummary(chunkId: string, style: "preview" | "summary"): void {
+        const styles = this.chunkSummaries.get(chunkId);
+        if (!styles) return;
+        styles.delete(style);
+        if (styles.size === 0) {
+            this.chunkSummaries.delete(chunkId);
+        }
+    }
+
+    public deleteChunkSummaries(chunkId: string): void {
+        this.chunkSummaries.delete(chunkId);
+    }
+
+    public iterateChunkSummaries(
+        visitor: (chunkId: string, styles: Record<"preview" | "summary", { summary: string; contentHash?: string }>) => void
+    ): void {
+        for (const [chunkId, styles] of this.chunkSummaries.entries()) {
+            const payload: Record<"preview" | "summary", { summary: string; contentHash?: string }> = {} as any;
+            for (const [style, value] of styles.entries()) {
+                if (style !== "preview" && style !== "summary") continue;
+                payload[style as "preview" | "summary"] = { ...value };
+            }
+            visitor(chunkId, payload);
+        }
+    }
+
+    public compactChunkSummaries(): void {
+        // No-op for in-memory store.
+    }
+
     public upsertPendingTransaction(entry: TransactionLogEntry): void {
         this.transactions.set(entry.id, { ...entry });
     }
@@ -394,7 +513,7 @@ export class MemoryIndexStore implements IndexStore {
         const entries: TransactionLogEntry[] = [];
         for (const entry of this.transactions.values()) {
             if (entry.status === "pending") {
-                entries.push({ ...entry, snapshots: entry.snapshots.map(snapshot => ({ ...snapshot })) });
+                entries.push(this.cloneTransaction(entry));
             }
         }
         return entries.sort((a, b) => a.timestamp - b.timestamp);
@@ -410,9 +529,32 @@ export class MemoryIndexStore implements IndexStore {
         this.transactions.set(id, { ...entry, status: "rolled_back" });
     }
 
+    public listTransactions(options?: { status?: "pending" | "committed" | "rolled_back"; limit?: number }): TransactionLogEntry[] {
+        const status = options?.status;
+        const entries: TransactionLogEntry[] = [];
+        for (const entry of this.transactions.values()) {
+            if (status && entry.status !== status) continue;
+            entries.push(this.cloneTransaction(entry));
+        }
+        entries.sort((a, b) => b.timestamp - a.timestamp);
+        if (typeof options?.limit === "number") {
+            return entries.slice(0, Math.max(0, options.limit));
+        }
+        return entries;
+    }
+
     public close(): void {}
 
     public dispose(): void {}
+
+    private cloneTransaction(entry: TransactionLogEntry): TransactionLogEntry {
+        return {
+            ...entry,
+            diffSummary: entry.diffSummary ? { ...entry.diffSummary } : undefined,
+            filesTouched: entry.filesTouched ? entry.filesTouched.map(item => ({ ...item })) : undefined,
+            snapshots: entry.snapshots.map(snapshot => ({ ...snapshot }))
+        };
+    }
 
     protected normalize(relPath: string): string {
         let normalized = relPath.replace(/\\/g, "/");
@@ -438,6 +580,133 @@ export class MemoryIndexStore implements IndexStore {
         return normalized || ".";
     }
 
+    private searchSymbolsLinear(query: string, limit: number): Array<{ path: string; data_json: string }> {
+        const results: Array<{ path: string; data_json: string }> = [];
+        for (const [filePath, symbols] of this.symbols.entries()) {
+            for (const symbol of symbols) {
+                if (!symbol?.name) continue;
+                if (!symbol.name.toLowerCase().includes(query)) continue;
+                results.push({ path: filePath, data_json: JSON.stringify(symbol) });
+                if (results.length >= limit) {
+                    return results;
+                }
+            }
+        }
+        return results;
+    }
+
+    private collectSecondaryCandidates(query: string): string[] | null {
+        const trigrams = this.toTrigrams(query);
+        if (trigrams.length === 0) return null;
+        const sets: Set<string>[] = [];
+        for (const trigram of trigrams) {
+            const set = this.symbolRefsByTrigram.get(trigram);
+            if (!set || set.size === 0) {
+                return [];
+            }
+            sets.push(set);
+        }
+        sets.sort((a, b) => a.size - b.size);
+        let candidates = new Set(sets[0]);
+        for (let i = 1; i < sets.length; i++) {
+            const next = sets[i];
+            for (const ref of candidates) {
+                if (!next.has(ref)) {
+                    candidates.delete(ref);
+                }
+            }
+            if (candidates.size === 0) break;
+        }
+        return Array.from(candidates);
+    }
+
+    private resolveSymbolRef(ref: string): { filePath: string; symbol: SymbolInfo } | null {
+        const splitIndex = ref.lastIndexOf("#");
+        if (splitIndex <= 0) return null;
+        const filePath = ref.slice(0, splitIndex);
+        const ordinal = Number.parseInt(ref.slice(splitIndex + 1), 10);
+        if (!Number.isFinite(ordinal) || ordinal < 0) return null;
+        const symbols = this.symbols.get(filePath);
+        const symbol = symbols?.[ordinal];
+        if (!symbol) return null;
+        return { filePath, symbol };
+    }
+
+    private addSecondaryIndexForFile(filePath: string, symbols: SymbolInfo[]): void {
+        if (!this.symbolSecondaryIndexEnabled) return;
+        symbols.forEach((symbol, index) => {
+            if (!symbol?.name) return;
+            const ref = this.buildSymbolRef(filePath, index);
+            const trigrams = this.toTrigrams(symbol.name.toLowerCase());
+            if (trigrams.length === 0) return;
+            for (const trigram of trigrams) {
+                let set = this.symbolRefsByTrigram.get(trigram);
+                if (!set) {
+                    set = new Set();
+                    this.symbolRefsByTrigram.set(trigram, set);
+                }
+                set.add(ref);
+            }
+        });
+    }
+
+    private removeSecondaryIndexForFile(filePath: string): void {
+        if (!this.symbolSecondaryIndexEnabled) return;
+        const symbols = this.symbols.get(filePath) ?? [];
+        symbols.forEach((symbol, index) => {
+            if (!symbol?.name) return;
+            const ref = this.buildSymbolRef(filePath, index);
+            const trigrams = this.toTrigrams(symbol.name.toLowerCase());
+            for (const trigram of trigrams) {
+                const set = this.symbolRefsByTrigram.get(trigram);
+                if (!set) continue;
+                set.delete(ref);
+                if (set.size === 0) {
+                    this.symbolRefsByTrigram.delete(trigram);
+                }
+            }
+        });
+    }
+
+    protected rebuildSecondaryIndex(): void {
+        if (!this.symbolSecondaryIndexEnabled) {
+            this.symbolRefsByTrigram.clear();
+            return;
+        }
+        this.symbolRefsByTrigram.clear();
+        for (const [filePath, symbols] of this.symbols.entries()) {
+            this.addSecondaryIndexForFile(filePath, symbols);
+        }
+    }
+
+    protected resolveSecondaryIndexEnabled(): boolean {
+        const raw = (process.env.KAIRO_SYMBOL_SECONDARY_INDEX ?? "auto").trim().toLowerCase();
+        if (raw === "off" || raw === "false" || raw === "0") return false;
+        if (raw === "on" || raw === "true" || raw === "1") return true;
+        return true;
+    }
+
+    protected resolveSymbolSearchMaxCandidates(): number {
+        const raw = Number.parseInt(process.env.KAIRO_SYMBOL_SEARCH_MAX_CANDIDATES ?? "20000", 10);
+        if (!Number.isFinite(raw) || raw <= 0) return 20000;
+        return raw;
+    }
+
+    private toTrigrams(input: string): string[] {
+        const normalized = input.trim().toLowerCase();
+        if (normalized.length < 3) return [];
+        if (normalized.length === 3) return [normalized];
+        const trigrams: string[] = [];
+        for (let i = 0; i <= normalized.length - 3; i++) {
+            trigrams.push(normalized.slice(i, i + 3));
+        }
+        return trigrams;
+    }
+
+    private buildSymbolRef(filePath: string, ordinal: number): string {
+        return `${filePath}#${ordinal}`;
+    }
+
     private cleanupIncomingDependencies(targetPath: string): void {
         for (const [source, snapshot] of this.dependencies.entries()) {
             const filtered = snapshot.outgoing.filter(dep => dep.target !== targetPath);
@@ -453,9 +722,11 @@ export class FileIndexStore extends MemoryIndexStore {
     private readonly manifestPath: string;
     private readonly filesPath: string;
     private readonly symbolsPath: string;
+    private readonly secondaryIndexPath: string;
     private readonly dependenciesPath: string;
     private readonly ghostsPath: string;
     private readonly chunksPath: string;
+    private readonly documentMetaPath: string;
     private readonly embeddingsPath: string;
     private readonly packsPath: string;
     private readonly summariesPath: string;
@@ -464,6 +735,7 @@ export class FileIndexStore extends MemoryIndexStore {
     private readonly embeddingPacks = new Map<string, EmbeddingPackManager>();
     private readonly hasLegacyEmbeddingsOnDisk: boolean;
     private hasEmbeddingPackOnDisk: boolean;
+    private secondaryIndexPersistTimer?: NodeJS.Timeout;
 
     constructor(rootPath: string, repoId?: string) {
         super(rootPath, "file");
@@ -473,9 +745,11 @@ export class FileIndexStore extends MemoryIndexStore {
         this.manifestPath = path.join(this.storageDir, "manifest.json");
         this.filesPath = path.join(this.storageDir, "files.json");
         this.symbolsPath = path.join(this.storageDir, "symbols.json");
+        this.secondaryIndexPath = path.join(this.storageDir, "symbols_secondary_index.json");
         this.dependenciesPath = path.join(this.storageDir, "dependencies.json");
         this.ghostsPath = path.join(this.storageDir, "ghosts.json");
         this.chunksPath = path.join(this.storageDir, "chunks.json");
+        this.documentMetaPath = path.join(this.storageDir, "document_meta.json");
         this.embeddingsPath = path.join(this.storageDir, "embeddings.json");
         this.packsPath = path.join(this.storageDir, "packs.json");
         this.summariesPath = path.join(this.storageDir, "summaries.json");
@@ -485,6 +759,7 @@ export class FileIndexStore extends MemoryIndexStore {
         this.hasEmbeddingPackOnDisk = this.embeddingPackConfig.enabled && (!this.hasLegacyEmbeddingsOnDisk || this.detectEmbeddingPackOnDisk());
         this.maybeMigrateEmbeddingPack();
         this.loadFromDisk();
+        this.loadSecondaryIndex();
     }
 
     public override getOrCreateFile(relativePath: string, lastModified?: number, language?: string | null): FileRecord {
@@ -493,12 +768,23 @@ export class FileIndexStore extends MemoryIndexStore {
         return record;
     }
 
+    public override updateFileMeta(
+        relativePath: string,
+        updates: { lastModified?: number; language?: string | null; contentHash?: string; sizeBytes?: number }
+    ): FileRecord {
+        const record = super.updateFileMeta(relativePath, updates);
+        this.persistFiles();
+        return record;
+    }
+
     public override deleteFile(relativePath: string): void {
         super.deleteFile(relativePath);
         this.persistFiles();
         this.persistSymbols();
+        this.persistSecondaryIndex();
         this.persistDependencies();
         this.persistChunks();
+        this.persistDocumentMeta();
         if (!this.embeddingPackConfig.enabled || !this.hasEmbeddingPackOnDisk) {
             this.persistEmbeddings();
         }
@@ -508,8 +794,10 @@ export class FileIndexStore extends MemoryIndexStore {
         super.deleteFilesByPrefix(prefix);
         this.persistFiles();
         this.persistSymbols();
+        this.persistSecondaryIndex();
         this.persistDependencies();
         this.persistChunks();
+        this.persistDocumentMeta();
         if (!this.embeddingPackConfig.enabled || !this.hasEmbeddingPackOnDisk) {
             this.persistEmbeddings();
         }
@@ -519,6 +807,7 @@ export class FileIndexStore extends MemoryIndexStore {
         super.replaceSymbols(args);
         this.persistFiles();
         this.persistSymbols();
+        this.persistSecondaryIndex();
     }
 
     public override replaceDependencies(args: {
@@ -560,6 +849,11 @@ export class FileIndexStore extends MemoryIndexStore {
     public override deleteDocumentChunks(filePath: string): void {
         super.deleteDocumentChunks(filePath);
         this.persistChunks();
+    }
+
+    public override upsertDocumentMeta(filePath: string, meta: any): void {
+        super.upsertDocumentMeta(filePath, meta);
+        this.persistDocumentMeta();
     }
 
     public override upsertEmbedding(chunkId: string, key: EmbeddingKey, embedding: { dims: number; vector: Float32Array; norm?: number }): void {
@@ -639,8 +933,26 @@ export class FileIndexStore extends MemoryIndexStore {
         this.persistPacks();
     }
 
+    public override compactEvidencePacks(): void {
+        this.persistPacks();
+    }
+
     public override upsertChunkSummary(chunkId: string, style: "preview" | "summary", summary: string, contentHash?: string): void {
         super.upsertChunkSummary(chunkId, style, summary, contentHash);
+        this.persistSummaries();
+    }
+
+    public override deleteChunkSummary(chunkId: string, style: "preview" | "summary"): void {
+        super.deleteChunkSummary(chunkId, style);
+        this.persistSummaries();
+    }
+
+    public override deleteChunkSummaries(chunkId: string): void {
+        super.deleteChunkSummaries(chunkId);
+        this.persistSummaries();
+    }
+
+    public override compactChunkSummaries(): void {
         this.persistSummaries();
     }
 
@@ -660,6 +972,11 @@ export class FileIndexStore extends MemoryIndexStore {
     }
 
     public override close(): void {
+        if (this.secondaryIndexPersistTimer) {
+            clearTimeout(this.secondaryIndexPersistTimer);
+            this.secondaryIndexPersistTimer = undefined;
+            this.flushSecondaryIndex();
+        }
         if (this.embeddingPackConfig.enabled && this.hasEmbeddingPackOnDisk) {
             for (const pack of this.embeddingPacks.values()) {
                 pack.close();
@@ -688,12 +1005,9 @@ export class FileIndexStore extends MemoryIndexStore {
 
         const symbols = readJson<Record<string, SymbolInfo[]>>(this.symbolsPath, {});
         for (const [filePath, entries] of Object.entries(symbols)) {
-            super.replaceSymbols({
-                relativePath: filePath,
-                lastModified: this.getFile(filePath)?.last_modified ?? Date.now(),
-                language: this.getFile(filePath)?.language ?? null,
-                symbols: entries ?? []
-            });
+            const record = this.getFile(filePath);
+            super.getOrCreateFile(filePath, record?.last_modified ?? Date.now(), record?.language ?? null);
+            this.symbols.set(this.normalize(filePath), entries ?? []);
         }
 
         const deps = readJson<Record<string, DependencySnapshot>>(this.dependenciesPath, {});
@@ -714,6 +1028,21 @@ export class FileIndexStore extends MemoryIndexStore {
         const chunks = readJson<Record<string, StoredDocumentChunk[]>>(this.chunksPath, {});
         for (const [filePath, entries] of Object.entries(chunks)) {
             super.upsertDocumentChunks(filePath, entries ?? []);
+        }
+
+        const metas = readJson<Record<string, any>>(this.documentMetaPath, {});
+        for (const [filePath, meta] of Object.entries(metas)) {
+            if (!meta || typeof meta !== "object") continue;
+            if (typeof (meta as any).sourceFormat !== "string") continue;
+            super.upsertDocumentMeta(filePath, {
+                filePath,
+                sourceFormat: String((meta as any).sourceFormat),
+                extractor: typeof (meta as any).extractor === "string" ? (meta as any).extractor : undefined,
+                warnings: Array.isArray((meta as any).warnings) ? (meta as any).warnings.map((v: any) => String(v)) : undefined,
+                reasons: Array.isArray((meta as any).reasons) ? (meta as any).reasons.map((v: any) => String(v)) : undefined,
+                stats: (meta as any).stats && typeof (meta as any).stats === "object" ? (meta as any).stats : undefined,
+                updatedAt: Number.isFinite((meta as any).updatedAt) ? (meta as any).updatedAt : Date.now()
+            });
         }
 
         if (!this.embeddingPackConfig.enabled || !this.hasEmbeddingPackOnDisk) {
@@ -767,6 +1096,94 @@ export class FileIndexStore extends MemoryIndexStore {
         writeJson(this.symbolsPath, payload);
     }
 
+    private loadSecondaryIndex(): void {
+        if (!this.symbolSecondaryIndexEnabled) {
+            this.symbolRefsByTrigram.clear();
+            this.symbolSecondaryIndexBytes = 0;
+            return;
+        }
+        const maxBytes = this.resolveSecondaryIndexMaxBytes();
+        if (!fs.existsSync(this.secondaryIndexPath)) {
+            this.rebuildSecondaryIndex();
+            this.persistSecondaryIndex();
+            return;
+        }
+        try {
+            const size = fs.statSync(this.secondaryIndexPath).size;
+            this.symbolSecondaryIndexBytes = size;
+            if (maxBytes > 0 && size > maxBytes) {
+                this.symbolSecondaryIndexEnabled = false;
+                this.symbolRefsByTrigram.clear();
+                fs.rmSync(this.secondaryIndexPath, { force: true });
+                return;
+            }
+        } catch {
+            // best-effort
+        }
+        const payload = readJson<{ version?: number; trigrams?: Record<string, string[]> } | null>(this.secondaryIndexPath, null);
+        if (!payload || payload.version !== 1 || !payload.trigrams || typeof payload.trigrams !== "object") {
+            this.rebuildSecondaryIndex();
+            this.persistSecondaryIndex();
+            return;
+        }
+        this.symbolRefsByTrigram.clear();
+        for (const [trigram, refs] of Object.entries(payload.trigrams)) {
+            if (!Array.isArray(refs) || refs.length === 0) continue;
+            this.symbolRefsByTrigram.set(trigram, new Set(refs.filter(Boolean)));
+        }
+        if (!Number.isFinite(this.symbolSecondaryIndexBytes)) {
+            this.symbolSecondaryIndexBytes = 0;
+        }
+    }
+
+    private persistSecondaryIndex(): void {
+        if (!this.symbolSecondaryIndexEnabled) return;
+        if (this.secondaryIndexPersistTimer) return;
+        this.secondaryIndexPersistTimer = setTimeout(() => {
+            this.secondaryIndexPersistTimer = undefined;
+            this.flushSecondaryIndex();
+        }, 250);
+    }
+
+    private flushSecondaryIndex(): void {
+        if (!this.symbolSecondaryIndexEnabled) return;
+        const payload = this.buildSecondaryIndexPayload();
+        const json = JSON.stringify(payload);
+        const size = Buffer.byteLength(json);
+        const maxBytes = this.resolveSecondaryIndexMaxBytes();
+        if (maxBytes > 0 && size > maxBytes) {
+            this.symbolSecondaryIndexEnabled = false;
+            this.symbolRefsByTrigram.clear();
+            this.symbolSecondaryIndexBytes = size;
+            try {
+                fs.rmSync(this.secondaryIndexPath, { force: true });
+            } catch {
+                // best-effort
+            }
+            return;
+        }
+        const dir = path.dirname(this.secondaryIndexPath);
+        fs.mkdirSync(dir, { recursive: true });
+        const tmpPath = `${this.secondaryIndexPath}.tmp-${process.pid}-${Date.now()}`;
+        fs.writeFileSync(tmpPath, json);
+        fs.renameSync(tmpPath, this.secondaryIndexPath);
+        this.symbolSecondaryIndexBytes = size;
+    }
+
+    private resolveSecondaryIndexMaxBytes(): number {
+        const raw = Number.parseInt(process.env.KAIRO_SYMBOL_SECONDARY_INDEX_MAX_BYTES ?? "67108864", 10);
+        if (!Number.isFinite(raw) || raw <= 0) return 0;
+        return raw;
+    }
+
+    private buildSecondaryIndexPayload(): { version: number; trigrams: Record<string, string[]> } {
+        const trigrams: Record<string, string[]> = {};
+        for (const [key, refs] of this.symbolRefsByTrigram.entries()) {
+            trigrams[key] = Array.from(refs);
+        }
+        return { version: 1, trigrams };
+    }
+
     private persistDependencies(): void {
         const payload: Record<string, DependencySnapshot> = {};
         for (const [filePath, snapshot] of this.dependencies.entries()) {
@@ -785,6 +1202,14 @@ export class FileIndexStore extends MemoryIndexStore {
             payload[filePath] = chunks;
         }
         writeJson(this.chunksPath, payload);
+    }
+
+    private persistDocumentMeta(): void {
+        const payload: Record<string, unknown> = {};
+        for (const [filePath, meta] of this.documentMeta.entries()) {
+            payload[filePath] = meta;
+        }
+        writeJson(this.documentMetaPath, payload);
     }
 
     private persistEmbeddings(): void {

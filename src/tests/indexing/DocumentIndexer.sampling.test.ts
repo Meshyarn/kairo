@@ -6,6 +6,7 @@ import { MemoryFileSystem, NodeFileSystem } from "../../platform/FileSystem.js";
 import { DocumentIndexer } from "../../indexing/DocumentIndexer.js";
 import { IndexDatabase } from "../../indexing/IndexDatabase.js";
 import { DocumentChunkRepository } from "../../indexing/DocumentChunkRepository.js";
+import { DocumentContentLoader } from "../../documents/DocumentContentLoader.js";
 
 describe("DocumentIndexer sampling", () => {
     let tempDir: string;
@@ -57,9 +58,10 @@ describe("DocumentIndexer sampling", () => {
         const fileSystem = new NodeFileSystem(tempDir);
         const indexDb = new IndexDatabase(tempDir);
         const indexer = new DocumentIndexer(tempDir, fileSystem, indexDb);
+        const loader = new DocumentContentLoader(tempDir, fileSystem);
 
-        const sampled = await (indexer as any).readDocumentContent("docs/huge.txt", size);
-        expect(sampled).toContain("[[sampling_applied bytes=");
+        const sampled = await loader.loadForIndex("docs/huge.txt", size);
+        expect(sampled.profileContent).toContain("[[sampling_applied bytes=");
         indexDb.close();
     });
 });

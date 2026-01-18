@@ -4,12 +4,14 @@ import { SymbolIndex } from '../../ast/SymbolIndex.js';
 import { VectorIndexManager } from '../../vector/VectorIndexManager.js';
 import type { EmbeddingProviderClient } from '../../embeddings/EmbeddingProviderFactory.js';
 import type { CodeSymbol } from '../../indexing/SymbolVectorRepository.js';
+import type { EmbeddingRepository } from '../../indexing/EmbeddingRepository.js';
 
 describe('SymbolEmbeddingIndex - Phase 1 Smart Fuzzy Match', () => {
     let symbolEmbeddingIndex: SymbolEmbeddingIndex;
     let mockSymbolIndex: jest.Mocked<SymbolIndex>;
     let mockVectorIndexManager: jest.Mocked<VectorIndexManager>;
     let mockEmbeddingProvider: jest.Mocked<EmbeddingProviderClient>;
+    let mockEmbeddingRepository: jest.Mocked<EmbeddingRepository>;
 
     beforeEach(() => {
         // Mock SymbolIndex
@@ -30,9 +32,19 @@ describe('SymbolEmbeddingIndex - Phase 1 Smart Fuzzy Match', () => {
             embed: jest.fn<any>(),
         } as any;
 
+        mockEmbeddingRepository = {
+            upsertEmbedding: jest.fn(),
+            getEmbedding: jest.fn(),
+            deleteEmbedding: jest.fn(),
+            deleteEmbeddingsForFile: jest.fn(),
+            listEmbeddings: jest.fn(),
+            iterateEmbeddings: jest.fn()
+        } as any;
+
         symbolEmbeddingIndex = new SymbolEmbeddingIndex(
             mockSymbolIndex,
             mockVectorIndexManager,
+            mockEmbeddingRepository,
             mockEmbeddingProvider,
             {
                 enabled: true,
@@ -55,6 +67,7 @@ describe('SymbolEmbeddingIndex - Phase 1 Smart Fuzzy Match', () => {
             const disabledIndex = new SymbolEmbeddingIndex(
                 mockSymbolIndex,
                 mockVectorIndexManager,
+                mockEmbeddingRepository,
                 mockEmbeddingProvider,
                 { enabled: false }
             );
@@ -221,6 +234,7 @@ describe('SymbolEmbeddingIndex - Phase 1 Smart Fuzzy Match', () => {
             const disabledIndex = new SymbolEmbeddingIndex(
                 mockSymbolIndex,
                 mockVectorIndexManager,
+                mockEmbeddingRepository,
                 mockEmbeddingProvider,
                 { enabled: false }
             );
@@ -300,7 +314,7 @@ describe('SymbolEmbeddingIndex - Phase 1 Smart Fuzzy Match', () => {
                     }),
                     embedding: expect.objectContaining({
                         provider: 'local',
-                        model: 'multilingual-e5-small',
+                        model: 'symbols_v1',
                         dims: 384,
                     }),
                 })

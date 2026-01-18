@@ -3,6 +3,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { ManageHandlers } from "../../handlers/ManageHandlers.js";
+import { createDefaultToolSpecRegistry } from "../../server/tools/ToolSpecRegistry.js";
 
 const makeTempDir = () => {
     return fs.mkdtempSync(path.join(os.tmpdir(), "kairo-config-"));
@@ -10,7 +11,11 @@ const makeTempDir = () => {
 
 const makeContext = (rootPath: string) => ({
     rootPath,
-    isTestEnv: () => true
+    toolSpecRegistry: createDefaultToolSpecRegistry(),
+    isTestEnv: () => true,
+    indexDatabase: {
+        listFiles: () => []
+    }
 });
 
 const readJson = (filePath: string) => JSON.parse(fs.readFileSync(filePath, "utf-8"));
@@ -73,6 +78,7 @@ describe("ManageHandlers config bootstrap", () => {
 
         const codes = result.findings.map((finding: any) => finding.code);
         expect(codes).toContain("MIGRATION_NEEDED");
+        expect(result.rollout).toBeDefined();
         const planPaths = result.plan.map((entry: any) => entry.path);
         expect(planPaths).toContain(path.join(root, ".kairo", "config", "mcp-config.json"));
         expect(planPaths).toContain(path.join(root, ".kairo", "config", "languages.json"));

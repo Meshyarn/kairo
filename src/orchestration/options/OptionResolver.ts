@@ -4,7 +4,7 @@ import type { IntentConstraints } from "../IntentRouter.js";
 import type { SessionPolicy } from "../../types/flow-artifacts.js";
 import type { DiffMode } from "../../types.js";
 
-export type ToolProfile = "fast" | "balanced" | "deep";
+export type ToolProfile = "lean" | "fast" | "balanced" | "deep";
 export type ToolSources = "code" | "docs" | "both";
 export type ToolSafety = "plan" | "apply";
 
@@ -64,7 +64,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
 const isToolProfile = (value: unknown): value is ToolProfile =>
-  value === "fast" || value === "balanced" || value === "deep";
+  value === "lean" || value === "fast" || value === "balanced" || value === "deep";
 
 const isToolSources = (value: unknown): value is ToolSources =>
   value === "code" || value === "docs" || value === "both";
@@ -128,6 +128,16 @@ export class OptionResolver {
       sourcesAffectsPack = true;
     }
 
+    if (profileAllowed && profile === "lean") {
+      if (setIfUnset(limits, "maxResults", 20)) profileAffectsPack = true;
+      if (setIfUnset(limits, "maxFiles", 400)) profileAffectsPack = true;
+      setIfUnset(limits, "maxItemChars", 2400);
+      setIfUnset(limits, "maxChars", 20000);
+      setIfUnset(limits, "maxTokens", 1500);
+      setIfUnset(limits, "maxBytes", 400000);
+      profileApplied = true;
+    }
+
     if (profileAllowed && profile === "fast") {
       if (setIfUnset(limits, "maxResults", 5)) profileAffectsPack = true;
       if (setIfUnset(limits, "maxFiles", 80)) profileAffectsPack = true;
@@ -142,7 +152,7 @@ export class OptionResolver {
       profileApplied = true;
     }
 
-    const effectiveView = viewExplicit ? view : (profile === "fast" ? "preview" : "auto");
+    const effectiveView = viewExplicit ? view : (profile === "lean" || profile === "fast" ? "preview" : "auto");
 
     const sourcesWantsDocs = sources === "docs" || sources === "both";
 
@@ -197,6 +207,9 @@ export class OptionResolver {
     const profileAllowed = Boolean(profileExplicit) || profileAppliedFromSession || enableProfiles;
 
     let depth = args.depth;
+    if (!depthExplicit && profileAllowed && profile === "lean") {
+      depth = "shallow";
+    }
     if (!depthExplicit && profileAllowed && profile === "fast") {
       depth = "shallow";
     }
@@ -237,7 +250,10 @@ export class OptionResolver {
     const profile = isToolProfile(profileFromArgs ?? sessionProfile) ? (profileFromArgs ?? sessionProfile) : undefined;
     const safety = isToolSafety(safetyFromArgs ?? sessionSafety) ? (safetyFromArgs ?? sessionSafety) : undefined;
     const traceEnabled = args.trace === true;
-    const dryRun = this.resolveDryRun(args, sessionId, safety);
+    let dryRun = this.resolveDryRun(args, sessionId, safety);
+    if (profile === "lean" && typeof args.dryRun !== "boolean" && !safetyExplicit) {
+      dryRun = true;
+    }
     const reviewOptions = this.resolveReviewOptions(args.reviewOptions, Boolean(sessionId), profile, dryRun);
     const diffMode = this.resolveDiffMode(profile);
 
@@ -264,6 +280,9 @@ export class OptionResolver {
   static resolveChunkingOptions(
     profile?: ToolProfile
   ): { params: { maxTokens: number; overlapTokens: number }; preferredTier?: CapabilityTier } {
+    if (profile === "lean") {
+      return { params: { maxTokens: 320, overlapTokens: 24 }, preferredTier: "native" };
+    }
     if (profile === "fast") {
       return { params: { maxTokens: 384, overlapTokens: 32 }, preferredTier: "native" };
     }
@@ -308,12 +327,15 @@ export class OptionResolver {
       return {};
     }
     return hasSession
-      ? { preApply: true, postApply: false, strictness: "balanced", blockOn: ["syntax", "guardrails", "vibe"] }
+      ? { preApply: true, postApply: false, strictness: "balanced", blockOn: ["syntax", "guardrails"] }
       : { preApply: true, postApply: false, strictness: "permissive", blockOn: ["syntax"] };
   }
 
   private static resolveReviewProfileDefaults(profile: ToolProfile | undefined, dryRun: boolean): any {
     if (!profile || profile === "balanced") return undefined;
+    if (profile === "lean") {
+      return { strictness: "permissive", blockOn: ["syntax"], postApply: false };
+    }
     if (profile === "fast") {
       return { strictness: "permissive", blockOn: ["syntax"], postApply: false };
     }
@@ -326,6 +348,6 @@ export class OptionResolver {
 
   private static resolveDiffMode(profile?: ToolProfile): DiffMode | undefined {
     if (!profile) return undefined;
-    return profile === "fast" ? "myers" : "semantic";
+    return profile === "fast" || profile === "lean" ? "myers" : "semantic";
   }
 }

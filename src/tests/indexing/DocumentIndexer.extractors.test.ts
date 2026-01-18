@@ -3,51 +3,25 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
-class DocxExtractError extends Error {
-    public reason: string;
-    constructor(reason: string) {
-        super(reason);
-        this.reason = reason;
-    }
-}
-
-class XlsxExtractError extends Error {
-    public reason: string;
-    constructor(reason: string) {
-        super(reason);
-        this.reason = reason;
-    }
-}
-
-class PdfExtractError extends Error {
-    public reason: string;
-    constructor(reason: string) {
-        super(reason);
-        this.reason = reason;
-    }
-}
-
-const extractDocxAsHtml = jest.fn(async () => {
-    throw new DocxExtractError("docx_failed");
-});
-const extractXlsxAsText = jest.fn(async () => {
-    throw new XlsxExtractError("xlsx_failed");
-});
-const extractPdfAsText = jest.fn(async () => {
-    throw new PdfExtractError("pdf_failed");
+const loadForIndex = jest.fn(async (filePath: string) => {
+    const ext = path.extname(filePath);
+    return {
+        filePath,
+        sourceFormat: ext.replace(".", "") || "unknown",
+        kind: "text",
+        profileContent: "",
+        contentForSearch: "",
+        degraded: true,
+        reasons: [`${ext.replace(".", "")}_extract_failed`],
+        warnings: [],
+        stats: {}
+    };
 });
 
-jest.unstable_mockModule("../../documents/extractors/DocxExtractor.js", () => ({
-    extractDocxAsHtml,
-    DocxExtractError
-}));
-jest.unstable_mockModule("../../documents/extractors/XlsxExtractor.js", () => ({
-    extractXlsxAsText,
-    XlsxExtractError
-}));
-jest.unstable_mockModule("../../documents/extractors/PdfExtractor.js", () => ({
-    extractPdfAsText,
-    PdfExtractError
+jest.unstable_mockModule("../../documents/DocumentContentLoader.js", () => ({
+    DocumentContentLoader: class {
+        loadForIndex = loadForIndex;
+    }
 }));
 
 let DocumentIndexer: typeof import("../../indexing/DocumentIndexer.js").DocumentIndexer;
@@ -67,9 +41,7 @@ describe("DocumentIndexer extractor failures", () => {
 
     beforeEach(() => {
         tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "doc-extractors-"));
-        extractDocxAsHtml.mockClear();
-        extractXlsxAsText.mockClear();
-        extractPdfAsText.mockClear();
+        loadForIndex.mockClear();
     });
 
     afterEach(() => {
@@ -87,7 +59,7 @@ describe("DocumentIndexer extractor failures", () => {
 
         await indexer.indexFile("docs/report.docx");
 
-        expect(extractDocxAsHtml).toHaveBeenCalled();
+        expect(loadForIndex).toHaveBeenCalled();
         const repo = new DocumentChunkRepository(indexDb);
         expect(repo.listChunksForFile("docs/report.docx")).toHaveLength(0);
         indexDb.close();
@@ -104,7 +76,7 @@ describe("DocumentIndexer extractor failures", () => {
 
         await indexer.indexFile("docs/sheet.xlsx");
 
-        expect(extractXlsxAsText).toHaveBeenCalled();
+        expect(loadForIndex).toHaveBeenCalled();
         const repo = new DocumentChunkRepository(indexDb);
         expect(repo.listChunksForFile("docs/sheet.xlsx")).toHaveLength(0);
         indexDb.close();
@@ -121,7 +93,7 @@ describe("DocumentIndexer extractor failures", () => {
 
         await indexer.indexFile("docs/sample.pdf");
 
-        expect(extractPdfAsText).toHaveBeenCalled();
+        expect(loadForIndex).toHaveBeenCalled();
         const repo = new DocumentChunkRepository(indexDb);
         expect(repo.listChunksForFile("docs/sample.pdf")).toHaveLength(0);
         indexDb.close();

@@ -2,6 +2,10 @@ import type { EmbeddingProviderClient } from "../embeddings/EmbeddingProviderFac
 import type { SymbolIndex } from "../ast/SymbolIndex.js";
 import type { VectorIndexManager } from "../vector/VectorIndexManager.js";
 import { SymbolVectorRepository, type CodeSymbol, type SymbolWithSimilarity } from "./SymbolVectorRepository.js";
+import type { EmbeddingRepository } from "./EmbeddingRepository.js";
+import type { DefinitionSymbol, SymbolInfo } from "../types.js";
+import path from "path";
+import { metrics } from "../utils/MetricsCollector.js";
 
 /**
  * Configuration for SymbolEmbeddingIndex
@@ -9,19 +13,40 @@ import { SymbolVectorRepository, type CodeSymbol, type SymbolWithSimilarity } fr
 export interface SymbolEmbeddingConfig {
     /** Whether to enable symbol embedding indexing */
     enabled: boolean;
+    /** Mode for symbol semantic search */
+    mode: "off" | "manual";
     /** Batch size for symbol indexing */
     batchSize: number;
     /** Minimum similarity threshold for search results */
     minSimilarity: number;
     /** Maximum number of results to return */
     maxResults: number;
+    /** Maximum chars to include per symbol text */
+    maxTextChars: number;
+    /** Model key for symbol embeddings (separate from docs) */
+    symbolModelKey: string;
+    /** Maximum files to index per build */
+    maxFiles: number;
+    /** Maximum symbols to index per build */
+    maxSymbols: number;
+    /** Maximum bytes per symbol text */
+    maxBytesPerSymbol: number;
+    /** Timeout for a build (ms) */
+    timeoutMs: number;
 }
 
 const DEFAULT_CONFIG: SymbolEmbeddingConfig = {
     enabled: true,
+    mode: "manual",
     batchSize: 10,
     minSimilarity: 0.5,
     maxResults: 20,
+    maxTextChars: 2000,
+    symbolModelKey: "symbols_v1",
+    maxFiles: 2000,
+    maxSymbols: 20000,
+    maxBytesPerSymbol: 4000,
+    timeoutMs: 60_000
 };
 
 /**
@@ -45,10 +70,14 @@ export class SymbolEmbeddingIndex {
     private readonly config: SymbolEmbeddingConfig;
     private readonly symbolVectorRepo: SymbolVectorRepository;
     private indexedSymbolCount: number = 0;
+    private lastBuildAt?: number;
+    private lastBuildDegradedReasons: string[] = [];
+    private readonly fileMtimeCache = new Map<string, number>();
 
     constructor(
         private readonly symbolIndex: SymbolIndex,
         private readonly vectorIndexManager: VectorIndexManager,
+        private readonly embeddingRepository: EmbeddingRepository,
         private readonly embeddingProvider: EmbeddingProviderClient,
         config: Partial<SymbolEmbeddingConfig> = {}
     ) {
@@ -57,9 +86,10 @@ export class SymbolEmbeddingIndex {
             vectorIndexManager,
             embeddingProvider,
             symbolIndex,
+            embeddingRepository,
             {
                 provider: embeddingProvider.provider,
-                model: embeddingProvider.model,
+                model: this.config.symbolModelKey || embeddingProvider.model,
             }
         );
     }
@@ -96,8 +126,76 @@ export class SymbolEmbeddingIndex {
             return;
         }
 
-        const allSymbols = await this.extractAllSymbols();
+        this.indexedSymbolCount = 0;
+        this.lastBuildDegradedReasons = [];
+        const startedAt = Date.now();
+        const allSymbols = await this.extractAllSymbols(startedAt);
         await this.batchIndex(allSymbols);
+        this.lastBuildAt = Date.now();
+    }
+
+    async buildIndex(): Promise<{ indexedSymbols: number; removed: number; durationMs: number }> {
+        const startedAt = Date.now();
+        const stopTimer = metrics.startTimer("symbol_index.build_ms");
+        metrics.inc("symbol_index.build.count");
+        const cleared = await this.clearIndex();
+        await this.indexAllSymbols();
+        const vectorConfig = this.vectorIndexManager.getConfig();
+        if (this.vectorIndexManager.isEnabled() && vectorConfig.mode !== "bruteforce") {
+            await this.vectorIndexManager.rebuildFromRepository(
+                this.embeddingProvider.provider,
+                this.config.symbolModelKey
+            );
+        }
+        stopTimer();
+        metrics.gauge("symbol_index.indexed_symbols", this.indexedSymbolCount);
+        return {
+            indexedSymbols: this.indexedSymbolCount,
+            removed: cleared.removed,
+            durationMs: Date.now() - startedAt
+        };
+    }
+
+    async indexSymbolsForFile(
+        filePath: string,
+        options: { mtime?: number; force?: boolean } = {}
+    ): Promise<{ indexedSymbols: number; removed: number; durationMs: number }> {
+        if (!this.config.enabled) {
+            return { indexedSymbols: 0, removed: 0, durationMs: 0 };
+        }
+        const startedAt = Date.now();
+        const relativePath = this.toRelativePath(filePath);
+        if (!options.force && typeof options.mtime === "number") {
+            const cachedMtime = this.fileMtimeCache.get(relativePath);
+            if (cachedMtime === options.mtime) {
+                metrics.inc("symbol_index.incremental.skip.count");
+                return { indexedSymbols: 0, removed: 0, durationMs: Date.now() - startedAt };
+            }
+        }
+        metrics.inc("symbol_index.incremental.count");
+        const removed = await this.clearSymbolsForFile(relativePath);
+        const symbols = await this.symbolIndex.getSymbolsForFile(filePath);
+        const filtered = this.normalizeSymbolsForFile(relativePath, symbols);
+        await this.batchIndex(filtered);
+        if (typeof options.mtime === "number") {
+            this.fileMtimeCache.set(relativePath, options.mtime);
+        }
+        metrics.observe("symbol_index.incremental_ms", Date.now() - startedAt);
+        return {
+            indexedSymbols: filtered.length,
+            removed,
+            durationMs: Date.now() - startedAt
+        };
+    }
+
+    async clearSymbolsForFile(filePath: string): Promise<number> {
+        const relativePath = this.toRelativePath(filePath);
+        this.fileMtimeCache.delete(relativePath);
+        return this.symbolVectorRepo.clearSymbolsForFile(relativePath);
+    }
+
+    isReadyForIncremental(): boolean {
+        return this.config.enabled && Boolean(this.lastBuildAt);
     }
 
     /**
@@ -126,7 +224,7 @@ export class SymbolEmbeddingIndex {
         const results = await this.symbolVectorRepo.searchSymbols(query, topK);
 
         // Filter by similarity threshold and symbol type
-        let filtered = results.filter(r => r.similarity >= minSimilarity);
+        let filtered = results.results.filter(r => r.similarity >= minSimilarity);
 
         if (options.symbolTypes && options.symbolTypes.length > 0) {
             filtered = filtered.filter(r => 
@@ -141,6 +239,31 @@ export class SymbolEmbeddingIndex {
         }));
     }
 
+    async searchSymbolsWithDiagnostics(
+        query: string,
+        options: {
+            topK?: number;
+            minSimilarity?: number;
+            symbolTypes?: CodeSymbol['type'][];
+        } = {}
+    ): Promise<{ results: SymbolSearchResult[]; degraded: boolean; reason?: string; backend?: string }> {
+        if (!this.config.enabled) {
+            return { results: [], degraded: true, reason: "symbol_semantic_search_disabled" };
+        }
+        const raw = await this.symbolVectorRepo.searchSymbols(query, options.topK ?? this.config.maxResults);
+        if (raw.degraded) {
+            return { results: [], degraded: true, reason: raw.reason, backend: raw.backend };
+        }
+        const filtered = raw.results
+            .filter(result => result.similarity >= (options.minSimilarity ?? this.config.minSimilarity))
+            .filter(result => !options.symbolTypes || options.symbolTypes.includes(result.symbol.type))
+            .map(result => ({
+                ...result,
+                relevanceScore: this.calculateRelevanceScore(result.symbol, result.similarity, query)
+            }));
+        return { results: filtered, degraded: false, backend: raw.backend };
+    }
+
     /**
      * Get statistics about indexed symbols
      */
@@ -149,33 +272,156 @@ export class SymbolEmbeddingIndex {
             indexedSymbolCount: this.indexedSymbolCount,
             enabled: this.config.enabled,
             config: this.config,
+            lastBuildAt: this.lastBuildAt
         };
+    }
+
+    getStatus() {
+        const vectorConfig = this.vectorIndexManager.getConfig();
+        return {
+            enabled: this.config.enabled,
+            mode: this.config.mode,
+            provider: this.embeddingProvider.provider,
+            baseModel: this.embeddingProvider.model,
+            symbolModelKey: this.config.symbolModelKey,
+            indexedSymbolCount: this.indexedSymbolCount,
+            lastBuildAt: this.lastBuildAt ? new Date(this.lastBuildAt).toISOString() : undefined,
+            degradedReasons: this.lastBuildDegradedReasons.length > 0 ? this.lastBuildDegradedReasons : undefined,
+            vectorIndex: {
+                enabled: this.vectorIndexManager.isEnabled(),
+                mode: vectorConfig.mode,
+                rebuild: vectorConfig.rebuild
+            }
+        };
+    }
+
+    async clearIndex(): Promise<{ removed: number }> {
+        const result = await this.symbolVectorRepo.clearIndex();
+        this.indexedSymbolCount = 0;
+        this.lastBuildAt = undefined;
+        this.fileMtimeCache.clear();
+        return result;
     }
 
     /**
      * Extract all symbols from SymbolIndex and convert to CodeSymbol format
      */
-    private async extractAllSymbols(): Promise<CodeSymbol[]> {
+    private async extractAllSymbols(startedAt: number): Promise<CodeSymbol[]> {
         const symbols: CodeSymbol[] = [];
-        // SymbolIndex doesn't have getAllFiles, we need to track indexed files separately
-        // For now, return empty array (will be implemented when integrated with IncrementalIndexer)
+        const allSymbols = await this.symbolIndex.getAllSymbols();
+        let processedFiles = 0;
+        for (const [filePath, fileSymbols] of allSymbols.entries()) {
+            if (processedFiles >= this.config.maxFiles) {
+                this.lastBuildDegradedReasons.push("budget_exceeded");
+                break;
+            }
+            if (Date.now() - startedAt > this.config.timeoutMs) {
+                this.lastBuildDegradedReasons.push("budget_exceeded");
+                break;
+            }
+            for (const symbol of fileSymbols ?? []) {
+                if (symbols.length >= this.config.maxSymbols) {
+                    this.lastBuildDegradedReasons.push("budget_exceeded");
+                    break;
+                }
+                if (!isDefinitionSymbol(symbol)) continue;
+                const normalized = this.normalizeSymbolType(symbol.type);
+                if (!normalized) continue;
+                const content = typeof symbol.content === "string"
+                    ? symbol.content
+                    : (typeof symbol.doc === "string" ? symbol.doc : undefined);
+                const trimmedContent = this.trimSymbolContent(content);
+                const codeSymbol: CodeSymbol = {
+                    symbolId: SymbolVectorRepository.buildSymbolId({
+                        filePath,
+                        name: symbol.name,
+                        type: normalized,
+                        lineRange: { start: symbol.range.startLine, end: symbol.range.endLine },
+                        range: { startByte: symbol.range.startByte, endByte: symbol.range.endByte },
+                        signature: symbol.signature,
+                        content: trimmedContent
+                    }),
+                    name: symbol.name,
+                    type: normalized,
+                    filePath,
+                    lineRange: { start: symbol.range.startLine, end: symbol.range.endLine },
+                    range: { startByte: symbol.range.startByte, endByte: symbol.range.endByte },
+                    signature: symbol.signature,
+                    content: trimmedContent
+                };
+                symbols.push(codeSymbol);
+            }
+            processedFiles += 1;
+        }
         return symbols;
+    }
+
+    private normalizeSymbolsForFile(filePath: string, fileSymbols: SymbolInfo[]): CodeSymbol[] {
+        const symbols: CodeSymbol[] = [];
+        for (const symbol of fileSymbols ?? []) {
+            if (symbols.length >= this.config.maxSymbols) {
+                this.lastBuildDegradedReasons = ["budget_exceeded"];
+                break;
+            }
+            if (!isDefinitionSymbol(symbol)) continue;
+            const normalized = this.normalizeSymbolType(symbol.type);
+            if (!normalized) continue;
+            const content = typeof symbol.content === "string"
+                ? symbol.content
+                : (typeof symbol.doc === "string" ? symbol.doc : undefined);
+            const trimmedContent = this.trimSymbolContent(content);
+            symbols.push({
+                symbolId: SymbolVectorRepository.buildSymbolId({
+                    filePath,
+                    name: symbol.name,
+                    type: normalized,
+                    lineRange: { start: symbol.range.startLine, end: symbol.range.endLine },
+                    range: { startByte: symbol.range.startByte, endByte: symbol.range.endByte },
+                    signature: symbol.signature,
+                    content: trimmedContent
+                }),
+                name: symbol.name,
+                type: normalized,
+                filePath,
+                lineRange: { start: symbol.range.startLine, end: symbol.range.endLine },
+                range: { startByte: symbol.range.startByte, endByte: symbol.range.endByte },
+                signature: symbol.signature,
+                content: trimmedContent
+            });
+        }
+        return symbols;
+    }
+
+    private trimSymbolContent(content?: string): string | undefined {
+        if (!content) return undefined;
+        const trimmed = content.slice(0, this.config.maxTextChars);
+        if (Buffer.byteLength(trimmed, "utf8") <= this.config.maxBytesPerSymbol) {
+            return trimmed;
+        }
+        let sliced = trimmed;
+        while (Buffer.byteLength(sliced, "utf8") > this.config.maxBytesPerSymbol && sliced.length > 0) {
+            sliced = sliced.slice(0, Math.max(0, sliced.length - 50));
+        }
+        return sliced.length > 0 ? sliced : undefined;
+    }
+
+    private toRelativePath(filePath: string): string {
+        const rootPath = this.symbolIndex.getRootPath();
+        const normalized = path.resolve(filePath);
+        return path.relative(rootPath, normalized).replace(/\\/g, "/");
     }
 
     /**
      * Normalize SymbolIndex kind to CodeSymbol type
      */
-    private normalizeSymbolType(kind: string): CodeSymbol['type'] {
+    private normalizeSymbolType(kind: string): CodeSymbol['type'] | null {
         const normalized = kind.toLowerCase();
-        
-        if (normalized.includes('class')) return 'class';
-        if (normalized.includes('function')) return 'function';
-        if (normalized.includes('method')) return 'method';
-        if (normalized.includes('interface')) return 'interface';
-        if (normalized.includes('type')) return 'type';
-        
-        // Default to function
-        return 'function';
+        if (normalized === "class") return "class";
+        if (normalized === "function") return "function";
+        if (normalized === "method") return "method";
+        if (normalized === "interface") return "interface";
+        if (normalized === "type_alias") return "type";
+        return null;
     }
 
     /**
@@ -205,4 +451,8 @@ export class SymbolEmbeddingIndex {
 
         return Math.min(score, 1.0);
     }
+}
+
+function isDefinitionSymbol(symbol: SymbolInfo): symbol is DefinitionSymbol {
+    return symbol.type !== "import" && symbol.type !== "export";
 }

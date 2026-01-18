@@ -41,6 +41,26 @@ describe('SearchHandlers', () => {
     expect(result.results[0].path).toContain('data.ts');
   });
 
+  it('degrades semantic symbol search when disabled', async () => {
+    const prev = process.env.KAIRO_SYMBOL_SEMANTIC_SEARCH_ENABLED;
+    process.env.KAIRO_SYMBOL_SEMANTIC_SEARCH_ENABLED = "false";
+    const result = await runTool(server, 'project_search', {
+      query: 'DATA',
+      type: 'symbol',
+      semanticSymbols: true
+    });
+    if (prev === undefined) {
+      delete process.env.KAIRO_SYMBOL_SEMANTIC_SEARCH_ENABLED;
+    } else {
+      process.env.KAIRO_SYMBOL_SEMANTIC_SEARCH_ENABLED = prev;
+    }
+
+    expect(result.results.length).toBeGreaterThan(0);
+    expect(Array.isArray(result.degradedReasons)).toBe(true);
+    const messages = result.degradedReasons.map((entry: any) => entry?.message ?? "");
+    expect(messages.some((msg: string) => msg.toLowerCase().includes("disabled"))).toBe(true);
+  });
+
   it('handles file_scout tool correctly', async () => {
     const result = await runTool(server, 'file_scout', {
       query: 'DATA'
@@ -63,6 +83,46 @@ describe('SearchHandlers', () => {
 
     const paths = result.results.map((entry: { path: string }) => entry.path.replace(/\\/g, '/'));
     expect(paths.some((entry: string) => entry.includes('/.kairo/'))).toBe(false);
-    expect(paths.some((entry: string) => entry.endsWith('/src/OrchestrationEngine.ts'))).toBe(true);
+    expect(paths.some((entry: string) => entry.endsWith('src/OrchestrationEngine.ts'))).toBe(true);
+  });
+
+  it('adds repo metadata and filters by repoScope', async () => {
+    await server.shutdown();
+    const repoA = path.join(testRoot, 'repo-a');
+    const repoB = path.join(testRoot, 'repo-b');
+    fs.mkdirSync(path.join(repoA, 'src'), { recursive: true });
+    fs.mkdirSync(path.join(repoB, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(repoA, 'src', 'data.ts'), 'export const DATA = 1;');
+    fs.writeFileSync(path.join(repoB, 'src', 'data.ts'), 'export const DATA = 2;');
+    const configDir = path.join(testRoot, '.kairo', 'config');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(path.join(configDir, 'mcp-config.json'), JSON.stringify({
+      version: "1.0",
+      repositories: {
+        a: { path: "repo-a", name: "Repo A", type: "primary", languages: ["typescript"] },
+        b: { path: "repo-b", name: "Repo B", type: "linked", languages: ["typescript"] }
+      },
+      defaultRepo: "a"
+    }, null, 2));
+    server = new SmartContextServer(testRoot);
+
+    const allResults = await runTool(server, 'project_search', {
+      query: 'data.ts',
+      type: 'filename'
+    });
+    expect(allResults.results.length).toBeGreaterThan(0);
+    expect(allResults.results.every((entry: any) => !path.isAbsolute(entry.path))).toBe(true);
+    expect(allResults.results).toEqual(expect.arrayContaining([
+      expect.objectContaining({ repoId: 'a', repoRelativePath: 'src/data.ts' }),
+      expect.objectContaining({ repoId: 'b', repoRelativePath: 'src/data.ts' })
+    ]));
+
+    const scoped = await runTool(server, 'project_search', {
+      query: 'data.ts',
+      type: 'filename',
+      repoScope: { mode: 'repos', repoIds: ['b'] }
+    });
+    expect(scoped.results).toHaveLength(1);
+    expect(scoped.results[0]).toMatchObject({ repoId: 'b', repoRelativePath: 'src/data.ts' });
   });
 });

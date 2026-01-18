@@ -1,5 +1,4 @@
 import crypto from 'crypto';
-import fs from 'fs';
 import { InternalToolRegistry } from '../InternalToolRegistry.js';
 import { OrchestrationContext } from '../OrchestrationContext.js';
 import { ParsedIntent } from '../IntentRouter.js';
@@ -9,26 +8,32 @@ import { SyntaxValidator } from '../../engine/validators/syntax-validator.js';
 import { AstManager } from '../../ast/AstManager.js';
 import { getSupportForFilePath, SupportLevel } from '../../config/LanguageSupportLevels.js';
 import { applyTokenBudget } from '../TokenBudget.js';
+import type { FileVersionManager } from '../../engine/FileVersionManager.js';
+import type { PathNormalizer } from '../../utils/PathNormalizer.js';
+import { normalizeReadInput } from './read/ReadInputNormalizer.js';
+import { formatReadBlockedResponse, formatReadResponse } from './read/ReadResponseFormatter.js';
 
 export class ReadPillar {
   constructor(private readonly registry: InternalToolRegistry) {}
 
   public async execute(intent: ParsedIntent, context: OrchestrationContext): Promise<any> {
-    const { targets, constraints, originalIntent } = intent;
-    const target = constraints.targetPath || targets[0] || originalIntent;
-    const view = constraints.view ?? (constraints.depth === 'deep' ? 'full' : 'skeleton');
-    const includeProfile = constraints.includeProfile === true;
-    const includeHash = constraints.includeHash === true;
-    const resolvedPath = await this.resolveTargetPath(target);
-    const lineRange = this.normalizeLineRange(constraints.lineRange);
-    const sectionId = constraints.sectionId;
-    const headingPath = constraints.headingPath;
-    const isDocument = this.isDocumentPath(resolvedPath);
-    const envMaxTokens = Number.parseInt(process.env.KAIRO_READ_MAX_TOKENS ?? process.env.KAIRO_DEFAULT_MAX_TOKENS ?? "", 10);
+    const {
+      constraints,
+      view,
+      includeProfile,
+      includeHash,
+      resolvedPath,
+      lineRange,
+      sectionId,
+      headingPath,
+      isDocument,
+      maxTokens
+    } = await normalizeReadInput(intent, {
+      resolveTargetPath: (value) => this.resolveTargetPath(value),
+      normalizeLineRange: (value) => this.normalizeLineRange(value),
+      isDocumentPath: (value) => this.isDocumentPath(value)
+    });
     const limits = constraints.limits ?? {};
-    const maxTokens = Number.isFinite(limits.maxTokens) && limits.maxTokens! > 0
-      ? limits.maxTokens
-      : (Number.isFinite(envMaxTokens) && envMaxTokens > 0 ? envMaxTokens : undefined);
 
     let content: string = '';
     let documentOutline: any = undefined;
@@ -52,22 +57,7 @@ export class ReadPillar {
           const querySupport = await checkQuerySupport(resolvedPath, requiredQueries, { required: true });
           if (querySupport.degraded) {
             const languageId = AstManager.getInstance().getLanguageId(resolvedPath);
-            const missing = Array.isArray(querySupport.missing) ? querySupport.missing : [];
-            const missingSummary = missing.length > 0 ? ` (${missing.join(", ")})` : "";
-            const message = querySupport.reason === "language_parser_unavailable"
-              ? `Language parser unavailable for ${resolvedPath}.`
-              : `Missing query pack for ${languageId}${missingSummary}.`;
-            const degradedReasons = buildDegradedReasons([querySupport.reason ?? "language_query_missing"], {
-              filePath: resolvedPath,
-              languageId
-            });
-            return {
-              success: false,
-              status: 'blocked',
-              message,
-              reasons: [querySupport.reason ?? "language_query_missing"],
-              degradedReasons
-            };
+            reasons.push(querySupport.reason ?? "missing_query_pack");
           }
         }
 
@@ -81,29 +71,31 @@ export class ReadPillar {
               filePath: resolvedPath,
               languageId: AstManager.getInstance().getLanguageId(resolvedPath)
             });
-            return {
-              success: false,
+            return formatReadBlockedResponse({
               status: 'blocked',
               message: `Unable to read ${resolvedPath} for syntax validation.`,
               reasons: ["syntax_validation_failed"],
               degradedReasons
-            };
+            });
           }
 
           const validator = new SyntaxValidator();
           const validation = await validator.validate(resolvedPath, fullContent);
           if (!validation.success) {
-            const degradedReasons = buildDegradedReasons(["syntax_validation_failed"], {
+            const codes = (validation.blockingErrors ?? []).map((error) => error.code);
+            const reason = codes.includes("SYNTAX_VALIDATOR_UNAVAILABLE")
+              ? "missing_syntax_validator"
+              : (codes.includes("SYNTAX_LANGUAGE_UNAVAILABLE") ? "missing_wasm_grammar" : "syntax_validation_failed");
+            const degradedReasons = buildDegradedReasons([reason], {
               filePath: resolvedPath,
               languageId: validation.languageId
             });
-            return {
-              success: false,
+            return formatReadBlockedResponse({
               status: 'blocked',
               message: `Syntax validation failed for ${resolvedPath}.`,
-              reasons: ["syntax_validation_failed"],
+              reasons: [reason],
               degradedReasons
-            };
+            });
           }
         }
       }
@@ -166,6 +158,17 @@ export class ReadPillar {
       lineCount: profile?.metadata?.lineCount ?? (typeof fullContent === 'string' ? fullContent.split(/\r?\n/).length : (typeof content === 'string' ? content.split(/\r?\n/).length : 0)),
       language: profile?.metadata?.language ?? null
     };
+    const fileVersionManager = this.registry.getMetadata<FileVersionManager>('fileVersionManager');
+    const pathNormalizer = this.registry.getMetadata<PathNormalizer>('pathNormalizer');
+    if (fileVersionManager && pathNormalizer) {
+      try {
+        const absPath = pathNormalizer.toAbsolute(pathNormalizer.normalize(metadata.filePath));
+        const versionInfo = await fileVersionManager.getVersion(absPath);
+        (metadata as any).versionInfo = versionInfo;
+      } catch {
+        // ignore versionInfo failures
+      }
+    }
 
     const tokenBudget = applyTokenBudget(content, {
       maxTokens,
@@ -191,7 +194,7 @@ export class ReadPillar {
       languageId: metadata.language ?? undefined
     });
 
-    return {
+    return formatReadResponse({
       success: true,
       status: 'success',
       content,
@@ -209,11 +212,26 @@ export class ReadPillar {
         suggestedActions: view === 'full'
           ? []
           : [
-              { pillar: 'read', action: 'view_full', target: resolvedPath },
-              { pillar: 'read', action: 'include_profile', target: resolvedPath, options: { includeProfile: true } }
+              {
+                id: 'read.view_full',
+                priority: 1,
+                description: 'Load full content for this file.',
+                rationale: 'Full content provides complete context.',
+                toolCall: { tool: 'read', args: { action: 'view_full', target: resolvedPath } }
+              },
+              {
+                id: 'read.include_profile',
+                priority: 2,
+                description: 'Include file profile metadata.',
+                rationale: 'Profile metadata helps guide deeper analysis.',
+                toolCall: {
+                  tool: 'read',
+                  args: { action: 'include_profile', target: resolvedPath, options: { includeProfile: true } }
+                }
+              }
             ]
       }
-    };
+    });
   }
 
   private async resolveTargetPath(target: string): Promise<string> {

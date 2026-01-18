@@ -58,6 +58,16 @@ export interface StoredDocumentChunk {
     updatedAt: number;
 }
 
+export interface StoredDocumentMeta {
+    filePath: string;
+    sourceFormat: string;
+    extractor?: string;
+    warnings?: string[];
+    reasons?: string[];
+    stats?: Record<string, unknown>;
+    updatedAt: number;
+}
+
 export interface StoredEmbedding {
     chunkId: string;
     provider: string;
@@ -74,10 +84,28 @@ export interface TransactionLogEntry {
     timestamp: number;
     status: "pending" | "committed" | "rolled_back";
     description: string;
+    diffSummary?: {
+        fileCount: number;
+        linesAdded: number;
+        linesDeleted: number;
+        linesChanged: number;
+        skippedFiles?: number;
+    };
+    filesTouched?: Array<{
+        path: string;
+        beforeHash?: string;
+        afterHash?: string;
+        bytesBefore?: number;
+        bytesAfter?: number;
+    }>;
+    patchRef?: string;
+    patchFormat?: "unified_diff" | "structured_edits" | "both";
     snapshots: Array<{
         filePath: string;
+        originalExists?: boolean;
         originalContent: string;
         originalHash: string;
+        newExists?: boolean;
         newContent?: string;
         newHash?: string;
     }>;
@@ -89,6 +117,10 @@ export interface IndexStore {
     getOrCreateFile(relativePath: string, lastModified?: number, language?: string | null): FileRecord;
     getFile(relativePath: string): FileRecord | undefined;
     listFiles(): FileRecord[];
+    updateFileMeta(
+        relativePath: string,
+        updates: { lastModified?: number; language?: string | null; contentHash?: string; sizeBytes?: number }
+    ): FileRecord;
     deleteFile(relativePath: string): void;
     deleteFilesByPrefix(prefix: string): void;
 
@@ -96,6 +128,7 @@ export interface IndexStore {
     readSymbols(relativePath: string): SymbolInfo[] | undefined;
     streamAllSymbols(): Map<string, SymbolInfo[]>;
     searchSymbols(pattern: string, limit?: number): Array<{ path: string; data_json: string }>;
+    getSecondaryIndexStatus(): { enabled: boolean; bytes?: number };
 
     replaceDependencies(args: {
         relativePath: string;
@@ -121,6 +154,8 @@ export interface IndexStore {
     getChunkContentHash(chunkId: string): string | undefined;
     getDocumentChunk(chunkId: string): StoredDocumentChunk | null;
     deleteDocumentChunks(filePath: string): void;
+    upsertDocumentMeta(filePath: string, meta: StoredDocumentMeta): void;
+    getDocumentMeta(filePath: string): StoredDocumentMeta | null;
 
     upsertEmbedding(chunkId: string, key: EmbeddingKey, embedding: { dims: number; vector: Float32Array; norm?: number }): void;
     getEmbedding(chunkId: string, key: EmbeddingKey): StoredEmbedding | null;
@@ -132,13 +167,20 @@ export interface IndexStore {
     upsertEvidencePack(packId: string, payload: unknown): void;
     getEvidencePack(packId: string): unknown | null;
     deleteEvidencePack(packId: string): void;
+    iterateEvidencePacks(visitor: (packId: string, payload: unknown) => void): void;
+    compactEvidencePacks(): void;
 
     getChunkSummary(chunkId: string, style: "preview" | "summary"): { summary: string; contentHash?: string } | null;
     upsertChunkSummary(chunkId: string, style: "preview" | "summary", summary: string, contentHash?: string): void;
+    deleteChunkSummary(chunkId: string, style: "preview" | "summary"): void;
+    deleteChunkSummaries(chunkId: string): void;
+    iterateChunkSummaries(visitor: (chunkId: string, styles: Record<"preview" | "summary", { summary: string; contentHash?: string }>) => void): void;
+    compactChunkSummaries(): void;
 
     upsertPendingTransaction(entry: TransactionLogEntry): void;
     listPendingTransactions(): TransactionLogEntry[];
     markTransactionCommitted(id: string, entry: TransactionLogEntry): void;
+    listTransactions(options?: { status?: "pending" | "committed" | "rolled_back"; limit?: number }): TransactionLogEntry[];
     markTransactionRolledBack(id: string): void;
 
     close(): void;

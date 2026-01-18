@@ -4,6 +4,7 @@ import { ReverseImportIndex } from "../ast/ReverseImportIndex.js";
 import { ContextEngine } from "../engine/Context.js";
 import { JsAstBackend } from "../ast/JsAstBackend.js";
 import { PathNormalizer } from "../utils/PathNormalizer.js";
+import { createDefaultToolSpecRegistry } from "../server/tools/ToolSpecRegistry.js";
 
 describe("Top 4 Low Coverage Files - Branch Coverage", () => {
 
@@ -16,6 +17,7 @@ describe("Top 4 Low Coverage Files - Branch Coverage", () => {
                 orchestrationEngine: { executePillar: jest.fn().mockImplementation(() => Promise.resolve({ ok: true } as any)) },
                 pathNormalizer: new PathNormalizer("/root")
             };
+            context.toolSpecRegistry = createDefaultToolSpecRegistry();
             handlers = new NavigateHandlers(context);
         });
 

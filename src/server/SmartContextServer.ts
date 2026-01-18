@@ -1,6 +1,13 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ListToolsRequestSchema, CallToolRequestSchema, McpError, ErrorCode } from "@modelcontextprotocol/sdk/types.js";
+import {
+    buildContractMeta,
+    getToolSchemaMode,
+    normalizeArgs,
+    validateArgs
+} from "./tools/ToolArgs.js";
+import { createDefaultToolSpecRegistry, type ToolSpec } from "./tools/ToolSpecRegistry.js";
 import * as fs from "fs";
 import * as path from "path";
 import ignore from "ignore";
@@ -34,7 +41,9 @@ import { IndexStateManager } from "../indexing/IndexStateManager.js";
 import { EmbeddingRepository } from "../indexing/EmbeddingRepository.js";
 import { DocumentChunkRepository } from "../indexing/DocumentChunkRepository.js";
 import { EvidencePackRepository } from "../indexing/EvidencePackRepository.js";
+import { StorageMaintenanceService, type StoragePruneTarget } from "../indexing/StorageMaintenanceService.js";
 import { TransactionLog } from "../engine/TransactionLog.js";
+import { PatchStore } from "../engine/PatchStore.js";
 import { ConfigurationManager } from "../config/ConfigurationManager.js";
 import { RepoRegistry } from "../config/RepoRegistry.js";
 import { PackageAliasMap } from "../config/PackageAliasMap.js";
@@ -63,11 +72,15 @@ import { extractDocxAsHtml, DocxExtractError } from "../documents/extractors/Doc
 import { extractXlsxAsText, XlsxExtractError } from "../documents/extractors/XlsxExtractor.js";
 import { extractPdfAsText, PdfExtractError } from "../documents/extractors/PdfExtractor.js";
 import { EmbeddingProviderFactory } from "../embeddings/EmbeddingProviderFactory.js";
-import { resolveEmbeddingConfigFromEnv } from "../embeddings/EmbeddingConfig.js";
+import { resolveEmbeddingConfigFromEnv, resolveEmbeddingProviderEnv } from "../embeddings/EmbeddingConfig.js";
 import { metrics } from "../utils/MetricsCollector.js";
 import { VectorIndexManager } from "../vector/VectorIndexManager.js";
+import { SymbolEmbeddingIndex } from "../indexing/SymbolEmbeddingIndex.js";
 import { AdaptiveFlowReporter } from "../utils/AdaptiveFlowReporter.js";
 import { AlertDispatcher } from "../utils/AlertDispatcher.js";
+import { AdaptiveLodController } from "../orchestration/adaptive-flow/AdaptiveLodController.js";
+import { MetricsExportService } from "../utils/metrics/MetricsExportService.js";
+import { CacheInvalidationHub } from "./CacheInvalidationHub.js";
 
 // Orchestration Imports
 import { OrchestrationEngine } from "../orchestration/OrchestrationEngine.js";
@@ -86,7 +99,7 @@ import { ManageHandlers } from "../handlers/ManageHandlers.js";
 import { NavigateHandlers } from "../handlers/NavigateHandlers.js";
 import { IntegrityHandlers } from "../handlers/IntegrityHandlers.js";
 import { HandlerRegistry } from "../handlers/HandlerRegistry.js";
-import { createHandlerContext } from "../handlers/HandlerContext.js";
+import { createHandlerContext, type HandlerContext } from "../handlers/HandlerContext.js";
 
 export class SmartContextServer {
     private server: Server;
@@ -120,6 +133,7 @@ export class SmartContextServer {
     private embeddingRepository: EmbeddingRepository;
     private embeddingProviderFactory: EmbeddingProviderFactory;
     private vectorIndexManager: VectorIndexManager;
+    private symbolEmbeddingIndex?: SymbolEmbeddingIndex;
     private documentSearchEngine: DocumentSearchEngine;
     private ghostInterfaceBuilder: GhostInterfaceBuilder;
     private fallbackResolver: FallbackResolver;
@@ -141,8 +155,15 @@ export class SmartContextServer {
     private heartbeatTimer?: NodeJS.Timeout;
     private shutdownRequested = false;
     private shutdownTimer?: NodeJS.Timeout;
+    private storagePruneTimer?: NodeJS.Timeout;
+    private storagePruneRunning = false;
     private metricsReporter?: AdaptiveFlowReporter;
     private alertDispatcher?: AlertDispatcher;
+    private metricsExportService?: MetricsExportService;
+    private cacheInvalidationHub?: CacheInvalidationHub;
+    private cacheStrategy: CachingStrategy;
+    private toolSpecRegistry = createDefaultToolSpecRegistry();
+    private handlerContext?: HandlerContext;
 
     private searchHandlers!: SearchHandlers;
     private codeHandlers!: CodeHandlers;
@@ -242,10 +263,39 @@ export class SmartContextServer {
             this.configurationManager,
             {
                 watch: true,
-                initialScan: false,
-                onFileQueued: (filePath) => this.indexStateManager.markDirty(toRelative(filePath)),
-                onFileIndexed: (filePath) => this.indexStateManager.clearDirty(toRelative(filePath)),
-                onFileRemoved: (filePath) => this.indexStateManager.clearDirty(toRelative(filePath))
+                initialScan: this.resolveBaselineEnabled(),
+                onFileQueued: (filePath) => {
+                    this.indexStateManager.markDirty(toRelative(filePath));
+                    this.cacheInvalidationHub?.onEvent({ type: "file_changed", absPath: filePath });
+                },
+                onFileIndexed: (filePath) => {
+                    this.indexStateManager.clearDirty(toRelative(filePath));
+                    if (this.symbolEmbeddingIndex?.isReadyForIncremental()) {
+                        void (async () => {
+                            try {
+                                const stat = await this.fileSystem.stat(filePath).catch(() => undefined);
+                                await this.symbolEmbeddingIndex!.indexSymbolsForFile(filePath, { mtime: stat?.mtime });
+                            } catch (error) {
+                                console.warn("[SmartContextServer] Symbol incremental index failed:", error);
+                            }
+                        })();
+                    }
+                },
+                onFileRemoved: (filePath) => {
+                    this.indexStateManager.clearDirty(toRelative(filePath));
+                    this.cacheInvalidationHub?.onEvent({ type: "file_deleted", absPath: filePath });
+                    if (this.symbolEmbeddingIndex?.isReadyForIncremental()) {
+                        void this.symbolEmbeddingIndex.clearSymbolsForFile(filePath).catch((error) => {
+                            console.warn("[SmartContextServer] Symbol incremental clear failed:", error);
+                        });
+                    }
+                },
+                onDirectoryRemoved: (dirPath) => {
+                    this.cacheInvalidationHub?.onEvent({ type: "dir_deleted", absPath: dirPath });
+                },
+                onActivity: (activity) => {
+                    this.indexStateManager.setActivity(activity);
+                }
             },
             this.documentIndexer
         );
@@ -264,7 +314,8 @@ export class SmartContextServer {
             this.rootPath,
             this.symbolIndex,
             new EvidencePackRepository(this.indexDatabase),
-            this.vectorIndexManager
+            this.vectorIndexManager,
+            this.indexDatabase
         );
         this.clusterSearchEngine = new ClusterSearchEngine({
             rootPath: this.rootPath,
@@ -275,10 +326,25 @@ export class SmartContextServer {
             fileSystem: this.fileSystem
         });
 
+        this.cacheStrategy = new CachingStrategy(this.rootPath);
+        this.cacheInvalidationHub = new CacheInvalidationHub({
+            rootPath: this.rootPath,
+            indexStateManager: this.indexStateManager,
+            searchEngine: this.searchEngine,
+            dependencyGraph: this.dependencyGraph,
+            clusterSearchEngine: this.clusterSearchEngine,
+            documentSearchEngine: this.documentSearchEngine,
+            documentIndexer: this.documentIndexer,
+            orchestrationCache: this.cacheStrategy,
+            callGraphBuilder: this.callGraphBuilder,
+            typeDependencyTracker: this.typeDependencyTracker
+        });
+        void this.cacheInvalidationHub.syncEpoch();
+
         const historyEngine = new HistoryEngine(this.rootPath, this.fileSystem);
         this.historyEngine = historyEngine;
         const editorEngine = new EditorEngine(this.rootPath, this.fileSystem, new AstAwareDiff(this.skeletonGenerator));
-        const transactionLog = new TransactionLog(this.indexDatabase);
+        const transactionLog = new TransactionLog(this.indexDatabase, new PatchStore());
 
         this.editCoordinator = new EditCoordinator(editorEngine, historyEngine, {
             rootPath: this.rootPath,
@@ -308,7 +374,7 @@ export class SmartContextServer {
             new IntentRouter(),
             new WorkflowPlanner(),
             this.internalRegistry,
-            new CachingStrategy(this.rootPath)
+            this.cacheStrategy
         );
         this.registerInternalTools();
         
@@ -318,9 +384,12 @@ export class SmartContextServer {
         this.internalRegistry.setMetadata('dependencyGraph', this.dependencyGraph);
         this.internalRegistry.setMetadata('flowArtifactManager', this.flowArtifactManager);
         this.internalRegistry.setMetadata('repoRegistry', this.repoRegistry);
+        this.internalRegistry.setMetadata('pathNormalizer', this.pathNormalizer);
         this.internalRegistry.setMetadata('packageAliasMap', packageAliasMap);
         this.internalRegistry.setMetadata('impactAnalyzer', this.impactAnalyzer);
         this.internalRegistry.setMetadata('propertyAccessIndex', propertyAccessIndex);
+        this.internalRegistry.setMetadata('fileVersionManager', this.fileVersionManager);
+        this.internalRegistry.setMetadata('adaptiveLodController', new AdaptiveLodController());
         
         this.setupHandlers();
         this.initializeModularHandlers();
@@ -328,6 +397,9 @@ export class SmartContextServer {
 
         this.startHeartbeat();
         this.initMetricsReporter();
+        this.initMetricsExportService();
+        this.startStoragePrune();
+        void this.initSymbolSemanticSearch();
     }
 
     private initializeModularHandlers(): void {
@@ -341,6 +413,7 @@ export class SmartContextServer {
             searchEngine: this.searchEngine,
             documentSearchEngine: this.documentSearchEngine,
             symbolIndex: this.symbolIndex,
+            symbolEmbeddingIndex: this.symbolEmbeddingIndex,
             astManager: this.astManager,
             contextEngine: this.contextEngine,
             dependencyGraph: this.dependencyGraph,
@@ -362,8 +435,12 @@ export class SmartContextServer {
             indexDatabase: this.indexDatabase,
             historyEngine: this.historyEngine,
             flowArtifactManager: this.flowArtifactManager,
+            metricsExportService: this.metricsExportService,
+            cacheInvalidationHub: this.cacheInvalidationHub,
+            toolSpecRegistry: this.toolSpecRegistry,
             isTestEnv: () => this.isTestEnv()
         });
+        this.handlerContext = handlerContext;
         this.searchHandlers = new SearchHandlers(handlerContext);
         this.codeHandlers = new CodeHandlers(handlerContext);
         this.editHandlers = new EditHandlers(handlerContext);
@@ -389,12 +466,14 @@ export class SmartContextServer {
     private registerInternalTools(): void {
         this.internalRegistry.register('code_read', (args) => (this.codeHandlers as any).readCodeRaw(args));
         this.internalRegistry.register('project_search', (args) => (this.searchHandlers as any).searchProjectRaw(args));
+        this.internalRegistry.register('symbol_semantic_search', (args) => (this.searchHandlers as any).searchSymbolSemanticRaw(args));
         this.internalRegistry.register('file_search', (args) => (this.searchHandlers as any).searchFilesRaw(args));
         this.internalRegistry.register('file_scout', (args) => (this.searchHandlers as any).scoutFilesRaw(args));
         this.internalRegistry.register('file_list', (args) => (this.codeHandlers as any).listFilesRaw(args));
         this.internalRegistry.register('file_stat', (args) => (this.codeHandlers as any).statFileRaw(args));
         this.internalRegistry.register('relationship_analyze', (args) => (this.codeHandlers as any).analyzeRelationshipRaw(args));
         this.internalRegistry.register('edit_apply', (args) => (this.editHandlers as any).editCodeRaw(args));
+        this.internalRegistry.register('file_edit', (args) => (this.editHandlers as any).editFileRaw(args));
         this.internalRegistry.register('project_manage', (args) => (this.manageHandlers as any).manageProjectRaw(args));
         this.internalRegistry.register('file_profile', (args) => (this.codeHandlers as any).readFileProfileRaw(args));
         this.internalRegistry.register('file_write', (args) => (this.editHandlers as any).executeWriteFile(args));
@@ -583,6 +662,55 @@ export class SmartContextServer {
         this.heartbeatTimer = undefined;
     }
 
+    private startStoragePrune(): void {
+        if (this.storagePruneTimer || this.isTestEnv()) return;
+        const intervalMs = Number(process.env.KAIRO_STORAGE_PRUNE_INTERVAL_MS ?? "");
+        if (!Number.isFinite(intervalMs) || intervalMs <= 0) return;
+        const includeOnStart = process.env.KAIRO_STORAGE_PRUNE_ON_START === "true";
+        const includeFlowArtifacts = process.env.KAIRO_STORAGE_PRUNE_FLOW_ARTIFACTS === "true";
+        const compact = process.env.KAIRO_STORAGE_PRUNE_COMPACT === "true";
+
+        const runPrune = async () => {
+            if (this.storagePruneRunning) return;
+            this.storagePruneRunning = true;
+            try {
+                const targets: StoragePruneTarget[] = includeFlowArtifacts
+                    ? ["evidence_packs", "chunk_summaries", "flow_artifacts"]
+                    : ["evidence_packs", "chunk_summaries"];
+                const service = new StorageMaintenanceService(
+                    this.indexDatabase,
+                    this.documentSearchEngine,
+                    this.flowArtifactManager
+                );
+                await service.prune({
+                    mode: "apply",
+                    targets,
+                    includeExpired: true,
+                    includeStale: true,
+                    enforceCaps: true,
+                    compact
+                });
+            } catch (error) {
+                console.warn("[SmartContextServer] Background storage prune failed:", error);
+            } finally {
+                this.storagePruneRunning = false;
+            }
+        };
+
+        this.storagePruneTimer = setInterval(runPrune, intervalMs);
+        if (includeOnStart) {
+            setImmediate(() => {
+                void runPrune();
+            });
+        }
+    }
+
+    private stopStoragePrune(): void {
+        if (!this.storagePruneTimer) return;
+        clearInterval(this.storagePruneTimer);
+        this.storagePruneTimer = undefined;
+    }
+
     private shouldWarmupSearchIndex(): boolean {
         const enabled = (process.env.KAIRO_WARMUP_ENABLED ?? "true").toLowerCase();
         if (enabled === "false" || enabled === "0") return false;
@@ -625,6 +753,62 @@ export class SmartContextServer {
         this.metricsReporter = reporter;
     }
 
+    private initMetricsExportService(): void {
+        if (this.isTestEnv()) return;
+        const service = new MetricsExportService();
+        this.metricsExportService = service;
+        void service.start().catch((error) => {
+            console.warn("[SmartContextServer] Metrics export service failed to start:", error);
+        });
+    }
+
+    private async initSymbolSemanticSearch(): Promise<void> {
+        const enabled = (process.env.KAIRO_SYMBOL_SEMANTIC_SEARCH_ENABLED ?? "false").toLowerCase() === "true";
+        const mode = (process.env.KAIRO_SYMBOL_SEMANTIC_SEARCH_MODE ?? "manual").toLowerCase();
+        if (!enabled || mode === "off") {
+            return;
+        }
+        const embeddingConfig = this.embeddingProviderFactory.getConfig();
+        const providerEnv = resolveEmbeddingProviderEnv(embeddingConfig).provider;
+        const baseModel = embeddingConfig.local?.model ?? "multilingual-e5-small";
+        if (providerEnv === "disabled" || baseModel === "hash" || baseModel.startsWith("hash-")) {
+            return;
+        }
+        try {
+            const provider = await this.embeddingProviderFactory.getProvider();
+            if (provider.provider === "disabled" || provider.model === "hash") {
+                return;
+            }
+            const symbolModelKey = process.env.KAIRO_SYMBOL_EMBEDDING_MODEL_KEY
+                ?? `${provider.model}::symbols_v1`;
+            this.symbolEmbeddingIndex = new SymbolEmbeddingIndex(
+                this.symbolIndex,
+                this.vectorIndexManager,
+                this.embeddingRepository,
+                provider,
+                {
+                    enabled: true,
+                    mode: mode === "manual" ? "manual" : "off",
+                    batchSize: this.parseNumberEnv(process.env.KAIRO_SYMBOL_EMBEDDINGS_BATCH_SIZE, 10),
+                    minSimilarity: this.parseNumberEnv(process.env.KAIRO_SYMBOL_EMBEDDINGS_MIN_SIMILARITY, 0.5),
+                    maxResults: this.parseNumberEnv(process.env.KAIRO_SYMBOL_EMBEDDINGS_MAX_RESULTS, 20),
+                    maxTextChars: this.parseNumberEnv(process.env.KAIRO_SYMBOL_EMBEDDINGS_MAX_TEXT_CHARS, 2000),
+                    maxFiles: this.parseNumberEnv(process.env.KAIRO_SYMBOL_EMBEDDINGS_MAX_FILES, 2000),
+                    maxSymbols: this.parseNumberEnv(process.env.KAIRO_SYMBOL_EMBEDDINGS_MAX_SYMBOLS, 20000),
+                    maxBytesPerSymbol: this.parseNumberEnv(process.env.KAIRO_SYMBOL_EMBEDDINGS_MAX_BYTES_PER_SYMBOL, 4000),
+                    timeoutMs: this.parseNumberEnv(process.env.KAIRO_SYMBOL_EMBEDDINGS_TIMEOUT_MS, 60000),
+                    symbolModelKey
+                }
+            );
+            this.searchEngine.setSymbolEmbeddingIndex(this.symbolEmbeddingIndex);
+            if (this.handlerContext) {
+                this.handlerContext.symbolEmbeddingIndex = this.symbolEmbeddingIndex;
+            }
+        } catch (error) {
+            console.warn("[SmartContextServer] Symbol semantic search init failed:", error);
+        }
+    }
+
     private parseNumberEnv(raw: string | undefined, fallback: number): number {
         if (!raw) return fallback;
         const value = Number(raw);
@@ -637,6 +821,13 @@ export class SmartContextServer {
             return raw;
         }
         return 'warning';
+    }
+
+    private resolveBaselineEnabled(): boolean {
+        const raw = (process.env.KAIRO_BASELINE_ENABLED ?? "auto").toLowerCase();
+        if (raw === "off" || raw === "false" || raw === "0") return false;
+        if (raw === "on" || raw === "true" || raw === "1") return true;
+        return !this.isTestEnv();
     }
 
     private setupShutdownHooks(): void {
@@ -692,542 +883,58 @@ export class SmartContextServer {
         this.contextEngine.updateIgnoreFilter(this.createIgnoreFilter(normalized));
         void this.searchEngine.updateExcludeGlobs(normalized);
         this.documentIndexer?.updateIgnorePatterns(normalized);
+        this.cacheInvalidationHub?.onEvent({ type: "ignore_changed" });
     }
 
     private listIntentTools(): any[] {
-        const internalTools = [
-            {
-                name: 'code_read',
-                description: 'Read file content in full, skeleton, or fragment modes.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        filePath: { type: 'string' },
-                        view: { type: 'string', enum: ['full', 'skeleton', 'fragment'] },
-                        lineRange: { type: 'string' }
-                    },
-                    required: ['filePath']
-                }
-            },
-            {
-                name: 'project_search',
-                description: 'Search for symbols, files, or content across the project.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        query: { type: 'string' },
-                        type: { type: 'string', enum: ['auto', 'file', 'symbol', 'directory', 'filename'] },
-                        maxResults: { type: 'number' }
-                    },
-                    required: ['query']
-                }
-            },
-            {
-                name: 'document_search',
-                description: 'Search project documents (md/mdx/txt/html/css + well-known text files) with hybrid ranking (BM25 + vector). Optionally include code comments as a separate corpus (kind="code_comment").',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        query: { type: 'string' },
-                        scope: { type: 'string', enum: ['all', 'docs', 'project'] },
-                        output: { type: 'string', enum: ['full', 'compact', 'pack_only'] },
-                        packId: { type: 'string' },
-                        maxResults: { type: 'number' },
-                        maxCandidates: { type: 'number' },
-                        maxChunkCandidates: { type: 'number' },
-                        maxVectorCandidates: { type: 'number' },
-                        maxEvidenceSections: { type: 'number' },
-                        maxEvidenceChars: { type: 'number' },
-                        includeEvidence: { type: 'boolean' },
-                        snippetLength: { type: 'number' },
-                        rrfK: { type: 'number' },
-                        rrfDepth: { type: 'number' },
-                        useMmr: { type: 'boolean' },
-                        mmrLambda: { type: 'number' },
-                        maxChunksEmbeddedPerRequest: { type: 'number' },
-                        maxEmbeddingTimeMs: { type: 'number' },
-                        includeComments: { type: 'boolean' },
-                        includeLogs: { type: 'boolean' },
-                        includeMetrics: { type: 'boolean' },
-                        embedding: {
-                            type: 'object',
-                            properties: {
-                                provider: { type: 'string', enum: ['auto', 'local', 'hash', 'disabled'] },
-                                normalize: { type: 'boolean' },
-                                batchSize: { type: 'number' },
-                                modelDir: { type: 'string' },
-                                local: {
-                                    type: 'object',
-                                    properties: {
-                                        model: { type: 'string' },
-                                        dims: { type: 'number' }
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    required: ['query']
-                }
-            },
-            {
-                name: 'document_references',
-                description: 'List resolved references (links) found in a markdown/MDX document.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        filePath: { type: 'string' }
-                    },
-                    required: ['filePath']
-                }
-            },
-            {
-                name: 'relationship_analyze',
-                description: 'Analyze dependencies, call graphs, data flow, or impact.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        target: { type: 'string' },
-                        mode: { type: 'string', enum: ['impact', 'dependencies', 'calls', 'data_flow', 'types'] },
-                        direction: { type: 'string', enum: ['upstream', 'downstream', 'both'] },
-                        contextPath: { type: 'string' },
-                        maxDepth: { type: 'number' },
-                        fromLine: { type: 'number' }
-                    },
-                    required: ['target', 'mode']
-                }
-            },
-            {
-                name: 'edit_apply',
-                description: 'Apply structured edits to files with optional dry-run.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        edits: { type: 'array', items: { type: 'object' } },
-                        dryRun: { type: 'boolean' },
-                        diffMode: { type: 'string', enum: ['myers', 'semantic'] }
-                    },
-                    required: ['edits']
-                }
-            },
-            {
-                name: 'edit_guidance',
-                description: 'Suggests batch edit groupings and companion changes.',
-                inputSchema: {
-                    type: 'object',
-                    properties: { filePaths: { type: 'array', items: { type: 'string' } }, pattern: { type: 'string' } },
-                    required: ['filePaths']
-                }
-            },
-            {
-                name: 'project_manage',
-                description: 'Manage project state (status, undo, redo, reindex).',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        command: {
-                            type: 'string',
-                            enum: [
-                                'status',
-                                'undo',
-                                'redo',
-                                'reindex',
-                                'history',
-                                'test',
-                                'metrics',
-                                'metrics_reset',
-                                'config',
-                                'init',
-                                'doctor',
-                                'sessions',
-                                'session',
-                                'session_complete',
-                                'artifacts',
-                                'artifact',
-                                'discard',
-                                'prune',
-                                'export',
-                                'import'
-                            ]
-                        },
-                        target: { type: 'string' },
-                        outcome: { type: 'object' },
-                        mode: { type: 'string', enum: ['plan', 'apply'] },
-                        targets: { type: 'array', items: { type: 'string', enum: ['kairo', 'vscode'] } },
-                        root: { type: 'string' },
-                        multiRepo: { type: 'string', enum: ['auto', 'single', 'detect'] },
-                        presets: { type: 'string', enum: ['minimal', 'recommended'] },
-                        languageScan: {
-                            type: 'object',
-                            properties: {
-                                maxFiles: { type: 'number' },
-                                sampleBytesPerFile: { type: 'number' },
-                                includeDocs: { type: 'boolean' }
-                            }
-                        },
-                        applyOptions: {
-                            type: 'object',
-                            properties: {
-                                backup: { type: 'boolean' },
-                                legacyMcpConfig: { type: 'boolean' }
-                            }
-                        }
-                    },
-                    required: ['command']
-                }
-            },
-            {
-                name: 'interface_reconstruct',
-                description: 'Reconstruct a ghost interface based on observed call sites.',
-                inputSchema: {
-                    type: 'object',
-                    properties: { symbolName: { type: 'string' } },
-                    required: ['symbolName']
-                }
-            }
-        ];
-
-        const pillarTools = [
-            {
-                name: 'understand',
-                description: 'Deeply analyzes code structure and architecture.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        goal: { type: 'string' },
-                        profile: { type: 'string', enum: ['fast', 'balanced', 'deep'] },
-                        sources: { type: 'string', enum: ['code', 'docs', 'both'] },
-                        depth: { type: 'string', enum: ['shallow', 'standard', 'deep'] },
-                        scope: { type: 'string', enum: ['symbol', 'file', 'module', 'project'] },
-                        include: {
-                            type: 'object',
-                            properties: {
-                                callGraph: { type: 'boolean' },
-                                hotSpots: { type: 'boolean' },
-                                pageRank: { type: 'boolean' },
-                                dependencies: { type: 'boolean' }
-                            }
-                        },
-                        sessionId: { type: 'string' },
-                        trace: { type: 'boolean' },
-                        vibe: {
-                            type: 'object',
-                            properties: {
-                                extract: { type: 'boolean' },
-                                scope: { type: 'string' },
-                                includeNorms: { type: 'boolean' }
-                            }
-                        },
-                        analysis: {
-                            type: 'object',
-                            properties: {
-                                clusters: { type: 'boolean' },
-                                maxClusters: { type: 'number' },
-                                maxFilesPerCluster: { type: 'number' }
-                            }
-                        },
-                        limits: {
-                            type: 'object',
-                            properties: {
-                                timeoutMs: { type: 'number' }
-                            }
-                        }
-                    },
-                    required: ['goal']
-                }
-            },
-            {
-                name: 'explore',
-                description: 'Unified discovery for docs/code with previews, sections, and controlled full reads.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        query: { type: 'string' },
-                        paths: { type: 'array', items: { type: 'string' } },
-                        profile: { type: 'string', enum: ['fast', 'balanced', 'deep'] },
-                        sources: { type: 'string', enum: ['code', 'docs', 'both'] },
-                        view: { type: 'string', enum: ['auto', 'preview', 'section', 'full'] },
-                        include: {
-                            type: 'object',
-                            properties: {
-                                docs: { type: 'boolean' },
-                                code: { type: 'boolean' },
-                                comments: { type: 'boolean' },
-                                logs: { type: 'boolean' }
-                            }
-                        },
-                        sessionId: { type: 'string' },
-                        trace: { type: 'boolean' },
-                        research: {
-                            type: 'object',
-                            properties: {
-                                sketch: { type: 'boolean' },
-                                topN: { type: 'number' },
-                                format: { type: 'string', enum: ['ascii', 'mermaid', 'both'] }
-                            }
-                        },
-                        section: {
-                            type: 'object',
-                            properties: {
-                                sectionId: { type: 'string' },
-                                headingPath: { type: 'array', items: { type: 'string' } },
-                                includeSubsections: { type: 'boolean' }
-                            }
-                        },
-                        packId: { type: 'string' },
-                        cursor: {
-                            type: 'object',
-                            properties: {
-                                items: { type: 'string' },
-                                content: { type: 'string' }
-                            }
-                        },
-                        limits: {
-                            type: 'object',
-                            properties: {
-                                maxResults: { type: 'number' },
-                                maxChars: { type: 'number' },
-                                maxItemChars: { type: 'number' },
-                                maxBytes: { type: 'number' },
-                                maxFiles: { type: 'number' },
-                                timeoutMs: { type: 'number' }
-                            }
-                        },
-                        fullPaths: { type: 'array', items: { type: 'string' } },
-                        allowSensitive: { type: 'boolean' },
-                        allowBinary: { type: 'boolean' },
-                        allowGlobs: { type: 'boolean' }
-                    }
-                }
-            },
-            {
-                name: 'change',
-                description: 'Safely modifies code with impact analysis.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        intent: { type: 'string' },
-                        profile: { type: 'string', enum: ['fast', 'balanced', 'deep'] },
-                        safety: { type: 'string', enum: ['plan', 'apply'] },
-                        target: { type: 'string' },
-                        targetFiles: { type: 'array', items: { type: 'string' } },
-                        edits: { type: 'array', items: { type: 'object' } },
-                        sessionId: { type: 'string' },
-                        trace: { type: 'boolean' },
-                        stylePack: { anyOf: [{ type: 'string' }, { type: 'object' }] },
-                        draftOptions: {
-                            type: 'object',
-                            properties: {
-                                skeletonOnly: { type: 'boolean' },
-                                includeImpact: { type: 'boolean' }
-                            }
-                        },
-                        draftId: { type: 'string' },
-                        refinement: { type: 'string' },
-                        reviewOptions: {
-                            type: 'object',
-                            properties: {
-                                preApply: { type: 'boolean' },
-                                postApply: { type: 'boolean' },
-                                strictness: { type: 'string', enum: ['strict', 'balanced', 'permissive'] },
-                                blockOn: { type: 'array', items: { type: 'string', enum: ['syntax', 'semantic', 'guardrails', 'vibe'] } }
-                            }
-                        },
-                        options: {
-                            type: 'object',
-                            properties: {
-                                dryRun: { type: 'boolean' },
-                                includeImpact: { type: 'boolean' },
-                                includeSymbolImpact: { type: 'boolean' },
-                                autoRollback: { type: 'boolean' },
-                                batchMode: { type: 'boolean' },
-                                suggestDocs: { type: 'boolean' },
-                                batchImpactLimit: { type: 'number' }
-                            }
-                        }
-                    },
-                    required: ['intent']
-                }
-            },
-            {
-                name: 'write',
-                description: 'Creates new files or scaffolds content.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        intent: { type: 'string' },
-                        profile: { type: 'string', enum: ['fast', 'balanced', 'deep'] },
-                        safety: { type: 'string', enum: ['plan', 'apply'] },
-                        targetPath: { type: 'string' },
-                        template: { type: 'string' },
-                        content: { type: 'string' },
-                        dryRun: { type: 'boolean' },
-                        sessionId: { type: 'string' },
-                        trace: { type: 'boolean' },
-                        stylePack: { anyOf: [{ type: 'string' }, { type: 'object' }] },
-                        draftOptions: {
-                            type: 'object',
-                            properties: {
-                                skeletonOnly: { type: 'boolean' },
-                                includeImpact: { type: 'boolean' }
-                            }
-                        },
-                        draftId: { type: 'string' },
-                        refinement: { type: 'string' },
-                        reviewOptions: {
-                            type: 'object',
-                            properties: {
-                                preApply: { type: 'boolean' },
-                                postApply: { type: 'boolean' },
-                                strictness: { type: 'string', enum: ['strict', 'balanced', 'permissive'] },
-                                blockOn: { type: 'array', items: { type: 'string', enum: ['syntax', 'semantic', 'guardrails', 'vibe'] } }
-                            }
-                        },
-                        options: {
-                            type: 'object',
-                            properties: {
-                                safeWrite: { type: 'boolean' },
-                                quickGenerate: { type: 'boolean' },
-                                smartWrite: { type: 'boolean' },
-                                styleReference: { type: 'array', items: { type: 'string' } }
-                            }
-                        }
-                    },
-                    required: ['intent']
-                }
-            },
-            {
-                name: 'manage',
-                description: 'Manages project state and transactions.',
-                inputSchema: {
-                    type: 'object',
-                    properties: {
-                        command: {
-                            type: 'string',
-                            enum: [
-                                'status',
-                                'undo',
-                                'redo',
-                                'reindex',
-                                'rebuild',
-                                'history',
-                                'test',
-                                'init',
-                                'doctor',
-                                'sessions',
-                                'session',
-                                'session_complete',
-                                'session_update',
-                                'artifacts',
-                                'artifact',
-                                'discard',
-                                'prune',
-                                'export',
-                                'import'
-                            ]
-                        },
-                        scope: { type: 'string', enum: ['file', 'transaction', 'project', 'config', 'languages', 'wasm', 'host', 'contracts'] },
-                        target: { type: 'string' },
-                        limit: { type: 'number' },
-                        outcome: { type: 'object' },
-                        sessionId: { type: 'string' },
-                        policy: { type: 'object' },
-                        policyMode: { type: 'string', enum: ['merge', 'replace'] },
-                        artifactOptions: {
-                            type: 'object',
-                            properties: {
-                                type: { type: 'string' },
-                                sessionId: { type: 'string' },
-                                limit: { type: 'number' },
-                                includeExpired: { type: 'boolean' }
-                            }
-                        },
-                        mode: { type: 'string', enum: ['plan', 'apply'] },
-                        targets: { type: 'array', items: { type: 'string', enum: ['kairo', 'vscode'] } },
-                        root: { type: 'string' },
-                        multiRepo: { type: 'string', enum: ['auto', 'single', 'detect'] },
-                        presets: { type: 'string', enum: ['minimal', 'recommended'] },
-                        languageScan: {
-                            type: 'object',
-                            properties: {
-                                maxFiles: { type: 'number' },
-                                sampleBytesPerFile: { type: 'number' },
-                                includeDocs: { type: 'boolean' }
-                            }
-                        },
-                        applyOptions: {
-                            type: 'object',
-                            properties: {
-                                backup: { type: 'boolean' },
-                                legacyMcpConfig: { type: 'boolean' }
-                            }
-                        }
-                    },
-                    required: ['command']
-                }
-            }
-        ];
-
-        const fileTools: any[] = [];
         const exposeInternalTools = process.env.KAIRO_EXPOSE_INTERNAL_TOOLS === "true"
             || process.env.KAIRO_EXPOSE_LEGACY_TOOLS === "true";
         const exposeFileTools = process.env.KAIRO_EXPOSE_FILE_TOOLS === "true"
             || process.env.KAIRO_EXPOSE_COMPAT_TOOLS === "true";
-        if (exposeFileTools) {
-            fileTools.push(
-                {
-                    name: 'file_read',
-                    description: 'Returns Smart File Profile or raw file content.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: { filePath: { type: 'string' }, full: { type: 'boolean' } },
-                        required: ['filePath']
-                    }
-                },
-                {
-                    name: 'file_write',
-                    description: 'Writes or creates a file with provided content.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: { filePath: { type: 'string' }, content: { type: 'string' } },
-                        required: ['filePath', 'content']
-                    }
-                },
-                {
-                    name: 'file_analyze',
-                    description: 'Analyze a single file and return summary metadata.',
-                    inputSchema: {
-                        type: 'object',
-                        properties: { filePath: { type: 'string' } },
-                        required: ['filePath']
-                    }
-                }
-            );
-        }
-
-        return [
-            ...(exposeInternalTools ? internalTools : []),
-            ...pillarTools,
-            ...fileTools
-        ];
+        const tools = this.toolSpecRegistry.listTools({
+            exposeInternal: exposeInternalTools,
+            exposeCompat: exposeFileTools
+        });
+        return tools.map((tool: ToolSpec) => ({
+            name: tool.name,
+            description: tool.description,
+            inputSchema: tool.inputSchema
+        }));
     }
 
     private async handleCallTool(name: string, args: any): Promise<any> {
         const rolloutContext = this.buildRolloutContext(args);
         return FeatureFlags.withContext(rolloutContext, async () => {
             try {
-                const useModularHandlers = FeatureFlags.isEnabled(FeatureFlags.MODULAR_HANDLERS_ENABLED, rolloutContext);
-                if (useModularHandlers) {
-                    const result = await this.handlerRegistry.handle(name, args);
-                    if (result !== null) {
-                        return result;
+                const toolSpec = this.toolSpecRegistry.get(name);
+                const mode = getToolSchemaMode();
+                const normalized = toolSpec ? normalizeArgs(toolSpec, args, mode) : { args: args ?? {}, findings: [], droppedFields: [] };
+                if (toolSpec) {
+                    const validation = validateArgs(toolSpec, normalized.args, mode);
+                    if (validation.missing.length > 0) {
+                        return this.errorResponse("MissingParameter", `Missing required parameter(s): ${validation.missing.join(", ")}`);
                     }
-                } else {
-                    const legacyResult = await this.handleCallToolLegacy(name, args);
-                    if (legacyResult !== null) {
-                        return legacyResult;
+                    if (validation.invalid.length > 0) {
+                        return this.errorResponse("InvalidArguments", "Invalid arguments.", { invalid: validation.invalid });
                     }
                 }
-
+                const useModularHandlers = FeatureFlags.isEnabled(FeatureFlags.MODULAR_HANDLERS_ENABLED, rolloutContext);
+                let result: any | null = null;
+                if (useModularHandlers) {
+                    const handlerResult = await this.handlerRegistry.handle(name, normalized.args);
+                    if (handlerResult !== null) {
+                        result = this.attachContractMeta(handlerResult, toolSpec, mode, normalized);
+                    }
+                } else {
+                    const legacyResult = await this.handleCallToolLegacy(name, normalized.args);
+                    if (legacyResult !== null) {
+                        result = this.attachContractMeta(legacyResult, toolSpec, mode, normalized);
+                    }
+                }
+                if (result !== null) {
+                    this.ensureResponseHasIsError(result);
+                    return result;
+                }
                 throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
             } catch (error: any) {
                 if (error instanceof McpError) {
@@ -1253,13 +960,105 @@ export class SmartContextServer {
     }
 
     private wrapLegacyResult(result: any): any {
+        let response: any;
         if (result && typeof result === 'object' && Array.isArray(result.content)) {
+            response = result;
+        } else if (typeof result === 'string') {
+            response = this.textResponse(result);
+        } else {
+            response = this.jsonResponse(result);
+        }
+        const derivedError = this.deriveLegacyIsError(result);
+        if (typeof derivedError === "boolean" && response && typeof response === "object") {
+            if (response.isError === undefined) {
+                response.isError = derivedError;
+            }
+        }
+        return response;
+    }
+
+    private deriveLegacyIsError(result: any): boolean | undefined {
+        if (!result || typeof result !== "object") {
+            return undefined;
+        }
+        if (typeof result.isError === "boolean") {
+            return result.isError;
+        }
+        if (typeof result.success === "boolean") {
+            return !result.success;
+        }
+        if (typeof result.errorCode === "string") {
+            return true;
+        }
+        return undefined;
+    }
+
+    private attachContractMeta(
+        result: any,
+        toolSpec: ToolSpec | undefined,
+        mode: "compat" | "strict",
+        normalized: { args: Record<string, any>; findings: import("./tools/ToolArgs.js").CompatFinding[] }
+    ): any {
+        if (!toolSpec) return result;
+        if (!result || typeof result !== "object" || !Array.isArray(result.content)) {
             return result;
         }
-        if (typeof result === 'string') {
-            return this.textResponse(result);
+        const text = result.content?.[0]?.text;
+        if (typeof text !== "string") return result;
+        let payload: any;
+        try {
+            payload = JSON.parse(text);
+        } catch {
+            return result;
         }
-        return this.jsonResponse(result);
+        if (!payload || typeof payload !== "object") return result;
+        if (payload.isError) return result;
+
+        const contract = buildContractMeta(toolSpec, mode, normalized.findings, normalized.args);
+        payload.contract = contract;
+        if (Array.isArray(contract.findings) && contract.findings.length > 0 && payload.guidance) {
+            const warnings = contract.findings.map((finding) => ({
+                severity: finding.severity,
+                code: finding.code,
+                message: finding.message,
+                affectedTargets: undefined,
+                mitigation: undefined
+            }));
+            if (Array.isArray(payload.guidance.warnings)) {
+                payload.guidance.warnings.push(...warnings);
+            } else {
+                payload.guidance.warnings = warnings;
+            }
+        }
+        return this.jsonResponse(payload);
+    }
+
+    private ensureResponseHasIsError(response: any): void {
+        if (!response || typeof response !== "object") return;
+        if (typeof response.isError === "boolean") return;
+        if (typeof response.success === "boolean") {
+            response.isError = response.success === false;
+            return;
+        }
+        const text = response.content?.[0]?.text;
+        if (typeof text !== "string") return;
+        try {
+            const payload = JSON.parse(text);
+            if (!payload || typeof payload !== "object") return;
+            if (typeof payload.isError === "boolean") {
+                response.isError = payload.isError;
+                return;
+            }
+            if (typeof payload.success === "boolean") {
+                response.isError = payload.success === false;
+                return;
+            }
+            if (typeof payload.errorCode === "string") {
+                response.isError = true;
+            }
+        } catch {
+            // ignore parsing errors
+        }
     }
 
     private isPillarTool(name: string): boolean {
@@ -1272,27 +1071,8 @@ export class SmartContextServer {
     }
 
     private validateRequiredArgs(toolName: string, args: any): string[] {
-        const requiredMap: Record<string, string[]> = {
-            code_read: ['filePath'],
-            project_search: ['query'],
-            file_search: [],
-            file_read: ['filePath'],
-            file_fragment_read: ['filePath'],
-            relationship_analyze: ['target', 'mode'],
-            edit_apply: ['edits'],
-            file_edit: ['filePath', 'edits'],
-            edit_guidance: ['filePaths'],
-            project_manage: ['command'],
-            interface_reconstruct: ['symbolName'],
-            file_write: ['filePath', 'content'],
-            file_analyze: ['filePath'],
-            understand: ['goal'],
-            explore: [],
-            change: ['intent'],
-            write: ['intent'],
-            manage: ['command']
-        };
-        const required = requiredMap[toolName] || [];
+        const toolSpec = this.toolSpecRegistry.get(toolName);
+        const required = Array.isArray(toolSpec?.inputSchema?.required) ? toolSpec?.inputSchema?.required ?? [] : [];
         const missing: string[] = [];
         for (const key of required) {
             if (args?.[key] === undefined || args?.[key] === null) {
@@ -1418,6 +1198,10 @@ export class SmartContextServer {
 
     public async shutdown() {
         this.stopHeartbeat();
+        this.stopStoragePrune();
+        if (this.metricsExportService) {
+            await this.metricsExportService.stop();
+        }
         await this.server.close();
         this.clusterSearchEngine.stopBackgroundTasks();
         if (this.incrementalIndexer) {

@@ -3,15 +3,17 @@ import { SearchEngine } from "../../engine/Search.js";
 import { DocumentChunkRepository, StoredDocumentChunk } from "../../indexing/DocumentChunkRepository.js";
 import { EmbeddingRepository } from "../../indexing/EmbeddingRepository.js";
 import { DocumentIndexer } from "../../indexing/DocumentIndexer.js";
+import type { IndexDatabase } from "../../indexing/IndexDatabase.js";
 import { EmbeddingProviderFactory } from "../../embeddings/EmbeddingProviderFactory.js";
 import { EmbeddingTimeoutError } from "../../embeddings/EmbeddingQueue.js";
+import { computeEmbeddingDiagnostics, isHashModel } from "../../embeddings/EmbeddingDiagnostics.js";
 import { LRUCache } from "lru-cache";
 import { EvidencePackRepository, computeRootFingerprint } from "../../indexing/EvidencePackRepository.js";
 import { metrics } from "../../utils/MetricsCollector.js";
 import { VectorIndexManager } from "../../vector/VectorIndexManager.js";
 import type { DocumentSearchOptions, DocumentSearchResponse } from "./SearchTypes.js";
 import { buildStaleCheckItems, fillPreviewsFromSummaries, hydrateResponseFromPack, toStoredItems } from "./EvidencePackBuilder.js";
-import { normalizeSearchQuery, computePackId } from "./QueryParsing.js";
+import { normalizeSearchQuery, computePackId, mergeEmbeddingConfig } from "./QueryParsing.js";
 import { isMetricsPath } from "./SearchFilters.js";
 import { applyMmr, buildRankMap, computeSimilarity, quickMatchScore, tokenize } from "./ResultRanking.js";
 import { limitEvidence, toSearchSection } from "./SnippetExtractor.js";
@@ -31,10 +33,21 @@ export class DocumentSearchEngine {
         private readonly rootPath: string,
         private readonly symbolIndex?: { getSymbolsForFile(filePath: string): Promise<unknown> },
         private readonly evidencePacks?: EvidencePackRepository,
-        private readonly vectorIndexManager?: VectorIndexManager
+        private readonly vectorIndexManager?: VectorIndexManager,
+        private readonly indexDatabase?: IndexDatabase
     ) {
         const max = Number.parseInt(process.env.KAIRO_EVIDENCE_PACK_CACHE_SIZE ?? "100", 10);
         this.packCache = new LRUCache({ max: Number.isFinite(max) && max > 0 ? max : 100 });
+    }
+
+    public evictPackCache(packIds?: string[]): void {
+        if (!packIds || packIds.length === 0) {
+            this.packCache.clear();
+            return;
+        }
+        for (const packId of packIds) {
+            this.packCache.delete(packId);
+        }
     }
 
     public async getEmbeddingStatus(): Promise<{ provider: string; model: string; dims: number } | null> {
@@ -126,7 +139,8 @@ export class DocumentSearchEngine {
             if (!cached.expiresAt || cached.expiresAt > now) {
                 const stale = await this.isPackStale(cached.staleCheckItems ?? []);
                 if (!stale) {
-                    return {
+                    metrics.inc("cache.docs_pack.hit_total");
+                    return this.attachFileMeta({
                         ...cached.response,
                         pack: {
                             packId: effectivePackId,
@@ -134,7 +148,7 @@ export class DocumentSearchEngine {
                             createdAt: cached.createdAt,
                             expiresAt: cached.expiresAt
                         }
-                    };
+                    });
                 }
                 this.packCache.delete(effectivePackId);
             }
@@ -154,14 +168,16 @@ export class DocumentSearchEngine {
                         .map(item => ({ chunkId: item.chunkId, snapshot: { contentHash: item.snapshot?.contentHash } }))
                         .filter(item => Boolean(item.snapshot?.contentHash));
                     this.packCache.set(effectivePackId, { response: responseFromDb, createdAt, expiresAt, staleCheckItems });
-                    return {
+                    metrics.inc("cache.docs_pack.hit_total");
+                    return this.attachFileMeta({
                         ...responseFromDb,
                         pack: { packId: effectivePackId, hit: true, createdAt, expiresAt }
-                    };
+                    });
                 }
             }
         }
 
+        metrics.inc("cache.docs_pack.miss_total");
         const candidateFiles = await collectCandidateFiles(this.searchEngine, this.chunkRepository, {
             query: normalizedQuery,
             maxCandidates,
@@ -233,13 +249,17 @@ export class DocumentSearchEngine {
                     // best-effort
                 }
             }
-            return {
+            return this.attachFileMeta({
                 ...response,
                 pack: { packId: effectivePackId, hit: false, createdAt, expiresAt }
-            };
+            });
         }
 
         const provider = await resolveEmbeddingProvider(this.embeddingFactory, options.embedding);
+        const embeddingConfig = options.embedding
+            ? mergeEmbeddingConfig(this.embeddingFactory.getConfig(), options.embedding)
+            : this.embeddingFactory.getConfig();
+        const embeddingDiagnostics = computeEmbeddingDiagnostics({ config: embeddingConfig });
         let vectorEnabled = provider.provider !== "disabled";
         let vectorScores = new Map<string, number>();
         let vectorRankMap = new Map<string, number>();
@@ -248,6 +268,21 @@ export class DocumentSearchEngine {
             ? Number.parseFloat(process.env.KAIRO_METRICS_SCORE_BOOST ?? "0.12")
             : 0;
         let queryVector: Float32Array | undefined;
+
+        if (!isTestEnv()) {
+            if (embeddingDiagnostics.remoteDownloadsAllowed) {
+                degradationReasons.push("embeddings_remote_enabled");
+            }
+            const modelId = embeddingDiagnostics.modelId;
+            if (modelId && !isHashModel(modelId) && embeddingDiagnostics.missingAssets && embeddingDiagnostics.missingAssets.length > 0) {
+                degradationReasons.push(embeddingDiagnostics.resolvedModelRoot
+                    ? "embeddings_local_model_incomplete"
+                    : "embeddings_local_model_missing");
+            }
+            if (provider.model && !isHashModel(modelId) && isHashModel(provider.model)) {
+                degradationReasons.push("embeddings_fallback_hash");
+            }
+        }
 
         if (vectorEnabled) {
             const queryEmbedding = await embedQuery(normalizedQuery, provider);
@@ -486,13 +521,43 @@ export class DocumentSearchEngine {
                 // best-effort
             }
         }
-        return {
+        return this.attachFileMeta({
             ...response,
             pack: { packId: effectivePackId, hit: false, createdAt, expiresAt }
-        };
+        });
         } finally {
             stopTotal();
         }
+    }
+
+    private attachFileMeta(response: DocumentSearchResponse): DocumentSearchResponse {
+        if (!this.indexDatabase) return response;
+        const filePaths = new Set<string>();
+        for (const section of response.results ?? []) {
+            if (section?.filePath) filePaths.add(section.filePath);
+        }
+        for (const section of response.evidence ?? []) {
+            if (section?.filePath) filePaths.add(section.filePath);
+        }
+        if (filePaths.size === 0) return response;
+
+        const meta: NonNullable<DocumentSearchResponse["fileMeta"]> = {};
+        for (const filePath of filePaths) {
+            const entry = this.indexDatabase.getDocumentMeta(filePath);
+            if (!entry) continue;
+            if (!entry.warnings || entry.warnings.length === 0) continue;
+            meta[filePath] = {
+                sourceFormat: entry.sourceFormat,
+                extractor: entry.extractor,
+                warnings: entry.warnings,
+                reasons: entry.reasons,
+                stats: entry.stats,
+                updatedAt: entry.updatedAt
+            };
+        }
+
+        if (Object.keys(meta).length === 0) return response;
+        return { ...response, fileMeta: meta };
     }
 
     private async isPackStale(items: Array<{ chunkId: string; snapshot?: { contentHash?: string } }>): Promise<boolean> {
@@ -512,6 +577,10 @@ export class DocumentSearchEngine {
         return false;
     }
 
+}
+
+function isTestEnv(): boolean {
+    return process.env.NODE_ENV === "test" || process.env.JEST_WORKER_ID !== undefined;
 }
 
 function clampDocLimit(value: number, envKey: string): number {

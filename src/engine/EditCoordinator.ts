@@ -15,6 +15,8 @@ import {
     EditOperation,
     BatchOperation,
     HistoryItem,
+    FileOperation,
+    HistoryOperation,
     EditExecutionOptions,
     ImpactPreview,
     ResolvedEdit
@@ -290,6 +292,7 @@ export class EditCoordinator {
             const originalContent = await fileSystem.readFile(filePath);
             const snapshot: TransactionSnapshot = {
                 filePath,
+                originalExists: true,
                 originalContent,
                 originalHash: this.computeHash(originalContent),
             };
@@ -320,6 +323,7 @@ export class EditCoordinator {
                 const newContent = await fileSystem.readFile(filePath);
                 const snapshot = snapshotMap.get(filePath);
                 if (snapshot) {
+                    snapshot.newExists = true;
                     snapshot.newContent = newContent;
                     snapshot.newHash = this.computeHash(newContent);
                 }
@@ -332,7 +336,7 @@ export class EditCoordinator {
                 operations,
             };
 
-            transactionLog.commit(transactionId, snapshots);
+            await transactionLog.commit(transactionId, snapshots, { operations });
             await this.historyEngine.replaceOperation(transactionId, batchOperation as HistoryItem);
 
             return {
@@ -372,17 +376,12 @@ export class EditCoordinator {
             };
         }
 
-        // BatchOperation: undo each contained EditOperation in reverse order.
+        // BatchOperation: undo each contained operation in reverse order.
         if ((item as BatchOperation).operations) {
             const batch = item as BatchOperation;
             for (let i = batch.operations.length - 1; i >= 0; i--) {
                 const op = batch.operations[i];
-                const resolvedPath = this.resolveFilePath(op.filePath!);
-                const result = await this.editorEngine.applyEdits(
-                    resolvedPath,
-                    op.inverseEdits as Edit[],
-                    false
-                );
+                const result = await this.applyHistoryOperation(op, "undo");
                 if (!result.success) {
                     return {
                         success: false,
@@ -392,14 +391,8 @@ export class EditCoordinator {
             }
             return { success: true, message: "Successfully undid batch operation." };
         } else {
-            const op = item as EditOperation;
-            const resolvedPath = this.resolveFilePath(op.filePath!);
-            const result = await this.editorEngine.applyEdits(
-                resolvedPath,
-                op.inverseEdits as Edit[],
-                false
-            );
-            return result;
+            const op = item as HistoryOperation;
+            return this.applyHistoryOperation(op, "undo");
         }
     }
 
@@ -422,16 +415,11 @@ export class EditCoordinator {
             };
         }
 
-        // BatchOperation: redo each contained EditOperation in original order.
+        // BatchOperation: redo each contained operation in original order.
         if ((item as BatchOperation).operations) {
             const batch = item as BatchOperation;
             for (const op of batch.operations) {
-                const resolvedPath = this.resolveFilePath(op.filePath!);
-                const result = await this.editorEngine.applyEdits(
-                    resolvedPath,
-                    op.edits as Edit[],
-                    false
-                );
+                const result = await this.applyHistoryOperation(op, "redo");
                 if (!result.success) {
                     return {
                         success: false,
@@ -441,10 +429,50 @@ export class EditCoordinator {
             }
             return { success: true, message: "Successfully redid batch operation." };
         } else {
-            const op = item as EditOperation;
-            const resolvedPath = this.resolveFilePath(op.filePath!);
-            const result = await this.editorEngine.applyEdits(resolvedPath, op.edits as Edit[], false);
-            return result;
+            const op = item as HistoryOperation;
+            return this.applyHistoryOperation(op, "redo");
+        }
+    }
+
+    private isFileOperation(op: HistoryOperation): op is FileOperation {
+        return (op as FileOperation).type === "file";
+    }
+
+    private async applyHistoryOperation(op: HistoryOperation, mode: "undo" | "redo"): Promise<EditResult> {
+        if (this.isFileOperation(op)) {
+            return this.applyFileOperation(op, mode);
+        }
+        const resolvedPath = this.resolveFilePath(op.filePath!);
+        const edits = mode === "undo" ? (op.inverseEdits as Edit[]) : (op.edits as Edit[]);
+        return this.editorEngine.applyEdits(resolvedPath, edits, false);
+    }
+
+    private async applyFileOperation(op: FileOperation, mode: "undo" | "redo"): Promise<EditResult> {
+        if (!this.fileSystem) {
+            return { success: false, message: "File system unavailable for undo/redo." };
+        }
+        const resolvedPath = this.resolveFilePath(op.filePath);
+        const shouldDelete = (op.action === "create" && mode === "undo") || (op.action === "delete" && mode === "redo");
+        if (shouldDelete) {
+            try {
+                if (await this.fileSystem.exists(resolvedPath)) {
+                    await this.fileSystem.deleteFile(resolvedPath);
+                }
+                return { success: true, message: "File deletion completed." };
+            } catch (error: any) {
+                return { success: false, message: error?.message ?? "File deletion failed." };
+            }
+        }
+        if (typeof op.content !== "string") {
+            return { success: false, message: "Missing content to restore file." };
+        }
+        try {
+            const dir = path.dirname(resolvedPath);
+            await this.fileSystem.createDir(dir);
+            await this.fileSystem.writeFile(resolvedPath, op.content);
+            return { success: true, message: "File restoration completed." };
+        } catch (error: any) {
+            return { success: false, message: error?.message ?? "File restoration failed." };
         }
     }
 
@@ -470,12 +498,18 @@ export class EditCoordinator {
 
         for (const snapshot of snapshots) {
             try {
-                await this.fileSystem.writeFile(snapshot.filePath, snapshot.originalContent);
-                const restored = await this.fileSystem.readFile(snapshot.filePath);
-                const restoredHash = this.computeHash(restored);
-                if (restoredHash !== snapshot.originalHash) {
-                    console.error(`[EditCoordinator] Hash mismatch after rollback for ${snapshot.filePath}`);
-                    metrics.inc("transactions.hash_mismatch");
+                if (snapshot.originalExists === false) {
+                    if (await this.fileSystem.exists(snapshot.filePath)) {
+                        await this.fileSystem.deleteFile(snapshot.filePath);
+                    }
+                } else {
+                    await this.fileSystem.writeFile(snapshot.filePath, snapshot.originalContent);
+                    const restored = await this.fileSystem.readFile(snapshot.filePath);
+                    const restoredHash = this.computeHash(restored);
+                    if (restoredHash !== snapshot.originalHash) {
+                        console.error(`[EditCoordinator] Hash mismatch after rollback for ${snapshot.filePath}`);
+                        metrics.inc("transactions.hash_mismatch");
+                    }
                 }
             } catch (error) {
                 console.error(`[EditCoordinator] Failed to restore ${snapshot.filePath}:`, error);

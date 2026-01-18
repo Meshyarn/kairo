@@ -1,4 +1,3 @@
-import fs from "fs";
 import { InternalToolRegistry } from '../../InternalToolRegistry.js';
 import { OrchestrationContext } from '../../OrchestrationContext.js';
 import { ParsedIntent } from '../../IntentRouter.js';
@@ -12,11 +11,13 @@ import { EditCoordinator } from '../../../engine/EditCoordinator.js';
 import { EditorEngine } from '../../../engine/Editor.js';
 import { HistoryEngine } from '../../../engine/History.js';
 import { UnifiedContextGraph } from '../../context/UnifiedContextGraph.js';
-import { NodeFileSystem } from '../../../platform/FileSystem.js';
+import { NodeFileSystem, type IFileSystem } from '../../../platform/FileSystem.js';
 import type { DependencyGraph } from '../../../ast/DependencyGraph.js';
 import type { IndexStateManager } from '../../../indexing/IndexStateManager.js';
 import { FeatureFlags } from '../../../config/FeatureFlags.js';
 import type { StylePack, WorkflowMeta } from '../../../types/flow-artifacts.js';
+import { AuditLog } from "../../../utils/AuditLog.js";
+import type { OverrideTrace } from "../../../utils/GuardrailsOverride.js";
 
 import { 
     toImpactReport, 
@@ -50,7 +51,6 @@ import {
     executeV2BatchChange
 } from "./BatchExecution.js";
 import { resolveTargetPath } from "./shared/TargetResolver.js";
-import { OptionResolver } from "../../options/OptionResolver.js";
 import { ContractManifestLoader } from "../../../contracts/ContractManifestLoader.js";
 import { ContractManifestGenerator } from "../../../contracts/ContractManifestGenerator.js";
 import { diffManifests } from "../../../contracts/ContractDiffer.js";
@@ -58,48 +58,166 @@ import type { PackageAliasMap } from "../../../config/PackageAliasMap.js";
 import type { RepoRegistry } from "../../../config/RepoRegistry.js";
 import type { ImpactAnalyzer } from "../../../engine/ImpactAnalyzer.js";
 import type { CrossLangImpact } from "../../../types/engine.js";
+import type { FileVersionManager } from "../../../engine/FileVersionManager.js";
 import { buildDegradedReasons } from "../../DegradedReasonMapper.js";
 import { AstManager } from "../../../ast/AstManager.js";
-import { checkQuerySupport } from "../../../ast/LanguageSupportSignals.js";
-import { getSupportForFilePath, SupportLevel } from "../../../config/LanguageSupportLevels.js";
+import type { PathNormalizer } from "../../../utils/PathNormalizer.js";
+import {
+    computeAdaptiveFlowGate,
+    recordAdaptiveFlowGateTrace,
+    resolveRolloutPresetFromEnv,
+    setAdaptiveFlowGate
+} from "../../adaptive-flow/AdaptiveFlowGate.js";
+import {
+    evaluateLanguageParityGate,
+    formatParityBlockMessage
+} from "../../../config/LanguageParityGate.js";
+import { normalizeRepoScope } from "../../../utils/RepoScope.js";
+import { evaluateRepoEditPolicy } from "../shared/RepoGuard.js";
+import { normalizeChangeInput } from "./ChangeInputNormalizer.js";
+import { buildWorkflowMeta, buildWorkflowWarnings } from "../shared/WorkflowMeta.js";
+import { evaluateOverrideDecision } from "../shared/OverrideDecision.js";
+import { evaluateIntegrityGuardrailBlock } from "../shared/IntegrityGuardrailDecision.js";
+import type { OptionSource, TraceOptionResolution } from "../../../types/option-trace.js";
+import { TraceBuilder } from "../../trace/TraceBuilder.js";
+import { applyFormatterBridge } from "../../formatter/FormatterBridge.js";
+
+const resolveOptionSource = (explicit: boolean, hasSession: boolean): OptionSource => {
+  if (explicit) return "explicit";
+  if (hasSession) return "session";
+  return "default";
+};
+
+const resolveFormatterMode = (constraints: any): string | undefined => {
+  if (typeof constraints?.formatter === "string") return constraints.formatter;
+  if (typeof constraints?.options?.formatter === "string") return constraints.options.formatter;
+  return undefined;
+};
+
+const buildStringResolution = (
+  resolved: string | undefined,
+  explicit: boolean,
+  hasSession: boolean,
+  requested?: unknown
+): TraceOptionResolution<string | null> => ({
+  source: resolveOptionSource(explicit, hasSession),
+  explicit,
+  resolved: resolved ?? null,
+  ...(requested !== undefined ? { requested } : {})
+});
 
 export class ChangePillar {
-  private fileSystem = new NodeFileSystem(process.cwd());
+  private fileSystem?: IFileSystem;
   
   constructor(private readonly registry: InternalToolRegistry) {}
 
+  private resolveFileSystem(): IFileSystem {
+    if (this.fileSystem) return this.fileSystem;
+    const injected =
+      typeof this.registry.getMetadata === "function"
+        ? this.registry.getMetadata<IFileSystem>("fileSystem")
+        : undefined;
+    this.fileSystem = injected ?? new NodeFileSystem(process.cwd());
+    return this.fileSystem;
+  }
+
   private getEditCoordinator(): EditCoordinator {
     const rootPath = process.cwd();
-    const editorEngine = new EditorEngine(rootPath, this.fileSystem);
-    const historyEngine = new HistoryEngine(rootPath, this.fileSystem);
+    const fileSystem = this.resolveFileSystem();
+    const editorEngine = new EditorEngine(rootPath, fileSystem);
+    const historyEngine = new HistoryEngine(rootPath, fileSystem);
     return new EditCoordinator(editorEngine, historyEngine);
   }
 
   private getEditResolver(): EditResolver {
     const rootPath = process.cwd();
-    const editorEngine = new EditorEngine(rootPath, this.fileSystem);
-    return new EditResolver(this.fileSystem, editorEngine);
+    const fileSystem = this.resolveFileSystem();
+    const editorEngine = new EditorEngine(rootPath, fileSystem);
+    return new EditResolver(fileSystem, editorEngine);
   }
 
   public async execute(intent: ParsedIntent, context: OrchestrationContext): Promise<any> {
     const stopTotal = metrics.startTimer("change.total_ms");
     try {
-      const { targets, constraints, originalIntent } = intent;
-      const { includeImpact = false, includeSymbolImpact = false } = constraints;
-      const integrityOptions = IntegrityEngine.resolveOptions(constraints.integrity, "change");
+      const fileSystem = this.resolveFileSystem();
       const ucg = context.getState<UnifiedContextGraph>('ucg');
-      const rawSessionId = typeof constraints.sessionId === "string" ? constraints.sessionId : undefined;
       const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
-      const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, originalIntent);
-      const sessionPolicy = resolvedSessionId ? artifactManager?.getSession(resolvedSessionId)?.policy : undefined;
-    const resolvedOptions = OptionResolver.resolveChangeOptions(constraints, resolvedSessionId, sessionPolicy);
-      const dryRun = resolvedOptions.effective.dryRun;
-      const reviewOptions = resolvedOptions.effective.reviewOptions;
-      const traceEnabled = resolvedOptions.effective.traceEnabled;
-      const diffMode = resolvedOptions.effective.diffMode;
-      const draftId = typeof (constraints as any).draftId === "string" ? (constraints as any).draftId : undefined;
-      const refinement = typeof (constraints as any).refinement === "string" ? (constraints as any).refinement : undefined;
-      const refinedIntent = refinement ? `${originalIntent}\nRefinement: ${refinement}` : originalIntent;
+      const {
+        targets,
+        constraints,
+        originalIntent,
+        includeImpact,
+        includeSymbolImpact,
+        integrityOptions,
+        resolvedSessionId,
+        sessionPolicy,
+        resolvedOptions,
+        dryRun,
+        reviewOptions,
+        traceEnabled,
+        diffMode,
+        draftId,
+        refinedIntent
+      } = normalizeChangeInput(intent, {
+        resolveSessionId: (rawSessionId, fallback) => artifactManager?.resolveSessionId(rawSessionId, fallback),
+        getSessionPolicy: (sessionId) => (sessionId ? artifactManager?.getSession(sessionId)?.policy : undefined)
+      });
+      const sessionProfile = sessionPolicy?.change?.profile ?? sessionPolicy?.profile;
+      const sessionSafety = sessionPolicy?.change?.safety ?? sessionPolicy?.safety;
+      const traceBuilder = traceEnabled
+        ? new TraceBuilder(
+          "change",
+          {
+            profile: buildStringResolution(
+              resolvedOptions.effective.profile,
+              typeof constraints.profile === "string",
+              Boolean(sessionProfile),
+              typeof constraints.profile === "string" ? constraints.profile : undefined
+            ),
+            safety: buildStringResolution(
+              resolvedOptions.effective.safety,
+              typeof (constraints as any).safety === "string",
+              Boolean(sessionSafety),
+              typeof (constraints as any).safety === "string" ? (constraints as any).safety : undefined
+            ),
+            dryRun: {
+              source: typeof constraints.dryRun === "boolean" ? "explicit" : (sessionSafety ? "session" : "computed"),
+              explicit: typeof constraints.dryRun === "boolean",
+              resolved: dryRun,
+              ...(typeof constraints.dryRun === "boolean" ? { requested: constraints.dryRun } : {})
+            },
+            trace: {
+              source: constraints.trace === true ? "explicit" : "default",
+              explicit: constraints.trace === true,
+              resolved: traceEnabled
+            }
+          },
+          { startedAtMs: Date.now() }
+        )
+        : undefined;
+      let fileCount: number | undefined;
+      const rolloutDependencyGraph = this.registry.getMetadata<DependencyGraph>("dependencyGraph");
+      if (rolloutDependencyGraph?.getIndexStatus) {
+        try {
+          const status = await rolloutDependencyGraph.getIndexStatus();
+          if (typeof status?.global?.totalFiles === "number") {
+            fileCount = status.global.totalFiles;
+          }
+        } catch {
+          fileCount = undefined;
+        }
+      }
+      const gate = computeAdaptiveFlowGate({
+        profile: resolvedOptions.effective.profile,
+        fileCount
+      });
+      setAdaptiveFlowGate(context, gate);
+      if (traceBuilder) {
+        recordAdaptiveFlowGateTrace(traceBuilder, gate, {
+          rolloutMode: resolveRolloutPresetFromEnv() ?? FeatureFlags.getMode(FeatureFlags.ADAPTIVE_FLOW_ENABLED),
+          userIdResolved: Boolean(FeatureFlags.getContext()?.userId)
+        });
+      }
       if (resolvedSessionId) {
         const policyPatch: Partial<{ profile?: string; safety?: string; change?: Record<string, unknown> }> = {};
         if (typeof constraints.profile === "string") {
@@ -119,18 +237,20 @@ export class ChangePillar {
       const draftPhantom = draftPackFromId?.phantomFiles?.[0];
       const draftContent = typeof draftPhantom?.content === "string" ? draftPhantom.content : undefined;
       const draftTargetPath = typeof draftPhantom?.path === "string" ? draftPhantom.path : undefined;
+      const expectedFileVersions = (constraints as any).fileVersions ?? draftPackFromId?.fileVersions;
       const stylePackOverride = this.resolveStylePack((constraints as any).stylePack, artifactManager);
       const sessionStylePack = stylePackOverride
         ?? (resolvedSessionId && artifactManager
           ? artifactManager.getLatestStylePack(resolvedSessionId)
           : undefined);
-      const workflowMeta = this.buildWorkflowMeta({
+      const workflowMeta = buildWorkflowMeta({
         sessionId: resolvedSessionId,
         dryRun,
         stylePack: sessionStylePack,
         artifactManager
       });
-      const workflowWarnings = this.buildWorkflowWarnings(workflowMeta, Boolean(resolvedSessionId));
+      const workflowWarnings = buildWorkflowWarnings(workflowMeta, Boolean(resolvedSessionId));
+      let overrideTrace: OverrideTrace | undefined;
       const attachWorkflow = <T extends Record<string, any>>(payload: T): T & { workflowMeta: WorkflowMeta; workflowWarnings?: string[] } => {
         const next = {
           ...payload,
@@ -138,25 +258,23 @@ export class ChangePillar {
           ...(traceEnabled
             ? {
                 effectiveOptions: {
+                  version: 1,
+                  pillar: "change",
                   profile: resolvedOptions.effective.profile,
                   safety: resolvedOptions.effective.safety,
                   dryRun,
                   reviewOptions,
                   diffMode
                 },
-                decisionTrace: {
-                  dryRun: {
-                    explicit: typeof constraints.dryRun === "boolean",
-                    resolved: dryRun
-                  },
-                  safety: resolvedOptions.effective.safety ?? null,
-                  profile: resolvedOptions.effective.profile ?? null
-                }
+                decisionTrace: traceBuilder?.finalize()
               }
             : {})
         } as T & { workflowMeta: WorkflowMeta; workflowWarnings?: string[] };
         if (workflowWarnings.length > 0) {
           next.workflowWarnings = workflowWarnings;
+        }
+        if (overrideTrace) {
+          (next as any).overrideTrace = overrideTrace;
         }
         return next;
       };
@@ -165,11 +283,142 @@ export class ChangePillar {
       const targetFiles = this.resolveTargetFiles(constraints, targets);
       const editPaths = this.collectEditPaths(rawEdits);
       const shouldBatch = this.shouldUseBatch(constraints, targetFiles, editPaths);
+      const overrideTargets = targetFiles.length > 0 ? targetFiles : editPaths;
+      const formatterMode = resolveFormatterMode(constraints);
+      const overrideEvaluation = await evaluateOverrideDecision({
+        constraints,
+        targetFiles: overrideTargets,
+        pillar: "change",
+        repoId: typeof (constraints as any).repoId === "string" ? (constraints as any).repoId : undefined,
+        auditLogAppend: AuditLog.append
+      });
+      const overrideDecision = overrideEvaluation.decision ?? undefined;
+      const bypassIntegrityGuardrails = overrideEvaluation.bypass.integrityGuardrails;
+      const bypassReviewBlock = overrideEvaluation.bypass.reviewPolicy;
+      const bypassStaleGuard = overrideEvaluation.bypass.staleGuard;
+      overrideTrace = overrideEvaluation.trace;
+      if (traceBuilder) {
+        traceBuilder.recordEvent({
+          area: "guardrails",
+          code: "override_evaluated",
+          data: {
+            decision: overrideDecision?.decision ?? "none",
+            bypassIntegrityGuardrails,
+            bypassReviewBlock,
+            bypassStaleGuard
+          }
+        });
+      }
+      if (overrideEvaluation.blockedResponse) {
+        if (traceBuilder) {
+          traceBuilder.recordSkip("override", "guardrail_blocked", "override not permitted");
+        }
+        return attachWorkflow(overrideEvaluation.blockedResponse);
+      }
+      const repoRegistry = this.registry.getMetadata<RepoRegistry>("repoRegistry");
+      const pathNormalizer = this.registry.getMetadata<PathNormalizer>("pathNormalizer");
+      const fileVersionManager = this.registry.getMetadata<FileVersionManager>("fileVersionManager");
+      const indexStateManager = this.registry.getMetadata<IndexStateManager>("indexStateManager");
+      const allowCrossRepoEdits = Boolean((constraints as any).allowCrossRepoEdits);
+      const repoScopeParams = {
+        repoScope: (constraints as any).repoScope,
+        repoId: (constraints as any).repoId,
+        repoIds: (constraints as any).repoIds
+      };
+      const repoScope = repoRegistry && pathNormalizer
+        ? normalizeRepoScope(repoScopeParams, repoRegistry, { defaultMode: "default" })
+        : undefined;
+      if (traceBuilder && repoScope) {
+        traceBuilder.recordEvent({
+          area: "policy",
+          code: "repo_scope_resolved",
+          data: {
+            mode: repoScope.scope.mode,
+            repoIdsCount: Array.isArray(repoScope.repoIds) ? repoScope.repoIds.length : 0
+          }
+        });
+      }
+
+      const handleRepoGuard = (guard: ReturnType<typeof evaluateRepoEditPolicy>) => {
+        if (!guard.blocked) return null;
+        const reason = guard.blockedReason ?? "cross_repo_edit_blocked";
+        const degradedReasons = buildDegradedReasons([reason]);
+        const guidanceMessage = reason === "cross_repo_edit_blocked"
+          ? "Set allowCrossRepoEdits=true in .kairo/config/mcp-config.json for involved repos, then rerun with allowCrossRepoEdits:true."
+          : "Adjust repoScope to include the target repository or use the default repo.";
+        if (traceBuilder) {
+          traceBuilder.recordSkip("repo_scope", "policy_disabled", reason);
+        }
+        return attachWorkflow({
+          success: false,
+          status: "blocked",
+          message: guard.message ?? "Blocked by repo scope policy.",
+          errorCode: guard.errorCode ?? "CROSS_REPO_EDIT_BLOCKED",
+          blockedReason: reason,
+          degradedReasons,
+          guidance: { message: guidanceMessage },
+          sessionId: resolvedSessionId
+        });
+      };
     
       const v2Enabled = ConfigurationManager.getEditorV2Enabled();
       const v2Mode = ConfigurationManager.getEditorV2Mode();
       const useV2 = v2Enabled && v2Mode !== 'off';
     
+      if (shouldBatch && repoRegistry && pathNormalizer && repoScope) {
+        const guard = evaluateRepoEditPolicy({
+          filePaths: [...targetFiles, ...editPaths],
+          repoScope,
+          repoRegistry,
+          pathNormalizer,
+          allowCrossRepoEdits
+        });
+        const blocked = handleRepoGuard(guard);
+        if (blocked) {
+          return blocked;
+        }
+      }
+
+      const staleGuard = await this.checkStaleGuard({
+        indexStateManager,
+        dryRun,
+        bypass: bypassStaleGuard,
+        workflowWarnings
+      });
+      if (traceBuilder) {
+        traceBuilder.recordEvent({
+          area: "guardrails",
+          code: "stale_guard",
+          data: { blocked: staleGuard.blocked, bypassed: bypassStaleGuard }
+        });
+      }
+      if (staleGuard.blocked) {
+        if (traceBuilder) {
+          traceBuilder.recordSkip("stale_guard", "guardrail_blocked", "index stale risk high");
+        }
+        return attachWorkflow({
+          success: false,
+          status: "blocked",
+          message: staleGuard.message,
+          errorCode: "INDEX_STALE_HIGH",
+          blockedReason: "index_stale_high",
+          guidance: {
+            message: staleGuard.message,
+            suggestedActions: [
+              {
+                id: "manage.reindex",
+                priority: 1,
+                description: "Rebuild index before apply.",
+                rationale: "High stale risk reduces apply safety.",
+                tags: ["repair_ladder", "attempt_2"],
+                toolCall: { tool: "manage", args: { command: "reindex" } }
+              }
+            ]
+          },
+          indexSnapshot: staleGuard.snapshot
+        });
+      }
+
       if (useV2 && shouldBatch) {
         const result = await executeV2BatchChange(
           { intent, context, rawEdits, targetFiles, dryRun, v2Mode },
@@ -181,9 +430,47 @@ export class ChangePillar {
 
       if (shouldBatch) {
         const dependencyGraph = this.registry.getMetadata<DependencyGraph>("dependencyGraph");
-        const indexStateManager = this.registry.getMetadata<IndexStateManager>("indexStateManager");
+        const batchFileVersions = dryRun
+          ? await this.buildFileVersionsSnapshot(targetFiles, fileVersionManager, pathNormalizer)
+          : expectedFileVersions;
+        if (!dryRun && batchFileVersions && fileVersionManager && pathNormalizer) {
+          const mismatch = await this.detectFileVersionMismatch(batchFileVersions, fileVersionManager, pathNormalizer);
+          if (mismatch) {
+            const degradedReasons = buildDegradedReasons(["file_version_mismatch"], { filePath: mismatch.filePath });
+            return attachWorkflow({
+              success: false,
+              status: "blocked",
+              message: "File version mismatch detected. Re-read the file(s) before retrying the change.",
+              errorCode: "FILE_VERSION_MISMATCH",
+              blockedReason: "file_version_mismatch",
+              degradedReasons,
+              guidance: {
+                message: "One or more files changed since planning. Re-read and re-plan before applying.",
+                suggestedActions: [
+                  {
+                    id: "read.view_full",
+                    priority: 1,
+                    description: "Re-read the latest file content.",
+                    rationale: "Refresh context before reapplying changes.",
+                    tags: ["repair_ladder", "attempt_1"],
+                    toolCall: { tool: "read", args: { action: "view_full", target: mismatch.filePath } }
+                  },
+                  {
+                    id: "change.plan",
+                    priority: 2,
+                    description: "Re-plan the change using the latest content.",
+                    rationale: "Ensure edits are based on the current file state.",
+                    tags: ["repair_ladder", "attempt_2"],
+                    toolCall: { tool: "change", args: { action: "plan", intent: originalIntent, target: mismatch.filePath } }
+                  }
+                ]
+              },
+              sessionId: resolvedSessionId
+            });
+          }
+        }
         const result = await executeBatchChange(
-          { intent, context, rawEdits, targetFiles, dryRun, includeImpact, dependencyGraph, indexStateManager, constraints, diffMode },
+          { intent, context, rawEdits, targetFiles, dryRun, includeImpact, dependencyGraph, indexStateManager, constraints, diffMode, fileVersions: batchFileVersions },
           (ctx, tool, args) => this.runTool(ctx, tool, args),
           (e) => this.extractEditFilePath(e),
           (args) => this.buildFailureGuidance(args)
@@ -212,12 +499,42 @@ export class ChangePillar {
           guidance: {
             message: 'Provide a target file path or select a file via navigate/search.',
             suggestedActions: [
-              { pillar: 'navigate', action: 'find', target: originalIntent },
-              { pillar: 'change', action: 'retry', intent: originalIntent, target: '<filePath>' }
+              {
+                id: 'navigate.find',
+                priority: 1,
+                description: 'Find candidate files for this change.',
+                rationale: 'Selecting a concrete file path is required to proceed.',
+                toolCall: { tool: 'navigate', args: { action: 'find', target: originalIntent } }
+              },
+              {
+                id: 'change.retry',
+                priority: 2,
+                description: 'Retry change with an explicit target path.',
+                rationale: 'Providing a file path unblocks the change flow.',
+                toolCall: { tool: 'change', args: { action: 'retry', intent: originalIntent, target: '<filePath>' } }
+              }
             ]
           }
         });
       }
+
+      if (targetPath && repoRegistry && pathNormalizer && repoScope) {
+        const guard = evaluateRepoEditPolicy({
+          filePaths: [targetPath, ...editPaths],
+          repoScope,
+          repoRegistry,
+          pathNormalizer,
+          allowCrossRepoEdits
+        });
+        const blocked = handleRepoGuard(guard);
+        if (blocked) {
+          return blocked;
+        }
+      }
+
+      const fileVersionsSnapshot = dryRun
+        ? await this.buildFileVersionsSnapshot([targetPath], fileVersionManager, pathNormalizer)
+        : undefined;
 
       const useDraftApply = !dryRun && rawEdits.length === 0 && Boolean(draftContent);
       if (useDraftApply && draftTargetPath && draftTargetPath !== targetPath) {
@@ -229,7 +546,13 @@ export class ChangePillar {
           guidance: {
             message: 'Align targetPath with the draft file or regenerate the draft for the intended target.',
             suggestedActions: [
-              { pillar: 'change', action: 'retry', intent: originalIntent, target: draftTargetPath }
+              {
+                id: 'change.retry',
+                priority: 1,
+                description: 'Retry change against the draft target path.',
+                rationale: 'Draft content must align with the chosen target file.',
+                toolCall: { tool: 'change', args: { action: 'retry', intent: originalIntent, target: draftTargetPath } }
+              }
             ]
           },
           sessionId: resolvedSessionId
@@ -245,13 +568,31 @@ export class ChangePillar {
         if (edits.length === 0) {
           return attachWorkflow({
             success: false,
-            message: 'No valid edits provided. Ensure targetContent/targetString and replacement/template are set.',
+            errorCode: "SCHEMA_VALIDATION_FAILED",
+            message: 'No valid edits provided. Ensure targetContent/targetString and replacement/template are set. Example: { edits: [{ targetString: "old", replacementString: "new" }] }.',
             invalidEdits: normalization.invalidEdits,
+            schemaCoaching: this.buildSchemaCoaching({
+              errorCode: "SCHEMA_VALIDATION_FAILED",
+              targetPath,
+              intent: originalIntent
+            }),
             guidance: {
-              message: 'Use read to copy exact text or provide a shorter targetString.',
+              message: 'Use read to copy exact text or provide a shorter targetString. Example edits: [{ targetString: "old", replacementString: "new" }].',
               suggestedActions: [
-                { pillar: 'read', action: 'view_fragment', target: targetPath },
-                { pillar: 'change', action: 'retry', intent: originalIntent, target: targetPath }
+                {
+                  id: 'read.view_fragment',
+                  priority: 1,
+                  description: 'View the exact target fragment.',
+                  rationale: 'Accurate target text prevents edit mismatches.',
+                  toolCall: { tool: 'read', args: { action: 'view_fragment', target: targetPath } }
+                },
+                {
+                  id: 'change.retry',
+                  priority: 2,
+                  description: 'Retry change with updated target text.',
+                  rationale: 'Retry with corrected target string.',
+                  toolCall: { tool: 'change', args: { action: 'retry', intent: originalIntent, target: targetPath } }
+                }
               ]
             },
             sessionId: resolvedSessionId
@@ -265,29 +606,51 @@ export class ChangePillar {
           guidance: {
             message: 'Re-run a dryRun to generate a DraftPack before applying.',
             suggestedActions: [
-              { pillar: 'change', action: 'plan', intent: originalIntent, target: targetPath }
+              {
+                id: 'change.plan',
+                priority: 1,
+                description: 'Generate a new plan (dryRun).',
+                rationale: 'Draft content is required to apply without edits.',
+                toolCall: { tool: 'change', args: { action: 'plan', intent: originalIntent, target: targetPath } }
+              }
             ]
           },
           sessionId: resolvedSessionId
         });
       }
 
-      const parityBlock = await this.resolveParityBlock(targetPath);
-      if (parityBlock.blocked) {
-        const reasons = parityBlock.reason ? [parityBlock.reason] : undefined;
-        const degradedReasons = reasons
-          ? buildDegradedReasons(reasons, { languageId: parityBlock.languageId, filePath: targetPath })
-          : undefined;
-        const message = parityBlock.message ?? "Language parity requirements are missing.";
+      const parityGate = await this.resolveParityGate(targetPath, dryRun ? "change_plan" : "change_apply");
+      const parityDegradedReasons = parityGate.result.reasons.length > 0
+        ? buildDegradedReasons(parityGate.result.reasons, {
+          languageId: parityGate.result.languageId,
+          filePath: targetPath
+        })
+        : undefined;
+      if (traceBuilder) {
+        traceBuilder.recordEvent({
+          area: "capabilities",
+          code: "parity_gate",
+          data: {
+            blocked: parityGate.blocked || parityGate.result.outcome === "block",
+            languageId: parityGate.result.languageId ?? null,
+            reasons: parityGate.result.reasons.slice(0, 3)
+          }
+        });
+      }
+      if (parityGate.result.outcome === "block") {
+        if (traceBuilder) {
+          traceBuilder.recordSkip("parity_gate", "guardrail_blocked", "language parity gate blocked");
+        }
+        const message = parityGate.message ?? "Language parity requirements are missing.";
         return attachWorkflow({
           success: false,
           status: "blocked",
           message,
           targetFile: targetPath,
           errorCode: "LANGUAGE_PARITY_MISSING",
-          blockedReason: parityBlock.reason ?? "language_parity_missing",
+          blockedReason: parityGate.result.reasons[0] ?? "language_parity_missing",
           blockingErrors: ["LANGUAGE_PARITY_MISSING"],
-          degradedReasons,
+          degradedReasons: parityDegradedReasons,
           guidance: { message },
           sessionId: resolvedSessionId
         });
@@ -329,7 +692,6 @@ export class ChangePillar {
       }
 
       const dependencyGraph = this.registry.getMetadata<DependencyGraph>("dependencyGraph");
-      const indexStateManager = this.registry.getMetadata<IndexStateManager>("indexStateManager");
       let guardrailResult: any = undefined;
       let reviewOriginalContent = "";
       let reviewNextContent = "";
@@ -337,7 +699,7 @@ export class ChangePillar {
         const guardrailTargetPath = resolveGuardrailTargetPath(targetPath);
         let originalContent = "";
         try {
-          originalContent = await this.fileSystem.readFile(guardrailTargetPath);
+          originalContent = await fileSystem.readFile(guardrailTargetPath);
         } catch {
           originalContent = "";
         }
@@ -370,7 +732,26 @@ export class ChangePillar {
           applyMode: !dryRun
         });
 
-        if (!dryRun && guardrailResult?.status === "block") {
+        const guardrailDecision = evaluateIntegrityGuardrailBlock({
+          guardrailResult,
+          dryRun,
+          bypass: bypassIntegrityGuardrails,
+          workflowWarnings,
+          warningMessage: "Override bypassed integrity guardrails blocking for this apply.",
+          downgradeOnBypass: true
+        });
+        guardrailResult = guardrailDecision.guardrailResult;
+        if (traceBuilder) {
+          traceBuilder.recordEvent({
+            area: "guardrails",
+            code: "integrity_guardrails",
+            data: { blocked: guardrailDecision.blocked, bypassed: bypassIntegrityGuardrails }
+          });
+        }
+        if (guardrailDecision.blocked) {
+          if (traceBuilder) {
+            traceBuilder.recordSkip("integrity_guardrails", "guardrail_blocked", "integrity guardrails blocked apply");
+          }
           return attachWorkflow({
             success: false,
             status: "blocked",
@@ -406,6 +787,7 @@ export class ChangePillar {
       const shouldBlockOn = !dryRun && blockOn.length > 0 && Boolean(targetPath);
       let preApplyReview: any = undefined;
       let preApplyReviewComputed = false;
+      let formatterResult: Awaited<ReturnType<typeof applyFormatterBridge>> = undefined;
       if (shouldBlockOn && targetPath) {
         preApplyReview = await new ReviewReportBuilder(
           { dependencyGraph, indexStateManager },
@@ -422,6 +804,9 @@ export class ChangePillar {
 
         const blockReasons = collectBlockReasons(preApplyReview, blockOn);
         if (blockReasons.length > 0) {
+          if (bypassReviewBlock) {
+            workflowWarnings.push("Override bypassed pre-apply review blocking for this apply.");
+          } else {
           if (artifactManager) {
             artifactManager.store({
               id: preApplyReview.id,
@@ -446,11 +831,18 @@ export class ChangePillar {
               message,
               reviewBlockReasons: blockReasons,
               suggestedActions: [
-                { pillar: "change", action: "review", target: targetPath }
+                {
+                  id: "change.review",
+                  priority: 1,
+                  description: "Review findings before applying changes.",
+                  rationale: "Review is required to resolve blocking issues.",
+                  toolCall: { tool: "change", args: { action: "review", target: targetPath } }
+                }
               ]
             },
             sessionId: resolvedSessionId
           });
+          }
         }
       }
 
@@ -461,7 +853,7 @@ export class ChangePillar {
       
       const dependencyPromise = allowDependencyAnalysis
         ? (async () => {
-            const deps = await collectDependentsFromGraph(ucg, targetPath);
+            const deps = await collectDependentsFromGraph(ucg, targetPath, context);
             if (deps) {
               return deps;
             }
@@ -473,9 +865,47 @@ export class ChangePillar {
         : Promise.resolve([]);
       
       const symbolImpactPromise = includeSymbolImpact && targetPath
-        ? analyzeSymbolImpact(targetPath, edits, constraints, this.fileSystem)
+        ? analyzeSymbolImpact(targetPath, edits, constraints, fileSystem)
         : Promise.resolve(null);
 
+      const fileVersions = !dryRun ? expectedFileVersions : undefined;
+      if (!dryRun && fileVersions && fileVersionManager && pathNormalizer) {
+        const mismatch = await this.detectFileVersionMismatch(fileVersions, fileVersionManager, pathNormalizer);
+        if (mismatch) {
+          const degradedReasons = buildDegradedReasons(["file_version_mismatch"], { filePath: mismatch.filePath });
+          return attachWorkflow({
+            success: false,
+            status: "blocked",
+            message: "File version mismatch detected. Re-read the file before retrying the change.",
+            targetFile: mismatch.filePath,
+            errorCode: "FILE_VERSION_MISMATCH",
+            blockedReason: "file_version_mismatch",
+            degradedReasons,
+            guidance: {
+              message: "The file changed since it was read. Re-read and re-plan before applying.",
+              suggestedActions: [
+                {
+                  id: "read.view_full",
+                  priority: 1,
+                  description: "Re-read the latest file content.",
+                  rationale: "Refresh context before reapplying changes.",
+                  tags: ["repair_ladder", "attempt_1"],
+                  toolCall: { tool: "read", args: { action: "view_full", target: mismatch.filePath } }
+                },
+                {
+                  id: "change.plan",
+                  priority: 2,
+                  description: "Re-plan the change using the latest content.",
+                  rationale: "Ensure edits are based on the current file state.",
+                  tags: ["repair_ladder", "attempt_2"],
+                  toolCall: { tool: "change", args: { action: "plan", intent: originalIntent, target: mismatch.filePath } }
+                }
+              ]
+            },
+            sessionId: resolvedSessionId
+          });
+        }
+      }
       const stopEdit = metrics.startTimer("change.edit_coordinator_ms");
       let editResult: any;
       try {
@@ -486,10 +916,47 @@ export class ChangePillar {
             options: {
               skipImpactPreview: dryRun && !allowImpactPreview,
               ...(diffMode ? { diffMode } : {})
-            }
+            },
+            fileVersions
           });
       } finally {
         stopEdit();
+      }
+
+      if (!editResult.success && editResult.errorCode === "FILE_VERSION_MISMATCH" && targetPath) {
+        const degradedReasons = buildDegradedReasons(["file_version_mismatch"], { filePath: targetPath });
+        return attachWorkflow({
+          success: false,
+          status: "blocked",
+          message: "File version mismatch detected. Re-read the file before retrying the change.",
+          targetFile: targetPath,
+          errorCode: "FILE_VERSION_MISMATCH",
+          blockedReason: "file_version_mismatch",
+          degradedReasons,
+          currentFileStates: editResult.updatedFileStates,
+          guidance: {
+            message: "The file changed since it was read. Re-read and re-plan before applying.",
+            suggestedActions: [
+              {
+                id: "read.view_full",
+                priority: 1,
+                description: "Re-read the latest file content.",
+                rationale: "Refresh context before reapplying changes.",
+                tags: ["repair_ladder", "attempt_1"],
+                toolCall: { tool: "read", args: { action: "view_full", target: targetPath } }
+              },
+              {
+                id: "change.plan",
+                priority: 2,
+                description: "Re-plan the change using the latest content.",
+                rationale: "Ensure edits are based on the current file state.",
+                tags: ["repair_ladder", "attempt_2"],
+                toolCall: { tool: "change", args: { action: "plan", intent: originalIntent, target: targetPath } }
+              }
+            ]
+          },
+          sessionId: resolvedSessionId
+        });
       }
 
       if (!editResult.success && editResult.errorCode === "SYNTAX_VALIDATION_FAILED" && targetPath) {
@@ -557,10 +1024,46 @@ export class ChangePillar {
               filePath: targetPath,
               edits: attempt.edits,
               dryRun,
-              options: diffMode ? { diffMode } : undefined
+              options: diffMode ? { diffMode } : undefined,
+              fileVersions
             });
           } finally {
             stopCorrect();
+          }
+          if (!correctedResult.success && correctedResult.errorCode === "FILE_VERSION_MISMATCH" && targetPath) {
+            const degradedReasons = buildDegradedReasons(["file_version_mismatch"], { filePath: targetPath });
+            return attachWorkflow({
+              success: false,
+              status: "blocked",
+              message: "File version mismatch detected. Re-read the file before retrying the change.",
+              targetFile: targetPath,
+              errorCode: "FILE_VERSION_MISMATCH",
+              blockedReason: "file_version_mismatch",
+              degradedReasons,
+              currentFileStates: correctedResult.updatedFileStates,
+              guidance: {
+                message: "The file changed since it was read. Re-read and re-plan before applying.",
+                suggestedActions: [
+                  {
+                    id: "read.view_full",
+                    priority: 1,
+                    description: "Re-read the latest file content.",
+                    rationale: "Refresh context before reapplying changes.",
+                    tags: ["repair_ladder", "attempt_1"],
+                    toolCall: { tool: "read", args: { action: "view_full", target: targetPath } }
+                  },
+                  {
+                    id: "change.plan",
+                    priority: 2,
+                    description: "Re-plan the change using the latest content.",
+                    rationale: "Ensure edits are based on the current file state.",
+                    tags: ["repair_ladder", "attempt_2"],
+                    toolCall: { tool: "change", args: { action: "plan", intent: originalIntent, target: targetPath } }
+                  }
+                ]
+              },
+              sessionId: resolvedSessionId
+            });
           }
           if (correctedResult.success) {
             finalResult = correctedResult;
@@ -585,8 +1088,14 @@ export class ChangePillar {
           })
         : undefined;
       const degradedReasonDetails = crossLangImpact?.reasons
-        ? buildDegradedReasons(crossLangImpact.reasons, { packageName: crossLangImpact.packageName })
+        ? buildDegradedReasons(crossLangImpact.reasons, {
+          packageName: crossLangImpact.packageName
+        })
         : undefined;
+      const mergedDegradedReasons = [
+        ...(degradedReasonDetails ?? []),
+        ...(parityDegradedReasons ?? [])
+      ];
       let impactReport = toImpactReport(impact, deps, targetPath, hotSpots, crossLangImpact);
       let architecturalRisk: any = guardrailResult?.architecturalRisk;
       const architecturalWarnings: string[] = Array.isArray(guardrailResult?.architecturalWarnings)
@@ -623,23 +1132,33 @@ export class ChangePillar {
         message: dryRun ? 'Change plan generated. Review the diff before applying.' : 'Changes successfully applied.',
         suggestedActions: dryRun ?
           [{
-            pillar: 'change',
-            action: 'apply',
-            intent: originalIntent,
-            target: targetPath,
-            edits,
-            options: { dryRun: false }
+            id: 'change.apply',
+            priority: 1,
+            description: 'Apply the planned changes.',
+            rationale: 'Plan completed successfully; apply to update files.',
+            toolCall: {
+              tool: 'change',
+              args: { action: 'apply', intent: originalIntent, target: targetPath, edits, options: { dryRun: false } }
+            }
           }] :
-          [{ pillar: 'manage', action: 'test' }]
+          [{
+            id: 'manage.test',
+            priority: 1,
+            description: 'Run tests for impacted areas.',
+            rationale: 'Validate behavior after applying changes.',
+            toolCall: { tool: 'manage', args: { command: 'test' } }
+          }]
       };
       if (dryRun && targetPath && !includeImpact && this.shouldSuggestImpact(targetPath, guardrailResult, edits)) {
         successGuidance.suggestedActions.push({
-          pillar: 'change',
-          action: 'plan',
-          intent: originalIntent,
-          target: targetPath,
-          edits,
-          options: { dryRun: true, includeImpact: true }
+          id: 'change.plan.impact',
+          priority: 2,
+          description: 'Generate a plan with impact analysis.',
+          rationale: 'Impact analysis helps validate risk before apply.',
+          toolCall: {
+            tool: 'change',
+            args: { action: 'plan', intent: originalIntent, target: targetPath, edits, options: { dryRun: true, includeImpact: true } }
+          }
         });
       }
 
@@ -661,7 +1180,18 @@ export class ChangePillar {
           oldContent: originalContent,
           newContent: nextContent
         });
+        if (fileVersionsSnapshot) {
+          draftPack.fileVersions = fileVersionsSnapshot;
+        }
         draftPack.workflowMeta = workflowMeta;
+        const applyAction = successGuidance?.suggestedActions?.find((action: any) => action?.id === "change.apply");
+        if (applyAction?.toolCall?.tool === "change" && applyAction.toolCall.args && typeof applyAction.toolCall.args === "object") {
+          applyAction.toolCall.args = {
+            ...applyAction.toolCall.args,
+            draftId: draftPack.id,
+            ...(draftPack.fileVersions ? { fileVersions: draftPack.fileVersions } : {})
+          };
+        }
       }
 
       if (!preApplyReviewComputed && (reviewOptions?.preApply ?? dryRun) && targetPath) {
@@ -678,11 +1208,55 @@ export class ChangePillar {
         });
       }
 
+      if (!dryRun && finalResult.success && formatterMode) {
+        const formatterTargets = Array.from(
+          new Set(
+            [
+              ...(targetPath ? [targetPath] : []),
+              ...targetFiles,
+              ...editPaths
+            ].filter((value): value is string => typeof value === "string" && value.length > 0)
+          )
+        );
+        formatterResult = await applyFormatterBridge({
+          mode: formatterMode,
+          filePaths: formatterTargets,
+          rootPath: process.cwd(),
+          fileSystem,
+          tool: "change",
+          rollbackAvailable: Boolean(finalResult.operation?.id)
+        });
+        if (formatterResult?.degradedReasons?.length) {
+          const formatterDegraded = buildDegradedReasons(formatterResult.degradedReasons ?? [], { filePath: targetPath });
+          if (formatterDegraded) {
+            mergedDegradedReasons.push(...formatterDegraded);
+          }
+        }
+        if (traceBuilder && formatterResult) {
+          traceBuilder.recordEvent({
+            area: "io",
+            code: "formatter_bridge",
+            data: {
+              mode: formatterMode,
+              applied: formatterResult.applied,
+              skippedReason: formatterResult.skippedReason ?? null,
+              degradedReasons: formatterResult.degradedReasons
+            }
+          });
+        }
+        if (formatterResult?.suggestedActions?.length) {
+          successGuidance.suggestedActions = [
+            ...(Array.isArray(successGuidance.suggestedActions) ? successGuidance.suggestedActions : []),
+            ...formatterResult.suggestedActions
+          ];
+        }
+      }
+
       let postReview: any = undefined;
       if (!dryRun && reviewOptions?.postApply && targetPath && finalResult.success) {
         let currentContent = "";
         try {
-          currentContent = await this.fileSystem.readFile(targetPath);
+          currentContent = await fileSystem.readFile(targetPath);
         } catch {
           currentContent = reviewNextContent ?? "";
         }
@@ -748,13 +1322,37 @@ export class ChangePillar {
           const top = relatedDocs[0];
           if (top?.filePath) {
             successGuidance.suggestedActions.push({
-              pillar: 'document_section',
-              action: 'preview',
-              target: top.filePath,
-              headingPath: top.sectionPath
+              id: 'document_section.preview',
+              priority: 2,
+              description: 'Preview related documentation section.',
+              rationale: 'Docs may need updates after code changes.',
+              toolCall: {
+                tool: 'document_section',
+                args: { action: 'preview', target: top.filePath, headingPath: top.sectionPath }
+              }
             });
           }
         }
+      }
+
+      if (overrideDecision) {
+        await AuditLog.append({
+          pillar: "change",
+          operation: dryRun ? "dry_run" : "apply",
+          decision: overrideDecision.decision,
+          actor: overrideDecision.approval?.approvedBy,
+          reason: overrideDecision.approval?.reason,
+          ticket: overrideDecision.approval?.ticket,
+          scope: overrideDecision.scope,
+          requested: overrideDecision.requestedAllow,
+          effective: overrideDecision.effectiveAllow,
+          targetFiles: overrideTargets,
+          result: {
+            success: finalResult.success,
+            status: finalResult.status,
+            errorCode: finalResult.errorCode
+          }
+        });
       }
 
       return attachWorkflow({
@@ -786,9 +1384,10 @@ export class ChangePillar {
         guidance: failureGuidance ?? successGuidance,
         sessionId: resolvedSessionId,
         relatedDocs,
+        formatter: formatterResult,
         integrity: integrityReport,
-        degraded: !finalResult.success && autoCorrectionAttempts.length === 0,
-        degradedReasons: degradedReasonDetails,
+        degraded: (!finalResult.success && autoCorrectionAttempts.length === 0) || mergedDegradedReasons.length > 0,
+        degradedReasons: mergedDegradedReasons.length > 0 ? mergedDegradedReasons : undefined,
         budget: {
           ...budget,
           used: {
@@ -820,37 +1419,14 @@ export class ChangePillar {
     return (fromConstraints.length > 0 ? fromConstraints : targets).filter((t: any) => typeof t === 'string');
   }
 
-  private async resolveParityBlock(targetPath: string): Promise<{
-    blocked: boolean;
-    reason?: string;
-    message?: string;
-    languageId?: string;
-  }> {
-    const support = getSupportForFilePath(targetPath);
-    if (!support || support.level !== SupportLevel.L3) {
-      return { blocked: false };
-    }
-    const requiredQueries = support.editPolicy.requireQueries ?? [];
-    if (requiredQueries.length === 0) {
-      return { blocked: false };
-    }
-    const signal = await checkQuerySupport(targetPath, requiredQueries, { required: true });
-    if (!signal.degraded) {
-      return { blocked: false };
-    }
-    const astManager = AstManager.getInstance();
-    const languageId = astManager.getLanguageId(targetPath);
-    const missing = Array.isArray(signal.missing) ? signal.missing : [];
-    const missingSummary = missing.length > 0 ? ` (${missing.join(", ")})` : "";
-    const message = signal.reason === "language_parser_unavailable"
-      ? `Language parser unavailable for ${targetPath}.`
-      : `Missing query pack for ${languageId}${missingSummary}.`;
-    return {
-      blocked: true,
-      reason: signal.reason,
-      message,
-      languageId
-    };
+  private async resolveParityGate(
+    targetPath: string,
+    operation: "change_plan" | "change_apply"
+  ): Promise<{ blocked: boolean; message?: string; result: Awaited<ReturnType<typeof evaluateLanguageParityGate>> }> {
+    const result = await evaluateLanguageParityGate({ filePath: targetPath, operation });
+    const blocked = result.outcome === "block";
+    const message = result.reasons.length > 0 ? formatParityBlockMessage({ filePath: targetPath, result }) : undefined;
+    return { blocked, message, result };
   }
 
   private collectEditPaths(edits: any[]): string[] {
@@ -860,6 +1436,38 @@ export class ChangePillar {
       if (p) paths.add(p);
     }
     return Array.from(paths);
+  }
+
+  private buildSchemaCoaching(args: { errorCode: string; targetPath?: string; intent?: string }) {
+    return {
+      errorCode: args.errorCode,
+      retryable: true,
+      nextAttemptHints: [
+        "Provide edits with targetString and replacementString.",
+        "Use read to capture exact target text before retry."
+      ],
+      requiredFields: ["edits[].targetString", "edits[].replacementString"],
+      unknownFields: [],
+      editsTemplate: {
+        edits: [
+          {
+            targetString: "<exact text>",
+            replacementString: "<replacement>"
+          }
+        ]
+      },
+      schemaExample: {
+        edits: [
+          {
+            targetString: "old",
+            replacementString: "new"
+          }
+        ]
+      },
+      helpUrl: "docs/guides/getting-started.md",
+      targetPath: args.targetPath,
+      intent: args.intent
+    };
   }
 
   private shouldUseBatch(constraints: any, targetFiles: string[], editPaths: string[]): boolean {
@@ -872,7 +1480,7 @@ export class ChangePillar {
       return reviewOptions;
     }
     const defaults = hasSession
-      ? { preApply: true, postApply: false, strictness: "balanced", blockOn: ["syntax", "guardrails", "vibe"] }
+      ? { preApply: true, postApply: false, strictness: "balanced", blockOn: ["syntax", "guardrails"] }
       : { preApply: true, postApply: false, strictness: "permissive", blockOn: ["syntax"] };
     const hasBlockOn = Array.isArray(reviewOptions?.blockOn);
     return {
@@ -902,40 +1510,51 @@ export class ChangePillar {
     return undefined;
   }
 
-  private buildWorkflowMeta(args: {
-    sessionId?: string;
-    dryRun: boolean;
-    stylePack?: StylePack;
-    artifactManager?: FlowArtifactManager;
-  }): WorkflowMeta {
-    const sessionArtifacts = args.sessionId && args.artifactManager
-      ? args.artifactManager.getBySession(args.sessionId)
-      : [];
-    const hasResearch = sessionArtifacts.some((artifact) => artifact.type === "research");
-    const hasAnalysis = sessionArtifacts.some((artifact) => artifact.type === "analysis");
-    const hasStylePack = Boolean(args.stylePack);
-    const dryRunUsed = args.dryRun;
-    const confidence: WorkflowMeta["confidence"] =
-      hasResearch && hasAnalysis && hasStylePack && dryRunUsed
-        ? "high"
-        : (hasStylePack || hasAnalysis || dryRunUsed)
-          ? "medium"
-          : "low";
-    const reasons: string[] = [];
-    if (!hasResearch) reasons.push("missing_research");
-    if (!hasAnalysis) reasons.push("missing_analysis");
-    if (!hasStylePack) reasons.push("missing_style_pack");
-    if (!dryRunUsed) reasons.push("dry_run_disabled");
-    return {
-      confidence,
-      reasons,
-      workflowStatus: {
-        hasResearch,
-        hasAnalysis,
-        hasStylePack,
-        dryRunUsed
+  private async buildFileVersionsSnapshot(
+    filePaths: string[],
+    fileVersionManager?: FileVersionManager,
+    pathNormalizer?: PathNormalizer
+  ): Promise<Record<string, { expectedVersion?: number; expectedHash?: string }> | undefined> {
+    if (!fileVersionManager || !pathNormalizer) return undefined;
+    const snapshot: Record<string, { expectedVersion?: number; expectedHash?: string }> = {};
+    const uniquePaths = Array.from(new Set(filePaths.filter(Boolean)));
+    for (const filePath of uniquePaths) {
+      const relPath = pathNormalizer.normalize(filePath);
+      try {
+        const absPath = pathNormalizer.toAbsolute(relPath);
+        const versionInfo = await fileVersionManager.getVersion(absPath);
+        snapshot[relPath] = {
+          expectedVersion: versionInfo.version,
+          expectedHash: versionInfo.contentHash
+        };
+      } catch {
+        // skip missing files
       }
-    };
+    }
+    return Object.keys(snapshot).length > 0 ? snapshot : undefined;
+  }
+
+  private async detectFileVersionMismatch(
+    fileVersions: Record<string, { expectedVersion?: number; expectedHash?: string }>,
+    fileVersionManager: FileVersionManager,
+    pathNormalizer: PathNormalizer
+  ): Promise<{ filePath: string } | null> {
+    for (const [relPath, expected] of Object.entries(fileVersions)) {
+      if (!expected) continue;
+      try {
+        const absPath = pathNormalizer.toAbsolute(pathNormalizer.normalize(relPath));
+        const current = await fileVersionManager.getVersion(absPath);
+        if (typeof expected.expectedHash === "string" && expected.expectedHash.length > 0 && expected.expectedHash !== current.contentHash) {
+          return { filePath: relPath };
+        }
+        if (typeof expected.expectedVersion === "number" && expected.expectedVersion !== current.version) {
+          return { filePath: relPath };
+        }
+      } catch {
+        return { filePath: relPath };
+      }
+    }
+    return null;
   }
 
   private extractTargetFromEdits(edits: any[]): string | undefined {
@@ -962,8 +1581,20 @@ export class ChangePillar {
     return {
       message: args.failureMessage || 'Change failed.',
       suggestedActions: [
-        { pillar: 'read', action: 'view_fragment', target: args.targetPath },
-        { pillar: 'change', action: 'retry', intent: args.intent, target: args.targetPath }
+        {
+          id: 'read.view_fragment',
+          priority: 1,
+          description: 'View the exact target fragment.',
+          rationale: 'Confirm the current content before retrying.',
+          toolCall: { tool: 'read', args: { action: 'view_fragment', target: args.targetPath } }
+        },
+        {
+          id: 'change.retry',
+          priority: 2,
+          description: 'Retry change with updated target text.',
+          rationale: 'Retry after verifying the current content.',
+          toolCall: { tool: 'change', args: { action: 'retry', intent: args.intent, target: args.targetPath } }
+        }
       ]
     };
   }
@@ -988,23 +1619,6 @@ export class ChangePillar {
       replacementString: args.draftContent,
       indexRange: { start: 0, end: args.originalContent.length }
     }];
-  }
-
-  private buildWorkflowWarnings(meta: WorkflowMeta, hasSession: boolean): string[] {
-    const warnings: string[] = [];
-    if (hasSession && !meta.workflowStatus.hasStylePack) {
-      warnings.push("No StylePack found in session. Consider running understand({ vibe: { extract: true } }).");
-    }
-    if (hasSession && !meta.workflowStatus.hasAnalysis) {
-      warnings.push("No AnalysisPack found in session. Consider running understand({ analysis: { clusters: true } }).");
-    }
-    if (hasSession && !meta.workflowStatus.hasResearch) {
-      warnings.push("No ResearchPack found in session. Consider running explore({ research: { sketch: true } }).");
-    }
-    if (!meta.workflowStatus.dryRunUsed) {
-      warnings.push("Applied changes without dryRun; review is recommended before apply.");
-    }
-    return warnings;
   }
 
   private async buildCrossLangImpact(
@@ -1034,11 +1648,14 @@ export class ChangePillar {
     const beforeManifest = loadResult.manifest;
 
     let afterManifest = beforeManifest;
-    if (alias.entryPath.endsWith(".d.ts") && fs.existsSync(alias.entryPath)) {
+    if (alias.entryPath.endsWith(".d.ts")) {
+      const fileSystem = this.resolveFileSystem();
+      if (await fileSystem.exists(alias.entryPath)) {
       const generator = new ContractManifestGenerator();
       afterManifest = generator.generateFromDts(alias.packageName, alias.entryPath, {
         sourceRepo: repo.path
       });
+      }
     }
 
     let diff = diffManifests(beforeManifest, afterManifest);
@@ -1145,12 +1762,13 @@ export class ChangePillar {
       const importPattern = new RegExp(
         String.raw`(?:from\s+["']${this.escapeRegExp(packageName)}["']|require\(\s*["']${this.escapeRegExp(packageName)}["']\s*\)|import\(\s*["']${this.escapeRegExp(packageName)}["']\s*\))`
       );
+      const fileSystem = this.resolveFileSystem();
       for (const filePath of paths) {
         if (!filePath || filePath === entryPath) continue;
         if (filePath.includes("/.kairo/") || filePath.includes("/node_modules/")) continue;
         if (!/\.(ts|tsx|js|jsx)$/.test(filePath)) continue;
         try {
-          const content = fs.readFileSync(filePath, "utf-8");
+          const content = await fileSystem.readFile(filePath);
           if (!importPattern.test(content)) continue;
         } catch {
           continue;
@@ -1186,6 +1804,30 @@ export class ChangePillar {
       }
     }
     return false;
+  }
+
+  private async checkStaleGuard(args: {
+    indexStateManager?: IndexStateManager;
+    dryRun: boolean;
+    bypass: boolean;
+    workflowWarnings: string[];
+  }): Promise<{ blocked: boolean; message: string; snapshot?: any }> {
+    if (args.dryRun || !args.indexStateManager) {
+      return { blocked: false, message: "" };
+    }
+    const snapshot = await args.indexStateManager.getSnapshot();
+    if (snapshot.staleRisk !== "high") {
+      return { blocked: false, message: "", snapshot };
+    }
+    if (args.bypass) {
+      args.workflowWarnings.push("Override bypassed stale index guard.");
+      return { blocked: false, message: "", snapshot };
+    }
+    return {
+      blocked: true,
+      message: "Index staleness is high; reindex before apply.",
+      snapshot
+    };
   }
 
 }

@@ -17,6 +17,41 @@ Kairo is configured via environment variables. Most users only need a few.
 
 Timeouts are primarily controlled by your MCP host (per-request timeout). Some operations also accept per-call timeouts via `limits.timeoutMs` (see `docs/agent/TOOL_REFERENCE.md`).
 
+## Drift checks (ADR-077)
+
+| Variable | Purpose | Notes |
+|---|---|---|
+| `KAIRO_DRIFT_CHECK_MAX_FILES` | Max indexed files sampled when computing workspace drift. | Default 200. |
+| `KAIRO_FORMATTER_MAX_FILES` | Max files for formatter bridge apply. | Default 10. |
+| `KAIRO_FORMATTER_ALLOW_UNTRACKED` | Allow formatter bridge to write even when undo/rollback is available (untracked by history). | Default `false`. |
+| `KAIRO_PATCH_STORAGE_WARN_FREE_PCT` | Patch ledger disk free warning threshold (%). | Default 8. |
+| `KAIRO_PATCH_STORAGE_BLOCK_FREE_PCT` | Patch ledger disk free block threshold (%). | Default 3. |
+| `.kairo/config/scopes.json` | Manual scope overrides. | Optional; defines `serviceRoot` scopes for drift grouping. |
+| `KAIRO_SCALE_TIER_S_MAX_FILES` | Max file count for scale tier S. | Default 5000. |
+| `KAIRO_SCALE_TIER_M_MAX_FILES` | Max file count for scale tier M. | Default 50000. |
+
+## Adaptive LOD (ADR-078)
+
+| Variable | Purpose | Notes |
+|---|---|---|
+| `KAIRO_ADAPTIVE_LOD_ENABLED` | Enable adaptive profile downshift. | Default `true`; set `false` to disable. |
+| `KAIRO_ADAPTIVE_LOD_WINDOW` | Sliding window size (calls). | Default 12. |
+| `KAIRO_ADAPTIVE_LOD_COOLDOWN_CALLS` | Cooldown before allowing recovery. | Default 20. |
+
+## Storage maintenance (ADR-059)
+
+| Variable | Purpose | Notes |
+|---|---|---|
+| `KAIRO_STORAGE_PRUNE_INTERVAL_MS` | Background prune interval (ms). | `0`/unset disables background prune. |
+| `KAIRO_STORAGE_PRUNE_ON_START` | Run prune once on startup. | `true` to enable. |
+| `KAIRO_STORAGE_PRUNE_FLOW_ARTIFACTS` | Include flow artifacts in prune. | `true` to enable. |
+| `KAIRO_STORAGE_PRUNE_COMPACT` | Run compact rewrite after prune. | `true` to enable. |
+| `KAIRO_EVIDENCE_PACK_MAX_COUNT` | Evidence pack max count cap. | Default ~300. |
+| `KAIRO_EVIDENCE_PACK_MAX_BYTES` | Evidence pack byte cap. | Default 100MB. |
+| `KAIRO_EVIDENCE_PACK_STALE_CHECK_MAX_ITEMS` | Evidence pack stale sampling limit. | Default 24 items. |
+| `KAIRO_CHUNK_SUMMARY_MAX_CHUNKS` | Chunk summary max chunk count. | Default 20k. |
+| `KAIRO_CHUNK_SUMMARY_MAX_BYTES` | Chunk summary byte cap. | Default 100MB. |
+
 ## Project config files (OSS essentials)
 
 These files live under `.kairo/` in the **target project root**.
@@ -29,7 +64,13 @@ Create `.kairo/config/mcp-config.json`:
 {
   "version": "1.0",
   "repositories": {
-    "main": { "path": ".", "name": "Main Repo", "type": "primary", "languages": ["typescript"] }
+    "main": {
+      "path": ".",
+      "name": "Main Repo",
+      "type": "primary",
+      "languages": ["typescript"],
+      "allowCrossRepoEdits": false
+    }
   },
   "defaultRepo": "main"
 }
@@ -37,6 +78,7 @@ Create `.kairo/config/mcp-config.json`:
 
 - Legacy location (if you already have it): `.mcp-config.json` in the project root.
 - Migration helper: `npm run migrate:mcp-config`
+- `allowCrossRepoEdits` must be explicitly set to `true` per repo to allow cross-repo edits (tool input must also set `allowCrossRepoEdits: true`).
 
 ### Language mappings (optional)
 
@@ -73,6 +115,21 @@ By default, `init` targets Kairo config files only. Pass `targets: ["vscode"]` t
 |---|---|
 | `KAIRO_WASM_DIR` | Where tree-sitter WASM assets are resolved (including Markdown/SQL WASM). |
 
+### Document extraction limits
+
+| Variable | Purpose | Notes |
+|---|---|---|
+| `KAIRO_DOC_MAX_FILE_BYTES` | Max bytes before sampling text files. | Triggers head/tail sampling. |
+| `KAIRO_DOC_SAMPLE_HEAD_BYTES` | Bytes kept from the start when sampling. | Applies to text-based docs. |
+| `KAIRO_DOC_SAMPLE_TAIL_BYTES` | Bytes kept from the end when sampling. | Applies to text-based docs. |
+| `KAIRO_PDF_MAX_PAGES` | Max pages extracted from PDF. | Caps extraction for large PDFs. |
+| `KAIRO_PDF_MAX_CHARS` | Max total extracted chars for PDF. | Triggers `pdf_char_cap`. |
+| `KAIRO_PDF_MIN_CHARS` | Min chars before `pdf_needs_ocr`. | Signals OCR needs. |
+| `KAIRO_PDF_MIN_CHARS_PER_PAGE` | Min chars per page before `pdf_low_text_density`. | Signals low text density. |
+| `KAIRO_XLSX_MAX_SHEETS` | Max sheets extracted from XLSX. | Caps extraction. |
+| `KAIRO_XLSX_MAX_ROWS` | Max rows per sheet. | Caps extraction. |
+| `KAIRO_XLSX_MAX_COLS` | Max columns per sheet. | Caps extraction. |
+
 ## Token budgets (ADR-056)
 
 Kairo can cap responses using `limits.maxTokens` (token-first) in addition to `limits.maxChars` (character caps).
@@ -83,6 +140,8 @@ Kairo can cap responses using `limits.maxTokens` (token-first) in addition to `l
 | `KAIRO_EXPLORE_MAX_TOKENS` | Default token budget for `explore`. | Overrides `KAIRO_DEFAULT_MAX_TOKENS`. |
 | `KAIRO_UNDERSTAND_MAX_TOKENS` | Default token budget for `understand`. | Overrides `KAIRO_DEFAULT_MAX_TOKENS`. |
 | `KAIRO_READ_MAX_TOKENS` | Default token budget for `read`. | Overrides `KAIRO_DEFAULT_MAX_TOKENS`. |
+| `KAIRO_MANAGE_MAX_TOKENS` | Default token budget for `manage` responses. | Used for `manage command=artifact` envelope caps. |
+| `KAIRO_MANAGE_MAX_CHARS` | Default JSON char cap for `manage` responses. | Used for `manage command=artifact` envelope caps. |
 | `KAIRO_TOKEN_ESTIMATOR` | Token estimator mode. | `whitespace` (default) or `chars`. |
 
 ## Native engine toggles (ADR-053-H)
@@ -110,7 +169,7 @@ Kairo can cap responses using `limits.maxTokens` (token-first) in addition to `l
 
 | Variable | Purpose |
 |---|---|
-| `KAIRO_EMBEDDING_PROVIDER` | Select embedding backend (`local`, `remote`, `hash`, `disabled`). | `remote` allows downloading models from HuggingFace. |
+| `KAIRO_EMBEDDING_PROVIDER` | Select embedding backend (`local`, `remote`, `hash`, `disabled`). | `remote` is opt-in and enables downloads from HuggingFace. |
 | `KAIRO_EMBEDDING_QUANTIZED` | Use quantized model (`true`/`false`). | Default: `true` (int8/q8). Set `false` for full precision (fp32/fp16). |
 | `KAIRO_EMBEDDING_MODEL` | Bundled/local model identifier (default: `multilingual-e5-small`). |
 | `KAIRO_MODEL_DIR` | Bundled model directory override (no remote downloads). |
@@ -166,12 +225,27 @@ When `KAIRO_VECTOR_INDEX_REBUILD=manual`, use the CLI `kairo-build-vector-index`
 | `KAIRO_DOC_FALLBACK_MAX_FILES` | Cap fallback list when no doc candidates exist. |
 | `KAIRO_DOC_LIST_FAST` | Skip sorting when listing document files (faster on huge repos). |
 
+## Baseline indexing + symbol search
+
+| Variable | Purpose |
+|---|---|
+| `KAIRO_BASELINE_ENABLED` | Enable baseline indexing on startup (`auto|on|off`). |
+| `KAIRO_BASELINE_BLOCKING` | Force symbol search to wait for baseline (`true/false`). |
+| `KAIRO_BASELINE_MAX_MS_PER_TICK` | Max baseline indexing time per tick (ms). |
+| `KAIRO_BASELINE_MAX_FILES_PER_TICK` | Max files processed per baseline tick. |
+| `KAIRO_SYMBOL_SECONDARY_INDEX` | Enable secondary symbol index (`auto|on|off`). |
+| `KAIRO_SYMBOL_SECONDARY_INDEX_MAX_BYTES` | Cap secondary index file size (bytes). |
+| `KAIRO_SYMBOL_SEARCH_MAX_CANDIDATES` | Max candidate refs evaluated in secondary index search. |
+| `KAIRO_SYMBOL_FUZZY_SEARCH` | Enable fuzzy symbol search (`auto|on|off`). |
+| `KAIRO_SYMBOL_FUZZY_MAX_FILES` | Max files for fuzzy search when `auto`. |
+
 ## Packaging (model bundle)
 
 | Variable | Purpose |
 |---|---|
 | `KAIRO_MODEL_SOURCE` | Source directory used by `npm run bundle:models` (model root or parent). |
 | `KAIRO_SKIP_MODEL_BUNDLE` | Skip bundling in `prepack` (`true` to skip). |
+| `KAIRO_MODEL_BUNDLE_PROFILE` | Bundle profile (`minimal` default, `full` to include all assets). |
 
 ## Integrity audit (ADR-041)
 
@@ -191,6 +265,23 @@ When `KAIRO_VECTOR_INDEX_REBUILD=manual`, use the CLI `kairo-build-vector-index`
 | `KAIRO_MODULAR_ROLLOUT_PERCENT` | Percentage rollout for the modular flags. | `0-100`; uses rollout user hashing. |
 | `KAIRO_ROLLOUT_USER` | Default user ID for rollout hashing. | Use if the host does not pass a user ID. |
 
+## Adaptive flow rollout (ADR-075)
+
+| Variable | Purpose | Notes |
+|---|---|---|
+| `KAIRO_ROLLOUT_MODE` | Rollout preset (`legacy|shadow|canary|beta|full`). | Primary preset switch. |
+| `KAIRO_ROLLOUT_PHASE` | Alias for `KAIRO_ROLLOUT_MODE`. | Kept for backward compatibility. |
+| `KAIRO_ROLLOUT_CANARY_USERS` | Canary allowlist. | Comma-separated user IDs. |
+| `KAIRO_ROLLOUT_BETA_PERCENT` | Beta rollout percent. | `0-100`. |
+| `KAIRO_ROLLOUT_FORCE` | Force preset application. | Applies even with explicit env overrides. |
+| `KAIRO_ADAPTIVE_FLOW_ENABLED` | Override Adaptive Flow flag. | `on|off|canary|beta|full` (optional payload). |
+| `KAIRO_UCG_ENABLED` | Override UCG flag. | Same format as above. |
+| `KAIRO_TOPOLOGY_SCANNER_ENABLED` | Override topology scanner flag. | Same format as above. |
+| `KAIRO_DUAL_WRITE_VALIDATION` | Toggle dual-write validation. | Same format as above. |
+| `KAIRO_TOPOLOGY_SUCCESS_MIN` | Alert threshold for topology success rate. | Default `0.95`. |
+| `KAIRO_UCG_MEMORY_MAX_MB` | Alert threshold for UCG memory estimate. | Default `500`. |
+| `KAIRO_L3_PROMOTION_RATIO_MAX` | Alert threshold for L3 promotion ratio. | Default `0.5`. |
+
 ## Writer's flow defaults (ADR-051)
 
 | Variable | Purpose | Notes |
@@ -204,6 +295,8 @@ When `KAIRO_VECTOR_INDEX_REBUILD=manual`, use the CLI `kairo-build-vector-index`
 |---|---|---|
 | `KAIRO_STYLE_PACK_TTL_MS` | Cache TTL for StylePack reuse across sessions. | Default: `1800000` (30 min). |
 | `KAIRO_STYLE_PACK_CACHE_SIZE` | Max cached StylePacks. | Default: `50`. |
+| `KAIRO_CALLGRAPH_MAX_NODES` | Max nodes stored in call graph artifacts. | Default: `500`. |
+| `KAIRO_CALLGRAPH_MAX_EDGES` | Max edges stored in call graph artifacts. | Default: `1500`. |
 
 ## Full list (source of truth)
 

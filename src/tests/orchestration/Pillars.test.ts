@@ -156,6 +156,6 @@ describe("Pillars", () => {
     expect(result.relatedDocs[0].section).toBeUndefined();
     expect(result.relatedDocs[0].packId).toBe("pack-1");
     const actions = result.guidance?.suggestedActions ?? [];
-    expect(actions.some((action: any) => action?.pillar === "document_section")).toBe(true);
+    expect(actions.some((action: any) => action?.toolCall?.tool === "document_section")).toBe(true);
   });
 });

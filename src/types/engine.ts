@@ -4,6 +4,7 @@ export interface ReadFragmentResult {
     filePath: string;
     content: string;
     ranges: LineRange[];
+    versionInfo?: FileVersionInfo;
 }
 
 export interface LineRange {
@@ -217,6 +218,40 @@ export interface EditResult {
     operation?: EditOperation;
 }
 
+export interface FileOperation {
+    /**
+     * Marker for non-edit filesystem operations stored in history.
+     */
+    type: "file";
+    /**
+     * Unique identifier for this operation (UUID).
+     */
+    id: string;
+    /**
+     * Milliseconds since epoch when the operation was created.
+     */
+    timestamp: number;
+    /**
+     * Human-readable description of the operation (e.g. tool name or intent).
+     */
+    description: string;
+    /**
+     * The file this operation applies to, typically stored
+     * as a path relative to the SmartContextServer root.
+     */
+    filePath: string;
+    /**
+     * The filesystem action represented by this operation.
+     */
+    action: "create" | "delete";
+    /**
+     * Content required to restore or recreate the file.
+     */
+    content?: string;
+}
+
+export type HistoryOperation = EditOperation | FileOperation;
+
 export interface SuggestedBatchEdit {
     operation: "insert" | "replace" | "delete";
     insertMode?: "before" | "after" | "at";
@@ -266,10 +301,10 @@ export interface BatchOperation {
     id: string;
     timestamp: number;
     description: string;
-    operations: EditOperation[];
+    operations: HistoryOperation[];
 }
 
-export type HistoryItem = EditOperation | BatchOperation;
+export type HistoryItem = EditOperation | FileOperation | BatchOperation;
 
 export interface DirectoryTree {
     [key: string]: null | DirectoryTree;
@@ -354,6 +389,11 @@ export interface EditCodeArgs {
     ignoreMistakes?: boolean;
     diffMode?: DiffMode;
     refactoringContext?: RefactoringContext;
+    options?: {
+        applyMode?: "atomic" | "partial";
+        deleteMode?: "forbid" | "confirm";
+        ordering?: "stable" | "creates_first";
+    };
     fileVersions?: Record<string, {
         expectedVersion?: number;
         expectedHash?: string;
@@ -362,10 +402,14 @@ export interface EditCodeArgs {
 
 export interface EditCodeResultEntry {
     filePath: string;
+    operation?: "replace" | "create" | "delete";
     applied: boolean;
+    status?: "applied" | "dry_run_ok" | "failed" | "blocked" | "confirmation_required";
     error?: string;
+    errorCode?: string;
     diff?: string;
     requiresConfirmation?: boolean;
+    confirmationHint?: { algorithm: "sha256"; valueFormat: "hex"; rationale: string };
     fileSize?: number;
     lineCount?: number;
     contentPreview?: string;
@@ -375,10 +419,13 @@ export interface EditCodeResultEntry {
 
 export interface EditCodeResult {
     success: boolean;
+    status?: "success" | "partial_success" | "blocked" | "failed";
     results: EditCodeResultEntry[];
     transactionId?: string;
     warnings?: string[];
     message?: string;
+    errorCode?: string;
+    summary?: { planned: number; applied: number; failed: number; blocked: number; confirmationRequired: number };
     updatedFileStates?: Record<string, {
         newVersion: number;
         newHash: string;

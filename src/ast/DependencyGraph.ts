@@ -1,5 +1,4 @@
 import * as path from 'path';
-import * as fs from 'fs';
 import { SymbolIndex } from './SymbolIndex.js';
 import { AstManager } from './AstManager.js';
 import { ModuleResolver, ResolutionResult } from './ModuleResolver.js';
@@ -10,6 +9,7 @@ import { UnifiedExtractor } from './extraction/UnifiedExtractor.js';
 import { ReverseImportIndex } from './ReverseImportIndex.js';
 import { normalizePath, toRelativePath } from '../utils/PathHelpers.js';
 import { FeatureFlags } from '../config/FeatureFlags.js';
+import { NodeFileSystem, type IFileSystem } from '../platform/FileSystem.js';
 
 export interface DependencyEdge {
     from: string;
@@ -37,6 +37,7 @@ export class DependencyGraph {
     private readonly symbolIndex: SymbolIndex;
     private readonly resolver: ModuleResolver;
     private readonly db: IndexDatabase;
+    private readonly fileSystem: IFileSystem;
     private lastRebuiltAt = 0;
     private loggingEnabled = true;
 
@@ -44,11 +45,18 @@ export class DependencyGraph {
     private unifiedExtractor: UnifiedExtractor;
     private reverseIndex: ReverseImportIndex;
 
-    constructor(rootPath: string, symbolIndex: SymbolIndex, resolver: ModuleResolver, db?: IndexDatabase) {
+    constructor(
+        rootPath: string,
+        symbolIndex: SymbolIndex,
+        resolver: ModuleResolver,
+        db?: IndexDatabase,
+        fileSystem?: IFileSystem
+    ) {
         this.rootPath = rootPath;
         this.symbolIndex = symbolIndex;
         this.resolver = resolver;
         this.db = db ?? this.symbolIndex.getDatabase();
+        this.fileSystem = fileSystem ?? new NodeFileSystem(this.rootPath);
 
         this.astManager = AstManager.getInstance();
         this.unifiedExtractor = new UnifiedExtractor(this.astManager.getQueryProvider(), {
@@ -87,8 +95,8 @@ export class DependencyGraph {
             metadata: { what: edge.what, line: edge.line }
         }));
 
-        const stats = await fs.promises.stat(filePath).catch(() => undefined);
-        const lastModified = stats?.mtimeMs ?? Date.now();
+        const stats = await this.fileSystem.stat(filePath).catch(() => undefined);
+        const lastModified = stats?.mtime ?? Date.now();
 
         this.db.replaceDependencies({
             relativePath: relPath,
@@ -127,14 +135,14 @@ export class DependencyGraph {
         this.log('log', `[DependencyGraph] Updating dependencies for ${filePath}`);
         
         const relPath = toRelativePath(this.rootPath, filePath);
-        const stats = await fs.promises.stat(filePath).catch(() => undefined);
-        const lastModified = stats?.mtimeMs ?? Date.now();
+        const stats = await this.fileSystem.stat(filePath).catch(() => undefined);
+        const lastModified = stats?.mtime ?? Date.now();
 
         let imports: ImportInfo[] = [];
         try {
             const languageId = this.astManager.getLanguageId(filePath);
             if (this.unifiedExtractor.supportsRegex(languageId)) {
-                const content = await fs.promises.readFile(filePath, 'utf-8');
+                const content = await this.fileSystem.readFile(filePath);
                 const unifiedEnabled = FeatureFlags.isEnabled(FeatureFlags.UNIFIED_EXTRACTION_ENABLED, FeatureFlags.getContext());
                 if (unifiedEnabled) {
                     imports = await this.unifiedExtractor.extractImports(filePath, content, languageId, {
@@ -472,18 +480,18 @@ export class DependencyGraph {
 
     private detectMonorepo(): boolean {
         const indicatorFiles = ['lerna.json', 'pnpm-workspace.yaml', 'turbo.json', 'nx.json'];
-        if (indicatorFiles.some(file => fs.existsSync(path.join(this.rootPath, file)))) {
+        if (indicatorFiles.some(file => this.fileSystem.existsSync?.(path.join(this.rootPath, file)))) {
             return true;
         }
 
         const candidateDirs = ['packages', 'apps', 'services', 'libs'];
         for (const dir of candidateDirs) {
             const rootDir = path.join(this.rootPath, dir);
-            if (!fs.existsSync(rootDir) || !fs.statSync(rootDir).isDirectory()) continue;
-            const subdirs = fs.readdirSync(rootDir).filter(entry => {
+            if (!this.fileSystem.existsSync?.(rootDir) || !this.fileSystem.statSync?.(rootDir)?.isDirectory()) continue;
+            const subdirs = (this.fileSystem.readDirSync?.(rootDir) ?? []).filter(entry => {
                 const full = path.join(rootDir, entry);
                 try {
-                    return fs.statSync(full).isDirectory() && fs.existsSync(path.join(full, 'package.json'));
+                    return this.fileSystem.statSync?.(full)?.isDirectory() && this.fileSystem.existsSync?.(path.join(full, 'package.json'));
                 } catch {
                     return false;
                 }

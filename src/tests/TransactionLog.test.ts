@@ -6,7 +6,7 @@ import * as os from "os";
 import * as path from "path";
 
 describe("TransactionLog", () => {
-    it("records pending transactions and clears on commit", () => {
+    it("records pending transactions and clears on commit", async () => {
         const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "kairo-tx-"));
         const db = new IndexDatabase(rootDir);
         const log = new TransactionLog(db);
@@ -21,7 +21,7 @@ describe("TransactionLog", () => {
         expect(pending[0].id).toBe(txId);
         expect(pending[0].snapshots[0].filePath).toBe("/a.txt");
 
-        log.commit(txId, snapshots);
+        await log.commit(txId, snapshots);
         pending = log.getPendingTransactions();
         expect(pending).toHaveLength(0);
         db.dispose();

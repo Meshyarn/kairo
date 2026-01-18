@@ -211,19 +211,26 @@ export function formatResolveErrors(
     if (first.suggestion?.lineRange) {
       messages.push(`Try narrowing to lines ${first.suggestion.lineRange.start}-${first.suggestion.lineRange.end}.`);
       actions.push({
-        pillar: 'read',
-        action: 'view_fragment',
-        target: first.filePath,
-        options: {
-          view: 'fragment',
-          lineRange: `${first.suggestion.lineRange.start}-${first.suggestion.lineRange.end}`
+        id: 'read.view_fragment',
+        priority: 1,
+        description: 'View the target fragment.',
+        rationale: 'Narrowing the range improves resolve accuracy.',
+        toolCall: {
+          tool: 'read',
+          args: {
+            action: 'view_fragment',
+            target: first.filePath,
+            options: { view: 'fragment', lineRange: `${first.suggestion.lineRange.start}-${first.suggestion.lineRange.end}` }
+          }
         }
       });
     } else {
       actions.push({
-        pillar: 'read',
-        action: 'view_file',
-        target: first.filePath
+        id: 'read.view_full',
+        priority: 1,
+        description: 'View the full file.',
+        rationale: 'Full context helps resolve ambiguous matches.',
+        toolCall: { tool: 'read', args: { action: 'view_full', target: first.filePath } }
       });
     }
   }
@@ -238,17 +245,22 @@ export function formatResolveErrors(
   }
 
   actions.push({
-    pillar: 'change',
-    action: 'retry',
-    intent,
-    target: targetFiles[0]
+    id: 'change.retry',
+    priority: 2,
+    description: 'Retry change with updated target text.',
+    rationale: 'Retry after confirming the correct target.',
+    toolCall: { tool: 'change', args: { action: 'retry', intent, target: targetFiles[0] } }
   });
 
   actions.push({
-    pillar: 'write',
-    action: 'overwrite',
-    intent: `Rewrite ${targetFiles[0]} with corrected content`,
-    targetPath: targetFiles[0]
+    id: 'write.overwrite',
+    priority: 3,
+    description: 'Overwrite the file with corrected content.',
+    rationale: 'Fallback when targeted edits cannot be resolved.',
+    toolCall: {
+      tool: 'write',
+      args: { action: 'overwrite', intent: `Rewrite ${targetFiles[0]} with corrected content`, targetPath: targetFiles[0] }
+    }
   });
 
   return {

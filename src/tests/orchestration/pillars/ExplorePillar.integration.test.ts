@@ -7,6 +7,13 @@ import { SmartContextServer } from '../../../index.js';
 const runTool = async (server: SmartContextServer, toolName: string, args: any) => {
   const response = await (server as any).handleCallTool(toolName, args);
   expect(response).toBeDefined();
+
+  if (response.content?.[0]?.text) {
+      try {
+          return JSON.parse(response.content[0].text);
+      } catch {}
+  }
+
   if (response.isError) {
       return response;
   }
@@ -92,9 +99,35 @@ describe('ExplorePillar Integration', () => {
     });
 
     expect(result.success).toBe(true);
+    expect(result.effectiveOptions?.version).toBe(1);
+    expect(result.effectiveOptions?.pillar).toBe('explore');
     expect(result.effectiveOptions?.sources).toBe('docs');
-    expect(result.decisionTrace?.docSearch).toBeDefined();
-    expect(result.decisionTrace?.docSearch?.skippedReason).not.toBe('doc_search_skipped');
+    expect(result.decisionTrace?.version).toBe(1);
+    expect(result.decisionTrace?.pillar).toBe('explore');
+    expect(result.decisionTrace?.optionResolution?.sources?.resolved).toBe('docs');
+
+    const allowlist = new Set([
+      "allocator.plan_created",
+      "allocator.section_strategy",
+      "allocator.section_omit",
+      "allocator.reuse_pack",
+      "allocator.reuse_summary"
+    ]);
+    const allocatorCodes = (result.decisionTrace?.events ?? [])
+      .map((event: any) => event?.code)
+      .filter((code: any) => typeof code === "string" && code.startsWith("allocator."));
+    expect(allocatorCodes.every((code: string) => allowlist.has(code))).toBe(true);
+
+    const adaptiveFlowAllowlist = new Set([
+      "adaptive_flow.gate.profile",
+      "adaptive_flow.gate.scale",
+      "adaptive_flow.rollout.user_missing",
+      "adaptive_flow.shadow.noop"
+    ]);
+    const adaptiveFlowCodes = (result.decisionTrace?.events ?? [])
+      .map((event: any) => event?.code)
+      .filter((code: any) => typeof code === "string" && code.startsWith("adaptive_flow."));
+    expect(adaptiveFlowCodes.every((code: string) => adaptiveFlowAllowlist.has(code))).toBe(true);
   });
 
   it('blocks sensitive files by default', async () => {

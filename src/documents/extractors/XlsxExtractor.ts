@@ -3,6 +3,13 @@ import { promises as fs } from "fs";
 type XlsxExtractionResult = {
     text: string;
     warnings: string[];
+    stats?: {
+        inputBytes: number;
+        outputChars: number;
+        totalSheets: number;
+        extractedSheets: number;
+        samplingApplied: boolean;
+    };
 };
 
 export class XlsxExtractError extends Error {
@@ -51,7 +58,8 @@ export async function extractXlsxAsText(absPath: string): Promise<XlsxExtraction
         }
 
         const lines: string[] = [];
-        for (const sheetName of sheets.slice(0, sheetLimit)) {
+        const extractedSheets = sheets.slice(0, sheetLimit);
+        for (const sheetName of extractedSheets) {
             const sheet = workbook.Sheets?.[sheetName];
             if (!sheet) {
                 warnings.push("xlsx_missing_sheet");
@@ -93,7 +101,18 @@ export async function extractXlsxAsText(absPath: string): Promise<XlsxExtraction
         }
 
         if (sheets.length > sheetLimit) warnings.push("xlsx_sheet_cap");
-        return { text: lines.join("\n"), warnings };
+        const text = lines.join("\n");
+        return {
+            text,
+            warnings,
+            stats: {
+                inputBytes: buffer.length,
+                outputChars: text.length,
+                totalSheets: sheets.length,
+                extractedSheets: extractedSheets.length,
+                samplingApplied: sheets.length > sheetLimit
+            }
+        };
     } catch (error: any) {
         throw new XlsxExtractError("xlsx_parse_failed", error?.message);
     }

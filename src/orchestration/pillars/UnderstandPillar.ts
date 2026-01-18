@@ -1,4 +1,5 @@
 
+import path from "path";
 import { LRUCache } from "lru-cache";
 import { InternalToolRegistry } from '../InternalToolRegistry.js';
 import { OrchestrationContext } from '../OrchestrationContext.js';
@@ -8,7 +9,7 @@ import { analyzeQuery, isStrongQuery } from '../../engine/search/QueryMetrics.js
 import { IntegrityEngine } from '../../integrity/IntegrityEngine.js';
 import { UnifiedContextGraph } from '../context/UnifiedContextGraph.js';
 import type { IndexStateManager } from '../../indexing/IndexStateManager.js';
-import type { AnalysisPack, StylePack } from '../../types/flow-artifacts.js';
+import type { AnalysisPack, StylePack, GraphPack } from '../../types/flow-artifacts.js';
 import { VibeProfileBuilder } from '../../generation/vibe-profile-builder.js';
 import { AnalysisPackBuilder } from '../../generation/analysis-pack-builder.js';
 import type { FlowArtifactManager } from '../flow-artifact-manager.js';
@@ -23,12 +24,56 @@ import {
 } from './understand/DependencyAnalysis.js';
 import { buildUnderstandResponse } from './understand/ReportGenerator.js';
 import { resolveProgressState, logProgress, logToolStart, logToolEnd, ProgressState } from '../../utils/ProgressLogger.js';
-import { OptionResolver } from '../options/OptionResolver.js';
 import { checkSkeletonSupport } from '../../ast/LanguageSupportSignals.js';
 import { buildDegradedReasons } from '../DegradedReasonMapper.js';
 import { UniversalFallbackExtractor } from '../../ast/extraction/UniversalFallbackExtractor.js';
 import { AstManager } from '../../ast/AstManager.js';
 import { applyTokenBudget } from '../TokenBudget.js';
+import { normalizeUnderstandInput } from './understand/UnderstandInputNormalizer.js';
+import type { OptionSource, TraceOptionResolution } from '../../types/option-trace.js';
+import { TraceBuilder } from '../trace/TraceBuilder.js';
+import { buildBudgetPlan, getSectionPlan } from '../budget/TokenBudgetAllocatorV2.js';
+import { enforceUnderstandResponseBudget } from "../budget/ResponseEnvelopeBudgeter.js";
+import { FeatureFlags } from "../../config/FeatureFlags.js";
+import { metrics } from "../../utils/MetricsCollector.js";
+import type { ToolProfile } from '../options/OptionResolver.js';
+import { AdaptiveLodController } from "../adaptive-flow/AdaptiveLodController.js";
+import {
+  computeAdaptiveFlowGate,
+  recordAdaptiveFlowGateTrace,
+  resolveRolloutPresetFromEnv,
+  setAdaptiveFlowGate
+} from "../adaptive-flow/AdaptiveFlowGate.js";
+import {
+  applySkeletonCompressionDecision,
+  resolveAllowGraphs,
+  shouldBuildFallbackGraph
+} from "./understand/UnderstandDecisionEngine.js";
+
+const resolveOptionSource = (explicit: boolean, hasSession: boolean): OptionSource => {
+  if (explicit) return "explicit";
+  if (hasSession) return "session";
+  return "default";
+};
+
+const buildStringResolution = (
+  resolved: string | undefined,
+  explicit: boolean,
+  hasSession: boolean,
+  requested?: unknown
+): TraceOptionResolution<string | null> => ({
+  source: resolveOptionSource(explicit, hasSession),
+  explicit,
+  resolved: resolved ?? null,
+  ...(requested !== undefined ? { requested } : {})
+});
+
+const DEFAULT_CALLGRAPH_MAX_NODES = Number.parseInt(process.env.KAIRO_CALLGRAPH_MAX_NODES ?? "500", 10) || 500;
+const DEFAULT_CALLGRAPH_MAX_EDGES = Number.parseInt(process.env.KAIRO_CALLGRAPH_MAX_EDGES ?? "1500", 10) || 1500;
+const DEFAULT_CALLGRAPH_PREVIEW_NODES = 30;
+const DEFAULT_CALLGRAPH_PREVIEW_EDGES = 90;
+const DEFAULT_CALLGRAPH_TOP_NODES = 10;
+const DEFAULT_CALLGRAPH_ARTIFACT_TTL_MS = 30 * 60 * 1000;
 
 
 export class UnderstandPillar {
@@ -42,46 +87,210 @@ export class UnderstandPillar {
   constructor(private readonly registry: InternalToolRegistry) {}
 
   public async execute(intent: ParsedIntent, context: OrchestrationContext): Promise<any> {
-    const { targets, constraints, originalIntent } = intent;
-    const subject = constraints.goal || targets[0] || originalIntent;
-    const rawSessionId = typeof constraints.sessionId === "string" ? constraints.sessionId : undefined;
+    const stopTotal = metrics.startTimer("understand.total_ms");
+    try {
     const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
-    const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, subject);
-    const sessionPolicy = resolvedSessionId ? artifactManager?.getSession(resolvedSessionId)?.policy : undefined;
-    const resolvedOptions = OptionResolver.resolveUnderstandOptions(constraints, sessionPolicy);
-    const depth = resolvedOptions.effective.depth || 'standard';
-    const include = resolvedOptions.effective.include ?? {};
-    const traceEnabled = resolvedOptions.effective.traceEnabled;
-    const vibe = constraints.vibe as { extract?: boolean; scope?: string; includeNorms?: boolean } | undefined;
-    const wantsVibe = vibe?.extract === true;
-    const analysis = constraints.analysis as { clusters?: boolean; maxClusters?: number; maxFilesPerCluster?: number } | undefined;
-    const wantsAnalysis = analysis?.clusters === true;
-    const includeDependencies = include.dependencies === true || include.pageRank === true;
-    const includeCalls = include.callGraph === true;
-    const explicitPath = this.extractPath(subject) ?? (typeof originalIntent === 'string' ? this.extractPath(originalIntent) : null);
-    const symbolHint = extractSymbol(subject) ?? (typeof originalIntent === 'string' ? extractSymbol(originalIntent) : null);
-    let resolvedPath = explicitPath;
+    const {
+      constraints,
+      subject,
+      resolvedSessionId,
+      sessionPolicy,
+      resolvedOptions,
+      depth: resolvedDepth,
+      include: resolvedInclude,
+      traceEnabled,
+      vibe,
+      wantsVibe,
+      analysis,
+      wantsAnalysis,
+      includeDependencies,
+      includeCalls,
+      explicitPath,
+      symbolHint,
+      integrityOptions,
+      limits,
+      maxTokens: resolvedMaxTokens
+    } = normalizeUnderstandInput(intent, {
+      resolveSessionId: (rawSessionId, fallback) => artifactManager?.resolveSessionId(rawSessionId, fallback),
+      getSessionPolicy: (sessionId) => (sessionId ? artifactManager?.getSession(sessionId)?.policy : undefined),
+      extractPath: (value) => this.extractPath(value ?? ""),
+      extractSymbol: (value) => extractSymbol(value ?? "")
+    });
+    let depth = resolvedDepth;
+    const include = resolvedInclude;
+    let maxTokens = resolvedMaxTokens;
+    let profile: ToolProfile | undefined = resolvedOptions.effective.profile as ToolProfile | undefined;
+    const adaptiveLod = this.registry.getMetadata<AdaptiveLodController>("adaptiveLodController");
+    const profileExplicit = typeof constraints.profile === "string";
+    const adaptiveDecision = adaptiveLod?.resolveProfile({
+      sessionId: resolvedSessionId,
+      tool: "understand",
+      requestedProfile: profile ?? "balanced",
+      explicit: profileExplicit
+    });
+    if (adaptiveDecision?.downshifted) {
+      profile = adaptiveDecision.profile;
+      if (!profileExplicit && typeof constraints.depth !== "string") {
+        if (profile === "lean" || profile === "fast") depth = "shallow";
+        if (profile === "deep") depth = "deep";
+      }
+      if (profile === "lean") {
+        if (typeof limits.maxTokens !== "number") limits.maxTokens = 1600;
+        if (typeof limits.timeoutMs !== "number") limits.timeoutMs = 4000;
+        maxTokens = 1600;
+      }
+      if (profile === "fast" && typeof limits.maxTokens !== "number") {
+        maxTokens = maxTokens ?? 1600;
+      }
+    }
+    resolvedOptions.effective.profile = profile;
+    let resolvedPath = explicitPath ?? null;
     const progress = resolveProgressState('Understand', constraints);
     const startedAt = Date.now();
-    const integrityOptions = IntegrityEngine.resolveOptions(constraints.integrity, "understand");
-    const envMaxTokens = Number.parseInt(process.env.KAIRO_UNDERSTAND_MAX_TOKENS ?? process.env.KAIRO_DEFAULT_MAX_TOKENS ?? "", 10);
-    const limits = constraints.limits ?? {};
-    const maxTokens = Number.isFinite(limits.maxTokens) && limits.maxTokens! > 0
-      ? limits.maxTokens
-      : (Number.isFinite(envMaxTokens) && envMaxTokens > 0 ? envMaxTokens : undefined);
+    const sessionProfile = sessionPolicy?.understand?.profile ?? sessionPolicy?.profile;
+    const sessionSources = sessionPolicy?.understand?.sources ?? sessionPolicy?.sources;
+    const traceBuilder = traceEnabled
+      ? new TraceBuilder(
+        "understand",
+        {
+          profile: buildStringResolution(
+            profile,
+            typeof constraints.profile === "string",
+            Boolean(sessionProfile),
+            typeof constraints.profile === "string" ? constraints.profile : undefined
+          ),
+          sources: buildStringResolution(
+            resolvedOptions.effective.sources,
+            typeof constraints.sources === "string",
+            Boolean(sessionSources),
+            typeof constraints.sources === "string" ? constraints.sources : undefined
+          ),
+          trace: {
+            source: constraints.trace === true ? "explicit" : "default",
+            explicit: constraints.trace === true,
+            resolved: traceEnabled
+          }
+        },
+        { startedAtMs: startedAt }
+      )
+      : undefined;
+    if (traceBuilder) {
+      traceBuilder.setBudget({ maxTokens });
+    }
+    if (traceBuilder && adaptiveDecision?.downshifted) {
+      traceBuilder.recordEvent({
+        area: "budget",
+        code: "adaptive_lod.downshift",
+        data: {
+          from: resolvedOptions.effective.profile ?? "balanced",
+          to: profile,
+          violationStreak: adaptiveDecision.violationStreak,
+          stableScore: adaptiveDecision.stableScore,
+          cooldownRemaining: adaptiveDecision.cooldownRemaining,
+          reasonCodes: adaptiveDecision.reasonCodes
+        }
+      });
+    }
+    const budgetPlan = buildBudgetPlan({
+      pillar: "understand",
+      profile: (profile ?? "balanced") as ToolProfile,
+      sources: resolvedOptions.effective.sources,
+      maxTokens
+    });
+    let includeCallsPlanned = includeCalls;
+    let includeDependenciesPlanned = includeDependencies;
+    let includeHotSpotsPlanned = include.hotSpots === true;
+    let wantsVibePlanned = wantsVibe;
+    let wantsAnalysisPlanned = wantsAnalysis;
+    const relatedCodePlan = getSectionPlan(budgetPlan, "related_code");
+    const analysisPlan = getSectionPlan(budgetPlan, "analysis_pack");
+    const stylePlan = getSectionPlan(budgetPlan, "style_pack");
+    const relatedCodeLimit = relatedCodePlan?.strategy === "summary"
+      ? 1
+      : (relatedCodePlan?.strategy === "preview" ? 3 : undefined);
+    const budgetOmissions: Array<"dependencies" | "call_graph" | "hot_spots" | "analysis_pack" | "style_pack"> = [];
+
+    const recordAllocatorEvents = () => {
+      if (!traceBuilder) return;
+      traceBuilder.recordEvent({
+        area: "budget",
+        code: "allocator.plan_created",
+        data: {
+          maxTokens: budgetPlan.maxTokens,
+          maxChars: budgetPlan.maxChars,
+          sectionCount: budgetPlan.sections.length
+        }
+      });
+      for (const section of budgetPlan.sections) {
+        traceBuilder.recordEvent({
+          area: "budget",
+          code: "allocator.section_strategy",
+          data: {
+            section: section.section,
+            strategy: section.strategy,
+            tokens: section.tokens,
+            chars: section.chars
+          }
+        });
+        if (section.strategy === "omit") {
+          traceBuilder.recordSkip(section.section, "budget_exceeded", "allocator omitted section");
+        }
+      }
+    };
+
+    const applyBudgetOmit = (section: "dependencies" | "call_graph" | "hot_spots" | "analysis_pack" | "style_pack") => {
+      budgetOmissions.push(section);
+      if (section === "dependencies") includeDependenciesPlanned = false;
+      if (section === "call_graph") includeCallsPlanned = false;
+      if (section === "hot_spots") includeHotSpotsPlanned = false;
+      if (section === "analysis_pack") wantsAnalysisPlanned = false;
+      if (section === "style_pack") wantsVibePlanned = false;
+    };
+
+    for (const entry of budgetPlan.sections) {
+      if (entry.strategy !== "omit") continue;
+      if (entry.section === "dependencies") applyBudgetOmit("dependencies");
+      if (entry.section === "call_graph") applyBudgetOmit("call_graph");
+      if (entry.section === "hot_spots") applyBudgetOmit("hot_spots");
+      if (entry.section === "analysis_pack") applyBudgetOmit("analysis_pack");
+      if (entry.section === "style_pack") applyBudgetOmit("style_pack");
+    }
+    recordAllocatorEvents();
 
     const metrics = analyzeQuery(subject);
-    const initialProjectStats = context.getState<any>("project_profile");
+    let initialProjectStats = context.getState<any>("project_profile");
+    if (!initialProjectStats) {
+      try {
+        initialProjectStats = await this.runTool(context, "project_profile", {}, progress);
+        if (initialProjectStats) {
+          context.setState("project_profile", initialProjectStats);
+        }
+      } catch {
+        initialProjectStats = undefined;
+      }
+    }
     const initialBudget = BudgetManager.create({
       category: 'understand',
       queryLength: metrics.length,
       tokenCount: metrics.tokenCount,
       strongQuery: metrics.strong,
-      includeGraph: includeDependencies || includeCalls,
-      includeHotSpots: include.hotSpots,
+      includeGraph: includeDependenciesPlanned || includeCallsPlanned,
+      includeHotSpots: includeHotSpotsPlanned,
       projectStats: initialProjectStats?.fileCount ? { fileCount: initialProjectStats.fileCount } : undefined
     });
     const searchBudget = this.resolveSearchBudget(constraints, subject, initialBudget);
+
+    const gate = computeAdaptiveFlowGate({
+      profile,
+      fileCount: typeof initialProjectStats?.fileCount === "number" ? initialProjectStats.fileCount : undefined
+    });
+    setAdaptiveFlowGate(context, gate);
+    if (traceBuilder) {
+      recordAdaptiveFlowGateTrace(traceBuilder, gate, {
+        rolloutMode: resolveRolloutPresetFromEnv() ?? FeatureFlags.getMode(FeatureFlags.ADAPTIVE_FLOW_ENABLED),
+        userIdResolved: Boolean(FeatureFlags.getContext()?.userId)
+      });
+    }
 
     logProgress(progress, `Start subject="${subject}" depth=${depth}.`);
     const ucg = context.getState<UnifiedContextGraph>('ucg');
@@ -121,7 +330,7 @@ export class UnderstandPillar {
     const primaryResult = resolvedPath ? { path: resolvedPath } : searchResult.results[0];
     let filePath = primaryResult.path;
     let symbolName = primaryResult?.symbol?.name;
-    if (includeCalls && !symbolName && symbolHint) {
+    if (includeCallsPlanned && !symbolName && symbolHint) {
       const symbolMatches = await this.runTool(context, 'project_search', {
         query: symbolHint,
         type: 'symbol',
@@ -136,9 +345,24 @@ export class UnderstandPillar {
       }
     }
 
+    if (traceBuilder && includeCallsPlanned && !symbolName) {
+      traceBuilder.recordSkip("call_graph", "not_applicable", "symbol not resolved");
+    }
+
     logProgress(progress, `Resolved filePath="${filePath}" symbol="${symbolName ?? ''}".`);
 
     const isDocument = isDocumentPath(filePath);
+    if (traceBuilder && isDocument) {
+      if (includeCallsPlanned) {
+        traceBuilder.recordSkip("call_graph", "unsupported", "document targets skip call graph");
+      }
+      if (includeDependenciesPlanned) {
+        traceBuilder.recordSkip("dependencies", "unsupported", "document targets skip dependencies");
+      }
+      if (includeHotSpotsPlanned) {
+        traceBuilder.recordSkip("hot_spots", "unsupported", "document targets skip hotspots");
+      }
+    }
     let projectStats: any = undefined;
     try {
       projectStats = await this.runTool(context, 'project_profile', {}, progress);
@@ -150,8 +374,8 @@ export class UnderstandPillar {
       queryLength: metrics.length,
       tokenCount: metrics.tokenCount,
       strongQuery: metrics.strong,
-      includeGraph: includeDependencies || includeCalls,
-      includeHotSpots: include.hotSpots,
+      includeGraph: includeDependenciesPlanned || includeCallsPlanned,
+      includeHotSpots: includeHotSpotsPlanned,
       projectStats: { fileCount: projectStats?.fileCount }
     });
 
@@ -165,6 +389,22 @@ export class UnderstandPillar {
     const degradedReasons: string[] = [];
     let fallbackGraph: { mode: "l2"; edges: Array<{ from: string; to: string; confidence: "low"; reason?: string }>; evidence?: string[] } | undefined = undefined;
     let refinementReason: string | undefined = undefined;
+    if (budgetOmissions.length > 0) {
+      degraded = true;
+      if (!degradedReasons.includes("budget_exceeded")) {
+        degradedReasons.push("budget_exceeded");
+      }
+      refinementReason = refinementReason ?? "budget_exceeded";
+      if (traceBuilder) {
+        for (const section of budgetOmissions) {
+          traceBuilder.recordEvent({
+            area: "budget",
+            code: "allocator.section_omit",
+            data: { section }
+          });
+        }
+      }
+    }
     if (isDocument) {
       const docAnalysis = await this.runTool(context, 'document_analyze', { filePath }, progress);
       skeleton = docAnalysis?.skeleton ?? '';
@@ -177,6 +417,21 @@ export class UnderstandPillar {
         mentionMatches = await resolveMentionReferences(context, docProfile.mentions, runTool, progress);
         relatedCode = mergeRelatedCode(relatedCode, mentionMatches);
       }
+      if (relatedCodeLimit && Array.isArray(relatedCode) && relatedCode.length > relatedCodeLimit) {
+        relatedCode = relatedCode.slice(0, relatedCodeLimit);
+        degraded = true;
+        if (!degradedReasons.includes("budget_exceeded")) {
+          degradedReasons.push("budget_exceeded");
+        }
+        refinementReason = refinementReason ?? "budget_exceeded";
+        if (traceBuilder) {
+          traceBuilder.recordEvent({
+            area: "budget",
+            code: "allocator.section_omit",
+            data: { section: "related_code" }
+          });
+        }
+      }
     } else {
       const support = await checkSkeletonSupport(filePath);
       if (support.degraded && support.reason) {
@@ -185,18 +440,28 @@ export class UnderstandPillar {
       }
       skeleton = await this.runTool(context, 'code_read', { filePath, view: 'skeleton' }, progress);
     }
-    const profile = await this.runTool(context, 'file_profile', { filePath }, progress);
+    const fileProfile = await this.runTool(context, 'file_profile', { filePath }, progress);
 
     let calls: any = null;
+    let callGraphArtifactId: string | undefined;
+    let callGraphSummary: GraphPack["summary"] | undefined;
+    let callGraphPreview: { nodes: any[]; edges: any[]; resolvedTarget?: any; meta?: any } | undefined;
     let deps: any = null;
     let hotSpots: any = [];
 
-    const allowGraphs = !isDocument && isStrongQuery(metrics) && (budget.profile !== 'safe' || includeCalls || includeDependencies || include.hotSpots === true);
-    if (isDocument && (includeCalls || includeDependencies || include.hotSpots === true)) {
+    const allowGraphs = resolveAllowGraphs({
+      isDocument,
+      strongQuery: isStrongQuery(metrics),
+      budgetProfile: budget.profile,
+      includeCalls: includeCallsPlanned,
+      includeDependencies: includeDependenciesPlanned,
+      includeHotSpots: includeHotSpotsPlanned
+    });
+    if (isDocument && (includeCallsPlanned || includeDependenciesPlanned || includeHotSpotsPlanned)) {
       degraded = true;
       refinementReason = refinementReason ?? 'document_file';
     }
-    if (includeCalls && symbolName && allowGraphs) {
+    if (includeCallsPlanned && symbolName && allowGraphs) {
       calls = await fetchCallGraph({
         context,
         filePath,
@@ -205,13 +470,38 @@ export class UnderstandPillar {
         runTool,
         progress
       });
-    } else if (includeCalls && symbolName && !allowGraphs) {
+    } else if (includeCallsPlanned && symbolName && !allowGraphs) {
       degraded = true;
       refinementReason = refinementReason ?? 'budget_exceeded';
+      if (traceBuilder) {
+        traceBuilder.recordSkip("call_graph", "budget_exceeded", "graph budget gated");
+      }
+    }
+    if (calls) {
+      const graphPackResult = this.buildGraphPack({
+        calls,
+        filePath,
+        symbolName,
+        depth
+      });
+      callGraphArtifactId = graphPackResult.pack.id;
+      callGraphSummary = graphPackResult.pack.summary;
+      callGraphPreview = graphPackResult.preview;
+      if (artifactManager) {
+        artifactManager.store({
+          id: graphPackResult.pack.id,
+          type: "graph",
+          createdAt: graphPackResult.pack.meta.createdAt,
+          expiresAt: graphPackResult.expiresAt,
+          pack: graphPackResult.pack,
+          sessionId: resolvedSessionId,
+          metadata: { intent: subject }
+        });
+      }
     }
 
-    if (includeDependencies && allowGraphs) {
-      deps = await collectDependenciesFromGraph(ucg, filePath);
+    if (includeDependenciesPlanned && allowGraphs) {
+      deps = await collectDependenciesFromGraph(ucg, filePath, context);
 
       if (!deps || !Array.isArray(deps.edges) || deps.edges.length === 0) {
         // Fallback to legacy tool if shared graph is unavailable or cold
@@ -221,57 +511,55 @@ export class UnderstandPillar {
           direction: 'both'
         }, progress);
       }
-    } else if (includeDependencies && !allowGraphs) {
+    } else if (includeDependenciesPlanned && !allowGraphs) {
       degraded = true;
       refinementReason = refinementReason ?? 'budget_exceeded';
-    }
-
-    if (include.hotSpots === true && allowGraphs) {
-      hotSpots = await this.runTool(context, 'hotspot_detect', {}, progress);
-    } else if (include.hotSpots === true && !allowGraphs) {
-      degraded = true;
-      refinementReason = refinementReason ?? 'budget_exceeded';
-    }
-
-    if (!isDocument && this.shouldBuildFallbackGraph(degradedReasons)) {
-      fallbackGraph = await this.buildFallbackGraph(filePath);
-    }
-
-    const compression = applyTokenBudget(typeof skeleton === "string" ? skeleton : String(skeleton ?? ""), {
-      maxTokens,
-      maxChars: undefined,
-      languageId: AstManager.getInstance().getLanguageId(filePath)
-    });
-    const compressionDecisions: Array<{
-      item: string;
-      from: "full" | "skeleton" | "reference" | "summary";
-      to: "full" | "skeleton" | "reference" | "summary";
-      reason: "budget_exceeded" | "low_score" | "distance";
-    }> = [];
-    let compressionMode: "truncate" | "distill" = "truncate";
-    if (compression.applied && typeof skeleton === "string") {
-      const digest = this.buildSkeletonDigest(profile);
-      if (digest) {
-        skeleton = digest;
-        compressionMode = "distill";
-        compressionDecisions.push({
-          item: filePath,
-          from: "skeleton",
-          to: "summary",
-          reason: "budget_exceeded"
-        });
-      } else {
-        skeleton = compression.text;
+      if (traceBuilder) {
+        traceBuilder.recordSkip("dependencies", "budget_exceeded", "graph budget gated");
       }
+    }
+
+    if (includeHotSpotsPlanned && allowGraphs) {
+      hotSpots = await this.runTool(context, 'hotspot_detect', {}, progress);
+    } else if (includeHotSpotsPlanned && !allowGraphs) {
       degraded = true;
-      if (!degradedReasons.includes("budget_exceeded")) {
-        degradedReasons.push("budget_exceeded");
+      refinementReason = refinementReason ?? 'budget_exceeded';
+      if (traceBuilder) {
+        traceBuilder.recordSkip("hot_spots", "budget_exceeded", "graph budget gated");
+      }
+    }
+
+    if (!isDocument && shouldBuildFallbackGraph(degradedReasons)) {
+      fallbackGraph = await this.buildFallbackGraph(filePath);
+      if (traceBuilder) {
+        traceBuilder.recordEvent({
+          area: "capabilities",
+          code: "fallback_graph",
+          message: "Using fallback graph extraction",
+          data: { filePathHint: path.basename(filePath) }
+        });
+      }
+    }
+
+    const compressionDecision = applySkeletonCompressionDecision({
+      skeleton: typeof skeleton === "string" ? skeleton : String(skeleton ?? ""),
+      filePath,
+      maxTokens,
+      languageId: AstManager.getInstance().getLanguageId(filePath),
+      buildDigest: () => this.buildSkeletonDigest(profile),
+      applyTokenBudget
+    });
+    skeleton = compressionDecision.skeleton;
+    if (compressionDecision.degraded) {
+      degraded = true;
+      if (compressionDecision.degradedReason && !degradedReasons.includes(compressionDecision.degradedReason)) {
+        degradedReasons.push(compressionDecision.degradedReason);
       }
     }
 
 
         // 3. Synthesize Response (Advanced synthesis in Phase 3)
-    const status = includeCalls && !symbolName ? 'partial_success' : (degraded ? 'partial_success' : 'ok');
+    const status = includeCallsPlanned && !symbolName ? 'partial_success' : (degraded ? 'partial_success' : 'ok');
     const elapsedMs = Date.now() - startedAt;
     logProgress(progress, `Completed in ${elapsedMs}ms.`);
     const integrityReport = integrityOptions && integrityOptions.mode !== "off"
@@ -304,8 +592,20 @@ export class UnderstandPillar {
       }
     }
 
-    const analysisPack = wantsAnalysis
-      ? this.buildAnalysisPack({
+    let analysisPack: AnalysisPack | undefined;
+    if (wantsAnalysisPlanned) {
+      if (analysisPlan?.strategy === "summary" && resolvedSessionId && artifactManager) {
+        analysisPack = artifactManager.getLatestAnalysisPack(resolvedSessionId);
+        if (analysisPack && traceBuilder) {
+          traceBuilder.recordEvent({
+            area: "budget",
+            code: "allocator.reuse_pack",
+            data: { section: "analysis_pack" }
+          });
+        }
+      }
+      if (!analysisPack) {
+        analysisPack = this.buildAnalysisPack({
           goal: subject,
           primaryFile: filePath,
           searchResults: searchResult?.results,
@@ -313,8 +613,9 @@ export class UnderstandPillar {
           hotSpots,
           degraded,
           analysis
-        })
-      : undefined;
+        });
+      }
+    }
 
     if (analysisPack) {
       if (artifactManager) {
@@ -329,6 +630,23 @@ export class UnderstandPillar {
       }
     }
 
+    let stylePack: StylePack | undefined;
+    if (wantsVibePlanned) {
+      if (stylePlan?.strategy === "summary" && resolvedSessionId && artifactManager) {
+        stylePack = artifactManager.getLatestStylePack(resolvedSessionId);
+        if (stylePack && traceBuilder) {
+          traceBuilder.recordEvent({
+            area: "budget",
+            code: "allocator.reuse_pack",
+            data: { section: "style_pack" }
+          });
+        }
+      }
+      if (!stylePack) {
+        stylePack = await this.buildStylePack(filePath, vibe, indexSnapshot, resolvedSessionId, subject);
+      }
+    }
+
     const response = buildUnderstandResponse({
       subject,
       filePath,
@@ -339,11 +657,13 @@ export class UnderstandPillar {
       docProfile,
       docReferences,
       relatedCode,
-      calls,
+      callGraph: callGraphPreview,
+      callGraphArtifactId,
+      callGraphSummary,
       deps,
       hotSpots,
       integrityReport,
-      includeCalls,
+      includeCalls: includeCallsPlanned,
       degraded,
       degradedReasons: degradedReasons.length > 0 ? degradedReasons : undefined,
       degradedReasonDetails: buildDegradedReasons(degradedReasons),
@@ -352,36 +672,161 @@ export class UnderstandPillar {
       budget,
       allowGraphs,
       indexSnapshot,
-      stylePack: wantsVibe ? await this.buildStylePack(filePath, vibe, indexSnapshot, resolvedSessionId, subject) : undefined,
+      stylePack,
       analysisPack,
       sessionId: resolvedSessionId,
-      compression: compression.applied
-        ? {
-            applied: true,
-            mode: compressionMode,
-            elasticWindowPct: compression.elasticWindowPct,
-            maxTokens: compression.maxTokens,
-            estimatedTokens: compression.estimatedTokens,
-            maxChars: compression.maxChars,
-            usedChars: compression.usedChars,
-            decisions: compressionDecisions.length > 0 ? compressionDecisions : undefined
-          }
-        : undefined
+      compression: compressionDecision.compression
+    });
+    enforceUnderstandResponseBudget({
+      response,
+      maxTokens,
+      maxChars: limits.maxChars,
+      traceBuilder
     });
     if (traceEnabled) {
       response.effectiveOptions = {
-        profile: resolvedOptions.effective.profile,
+        version: 1,
+        pillar: "understand",
+        profile,
         sources: resolvedOptions.effective.sources,
         depth,
         include
       };
-      response.decisionTrace = {
-        profileApplied: resolvedOptions.effective.profile ?? null,
-        sourcesApplied: resolvedOptions.effective.sources ?? null
-      };
+      if (traceBuilder) {
+        traceBuilder.setBudget({
+          maxTokens,
+          compressionApplied: compressionDecision.compression?.applied,
+          compressionMode: compressionDecision.compression?.mode
+        });
+        response.decisionTrace = traceBuilder.finalize();
+      }
     }
+    adaptiveLod?.recordOutcome({
+      sessionId: resolvedSessionId,
+      tool: "understand",
+      success: Boolean(response.success),
+      degradedReasons: response.degradedReasonDetails
+    });
     return response;
+    } finally {
+      stopTotal();
+    }
+  }
 
+  private buildGraphPack(input: {
+    calls: any;
+    filePath: string;
+    symbolName?: string | null;
+    depth: string;
+  }): {
+    pack: GraphPack;
+    preview: { nodes: any[]; edges: any[]; resolvedTarget?: any; meta?: any };
+    expiresAt: number;
+  } {
+    const rawNodes = Array.isArray(input.calls?.nodes) ? input.calls.nodes : [];
+    const rawEdges = Array.isArray(input.calls?.edges) ? input.calls.edges : [];
+    const totalNodes = rawNodes.length;
+    const totalEdges = rawEdges.length;
+    const maxNodes = DEFAULT_CALLGRAPH_MAX_NODES;
+    const maxEdges = DEFAULT_CALLGRAPH_MAX_EDGES;
+    let cappedNodes = rawNodes;
+    let cappedEdges = rawEdges;
+    let truncatedByCap = false;
+
+    if (Number.isFinite(maxNodes) && maxNodes > 0 && cappedNodes.length > maxNodes) {
+      cappedNodes = cappedNodes.slice(0, maxNodes);
+      truncatedByCap = true;
+    }
+    const nodeIds = new Set(cappedNodes.map((node: any) => node.id));
+    cappedEdges = cappedEdges.filter((edge: any) => nodeIds.has(edge.source) && nodeIds.has(edge.target));
+    if (Number.isFinite(maxEdges) && maxEdges > 0 && cappedEdges.length > maxEdges) {
+      cappedEdges = cappedEdges.slice(0, maxEdges);
+      truncatedByCap = true;
+    }
+    const truncatedReason = input.calls?.truncatedReason as ("cap" | "depth" | "unknown" | undefined);
+    if (truncatedReason === "cap") {
+      truncatedByCap = true;
+    }
+
+    const degreeMap = new Map<string, number>();
+    for (const edge of cappedEdges) {
+      degreeMap.set(edge.source, (degreeMap.get(edge.source) ?? 0) + 1);
+      degreeMap.set(edge.target, (degreeMap.get(edge.target) ?? 0) + 1);
+    }
+    type NodeDegree = { node: any; degree: number };
+    const topNodes = cappedNodes
+      .map((node: any): NodeDegree => ({ node, degree: degreeMap.get(node.id) ?? 0 }))
+      .sort((left: NodeDegree, right: NodeDegree) => right.degree - left.degree)
+      .slice(0, DEFAULT_CALLGRAPH_TOP_NODES)
+      .map((entry: NodeDegree) => ({
+        label: entry.node.label ?? entry.node.id,
+        filePath: entry.node.path,
+        degree: entry.degree
+      }));
+
+    const mode = input.calls?.resolvedTarget?.type === "file" ? "file" : "symbol";
+    const createdAt = Date.now();
+    const pack: GraphPack = {
+      id: this.generateGraphPackId(),
+      kind: "call_graph",
+      source: {
+        filePath: input.filePath,
+        ...(input.symbolName ? { symbolName: input.symbolName } : {}),
+        ...(input.depth ? { depth: input.depth } : {})
+      },
+      raw: {
+        nodes: cappedNodes,
+        edges: cappedEdges,
+        resolvedTarget: input.calls?.resolvedTarget
+      },
+      summary: {
+        mode,
+        truncated: input.calls?.truncated === true || truncatedByCap || totalNodes !== cappedNodes.length || totalEdges !== cappedEdges.length,
+        ...(truncatedReason ? { truncatedReason } : {}),
+        totalNodes,
+        totalEdges,
+        topNodes
+      },
+      meta: {
+        createdAt,
+        totalNodes,
+        totalEdges,
+        truncatedByCap,
+        ...(truncatedReason ? { truncatedReason } : {}),
+        caps: {
+          maxNodes,
+          maxEdges
+        }
+      }
+    };
+
+    const previewNodes = cappedNodes.slice(0, Math.min(DEFAULT_CALLGRAPH_PREVIEW_NODES, cappedNodes.length));
+    const previewNodeIds = new Set(previewNodes.map((node: any) => node.id));
+    const previewEdges = cappedEdges
+      .filter((edge: any) => previewNodeIds.has(edge.source) && previewNodeIds.has(edge.target))
+      .slice(0, DEFAULT_CALLGRAPH_PREVIEW_EDGES);
+
+    return {
+      pack,
+      expiresAt: createdAt + DEFAULT_CALLGRAPH_ARTIFACT_TTL_MS,
+      preview: {
+        nodes: previewNodes,
+        edges: previewEdges,
+        resolvedTarget: input.calls?.resolvedTarget,
+        meta: {
+          mode,
+          truncated: pack.summary.truncated,
+          totalNodes,
+          totalEdges,
+          artifactId: pack.id
+        }
+      }
+    };
+  }
+
+  private generateGraphPackId(): string {
+    const suffix = Math.random().toString(36).slice(2, 8);
+    return `graph_${Date.now().toString(36)}_${suffix}`;
   }
 
   private async buildStylePack(
@@ -621,16 +1066,6 @@ export class UnderstandPillar {
     }
 
     return { results: [] };
-  }
-
-  private shouldBuildFallbackGraph(reasons: string[]): boolean {
-    return reasons.some((reason) =>
-      reason === "language_query_missing"
-      || reason === "language_parser_unavailable"
-      || reason === "unsupported_language"
-      || reason === "missing_query_pack"
-      || reason === "missing_wasm_grammar"
-    );
   }
 
   private filterSearchResults(result: any): any {

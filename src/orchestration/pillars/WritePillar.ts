@@ -6,6 +6,7 @@ import { ParsedIntent } from '../IntentRouter.js';
 import { metrics } from '../../utils/MetricsCollector.js';
 import { type TemplateType, type TemplateContext } from '../../generation/SimpleTemplateGenerator.js';
 import { FeatureFlags } from '../../config/FeatureFlags.js';
+import { NodeFileSystem, type IFileSystem } from '../../platform/FileSystem.js';
 
 import {
     smartWriteCode,
@@ -23,10 +24,47 @@ import type { DraftPack, StylePack, WorkflowMeta } from "../../types/flow-artifa
 import { DraftPackBuilder } from "../../generation/draft-pack-builder.js";
 import { ReviewReportBuilder } from "../../generation/review-report-builder.js";
 import type { FlowArtifactManager } from "../flow-artifact-manager.js";
-import { OptionResolver } from "../options/OptionResolver.js";
 import { buildDegradedReasons } from "../DegradedReasonMapper.js";
+import type { FileVersionManager } from "../../engine/FileVersionManager.js";
+import {
+  evaluateLanguageParityGate,
+  formatParityBlockMessage
+} from "../../config/LanguageParityGate.js";
+import type { RepoRegistry } from "../../config/RepoRegistry.js";
+import type { PathNormalizer } from "../../utils/PathNormalizer.js";
+import { normalizeRepoScope } from "../../utils/RepoScope.js";
+import { evaluateRepoEditPolicy } from "./shared/RepoGuard.js";
+import { AuditLog } from "../../utils/AuditLog.js";
+import type { OverrideTrace } from "../../utils/GuardrailsOverride.js";
+import { normalizeWriteInput } from "./write/WriteInputNormalizer.js";
+import { buildWorkflowMeta, buildWorkflowWarnings } from "./shared/WorkflowMeta.js";
+import { evaluateOverrideDecision } from "./shared/OverrideDecision.js";
+import { evaluateIntegrityGuardrailBlock } from "./shared/IntegrityGuardrailDecision.js";
+import type { OptionSource, TraceOptionResolution } from "../../types/option-trace.js";
+import { TraceBuilder } from "../trace/TraceBuilder.js";
+import { applyFormatterBridge } from "../formatter/FormatterBridge.js";
+
+const resolveOptionSource = (explicit: boolean, hasSession: boolean): OptionSource => {
+  if (explicit) return "explicit";
+  if (hasSession) return "session";
+  return "default";
+};
+
+const buildStringResolution = (
+  resolved: string | undefined,
+  explicit: boolean,
+  hasSession: boolean,
+  requested?: unknown
+): TraceOptionResolution<string | null> => ({
+  source: resolveOptionSource(explicit, hasSession),
+  explicit,
+  resolved: resolved ?? null,
+  ...(requested !== undefined ? { requested } : {})
+});
 
 export class WritePillar {
+  private fileSystem?: IFileSystem;
+
   constructor(private readonly registry: InternalToolRegistry) {}
 
   private computeHash(content: string): { algorithm: 'xxhash' | 'sha256'; value: string } {
@@ -34,30 +72,137 @@ export class WritePillar {
     return { algorithm: 'sha256', value: hash };
   }
 
+  private resolveFileSystem(): IFileSystem {
+    if (this.fileSystem) return this.fileSystem;
+    const injected =
+      typeof this.registry.getMetadata === "function"
+        ? this.registry.getMetadata<IFileSystem>("fileSystem")
+        : undefined;
+    this.fileSystem = injected ?? new NodeFileSystem(process.cwd());
+    return this.fileSystem;
+  }
+
+  private resolveFormatterMode(constraints: any): string | undefined {
+    if (typeof constraints?.formatter === "string") return constraints.formatter;
+    if (typeof constraints?.options?.formatter === "string") return constraints.options.formatter;
+    return undefined;
+  }
+
+  private async applyFormatterIfNeeded(
+    mode: string | undefined,
+    filePath: string,
+    rollbackAvailable?: boolean
+  ): Promise<Awaited<ReturnType<typeof applyFormatterBridge>> | undefined> {
+    if (!mode) return undefined;
+    const fileSystem = this.resolveFileSystem();
+    return applyFormatterBridge({
+      mode,
+      filePaths: [filePath],
+      rootPath: process.cwd(),
+      fileSystem,
+      tool: "write",
+      rollbackAvailable
+    });
+  }
+
+  private applyFormatterOutcome<T extends Record<string, any>>(
+    payload: T,
+    formatterResult: Awaited<ReturnType<typeof applyFormatterBridge>> | undefined,
+    filePath: string
+  ): T {
+    if (!formatterResult) return payload;
+    const formatterReasons = formatterResult.degradedReasons?.length
+      ? buildDegradedReasons(formatterResult.degradedReasons, { filePath })
+      : [];
+    const existingReasons = Array.isArray(payload.degradedReasons) ? payload.degradedReasons : [];
+    const mergedReasons = formatterReasons && formatterReasons.length > 0
+      ? [...existingReasons, ...formatterReasons]
+      : existingReasons;
+    const guidance = payload.guidance ?? {};
+    const mergedActions = formatterResult.suggestedActions?.length
+      ? [
+          ...(Array.isArray(guidance.suggestedActions) ? guidance.suggestedActions : []),
+          ...formatterResult.suggestedActions
+        ]
+      : guidance.suggestedActions;
+    return {
+      ...payload,
+      formatter: formatterResult,
+      guidance: {
+        ...guidance,
+        ...(mergedActions ? { suggestedActions: mergedActions } : {})
+      },
+      ...(mergedReasons.length > 0
+        ? { degraded: Boolean(payload.degraded) || true, degradedReasons: mergedReasons }
+        : {})
+    };
+  }
+
 
   public async execute(intent: ParsedIntent, context: OrchestrationContext): Promise<any> {
     const stopTotal = metrics.startTimer("write.total_ms");
     try {
-      const { constraints, targets, originalIntent } = intent;
-      const targetPath = constraints.targetPath || targets[0];
-      const template = constraints.template;
-      let content = constraints.content ?? '';
-      const hasExplicitContent = constraints.content !== undefined;
-      const safeWrite = Boolean((constraints as any).safeWrite);
-      const quickGenerate = Boolean((constraints as any).quickGenerate);
-      const smartWrite = Boolean((constraints as any).smartWrite);
-      const styleReference = (constraints as any).styleReference as string[] | undefined;
-      const rawSessionId = typeof (constraints as any).sessionId === "string" ? (constraints as any).sessionId : undefined;
       const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
-      const resolvedSessionId = artifactManager?.resolveSessionId(rawSessionId, originalIntent);
-      const sessionPolicy = resolvedSessionId ? artifactManager?.getSession(resolvedSessionId)?.policy : undefined;
-    const resolvedOptions = OptionResolver.resolveWriteOptions(constraints, resolvedSessionId, sessionPolicy);
-      const dryRun = resolvedOptions.effective.dryRun;
-      const traceEnabled = resolvedOptions.effective.traceEnabled;
-      const draftOptions = (constraints as any).draftOptions as { skeletonOnly?: boolean } | undefined;
-      const reviewOptions = resolvedOptions.effective.reviewOptions;
-      const draftId = typeof (constraints as any).draftId === "string" ? (constraints as any).draftId : undefined;
-      const refinement = typeof (constraints as any).refinement === "string" ? (constraints as any).refinement : undefined;
+      const {
+        constraints,
+        targets,
+        originalIntent,
+        targetPath,
+        template,
+        content: initialContent,
+        hasExplicitContent,
+        safeWrite,
+        quickGenerate,
+        smartWrite,
+        styleReference,
+        resolvedSessionId,
+        sessionPolicy,
+        resolvedOptions,
+        dryRun,
+        traceEnabled,
+        draftOptions,
+        reviewOptions,
+        draftId,
+        refinement
+      } = normalizeWriteInput(intent, {
+        resolveSessionId: (rawSessionId, fallback) => artifactManager?.resolveSessionId(rawSessionId, fallback),
+        getSessionPolicy: (sessionId) => (sessionId ? artifactManager?.getSession(sessionId)?.policy : undefined)
+      });
+      const sessionProfile = sessionPolicy?.write?.profile ?? sessionPolicy?.profile;
+      const sessionSafety = sessionPolicy?.write?.safety ?? sessionPolicy?.safety;
+      const traceBuilder = traceEnabled
+        ? new TraceBuilder(
+          "write",
+          {
+            profile: buildStringResolution(
+              resolvedOptions.effective.profile,
+              typeof constraints.profile === "string",
+              Boolean(sessionProfile),
+              typeof constraints.profile === "string" ? constraints.profile : undefined
+            ),
+            safety: buildStringResolution(
+              resolvedOptions.effective.safety,
+              typeof (constraints as any).safety === "string",
+              Boolean(sessionSafety),
+              typeof (constraints as any).safety === "string" ? (constraints as any).safety : undefined
+            ),
+            dryRun: {
+              source: typeof constraints.dryRun === "boolean" ? "explicit" : (sessionSafety ? "session" : "computed"),
+              explicit: typeof constraints.dryRun === "boolean",
+              resolved: dryRun,
+              ...(typeof constraints.dryRun === "boolean" ? { requested: constraints.dryRun } : {})
+            },
+            trace: {
+              source: constraints.trace === true ? "explicit" : "default",
+              explicit: constraints.trace === true,
+              resolved: traceEnabled
+            }
+          },
+          { startedAtMs: Date.now() }
+        )
+        : undefined;
+      const formatterMode = this.resolveFormatterMode(constraints);
+      let content = initialContent;
       if (resolvedSessionId) {
         const policyPatch: Partial<{ profile?: string; safety?: string; write?: Record<string, unknown> }> = {};
         if (typeof constraints.profile === "string") {
@@ -80,13 +225,37 @@ export class WritePillar {
       const draftArtifact = draftId ? artifactManager?.get(draftId) : undefined;
       const draftPack = draftArtifact?.type === "draft" ? (draftArtifact as any).pack : undefined;
       const draftContent = draftPack?.phantomFiles?.[0]?.content as string | undefined;
-      const workflowMeta = this.buildWorkflowMeta({
+      const expectedFileVersions = (constraints as any).fileVersions ?? draftPack?.fileVersions;
+      const workflowMeta = buildWorkflowMeta({
         sessionId: resolvedSessionId,
         dryRun,
         stylePack: sessionStylePack,
         artifactManager
       });
-      const workflowWarnings = this.buildWorkflowWarnings(workflowMeta, Boolean(resolvedSessionId));
+      const workflowWarnings = buildWorkflowWarnings(workflowMeta, Boolean(resolvedSessionId));
+      let overrideTrace: OverrideTrace | undefined;
+      const repoRegistry = this.registry.getMetadata<RepoRegistry>("repoRegistry");
+      const pathNormalizer = this.registry.getMetadata<PathNormalizer>("pathNormalizer");
+      const fileVersionManager = this.registry.getMetadata<FileVersionManager>("fileVersionManager");
+      const allowCrossRepoEdits = Boolean((constraints as any).allowCrossRepoEdits);
+      const repoScopeParams = {
+        repoScope: (constraints as any).repoScope,
+        repoId: (constraints as any).repoId,
+        repoIds: (constraints as any).repoIds
+      };
+      const repoScope = repoRegistry && pathNormalizer
+        ? normalizeRepoScope(repoScopeParams, repoRegistry, { defaultMode: "default" })
+        : undefined;
+      if (traceBuilder && repoScope) {
+        traceBuilder.recordEvent({
+          area: "policy",
+          code: "repo_scope_resolved",
+          data: {
+            mode: repoScope.scope.mode,
+            repoIdsCount: Array.isArray(repoScope.repoIds) ? repoScope.repoIds.length : 0
+          }
+        });
+      }
       const attachSession = <T extends Record<string, any>>(payload: T): T & { sessionId?: string; workflowMeta: WorkflowMeta; workflowWarnings?: string[] } => {
         const next = {
           ...payload,
@@ -94,25 +263,23 @@ export class WritePillar {
           ...(traceEnabled
             ? {
                 effectiveOptions: {
+                  version: 1,
+                  pillar: "write",
                   profile: resolvedOptions.effective.profile,
                   safety: resolvedOptions.effective.safety,
                   dryRun,
                   reviewOptions,
                   diffMode: resolvedOptions.effective.diffMode
                 },
-                decisionTrace: {
-                  dryRun: {
-                    explicit: typeof constraints.dryRun === "boolean",
-                    resolved: dryRun
-                  },
-                  safety: resolvedOptions.effective.safety ?? null,
-                  profile: resolvedOptions.effective.profile ?? null
-                }
+                decisionTrace: traceBuilder?.finalize()
               }
             : {})
         } as T & { sessionId?: string; workflowMeta: WorkflowMeta; workflowWarnings?: string[] };
         if (workflowWarnings.length > 0) {
           next.workflowWarnings = workflowWarnings;
+        }
+        if (overrideTrace) {
+          (next as any).overrideTrace = overrideTrace;
         }
         return resolvedSessionId ? { ...next, sessionId: resolvedSessionId } : next;
       };
@@ -131,6 +298,185 @@ export class WritePillar {
       }
 
       const resolvedPath = await this.resolveTargetPath(targetPath);
+      const overrideEvaluation = await evaluateOverrideDecision({
+        constraints,
+        targetFiles: [resolvedPath],
+        pillar: "write",
+        repoId: typeof (constraints as any).repoId === "string" ? (constraints as any).repoId : undefined,
+        auditLogAppend: AuditLog.append
+      });
+      const overrideDecision = overrideEvaluation.decision ?? undefined;
+      const bypassIntegrityGuardrails = overrideEvaluation.bypass.integrityGuardrails;
+      const bypassReviewBlock = overrideEvaluation.bypass.reviewPolicy;
+      const bypassStaleGuard = overrideEvaluation.bypass.staleGuard;
+      overrideTrace = overrideEvaluation.trace;
+      if (traceBuilder) {
+        traceBuilder.recordEvent({
+          area: "guardrails",
+          code: "override_evaluated",
+          data: {
+            decision: overrideDecision?.decision ?? "none",
+            bypassIntegrityGuardrails,
+            bypassReviewBlock,
+            bypassStaleGuard
+          }
+        });
+      }
+      if (overrideEvaluation.blockedResponse) {
+        if (traceBuilder) {
+          traceBuilder.recordSkip("override", "guardrail_blocked", "override not permitted");
+        }
+        return attachSession(overrideEvaluation.blockedResponse);
+      }
+      if (repoRegistry && pathNormalizer && repoScope) {
+        const guard = evaluateRepoEditPolicy({
+          filePaths: [resolvedPath],
+          repoScope,
+          repoRegistry,
+          pathNormalizer,
+          allowCrossRepoEdits
+        });
+        if (guard.blocked) {
+          const reason = guard.blockedReason ?? "cross_repo_edit_blocked";
+          const degradedReasons = buildDegradedReasons([reason]);
+          const guidanceMessage = reason === "cross_repo_edit_blocked"
+            ? "Set allowCrossRepoEdits=true in .kairo/config/mcp-config.json for involved repos, then rerun with allowCrossRepoEdits:true."
+            : "Adjust repoScope to include the target repository or use the default repo.";
+          if (traceBuilder) {
+            traceBuilder.recordSkip("repo_scope", "policy_disabled", reason);
+          }
+          return attachSession({
+            success: false,
+            status: "blocked",
+            message: guard.message ?? "Blocked by repo scope policy.",
+            errorCode: guard.errorCode ?? "CROSS_REPO_EDIT_BLOCKED",
+            blockedReason: reason,
+            degradedReasons,
+            guidance: { message: guidanceMessage }
+          });
+        }
+      }
+
+      const staleGuard = await this.checkStaleGuard({
+        indexStateManager: this.registry.getMetadata<IndexStateManager>("indexStateManager"),
+        dryRun,
+        bypass: bypassStaleGuard,
+        workflowWarnings
+      });
+      if (traceBuilder) {
+        traceBuilder.recordEvent({
+          area: "guardrails",
+          code: "stale_guard",
+          data: { blocked: staleGuard.blocked, bypassed: bypassStaleGuard }
+        });
+      }
+      if (staleGuard.blocked) {
+        if (traceBuilder) {
+          traceBuilder.recordSkip("stale_guard", "guardrail_blocked", "index stale risk high");
+        }
+        return attachSession({
+          success: false,
+          status: "blocked",
+          message: staleGuard.message,
+          errorCode: "INDEX_STALE_HIGH",
+          blockedReason: "index_stale_high",
+          guidance: {
+            message: staleGuard.message,
+            suggestedActions: [
+              {
+                id: "manage.reindex",
+                priority: 1,
+                description: "Rebuild index before apply.",
+                rationale: "High stale risk reduces apply safety.",
+                tags: ["repair_ladder", "attempt_2"],
+                toolCall: { tool: "manage", args: { command: "reindex" } }
+              }
+            ]
+          },
+          indexSnapshot: staleGuard.snapshot
+        });
+      }
+      const parityGate = await evaluateLanguageParityGate({
+        filePath: resolvedPath,
+        operation: dryRun ? "write_plan" : "write_apply"
+      });
+      if (traceBuilder) {
+        traceBuilder.recordEvent({
+          area: "capabilities",
+          code: "parity_gate",
+          data: {
+            blocked: parityGate.outcome === "block",
+            languageId: parityGate.languageId ?? null,
+            reasons: Array.isArray(parityGate.reasons) ? parityGate.reasons.slice(0, 3) : []
+          }
+        });
+      }
+      const parityDegradedReasons = parityGate.reasons.length > 0
+        ? buildDegradedReasons(parityGate.reasons, {
+          languageId: parityGate.languageId,
+          filePath: resolvedPath
+        })
+        : undefined;
+      const applyParitySignals = <T extends Record<string, any>>(payload: T): T => {
+        if (!parityDegradedReasons || parityDegradedReasons.length === 0) {
+          return payload;
+        }
+        const mergedReasons = [
+          ...(Array.isArray(payload.degradedReasons) ? payload.degradedReasons : []),
+          ...parityDegradedReasons
+        ];
+        return {
+          ...payload,
+          degraded: Boolean(payload.degraded) || mergedReasons.length > 0,
+          degradedReasons: mergedReasons
+        };
+      };
+      const attachResponse = <T extends Record<string, any>>(payload: T) => {
+        const response = attachSession(applyParitySignals(payload));
+        if (overrideDecision) {
+          void AuditLog.append({
+            pillar: "write",
+            operation: dryRun ? "dry_run" : "apply",
+            decision: overrideDecision.decision,
+            actor: overrideDecision.approval?.approvedBy,
+            reason: overrideDecision.approval?.reason,
+            ticket: overrideDecision.approval?.ticket,
+            scope: overrideDecision.scope,
+            requested: overrideDecision.requestedAllow,
+            effective: overrideDecision.effectiveAllow,
+            targetFiles: [resolvedPath],
+            result: {
+              success: Boolean((payload as any).success),
+              status: (payload as any).status,
+              errorCode: (payload as any).errorCode
+            }
+          });
+        }
+        return response;
+      };
+
+      if (!dryRun && parityGate.outcome === "block") {
+        const message = formatParityBlockMessage({ filePath: resolvedPath, result: parityGate });
+        if (traceBuilder) {
+          traceBuilder.recordSkip("parity_gate", "guardrail_blocked", "language parity gate blocked");
+        }
+        return attachResponse({
+          success: false,
+          status: "blocked",
+          message,
+          createdFiles: [],
+          transactionId: '',
+          rollbackAvailable: false,
+          blockedReason: parityGate.reasons[0] ?? "language_parity_missing",
+          blockingErrors: ["LANGUAGE_PARITY_MISSING"],
+          errorCode: "LANGUAGE_PARITY_MISSING",
+          guidance: { message }
+        });
+      }
+
+      const fileVersionsSnapshot = dryRun
+        ? await this.buildFileVersionsSnapshot([resolvedPath], fileVersionManager, pathNormalizer)
+        : undefined;
 
       if (dryRun) {
         const refinedIntent = refinement ? `${originalIntent}\nRefinement: ${refinement}` : originalIntent;
@@ -199,6 +545,9 @@ export class WritePillar {
           content,
           existingContent
         });
+        if (fileVersionsSnapshot) {
+          draftPack.fileVersions = fileVersionsSnapshot;
+        }
         draftPack.workflowMeta = workflowMeta;
 
         const preApplyReview = (reviewOptions?.preApply ?? true)
@@ -239,17 +588,36 @@ export class WritePillar {
           }
         }
 
-        return attachSession({
+        return attachResponse({
           success: true,
           status: 'draft',
           draftPack,
           review: preApplyReview,
           guidance: {
             message: 'DraftPack generated. Review skeleton and phantom diff before applying.',
-            suggestedActions: []
+            suggestedActions: [
+              {
+                id: "write.apply",
+                priority: 1,
+                description: "Apply this draft write.",
+                rationale: "Uses the draft snapshot (including fileVersions) to block stale applies.",
+                toolCall: {
+                  tool: "write",
+                  args: {
+                    intent: refinedIntent,
+                    targetPath: resolvedPath,
+                    dryRun: false,
+                    draftId: draftPack.id,
+                    ...(draftPack.fileVersions ? { fileVersions: draftPack.fileVersions } : {})
+                  }
+                }
+              }
+            ]
           }
         });
       }
+
+      const fileVersions = expectedFileVersions;
 
       if (smartWrite && !hasExplicitContent) {
         const stopSmartWrite = metrics.startTimer("write.smart_write_ms");
@@ -277,9 +645,11 @@ export class WritePillar {
               constraints,
               resolvedSessionId,
               reviewOptions,
-              sessionStylePack
+              sessionStylePack,
+              fileVersions,
+              { integrityGuardrails: bypassIntegrityGuardrails, reviewPolicy: bypassReviewBlock }
             );
-            return attachSession(result);
+            return attachResponse(result);
           }
         } catch (error: any) {
           stopSmartWrite();
@@ -304,9 +674,11 @@ export class WritePillar {
               constraints,
               resolvedSessionId,
               reviewOptions,
-              sessionStylePack
+              sessionStylePack,
+              fileVersions,
+              { integrityGuardrails: bypassIntegrityGuardrails, reviewPolicy: bypassReviewBlock }
             );
-            return attachSession(result);
+            return attachResponse(result);
           }
         } catch (error: any) {
           stopGenerate();
@@ -327,22 +699,42 @@ export class WritePillar {
               await this.runTool(context, 'edit_apply', {
                 edits: [{ filePath: resolvedPath, operation: 'create', replacementString: '' }],
                 dryRun: false,
-                createMissingDirectories: true
+                createMissingDirectories: true,
+                fileVersions
               });
             }
             existingContent = '';
           }
 
-          const guardrailResult = await this.evaluateGuardrails(
+          let guardrailResult = await this.evaluateGuardrails(
             context,
             resolvedPath,
             existingContent,
             content,
             constraints
           );
-          if (guardrailResult?.status === 'block') {
+          const guardrailDecision = evaluateIntegrityGuardrailBlock({
+            guardrailResult,
+            dryRun: false,
+            bypass: bypassIntegrityGuardrails,
+            workflowWarnings,
+            warningMessage: "Override bypassed integrity guardrails blocking for this apply.",
+            downgradeOnBypass: false
+          });
+          guardrailResult = guardrailDecision.guardrailResult;
+          if (traceBuilder) {
+            traceBuilder.recordEvent({
+              area: "guardrails",
+              code: "integrity_guardrails",
+              data: { blocked: guardrailDecision.blocked, bypassed: bypassIntegrityGuardrails }
+            });
+          }
+          if (guardrailDecision.blocked) {
+            if (traceBuilder) {
+              traceBuilder.recordSkip("integrity_guardrails", "guardrail_blocked", "integrity guardrails blocked write");
+            }
             stopSafePatch();
-            return attachSession({
+            return attachResponse({
               success: false,
               status: 'blocked',
               createdFiles: [],
@@ -369,11 +761,12 @@ export class WritePillar {
             guardrailResult,
             constraints,
             reviewOptions,
-            stylePack: sessionStylePack
+            stylePack: sessionStylePack,
+            overrideBypass: bypassReviewBlock
           });
           if (reviewBlock.blocked) {
             stopSafePatch();
-            return attachSession({
+            return attachResponse({
               success: false,
               status: 'blocked',
               createdFiles: [],
@@ -397,15 +790,54 @@ export class WritePillar {
             expectedHash: existingContent ? this.computeHash(existingContent) : undefined
           };
 
+          if (fileVersions && fileVersionManager && pathNormalizer) {
+            const mismatch = await this.detectFileVersionMismatch(fileVersions, fileVersionManager, pathNormalizer);
+            if (mismatch) {
+              stopSafePatch();
+              return attachResponse(this.buildFileVersionMismatchResponse({
+                filePath: mismatch.filePath,
+                intent: originalIntent,
+                writeMode: "safe",
+                sessionId: resolvedSessionId
+              }));
+            }
+          }
+
           const result = await this.runTool(context, 'edit_transaction', {
             filePath: resolvedPath,
             edits: [edit],
-            dryRun: false
+            dryRun: false,
+            fileVersions
           });
 
           stopSafePatch();
 
-          return attachSession({
+          if (result?.errorCode === "FILE_VERSION_MISMATCH") {
+            return attachResponse(this.buildFileVersionMismatchResponse({
+              filePath: resolvedPath,
+              intent: originalIntent,
+              writeMode: "safe",
+              sessionId: resolvedSessionId,
+              currentFileStates: result.updatedFileStates
+            }));
+          }
+
+          const formatterResult = result?.success === false
+            ? undefined
+            : await this.applyFormatterIfNeeded(formatterMode, resolvedPath, true);
+          if (traceBuilder && formatterResult) {
+            traceBuilder.recordEvent({
+              area: "io",
+              code: "formatter_bridge",
+              data: {
+                mode: formatterMode,
+                applied: formatterResult.applied,
+                skippedReason: formatterResult.skippedReason ?? null,
+                degradedReasons: formatterResult.degradedReasons
+              }
+            });
+          }
+          const payload = this.applyFormatterOutcome({
             success: result.success ?? true,
             status: result.success === false ? 'failure' : 'success',
             createdFiles: result.success ? [{ path: resolvedPath, description: `Written (safe mode) from intent: ${originalIntent}` }] : [],
@@ -422,12 +854,23 @@ export class WritePillar {
             warnings: guardrailResult?.warnings,
             guidance: {
               message: result.success ? 'File written with undo support.' : `Write failed: ${result.message || 'Unknown error'}`,
-              suggestedActions: result.success ? [{ pillar: 'read', action: 'view_full', target: resolvedPath }] : []
+              suggestedActions: result.success
+                ? [
+                    {
+                      id: 'read.view_full',
+                      priority: 1,
+                      description: 'Review the updated file content.',
+                      rationale: 'Verify the write applied as intended.',
+                      toolCall: { tool: 'read', args: { action: 'view_full', target: resolvedPath } }
+                    }
+                  ]
+                : []
             }
-          });
+          }, formatterResult, resolvedPath);
+          return attachResponse(payload);
         } catch (error: any) {
           stopSafePatch();
-          return attachSession({
+          return attachResponse({
             success: false,
             status: 'failure',
             createdFiles: [],
@@ -446,15 +889,34 @@ export class WritePillar {
         } catch {
           existingContent = '';
         }
-        const guardrailResult = await this.evaluateGuardrails(
+        let guardrailResult = await this.evaluateGuardrails(
           context,
           resolvedPath,
           existingContent,
           content,
           constraints
         );
-        if (guardrailResult?.status === 'block') {
-          return attachSession({
+        const guardrailDecision = evaluateIntegrityGuardrailBlock({
+          guardrailResult,
+          dryRun: false,
+          bypass: bypassIntegrityGuardrails,
+          workflowWarnings,
+          warningMessage: "Override bypassed integrity guardrails blocking for this apply.",
+          downgradeOnBypass: false
+        });
+        guardrailResult = guardrailDecision.guardrailResult;
+        if (traceBuilder) {
+          traceBuilder.recordEvent({
+            area: "guardrails",
+            code: "integrity_guardrails",
+            data: { blocked: guardrailDecision.blocked, bypassed: bypassIntegrityGuardrails }
+          });
+        }
+        if (guardrailDecision.blocked) {
+          if (traceBuilder) {
+            traceBuilder.recordSkip("integrity_guardrails", "guardrail_blocked", "integrity guardrails blocked write");
+          }
+          return attachResponse({
             success: false,
             status: 'blocked',
             createdFiles: [],
@@ -481,10 +943,11 @@ export class WritePillar {
           guardrailResult,
           constraints,
           reviewOptions,
-          stylePack: sessionStylePack
+          stylePack: sessionStylePack,
+          overrideBypass: bypassReviewBlock
         });
         if (reviewBlock.blocked) {
-          return attachSession({
+          return attachResponse({
             success: false,
             status: 'blocked',
             createdFiles: [],
@@ -504,14 +967,37 @@ export class WritePillar {
         try {
           await this.runTool(context, 'file_write', { filePath: resolvedPath, content });
         } catch {
-          await this.runTool(context, 'edit_apply', {
+          const fallback = await this.runTool(context, 'edit_apply', {
             edits: [{ filePath: resolvedPath, operation: 'create', replacementString: content }],
             dryRun: false,
-            createMissingDirectories: true
+            createMissingDirectories: true,
+            fileVersions
           });
+          if (fallback?.errorCode === "FILE_VERSION_MISMATCH") {
+            return attachResponse(this.buildFileVersionMismatchResponse({
+              filePath: resolvedPath,
+              intent: originalIntent,
+              writeMode: "fast",
+              sessionId: resolvedSessionId,
+              currentFileStates: fallback.updatedFileStates
+            }));
+          }
         }
 
-        return attachSession({
+        const formatterResult = await this.applyFormatterIfNeeded(formatterMode, resolvedPath, false);
+        if (traceBuilder && formatterResult) {
+          traceBuilder.recordEvent({
+            area: "io",
+            code: "formatter_bridge",
+            data: {
+              mode: formatterMode,
+              applied: formatterResult.applied,
+              skippedReason: formatterResult.skippedReason ?? null,
+              degradedReasons: formatterResult.degradedReasons
+            }
+          });
+        }
+        const payload = this.applyFormatterOutcome({
           success: true,
           status: 'success',
           createdFiles: [{ path: resolvedPath, description: `Written from intent: ${originalIntent}` }],
@@ -528,9 +1014,18 @@ export class WritePillar {
           warnings: guardrailResult?.warnings,
           guidance: {
             message: 'File written (fast mode, no undo).',
-            suggestedActions: [{ pillar: 'read', action: 'view_full', target: resolvedPath }]
+            suggestedActions: [
+              {
+                id: 'read.view_full',
+                priority: 1,
+                description: 'Review the updated file content.',
+                rationale: 'Verify the write applied as intended.',
+                toolCall: { tool: 'read', args: { action: 'view_full', target: resolvedPath } }
+              }
+            ]
           }
-        });
+        }, formatterResult, resolvedPath);
+        return attachResponse(payload);
       }
 
       let existingContent: string | null = null;
@@ -544,11 +1039,21 @@ export class WritePillar {
         try {
           await this.runTool(context, 'file_write', { filePath: resolvedPath, content: '' });
         } catch {
-          await this.runTool(context, 'edit_apply', {
+          const fallback = await this.runTool(context, 'edit_apply', {
             edits: [{ filePath: resolvedPath, operation: 'create', replacementString: '' }],
             dryRun: false,
-            createMissingDirectories: true
+            createMissingDirectories: true,
+            fileVersions
           });
+          if (fallback?.errorCode === "FILE_VERSION_MISMATCH") {
+            return attachResponse(this.buildFileVersionMismatchResponse({
+              filePath: resolvedPath,
+              intent: originalIntent,
+              writeMode: "safe",
+              sessionId: resolvedSessionId,
+              currentFileStates: fallback.updatedFileStates
+            }));
+          }
         }
       }
 
@@ -560,14 +1065,22 @@ export class WritePillar {
       }
 
       if (content === '' && existingContent === null) {
-        return attachSession({
+        return attachResponse({
           success: true,
           status: 'success',
           createdFiles: [{ path: resolvedPath, description: `Created from intent: ${originalIntent}` }],
           transactionId: null,
           guidance: {
             message: 'Empty file created.',
-            suggestedActions: [{ pillar: 'read', action: 'view_full', target: resolvedPath }]
+            suggestedActions: [
+              {
+                id: 'read.view_full',
+                priority: 1,
+                description: 'Review the updated file content.',
+                rationale: 'Verify the write applied as intended.',
+                toolCall: { tool: 'read', args: { action: 'view_full', target: resolvedPath } }
+              }
+            ]
           }
         });
       }
@@ -584,7 +1097,10 @@ export class WritePillar {
         constraints
       );
       if (guardrailResult?.status === 'block') {
-        return attachSession({
+        if (bypassIntegrityGuardrails) {
+          workflowWarnings.push("Override bypassed integrity guardrails blocking for this apply.");
+        } else {
+        return attachResponse({
           success: false,
           status: 'blocked',
           createdFiles: [],
@@ -603,6 +1119,7 @@ export class WritePillar {
             message: guardrailResult.violations?.[0]?.message ?? 'Write blocked by integrity guardrails.'
           }
         });
+        }
       }
       const reviewBlock = await this.checkReviewBlock({
         filePath: resolvedPath,
@@ -611,10 +1128,11 @@ export class WritePillar {
         guardrailResult,
         constraints,
         reviewOptions,
-        stylePack: sessionStylePack
+        stylePack: sessionStylePack,
+        overrideBypass: bypassReviewBlock
       });
       if (reviewBlock.blocked) {
-        return attachSession({
+        return attachResponse({
           success: false,
           status: 'blocked',
           createdFiles: [],
@@ -631,18 +1149,56 @@ export class WritePillar {
         });
       }
 
+      if (fileVersions && fileVersionManager && pathNormalizer) {
+        const mismatch = await this.detectFileVersionMismatch(fileVersions, fileVersionManager, pathNormalizer);
+        if (mismatch) {
+          return attachResponse(this.buildFileVersionMismatchResponse({
+            filePath: mismatch.filePath,
+            intent: originalIntent,
+            writeMode: "safe",
+            sessionId: resolvedSessionId
+          }));
+        }
+      }
+
       const editResult = await this.runTool(context, 'edit_transaction', {
         filePath: resolvedPath,
         edits: [edit],
-        dryRun: false
+        dryRun: false,
+        fileVersions
       });
+
+      if (editResult?.errorCode === "FILE_VERSION_MISMATCH") {
+        return attachResponse(this.buildFileVersionMismatchResponse({
+          filePath: resolvedPath,
+          intent: originalIntent,
+          writeMode: "safe",
+          sessionId: resolvedSessionId,
+          currentFileStates: editResult.updatedFileStates
+        }));
+      }
 
       const reasonCodes = Array.isArray(guardrailResult?.blockingErrors)
         ? guardrailResult.blockingErrors
         : undefined;
       const degradedReasons = buildDegradedReasons(reasonCodes, { filePath: resolvedPath });
 
-      return attachSession({
+      const formatterResult = editResult?.success === false
+        ? undefined
+        : await this.applyFormatterIfNeeded(formatterMode, resolvedPath, true);
+      if (traceBuilder && formatterResult) {
+        traceBuilder.recordEvent({
+          area: "io",
+          code: "formatter_bridge",
+          data: {
+            mode: formatterMode,
+            applied: formatterResult.applied,
+            skippedReason: formatterResult.skippedReason ?? null,
+            degradedReasons: formatterResult.degradedReasons
+          }
+        });
+      }
+      const payload = this.applyFormatterOutcome({
         success: editResult.success ?? true,
         status: editResult.success === false ? 'failure' : 'success',
         createdFiles: [{ path: resolvedPath, description: `Written from intent: ${originalIntent}` }],
@@ -659,9 +1215,20 @@ export class WritePillar {
         degradedReasons,
         guidance: {
           message: editResult.success ? 'File written.' : 'File write failed.',
-          suggestedActions: editResult.success ? [{ pillar: 'read', action: 'view_full', target: resolvedPath }] : []
+          suggestedActions: editResult.success
+            ? [
+                {
+                  id: 'read.view_full',
+                  priority: 1,
+                  description: 'Review the updated file content.',
+                  rationale: 'Verify the write applied as intended.',
+                  toolCall: { tool: 'read', args: { action: 'view_full', target: resolvedPath } }
+                }
+              ]
+            : []
         }
-      });
+      }, formatterResult, resolvedPath);
+      return attachResponse(payload);
     } finally {
       stopTotal();
     }
@@ -674,6 +1241,97 @@ export class WritePillar {
       if (filenameMatch?.results?.length > 0) return filenameMatch.results[0].path;
     }
     return targetPath;
+  }
+
+  private async buildFileVersionsSnapshot(
+    filePaths: string[],
+    fileVersionManager?: FileVersionManager,
+    pathNormalizer?: PathNormalizer
+  ): Promise<Record<string, { expectedVersion?: number; expectedHash?: string }> | undefined> {
+    if (!fileVersionManager || !pathNormalizer) return undefined;
+    const snapshot: Record<string, { expectedVersion?: number; expectedHash?: string }> = {};
+    const uniquePaths = Array.from(new Set(filePaths.filter(Boolean)));
+    for (const filePath of uniquePaths) {
+      const relPath = pathNormalizer.normalize(filePath);
+      try {
+        const absPath = pathNormalizer.toAbsolute(relPath);
+        const versionInfo = await fileVersionManager.getVersion(absPath);
+        snapshot[relPath] = {
+          expectedVersion: versionInfo.version,
+          expectedHash: versionInfo.contentHash
+        };
+      } catch {
+        // skip missing files
+      }
+    }
+    return Object.keys(snapshot).length > 0 ? snapshot : undefined;
+  }
+
+  private async detectFileVersionMismatch(
+    fileVersions: Record<string, { expectedVersion?: number; expectedHash?: string }>,
+    fileVersionManager: FileVersionManager,
+    pathNormalizer: PathNormalizer
+  ): Promise<{ filePath: string } | null> {
+    for (const [relPath, expected] of Object.entries(fileVersions)) {
+      if (!expected) continue;
+      try {
+        const absPath = pathNormalizer.toAbsolute(pathNormalizer.normalize(relPath));
+        const current = await fileVersionManager.getVersion(absPath);
+        if (typeof expected.expectedHash === "string" && expected.expectedHash.length > 0 && expected.expectedHash !== current.contentHash) {
+          return { filePath: relPath };
+        }
+        if (typeof expected.expectedVersion === "number" && expected.expectedVersion !== current.version) {
+          return { filePath: relPath };
+        }
+      } catch {
+        return { filePath: relPath };
+      }
+    }
+    return null;
+  }
+
+  private buildFileVersionMismatchResponse(args: {
+    filePath: string;
+    intent: string;
+    writeMode: string;
+    sessionId?: string;
+    currentFileStates?: Record<string, { newVersion: number; newHash: string }>;
+  }) {
+    const degradedReasons = buildDegradedReasons(["file_version_mismatch"], { filePath: args.filePath });
+    return {
+      success: false,
+      status: "blocked",
+      createdFiles: [],
+      transactionId: "",
+      rollbackAvailable: false,
+      writeMode: args.writeMode,
+      errorCode: "FILE_VERSION_MISMATCH",
+      blockedReason: "file_version_mismatch",
+      degradedReasons,
+      currentFileStates: args.currentFileStates,
+      guidance: {
+        message: "The file changed since it was read. Re-read and retry the write.",
+        suggestedActions: [
+          {
+            id: "read.view_full",
+            priority: 1,
+            description: "Re-read the latest file content.",
+            rationale: "Refresh context before reapplying the write.",
+            tags: ["repair_ladder", "attempt_1"],
+            toolCall: { tool: "read", args: { action: "view_full", target: args.filePath } }
+          },
+          {
+            id: "write.plan",
+            priority: 2,
+            description: "Re-run the write in dry-run mode.",
+            rationale: "Validate the write against the current file state.",
+            tags: ["repair_ladder", "attempt_2"],
+            toolCall: { tool: "write", args: { intent: args.intent, target: args.filePath, options: { dryRun: true } } }
+          }
+        ]
+      },
+      sessionId: args.sessionId
+    };
   }
 
   private resolveDryRun(constraints: any, sessionId?: string): boolean {
@@ -721,59 +1379,6 @@ export class WritePillar {
     return undefined;
   }
 
-  private buildWorkflowMeta(args: {
-    sessionId?: string;
-    dryRun: boolean;
-    stylePack?: StylePack;
-    artifactManager?: FlowArtifactManager;
-  }): WorkflowMeta {
-    const sessionArtifacts = args.sessionId && args.artifactManager
-      ? args.artifactManager.getBySession(args.sessionId)
-      : [];
-    const hasResearch = sessionArtifacts.some((artifact) => artifact.type === "research");
-    const hasAnalysis = sessionArtifacts.some((artifact) => artifact.type === "analysis");
-    const hasStylePack = Boolean(args.stylePack);
-    const dryRunUsed = args.dryRun;
-    const confidence: WorkflowMeta["confidence"] =
-      hasResearch && hasAnalysis && hasStylePack && dryRunUsed
-        ? "high"
-        : (hasStylePack || hasAnalysis || dryRunUsed)
-          ? "medium"
-          : "low";
-    const reasons: string[] = [];
-    if (!hasResearch) reasons.push("missing_research");
-    if (!hasAnalysis) reasons.push("missing_analysis");
-    if (!hasStylePack) reasons.push("missing_style_pack");
-    if (!dryRunUsed) reasons.push("dry_run_disabled");
-    return {
-      confidence,
-      reasons,
-      workflowStatus: {
-        hasResearch,
-        hasAnalysis,
-        hasStylePack,
-        dryRunUsed
-      }
-    };
-  }
-
-  private buildWorkflowWarnings(meta: WorkflowMeta, hasSession: boolean): string[] {
-    const warnings: string[] = [];
-    if (hasSession && !meta.workflowStatus.hasStylePack) {
-      warnings.push("No StylePack found in session. Consider running understand({ vibe: { extract: true } }).");
-    }
-    if (hasSession && !meta.workflowStatus.hasAnalysis) {
-      warnings.push("No AnalysisPack found in session. Consider running understand({ analysis: { clusters: true } }).");
-    }
-    if (hasSession && !meta.workflowStatus.hasResearch) {
-      warnings.push("No ResearchPack found in session. Consider running explore({ research: { sketch: true } }).");
-    }
-    if (!meta.workflowStatus.dryRunUsed) {
-      warnings.push("Applied changes without dryRun; review is recommended before apply.");
-    }
-    return warnings;
-  }
-
   private looksLikePath(value: string): boolean {
     return /[\\/]/.test(value) || /\.[a-z0-9]+$/i.test(value);
   }
@@ -817,6 +1422,7 @@ export class WritePillar {
     constraints?: any;
     reviewOptions: any;
     stylePack?: any;
+    overrideBypass?: boolean;
   }): Promise<{ blocked: boolean; review?: any; message?: string; reasons?: Array<{ kind: string; verdict: string }> }> {
     const blockOn = Array.isArray(params.reviewOptions?.blockOn) ? params.reviewOptions.blockOn : [];
     if (blockOn.length === 0) {
@@ -842,11 +1448,38 @@ export class WritePillar {
     if (reasons.length === 0) {
       return { blocked: false, review, reasons };
     }
+    if (params.overrideBypass) {
+      return { blocked: false, review, reasons, message: "Review block was bypassed by override." };
+    }
     return {
       blocked: true,
       review,
       reasons,
       message: `Review blocked by ${reasons.map((item) => `${item.kind}(${item.verdict})`).join(", ")}.`
+    };
+  }
+
+  private async checkStaleGuard(args: {
+    indexStateManager?: IndexStateManager;
+    dryRun: boolean;
+    bypass: boolean;
+    workflowWarnings: string[];
+  }): Promise<{ blocked: boolean; message: string; snapshot?: any }> {
+    if (args.dryRun || !args.indexStateManager) {
+      return { blocked: false, message: "" };
+    }
+    const snapshot = await args.indexStateManager.getSnapshot();
+    if (snapshot.staleRisk !== "high") {
+      return { blocked: false, message: "", snapshot };
+    }
+    if (args.bypass) {
+      args.workflowWarnings.push("Override bypassed stale index guard.");
+      return { blocked: false, message: "", snapshot };
+    }
+    return {
+      blocked: true,
+      message: "Index staleness is high; reindex before apply.",
+      snapshot
     };
   }
 
@@ -959,7 +1592,9 @@ export class WritePillar {
     constraints?: any,
     sessionId?: string,
     reviewOptions?: any,
-    stylePack?: StylePack
+    stylePack?: StylePack,
+    fileVersions?: Record<string, { expectedVersion?: number; expectedHash?: string }>,
+    overrideBypass?: { integrityGuardrails?: boolean; reviewPolicy?: boolean }
   ): Promise<any> {
     try {
       let finalContent = content;
@@ -971,7 +1606,12 @@ export class WritePillar {
         try {
           await this.runTool(context, 'file_write', { filePath, content: '' });
         } catch {
-          await this.runTool(context, 'edit_apply', { edits: [{ filePath, operation: 'create', replacementString: '' }], dryRun: false, createMissingDirectories: true });
+          await this.runTool(context, 'edit_apply', {
+            edits: [{ filePath, operation: 'create', replacementString: '' }],
+            dryRun: false,
+            createMissingDirectories: true,
+            fileVersions
+          });
         }
         existingContent = '';
       }
@@ -983,6 +1623,9 @@ export class WritePillar {
         constraints
       );
       if (guardrailResult?.status === 'block') {
+        if (overrideBypass?.integrityGuardrails) {
+          // Continue despite block.
+        } else {
         return {
           success: false,
           status: 'blocked',
@@ -1004,6 +1647,7 @@ export class WritePillar {
             message: guardrailResult.violations?.[0]?.message ?? 'Write blocked by integrity guardrails.'
           }
         };
+        }
       }
       const reviewBlock = await this.checkReviewBlock({
         filePath,
@@ -1014,7 +1658,8 @@ export class WritePillar {
         reviewOptions: reviewOptions ?? this.resolveReviewOptions(constraints?.reviewOptions, Boolean(sessionId)),
         stylePack: stylePack ?? (sessionId
           ? this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager")?.getLatestStylePack(sessionId)
-          : undefined)
+          : undefined),
+        overrideBypass: overrideBypass?.reviewPolicy === true
       });
       if (reviewBlock.blocked) {
         return {
@@ -1036,8 +1681,33 @@ export class WritePillar {
         };
       }
       const edit = { targetString: existingContent, replacementString: finalContent, indexRange: { start: 0, end: existingContent.length }, expectedHash: existingContent ? this.computeHash(existingContent) : undefined };
-      const result = await this.runTool(context, 'edit_transaction', { filePath, edits: [edit], dryRun: false });
-      return {
+      const fileVersionManager = this.registry.getMetadata<FileVersionManager>("fileVersionManager");
+      const pathNormalizer = this.registry.getMetadata<PathNormalizer>("pathNormalizer");
+      if (fileVersions && fileVersionManager && pathNormalizer) {
+        const mismatch = await this.detectFileVersionMismatch(fileVersions, fileVersionManager, pathNormalizer);
+        if (mismatch) {
+          return this.buildFileVersionMismatchResponse({
+            filePath: mismatch.filePath,
+            intent,
+            writeMode: "quickGenerate",
+            sessionId
+          });
+        }
+      }
+      const result = await this.runTool(context, 'edit_transaction', { filePath, edits: [edit], dryRun: false, fileVersions });
+      if (result?.errorCode === "FILE_VERSION_MISMATCH") {
+        return this.buildFileVersionMismatchResponse({
+          filePath,
+          intent,
+          writeMode: "quickGenerate",
+          sessionId,
+          currentFileStates: result.updatedFileStates
+        });
+      }
+      const formatterResult = result?.success === false
+        ? undefined
+        : await this.applyFormatterIfNeeded(this.resolveFormatterMode(constraints), filePath, true);
+      const payload = this.applyFormatterOutcome({
         success: result.success ?? true,
         status: result.success === false ? 'failure' : 'success',
         createdFiles: result.success ? [{ path: filePath, description: `Generated ${templateType} from intent: ${intent}` }] : [],
@@ -1056,9 +1726,20 @@ export class WritePillar {
         sessionId,
         guidance: {
           message: result.success ? `Generated ${templateType} with project style. Use 'manage undo' to rollback.` : `Generation failed: ${result.message || 'Unknown error'}`,
-          suggestedActions: result.success ? [{ pillar: 'read', action: 'view_full', target: filePath }] : []
+          suggestedActions: result.success
+            ? [
+                {
+                  id: 'read.view_full',
+                  priority: 1,
+                  description: 'Review the updated file content.',
+                  rationale: 'Verify the write applied as intended.',
+                  toolCall: { tool: 'read', args: { action: 'view_full', target: filePath } }
+                }
+              ]
+            : []
         }
-      };
+      }, formatterResult, filePath);
+      return payload;
     } catch (error: any) {
       return { success: false, status: 'failure', createdFiles: [], transactionId: '', rollbackAvailable: false, writeMode: 'quickGenerate', sessionId, guidance: { message: `Quick generate failed: ${error.message}`, suggestedActions: [] } };
     }

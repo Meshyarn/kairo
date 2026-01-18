@@ -1,6 +1,13 @@
 import { validateRequiredArgs } from "./shared/ValidationHelpers.js";
+import type { ToolSpecRegistry } from "../server/tools/ToolSpecRegistry.js";
 
 export abstract class BaseHandler {
+    protected readonly toolSpecRegistry?: ToolSpecRegistry;
+
+    constructor(toolSpecRegistry?: ToolSpecRegistry) {
+        this.toolSpecRegistry = toolSpecRegistry;
+    }
+
     protected jsonResponse(payload: any): any {
         return { content: [{ type: 'text', text: JSON.stringify(payload, this.jsonReplacer, 2) }] };
     }
@@ -26,8 +33,10 @@ export abstract class BaseHandler {
         };
     }
 
-    protected validateRequiredArgs(toolName: string, args: any, requiredMap: Record<string, string[]>): string[] {
-        const required = requiredMap[toolName] || [];
+    protected validateRequiredArgs(toolName: string, args: any): string[] {
+        const required = Array.isArray(this.toolSpecRegistry?.get(toolName)?.inputSchema?.required)
+            ? this.toolSpecRegistry?.get(toolName)?.inputSchema?.required ?? []
+            : [];
         return validateRequiredArgs(args, required);
     }
 }

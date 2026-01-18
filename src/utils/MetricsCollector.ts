@@ -1,7 +1,7 @@
-type MetricsMode = "off" | "basic" | "detailed";
-type MetricsLevel = "basic" | "detailed";
+export type MetricsMode = "off" | "basic" | "detailed";
+export type MetricsLevel = "basic" | "detailed";
 
-type HistogramSnapshot = {
+export type HistogramSnapshot = {
     count: number;
     min?: number;
     max?: number;
@@ -71,6 +71,10 @@ export class MetricsCollector {
         this.counters.clear();
         this.gauges.clear();
         this.histograms.clear();
+    }
+
+    public getMode(): MetricsMode {
+        return this.mode;
     }
 
     private shouldRecord(level: MetricsLevel): boolean {

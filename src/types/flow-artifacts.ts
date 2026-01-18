@@ -1,3 +1,5 @@
+import type { SuggestedActionV1 } from "./guidance.js";
+
 export type ResearchPackId = string;
 
 export interface TopModule {
@@ -64,6 +66,35 @@ export interface AnalysisPack {
     clusters: AnalysisCluster[];
     createdAt: number;
     degraded?: boolean;
+}
+
+export type GraphPackId = string;
+
+export interface GraphPack {
+    id: GraphPackId;
+    kind: "call_graph";
+    source: { filePath: string; symbolName?: string; depth?: string };
+    raw?: {
+        nodes: Array<{ id: string; type: string; path?: string; label?: string }>;
+        edges: Array<{ source: string; target: string; relation?: string }>;
+        resolvedTarget?: any;
+    };
+    summary: {
+        mode: "symbol" | "file";
+        truncated: boolean;
+        truncatedReason?: "cap" | "depth" | "unknown";
+        totalNodes?: number;
+        totalEdges?: number;
+        topNodes?: Array<{ label: string; filePath?: string; degree?: number }>;
+    };
+    meta: {
+        createdAt: number;
+        totalNodes?: number;
+        totalEdges?: number;
+        truncatedByCap?: boolean;
+        truncatedReason?: "cap" | "depth" | "unknown";
+        caps?: { maxNodes?: number; maxEdges?: number };
+    };
 }
 
 export type StylePackId = string;
@@ -135,7 +166,25 @@ export interface StylePack {
     createdAt: number;
     expiresAt?: number;
     localOverrides?: Array<{ glob: string; profile: Partial<VibeProfile>; reason?: string }>;
+    references?: StylePackReference[];
+    configDetections?: StylePackConfigDetection[];
+    confidence?: number;
+    exceptions?: Array<{ glob: string; reason?: string }>;
 }
+
+export type StylePackReference = {
+    filePath: string;
+    lineStart?: number;
+    lineEnd?: number;
+    reason?: string;
+};
+
+export type StylePackConfigDetection = {
+    kind: string;
+    path: string;
+    scope: "serviceRoot" | "repoRoot" | "workspaceRoot";
+    details?: Record<string, unknown>;
+};
 
 export type DraftPackId = string;
 
@@ -206,6 +255,7 @@ export interface DraftPack {
     phantomDiffs?: PhantomDiff[];
     changePlan?: any;
     impactAnalysis?: ImpactAnalysis;
+    fileVersions?: Record<string, { expectedVersion?: number; expectedHash?: string }>;
     preflightCheck: PreflightCheck;
     stylePack?: StylePack;
     workflowMeta?: WorkflowMeta;
@@ -301,13 +351,7 @@ export interface VibeAlignmentValidation {
     summary: string;
 }
 
-export interface SuggestedAction {
-    pillar: "explore" | "understand" | "change" | "write" | "manage";
-    action: string;
-    args: Record<string, any>;
-    priority: "high" | "medium" | "low";
-    reason: string;
-}
+export type SuggestedAction = SuggestedActionV1;
 
 export type ReviewReportId = string;
 
@@ -323,8 +367,8 @@ export interface ReviewReport {
     reviewedFiles: string[];
 }
 
-export type ArtifactType = "research" | "analysis" | "style" | "draft" | "review";
-export type ArtifactId = ResearchPackId | AnalysisPackId | StylePackId | DraftPackId | ReviewReportId;
+export type ArtifactType = "research" | "analysis" | "style" | "draft" | "review" | "graph";
+export type ArtifactId = ResearchPackId | AnalysisPackId | StylePackId | DraftPackId | ReviewReportId | GraphPackId;
 
 export interface FlowArtifactBase {
     id: ArtifactId;
@@ -362,12 +406,18 @@ export interface ReviewArtifact extends FlowArtifactBase {
     targetDraftId?: DraftPackId;
 }
 
+export interface GraphArtifact extends FlowArtifactBase {
+    type: "graph";
+    pack: GraphPack;
+}
+
 export type FlowArtifact =
     | ResearchArtifact
     | AnalysisArtifact
     | StyleArtifact
     | DraftArtifact
-    | ReviewArtifact;
+    | ReviewArtifact
+    | GraphArtifact;
 
 export interface ArtifactManagerStatus {
     totalCount: number;
@@ -379,7 +429,7 @@ export interface ArtifactManagerStatus {
 
 export type FlowSessionStatus = "active" | "completed" | "abandoned";
 
-export type ToolProfile = "fast" | "balanced" | "deep";
+export type ToolProfile = "lean" | "fast" | "balanced" | "deep";
 export type ToolSources = "code" | "docs" | "both";
 export type ToolSafety = "plan" | "apply";
 
@@ -410,6 +460,7 @@ export interface FlowSession {
         style?: StylePackId;
         drafts: DraftPackId[];
         reviews: ReviewReportId[];
+        graphs?: GraphPackId[];
     };
     updatedAt?: number;
     outcome?: FlowSessionOutcome;

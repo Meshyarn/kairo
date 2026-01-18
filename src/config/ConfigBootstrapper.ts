@@ -6,7 +6,7 @@ import { createRequire } from "module";
 import { fileURLToPath } from "url";
 import { LanguageConfigLoader, BUILTIN_LANGUAGE_MAPPINGS } from "./LanguageConfig.js";
 import { getSupportForLanguageId, SupportLevel } from "./LanguageSupportLevels.js";
-import { LANGUAGE_PARITY_MATRIX } from "./LanguageParityMatrix.js";
+import { LANGUAGE_PARITY_MATRIX, resolveRequiredQueries } from "./LanguageParityMatrix.js";
 import { ContractManifestLoader } from "../contracts/ContractManifestLoader.js";
 import { ContractManifestGenerator } from "../contracts/ContractManifestGenerator.js";
 
@@ -88,7 +88,7 @@ export type ManageInitArgs = {
 
 export type ManageDoctorArgs = {
     mode?: BootstrapMode;
-    scope?: "project" | "config" | "languages" | "wasm" | "host" | "contracts" | "parity";
+    scope?: "project" | "config" | "languages" | "wasm" | "host" | "contracts" | "parity" | "capabilities";
     root?: string;
 };
 
@@ -534,7 +534,7 @@ export class ConfigBootstrapper {
             name: "Main Repo",
             type: "primary",
             languages: rootLanguages,
-            allowCrossRepoEdits: true,
+            allowCrossRepoEdits: false,
             excludePatterns: [...DEFAULT_EXCLUDE_PATTERNS]
         });
         repoPaths.add(path.resolve(rootPath));
@@ -564,7 +564,7 @@ export class ConfigBootstrapper {
                 name: candidate.name ?? this.titleCase(repoId.replace(/-/g, " ")),
                 type: candidate.type,
                 languages: langScan.languages.map((lang) => lang.languageId),
-                allowCrossRepoEdits: true,
+                allowCrossRepoEdits: false,
                 excludePatterns: [...DEFAULT_EXCLUDE_PATTERNS]
             });
             repoPaths.add(absPath);
@@ -791,8 +791,6 @@ export class ConfigBootstrapper {
                 .filter((id): id is string => typeof id === "string")
         );
         const queriesRoot = this.resolveQueriesRoot();
-        const requiredQueries = ["imports", "exports", "symbols", "skeleton"];
-
         for (const entry of LANGUAGE_PARITY_MATRIX.languages) {
             const severity = entry.supportLevel === "L3" ? "error" : "warn";
             if (!mappedLanguageIds.has(entry.languageId)) {
@@ -808,6 +806,7 @@ export class ConfigBootstrapper {
             if (entry.requiredQueryPack) {
                 const missing: string[] = [];
                 const candidates = this.resolveQueryCandidates(entry.languageId);
+                const requiredQueries = resolveRequiredQueries(entry);
                 for (const query of requiredQueries) {
                     let found = false;
                     if (queriesRoot) {
@@ -928,7 +927,7 @@ export class ConfigBootstrapper {
                 name: repo.name,
                 type: repo.type,
                 languages: repo.languages,
-                allowCrossRepoEdits: repo.allowCrossRepoEdits ?? true,
+                allowCrossRepoEdits: repo.allowCrossRepoEdits ?? false,
                 excludePatterns: repo.excludePatterns
             };
         }
@@ -1149,6 +1148,8 @@ export class ConfigBootstrapper {
         if (!scope) return true;
         const code = finding.code;
         switch (scope) {
+            case "capabilities":
+                return false;
             case "languages":
                 return code === "LANGUAGE_GAP" || code === "SCAN_TRUNCATED";
             case "wasm":
@@ -1175,6 +1176,9 @@ export class ConfigBootstrapper {
         if (!scope) return true;
         if (scope === "host") {
             return filePath.replace(/\\\\/g, "/").endsWith("/.vscode/mcp.json");
+        }
+        if (scope === "capabilities") {
+            return false;
         }
         if (scope === "wasm") {
             return false;
@@ -1204,6 +1208,9 @@ export class ConfigBootstrapper {
         if (scope === "wasm") {
             return hint.includes("KAIRO_WASM_DIR");
         }
+        if (scope === "capabilities") {
+            return false;
+        }
         if (scope === "languages") {
             return hint.includes("extensions") || hint.includes("mappings");
         }
@@ -1217,7 +1224,8 @@ export class ConfigBootstrapper {
             return hint.includes(".kairo/contracts") || hint.includes("contracts");
         }
         if (scope === "parity") {
-            return hint.includes("query") || hint.includes("WASM") || hint.includes("language");
+            const normalized = hint.toLowerCase();
+            return normalized.includes("query") || normalized.includes("wasm") || normalized.includes("validator");
         }
         return true;
     }

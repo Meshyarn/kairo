@@ -1,5 +1,14 @@
 import * as path from "path";
-import { promises as fsPromises, constants as fsConstants, watch as fsWatch } from "fs";
+import {
+    promises as fsPromises,
+    constants as fsConstants,
+    watch as fsWatch,
+    existsSync as fsExistsSync,
+    realpathSync as fsRealpathSync,
+    readFileSync as fsReadFileSync,
+    statSync as fsStatSync,
+    readdirSync as fsReaddirSync
+} from "fs";
 
 export type FileChangeType = "create" | "update" | "delete";
 
@@ -20,12 +29,19 @@ export interface IFileSystem {
     rename(from: string, to: string): Promise<void>;
     deleteFile(path: string): Promise<void>;
     exists(path: string): Promise<boolean>;
+    existsSync?(path: string): boolean;
+    realpath(path: string): Promise<string>;
+    realpathSync?(path: string): string;
     readDir(path: string): Promise<string[]>;
     createDir(path: string): Promise<void>;
     stat(path: string): Promise<FileStats>;
+    readFileSync?(path: string): string;
+    statSync?(path: string): FileStats;
+    readDirSync?(path: string): string[];
     watch?(path: string, onChange: (event: FileChangeEvent) => void): () => void;
 
-    listFiles(basePath: string): Promise<string[]>;}
+    listFiles(basePath: string): Promise<string[]>;
+}
 
 export class NodeFileSystem implements IFileSystem {
     private readonly rootPath: string;
@@ -79,6 +95,20 @@ export class NodeFileSystem implements IFileSystem {
         }
     }
 
+    existsSync(targetPath: string): boolean {
+        return fsExistsSync(this.resolvePath(targetPath));
+    }
+
+    async realpath(targetPath: string): Promise<string> {
+        return fsPromises.realpath(this.resolvePath(targetPath));
+    }
+
+    realpathSync(targetPath: string): string {
+        const resolved = this.resolvePath(targetPath);
+        const native = (fsRealpathSync as any).native;
+        return typeof native === "function" ? native(resolved) : fsRealpathSync(resolved);
+    }
+
     async readDir(targetPath: string): Promise<string[]> {
         return fsPromises.readdir(this.resolvePath(targetPath));
     }
@@ -94,6 +124,23 @@ export class NodeFileSystem implements IFileSystem {
             mtime: stats.mtimeMs,
             isDirectory: () => stats.isDirectory(),
         };
+    }
+
+    readFileSync(targetPath: string): string {
+        return fsReadFileSync(this.resolvePath(targetPath), "utf-8");
+    }
+
+    statSync(targetPath: string): FileStats {
+        const stats = fsStatSync(this.resolvePath(targetPath));
+        return {
+            size: stats.size,
+            mtime: stats.mtimeMs,
+            isDirectory: () => stats.isDirectory(),
+        };
+    }
+
+    readDirSync(targetPath: string): string[] {
+        return fsReaddirSync(this.resolvePath(targetPath));
     }
 
     watch(targetPath: string, onChange: (event: FileChangeEvent) => void): () => void {
@@ -194,6 +241,28 @@ export class MemoryFileSystem implements IFileSystem {
         return entry.content;
     }
 
+    readFileSync(targetPath: string): string {
+        const resolved = this.resolvePath(targetPath);
+        const entry = this.files.get(resolved);
+        if (!entry) {
+            throw new Error(`ENOENT: no such file, open '${resolved}'`);
+        }
+        return entry.content;
+    }
+
+    existsSync(targetPath: string): boolean {
+        const resolved = this.resolvePath(targetPath);
+        return this.files.has(resolved) || this.directories.has(resolved);
+    }
+
+    async realpath(targetPath: string): Promise<string> {
+        return this.resolvePath(targetPath);
+    }
+
+    realpathSync(targetPath: string): string {
+        return this.resolvePath(targetPath);
+    }
+
     async writeFile(targetPath: string, content: string): Promise<void> {
         const resolved = this.resolvePath(targetPath);
         this.ensureParentDirectories(resolved);
@@ -232,10 +301,28 @@ export class MemoryFileSystem implements IFileSystem {
 
     async deleteFile(targetPath: string): Promise<void> {
         const resolved = this.resolvePath(targetPath);
-        if (!this.files.delete(resolved)) {
-            throw new Error(`ENOENT: no such file, unlink '${resolved}'`);
+        if (this.files.delete(resolved)) {
+            this.notifyWatchers(resolved, "delete");
+            return;
         }
-        this.notifyWatchers(resolved, "delete");
+
+        if (this.directories.has(resolved)) {
+            const prefix = resolved.endsWith(path.sep) ? resolved : resolved + path.sep;
+            for (const filePath of Array.from(this.files.keys())) {
+                if (filePath === resolved || filePath.startsWith(prefix)) {
+                    this.files.delete(filePath);
+                }
+            }
+            for (const dirPath of Array.from(this.directories.keys())) {
+                if (dirPath === resolved || dirPath.startsWith(prefix)) {
+                    this.directories.delete(dirPath);
+                }
+            }
+            this.notifyWatchers(resolved, "delete");
+            return;
+        }
+
+        throw new Error(`ENOENT: no such file or directory, unlink '${resolved}'`);
     }
 
     async exists(targetPath: string): Promise<boolean> {
@@ -244,6 +331,26 @@ export class MemoryFileSystem implements IFileSystem {
     }
 
     async readDir(targetPath: string): Promise<string[]> {
+        const resolved = this.resolvePath(targetPath);
+        if (!this.directories.has(resolved)) {
+            throw new Error(`ENOENT: no such directory, scandir '${resolved}'`);
+        }
+        const entries = new Set<string>();
+        for (const filePath of this.files.keys()) {
+            if (path.dirname(filePath) === resolved) {
+                entries.add(path.basename(filePath));
+            }
+        }
+        for (const dirPath of this.directories.keys()) {
+            if (dirPath === resolved) continue;
+            if (path.dirname(dirPath) === resolved) {
+                entries.add(path.basename(dirPath));
+            }
+        }
+        return Array.from(entries.values()).sort();
+    }
+
+    readDirSync(targetPath: string): string[] {
         const resolved = this.resolvePath(targetPath);
         if (!this.directories.has(resolved)) {
             throw new Error(`ENOENT: no such directory, scandir '${resolved}'`);
@@ -272,6 +379,27 @@ export class MemoryFileSystem implements IFileSystem {
     }
 
     async stat(targetPath: string): Promise<FileStats> {
+        const resolved = this.resolvePath(targetPath);
+        if (this.files.has(resolved)) {
+            const entry = this.files.get(resolved)!;
+            return {
+                size: Buffer.byteLength(entry.content, "utf-8"),
+                mtime: entry.mtime,
+                isDirectory: () => false,
+            };
+        }
+        if (this.directories.has(resolved)) {
+            const entry = this.directories.get(resolved)!;
+            return {
+                size: 0,
+                mtime: entry.mtime,
+                isDirectory: () => true,
+            };
+        }
+        throw new Error(`ENOENT: no such file or directory, stat '${resolved}'`);
+    }
+
+    statSync(targetPath: string): FileStats {
         const resolved = this.resolvePath(targetPath);
         if (this.files.has(resolved)) {
             const entry = this.files.get(resolved)!;

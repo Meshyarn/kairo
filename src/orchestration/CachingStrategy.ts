@@ -7,6 +7,7 @@ export class CachingStrategy {
   private readonly resultCache: LRUCache<string, CacheEntry>;
   private readonly workflowCache: LRUCache<string, CacheEntry>;
   private readonly projectId: string;
+  private epoch = 0;
 
   constructor(projectId: string = process.cwd()) {
     this.projectId = projectId;
@@ -19,7 +20,8 @@ export class CachingStrategy {
     const payload = JSON.stringify({
       pillar,
       args: normalized,
-      projectId: this.projectId
+      projectId: this.projectId,
+      epoch: this.epoch
     });
     return crypto.createHash('sha256').update(payload).digest('hex');
   }
@@ -60,6 +62,16 @@ export class CachingStrategy {
 
   public getCachedWorkflow<T>(key: string): T | undefined {
     return this.workflowCache.get(key) as T | undefined;
+  }
+
+  public clear(): void {
+    this.resultCache.clear();
+    this.workflowCache.clear();
+  }
+
+  public setEpoch(epoch: number): void {
+    if (!Number.isFinite(epoch) || epoch < 0) return;
+    this.epoch = epoch;
   }
 
   private normalizeArgs(args: any): any {

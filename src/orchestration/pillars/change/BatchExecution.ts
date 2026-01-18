@@ -17,6 +17,7 @@ import {
 } from "../../guardrails/IntegrityGuardrails.js";
 import type { DependencyGraph } from "../../../ast/DependencyGraph.js";
 import type { IndexStateManager } from "../../../indexing/IndexStateManager.js";
+import { evaluateOverride } from "../../../utils/GuardrailsOverride.js";
 
 export async function executeBatchChange(
   args: {
@@ -30,12 +31,13 @@ export async function executeBatchChange(
     indexStateManager?: IndexStateManager;
     constraints?: any;
     diffMode?: "myers" | "semantic";
+    fileVersions?: Record<string, { expectedVersion?: number; expectedHash?: string }>;
   },
   runTool: (context: OrchestrationContext, tool: string, args: any) => Promise<any>,
   extractEditFilePath: (edit: any) => string | undefined,
   buildFailureGuidance: (args: any) => any
 ): Promise<any> {
-  const { intent, context, rawEdits, targetFiles, dryRun, includeImpact, dependencyGraph, indexStateManager, constraints, diffMode } = args;
+  const { intent, context, rawEdits, targetFiles, dryRun, includeImpact, dependencyGraph, indexStateManager, constraints, diffMode, fileVersions } = args;
   const originalIntent = intent.originalIntent;
 
   if (rawEdits.length === 0) {
@@ -74,13 +76,25 @@ export async function executeBatchChange(
     if (normalization.edits.length === 0) {
       return {
         success: false,
-        message: `No valid edits provided for ${filePath}. Ensure targetContent/targetString and replacement/template are set.`,
+        message: `No valid edits provided for ${filePath}. Ensure targetContent/targetString and replacement/template are set. Example: { edits: [{ targetString: "old", replacementString: "new" }] }.`,
         invalidEdits: normalization.invalidEdits,
         guidance: {
-          message: `Use read to copy exact text or provide a shorter targetString for ${filePath}.`,
+          message: `Use read to copy exact text or provide a shorter targetString for ${filePath}. Example edits: [{ targetString: "old", replacementString: "new" }].`,
           suggestedActions: [
-            { pillar: 'read', action: 'view_fragment', target: filePath },
-            { pillar: 'change', action: 'retry', intent: originalIntent, target: filePath }
+            {
+              id: 'read.view_fragment',
+              priority: 1,
+              description: 'View the exact target fragment.',
+              rationale: 'Accurate target text prevents edit mismatches.',
+              toolCall: { tool: 'read', args: { action: 'view_fragment', target: filePath } }
+            },
+            {
+              id: 'change.retry',
+              priority: 2,
+              description: 'Retry change with updated target text.',
+              rationale: 'Retry after verifying the current content.',
+              toolCall: { tool: 'change', args: { action: 'retry', intent: originalIntent, target: filePath } }
+            }
           ]
         }
       };
@@ -100,7 +114,8 @@ export async function executeBatchChange(
       dependencyGraph,
       indexStateManager,
       constraints,
-      diffMode
+      diffMode,
+      fileVersions
     }, runTool, buildFailureGuidance);
   }
 
@@ -114,7 +129,8 @@ export async function executeBatchChange(
     batchImpactLimit: resolveBatchImpactLimit(intent.constraints),
     dependencyGraph,
     indexStateManager,
-    constraints
+    constraints,
+    fileVersions
   }, runTool, normalizedByFile);
 }
 
@@ -131,11 +147,12 @@ async function executeBatchDryRun(
     indexStateManager?: IndexStateManager;
     constraints?: any;
     diffMode?: "myers" | "semantic";
+    fileVersions?: Record<string, { expectedVersion?: number; expectedHash?: string }>;
   },
   runTool: (context: OrchestrationContext, tool: string, args: any) => Promise<any>,
   buildFailureGuidance: (args: any) => any
 ): Promise<any> {
-  const { context, originalIntent, rawEdits, targetFiles, normalizedByFile, includeImpact, batchImpactLimit, dependencyGraph, indexStateManager, constraints, diffMode } = args;
+  const { context, originalIntent, rawEdits, targetFiles, normalizedByFile, includeImpact, batchImpactLimit, dependencyGraph, indexStateManager, constraints, diffMode, fileVersions } = args;
   const results: Array<{ filePath: string; success: boolean; diff?: string; error?: string }> = [];
   const planSteps: Array<{ action: 'modify'; file: string; description: string; diff?: string }> = [];
   const diffBlocks: string[] = [];
@@ -230,12 +247,21 @@ async function executeBatchDryRun(
     message: "Batch change plan generated. Review the diffs before applying.",
     suggestedActions: [
       {
-        pillar: "change",
-        action: "apply",
-        intent: originalIntent,
-        targetFiles,
-        edits: rawEdits,
-        options: { dryRun: false, batchMode: true }
+        id: "change.apply",
+        priority: 1,
+        description: "Apply the batch change plan.",
+        rationale: "Plan completed successfully; apply to update files.",
+        toolCall: {
+          tool: "change",
+          args: {
+            action: "apply",
+            intent: originalIntent,
+            targetFiles,
+            edits: rawEdits,
+            options: { dryRun: false, batchMode: true },
+            ...(fileVersions ? { fileVersions } : {})
+          }
+        }
       }
     ]
   };
@@ -246,6 +272,7 @@ async function executeBatchDryRun(
     diff: diffBlocks.join("\n\n"),
     plan: { steps: planSteps },
     results,
+    fileVersions: fileVersions && Object.keys(fileVersions).length > 0 ? fileVersions : undefined,
     impactReports: impactReports.length > 0 ? impactReports : undefined,
     guardrailResults: guardrailResults.length > 0 ? guardrailResults : undefined,
     guidance: successGuidance
@@ -264,11 +291,20 @@ async function executeBatchApply(
     dependencyGraph?: DependencyGraph;
     indexStateManager?: IndexStateManager;
     constraints?: any;
+    fileVersions?: Record<string, { expectedVersion?: number; expectedHash?: string }>;
   },
   runTool: (context: OrchestrationContext, tool: string, args: any) => Promise<any>,
   normalizedByFile: Map<string, { edits: any[] }>
 ): Promise<any> {
-  const { context, originalIntent, rawEdits, targetFiles, includeImpact, batchImpactLimit, dependencyGraph, indexStateManager, constraints } = args;
+  const { context, originalIntent, rawEdits, targetFiles, includeImpact, batchImpactLimit, dependencyGraph, indexStateManager, constraints, fileVersions } = args;
+  const overrideDecision = evaluateOverride({
+    override: (constraints as any)?.override,
+    requiredOverrides: [],
+    targetFiles,
+    pillar: "change",
+    repoId: typeof (constraints as any)?.repoId === "string" ? (constraints as any).repoId : undefined
+  });
+  const bypassIntegrityGuardrails = overrideDecision?.effectiveAllow?.["integrityGuardrails.bypass"] === true;
   const batchEdits: any[] = [];
   for (const [filePath, normalization] of normalizedByFile.entries()) {
     for (const edit of normalization.edits) {
@@ -302,6 +338,9 @@ async function executeBatchApply(
       applyMode: true
     });
     if (guardrail?.status === "block") {
+      if (bypassIntegrityGuardrails) {
+        continue;
+      }
       return {
         success: false,
         status: "blocked",
@@ -328,10 +367,40 @@ async function executeBatchApply(
   try {
     editResult = await runTool(context, "edit_apply", {
       edits: batchEdits,
-      dryRun: false
+      dryRun: false,
+      fileVersions
     });
   } finally {
     stopEditCode();
+  }
+  if (editResult?.errorCode === "FILE_VERSION_MISMATCH") {
+    return {
+      success: false,
+      status: "blocked",
+      message: "File version mismatch detected. Re-read the files before retrying the batch apply.",
+      errorCode: "FILE_VERSION_MISMATCH",
+      blockedReason: "file_version_mismatch",
+      currentFileStates: editResult.updatedFileStates,
+      guidance: {
+        message: "Files changed since the plan. Re-read and re-plan before applying.",
+        suggestedActions: [
+          {
+            id: "read.view_full",
+            priority: 1,
+            description: "Re-read the latest file content.",
+            rationale: "Refresh context before reapplying changes.",
+            toolCall: { tool: "read", args: { action: "view_full", target: targetFiles[0] ?? "" } }
+          },
+          {
+            id: "change.plan",
+            priority: 2,
+            description: "Re-plan the batch change.",
+            rationale: "Ensure edits match the latest file states.",
+            toolCall: { tool: "change", args: { action: "plan", intent: originalIntent, targetFiles } }
+          }
+        ]
+      }
+    };
   }
   const success = editResult?.success !== false;
   const results = Array.isArray(editResult?.results) ? editResult.results.map((entry: any) => ({
@@ -347,12 +416,26 @@ async function executeBatchApply(
   const guidance = success
     ? {
         message: "Batch changes successfully applied.",
-        suggestedActions: [{ pillar: "manage", action: "test" }]
+        suggestedActions: [
+          {
+            id: "manage.test",
+            priority: 1,
+            description: "Run tests for impacted areas.",
+            rationale: "Validate behavior after batch changes.",
+            toolCall: { tool: "manage", args: { command: "test" } }
+          }
+        ]
       }
     : {
         message: message ?? "Batch apply failed.",
         suggestedActions: [
-          { pillar: "change", action: "retry", intent: originalIntent, targetFiles, edits: rawEdits }
+          {
+            id: "change.retry",
+            priority: 1,
+            description: "Retry batch change.",
+            rationale: "Retry after addressing apply failures.",
+            toolCall: { tool: "change", args: { action: "retry", intent: originalIntent, targetFiles, edits: rawEdits } }
+          }
         ]
       };
 

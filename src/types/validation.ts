@@ -24,7 +24,7 @@ export interface ValidationResult {
     warnings?: ValidationDiagnostic[];
     durationMs?: number;
     languageId?: string;
-    supportLevel?: "understand-grade" | "edit-safe";
+    supportLevel?: "L2" | "L3";
 }
 
 export interface ValidationSummary {

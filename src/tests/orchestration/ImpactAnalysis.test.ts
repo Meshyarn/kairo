@@ -6,6 +6,7 @@ import {
   computePageRankFromEdges,
   toImpactReport
 } from "../../orchestration/pillars/change/ImpactAnalysis.js";
+import { OrchestrationContext } from "../../orchestration/OrchestrationContext.js";
 
 const edges = [
   { from: "a.ts", to: "b.ts" },
@@ -48,7 +49,8 @@ describe("ImpactAnalysis", () => {
       getNode: (path: string) => (path === "main.ts" ? node : path === "dep.ts" ? depNode : undefined)
     };
 
-    const result = await collectDependentsFromGraph(ucg as any, "main.ts");
+    const ctx = new OrchestrationContext();
+    const result = await collectDependentsFromGraph(ucg as any, "main.ts", ctx);
 
     expect(result?.success).toBe(true);
     expect(result?.edges[0].from).toBe("dep.ts");

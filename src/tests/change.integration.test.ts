@@ -48,6 +48,30 @@ describe('SmartContextServer - change integration', () => {
     expect(updated).toContain('const message = "hi";');
   });
 
+  it('emits trace when trace is enabled', async () => {
+    const relPath = path.join('src', 'trace.ts');
+    const absPath = path.join(testRoot, relPath);
+    fs.writeFileSync(absPath, 'const message = "hello";\n', 'utf-8');
+
+    const result = await runTool(server, 'change', {
+      intent: 'Trace change',
+      targetFiles: [relPath],
+      edits: [{
+        target: 'const message = "hello";',
+        replacement: 'const message = "hi";'
+      }],
+      options: { dryRun: true, includeImpact: false },
+      trace: true
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.effectiveOptions?.version).toBe(1);
+    expect(result.effectiveOptions?.pillar).toBe('change');
+    expect(result.decisionTrace?.version).toBe(1);
+    expect(result.decisionTrace?.pillar).toBe('change');
+    expect(result.decisionTrace?.optionResolution?.dryRun?.resolved).toBe(true);
+  });
+
   it('applies edits when safety=apply is set without explicit dryRun', async () => {
     const relPath = path.join('src', 'safety.ts');
     const absPath = path.join(testRoot, relPath);

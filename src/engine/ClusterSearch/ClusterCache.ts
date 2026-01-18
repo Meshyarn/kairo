@@ -1,5 +1,6 @@
 import * as path from "path";
 import { ClusterSearchResponse, SearchCluster } from "../../types/cluster.js";
+import { metrics } from "../../utils/MetricsCollector.js";
 
 export interface CacheableSearchOptions {
     maxClusters: number;
@@ -45,13 +46,16 @@ export class ClusterCache {
         const cacheKey = this.buildCacheKey(query, options);
         const entry = this.responseCache.get(cacheKey);
         if (!entry) {
+            metrics.inc("cache.cluster.miss_total");
             return null;
         }
         if (this.isExpired(entry)) {
             this.dropCacheEntry(cacheKey);
+            metrics.inc("cache.cluster.miss_total");
             return null;
         }
         entry.hitCount++;
+        metrics.inc("cache.cluster.hit_total");
         return { cacheKey, response: entry.response };
     }
 
@@ -82,6 +86,7 @@ export class ClusterCache {
 
         this.responseCache.set(cacheKey, entry);
         this.evictIfNeeded();
+        metrics.gauge("cache.cluster.size", this.responseCache.size);
     }
 
     getCluster(clusterId: string): SearchCluster | undefined {
@@ -151,6 +156,7 @@ export class ClusterCache {
         this.clusterIndex.clear();
         this.clusterFileRefs.clear();
         this.clusterToEntries.clear();
+        metrics.gauge("cache.cluster.size", 0);
     }
 
     buildCacheKey(query: string, options: CacheableSearchOptions): string {
@@ -197,6 +203,7 @@ export class ClusterCache {
                 this.clusterFileRefs.delete(clusterId);
             }
         }
+        metrics.gauge("cache.cluster.size", this.responseCache.size);
     }
 
     private isExpired(entry: CacheEntry): boolean {

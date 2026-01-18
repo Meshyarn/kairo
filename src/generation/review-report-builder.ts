@@ -152,11 +152,11 @@ export class ReviewReportBuilder {
             return [];
         }
         return [{
-            pillar: "change",
-            action: "review",
-            args: {},
-            priority: "high",
-            reason: "Review findings before applying changes."
+            id: "manage.guidance.review",
+            priority: 1,
+            description: "Review findings before applying changes.",
+            rationale: "Guardrails or validations flagged issues that need attention.",
+            toolCall: { tool: "manage", args: { command: "guidance" } }
         }];
     }
 

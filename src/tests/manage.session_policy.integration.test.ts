@@ -69,6 +69,19 @@ describe('SmartContextServer - session policy integration', () => {
 
     expect(writeResult.success).toBe(true);
     expect(writeResult.effectiveOptions?.safety).toBe('plan');
-    expect(writeResult.decisionTrace?.dryRun?.resolved).toBe(true);
+    expect(writeResult.decisionTrace?.optionResolution?.dryRun?.resolved).toBe(true);
+  });
+
+  it('emits trace for manage commands', async () => {
+    const result = await runTool(server, 'manage', {
+      command: 'status',
+      trace: true
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.effectiveOptions?.version).toBe(1);
+    expect(result.effectiveOptions?.pillar).toBe('manage');
+    expect(result.decisionTrace?.version).toBe(1);
+    expect(result.decisionTrace?.pillar).toBe('manage');
   });
 });

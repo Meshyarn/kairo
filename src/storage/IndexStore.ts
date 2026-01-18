@@ -5,6 +5,7 @@ export type {
     StoredUnresolvedDependency,
     StoredGhostSymbol,
     StoredDocumentChunk,
+    StoredDocumentMeta,
     StoredEmbedding,
     EmbeddingKey,
     TransactionLogEntry,

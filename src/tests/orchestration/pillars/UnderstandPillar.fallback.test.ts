@@ -62,7 +62,10 @@ describe("UnderstandPillar fallbackGraph", () => {
     const result = await pillar.execute(buildIntent(filePath) as any, new OrchestrationContext());
 
     expect(result.degraded).toBe(true);
-    expect(result.degradedReasons?.some((reason: any) => reason.type === "missing_query_pack")).toBe(true);
+    const reason = result.degradedReasons?.find((entry: any) => entry.type === "missing_query_pack");
+    expect(reason).toBeDefined();
+    expect(reason?.actionId).toBe("manage.doctor.parity");
+    expect(reason?.actionToolCall).toMatchObject({ tool: "manage", args: { command: "doctor", scope: "parity" } });
     expect(result.fallbackGraph?.mode).toBe("l2");
     expect(result.fallbackGraph?.edges?.length).toBe(1);
     expect(result.fallbackGraph?.edges?.[0].to).toBe("os");

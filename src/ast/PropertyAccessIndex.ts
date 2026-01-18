@@ -1,6 +1,6 @@
-import fs from "fs";
 import path from "path";
 import ts from "typescript";
+import { NodeFileSystem, type IFileSystem } from "../platform/FileSystem.js";
 
 export interface PropertyAccessLocation {
     filePath: string;
@@ -17,8 +17,11 @@ type IndexKey = {
 
 export class PropertyAccessIndex {
     private usages = new Map<string, PropertyAccessLocation[]>();
+    private readonly fileSystem: IFileSystem;
 
-    constructor(private readonly rootPath: string) {}
+    constructor(private readonly rootPath: string, fileSystem?: IFileSystem) {
+        this.fileSystem = fileSystem ?? new NodeFileSystem(rootPath);
+    }
 
     public indexFile(
         filePath: string,
@@ -28,7 +31,7 @@ export class PropertyAccessIndex {
             exportNames?: string[];
         }
     ): void {
-        const content = options?.content ?? fs.readFileSync(filePath, "utf-8");
+        const content = options?.content ?? this.fileSystem.readFileSync?.(filePath) ?? (() => { throw new Error("IFileSystem.readFileSync is required"); })();
         const sourceFile = ts.createSourceFile(filePath, content, ts.ScriptTarget.ES2022, true);
         const exportNames = new Set(options?.exportNames ?? []);
         const packageName = options?.packageName ?? "unknown";

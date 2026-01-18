@@ -5,7 +5,7 @@ import {
     SupportLevel
 } from "../src/config/LanguageSupportLevels.js";
 import { BUILTIN_LANGUAGE_MAPPINGS } from "../src/config/LanguageConfig.js";
-import { LANGUAGE_PARITY_MATRIX } from "../src/config/LanguageParityMatrix.js";
+import { LANGUAGE_PARITY_MATRIX, resolveRequiredQueries } from "../src/config/LanguageParityMatrix.js";
 
 type ValidationMessage = {
     level: "error" | "warn";
@@ -37,8 +37,6 @@ const requiredExtensions = [".cs", ".sql"];
 const optionalExtensions = [".h", ".hpp"];
 
 const messages: ValidationMessage[] = [];
-const requiredQueries = ["imports", "exports", "symbols", "skeleton"];
-
 function record(level: ValidationMessage["level"], code: string, message: string, languageId?: string) {
     messages.push({ level, code, message, languageId });
 }
@@ -95,6 +93,7 @@ for (const entry of LANGUAGE_PARITY_MATRIX.languages) {
     }
 
     if (entry.requiredQueryPack) {
+        const requiredQueries = resolveRequiredQueries(entry);
         for (const queryName of requiredQueries) {
             const filePath = queryFilePath(entry.languageId, queryName);
             if (!fs.existsSync(filePath)) {

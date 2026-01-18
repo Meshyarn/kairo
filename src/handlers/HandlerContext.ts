@@ -3,6 +3,7 @@ import type { InternalToolRegistry } from "../orchestration/InternalToolRegistry
 import type { SearchEngine } from "../engine/Search.js";
 import type { DocumentSearchEngine } from "../documents/search/DocumentSearchEngine.js";
 import type { SymbolIndex } from "../ast/SymbolIndex.js";
+import type { SymbolEmbeddingIndex } from "../indexing/SymbolEmbeddingIndex.js";
 import type { AstManager } from "../ast/AstManager.js";
 import type { ContextEngine } from "../engine/Context.js";
 import type { DependencyGraph } from "../ast/DependencyGraph.js";
@@ -23,19 +24,23 @@ import type { IndexDatabase } from "../indexing/IndexDatabase.js";
 import type { IndexStateManager } from "../indexing/IndexStateManager.js";
 import type { IncrementalIndexer } from "../indexing/IncrementalIndexer.js";
 import type { HistoryEngine } from "../engine/History.js";
-import type { NodeFileSystem } from "../platform/FileSystem.js";
+import type { IFileSystem } from "../platform/FileSystem.js";
 import type { RepoRegistry } from "../config/RepoRegistry.js";
 import type { FlowArtifactManager } from "../orchestration/flow-artifact-manager.js";
+import type { MetricsExportService } from "../utils/metrics/MetricsExportService.js";
+import type { CacheInvalidationHub } from "../server/CacheInvalidationHub.js";
+import type { ToolSpecRegistry } from "../server/tools/ToolSpecRegistry.js";
 
 export interface HandlerContext {
     rootPath: string;
     repoRegistry: RepoRegistry;
-    fileSystem: NodeFileSystem;
+    fileSystem: IFileSystem;
     orchestrationEngine: OrchestrationEngine;
     internalRegistry: InternalToolRegistry;
     searchEngine: SearchEngine;
     documentSearchEngine: DocumentSearchEngine;
     symbolIndex: SymbolIndex;
+    symbolEmbeddingIndex?: SymbolEmbeddingIndex;
     astManager: AstManager;
     contextEngine: ContextEngine;
     dependencyGraph: DependencyGraph;
@@ -57,6 +62,9 @@ export interface HandlerContext {
     indexDatabase: IndexDatabase;
     historyEngine: HistoryEngine;
     flowArtifactManager: FlowArtifactManager;
+    metricsExportService?: MetricsExportService;
+    cacheInvalidationHub?: CacheInvalidationHub;
+    toolSpecRegistry: ToolSpecRegistry;
     isTestEnv: () => boolean;
     metadata?: Record<string, unknown>;
 }

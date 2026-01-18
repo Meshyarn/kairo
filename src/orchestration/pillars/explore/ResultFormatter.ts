@@ -1,6 +1,7 @@
 import type { IntegrityReport } from "../../../integrity/IntegrityTypes.js";
 import type { IndexSnapshot } from "../../../indexing/IndexStateManager.js";
 import type { ResearchPack } from "../../../types/flow-artifacts.js";
+import type { DecisionTraceV1, EffectiveOptionsV1 } from "../../../types/option-trace.js";
 import type { DegradedReason } from "../../../types/tool-responses.js";
 
 export type ExploreItem = {
@@ -52,8 +53,8 @@ export type ExploreResponse = {
     }>;
     indexSnapshot?: IndexSnapshot;
     sessionId?: string;
-    effectiveOptions?: Record<string, unknown>;
-    decisionTrace?: Record<string, unknown>;
+    effectiveOptions?: EffectiveOptionsV1;
+    decisionTrace?: DecisionTraceV1;
 };
 
 const DEFAULT_MAX_CHARS = 8000;

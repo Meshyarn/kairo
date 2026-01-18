@@ -156,9 +156,28 @@ export { authenticate, validateCredentials };
         const args = {
             edits: [{
                 filePath: 'delete_hash_test.ts',
-                operation: 'delete'
+                operation: 'delete',
+                confirmationHash: 'deadbeef'
             }],
-            dryRun: true
+            dryRun: true,
+            options: { deleteMode: 'confirm' },
+            override: {
+                approval: {
+                    approvedBy: "perf",
+                    reason: "hash perf test",
+                    issuedAt: new Date().toISOString(),
+                    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+                    method: "manual"
+                },
+                scope: {
+                    pillars: ["edit_apply"],
+                    fileGlobs: ["**"],
+                    maxFiles: 10
+                },
+                allow: {
+                    editPolicy: { allowDelete: "confirm_only" }
+                }
+            }
         };
 
         const response = await (server as any).handleCallTool('edit_apply', args);

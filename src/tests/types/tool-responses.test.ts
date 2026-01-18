@@ -11,7 +11,9 @@ describe("tool-responses degraded reasons", () => {
       "missing_wasm_grammar",
       "syntax_validation_failed",
       "skeleton_extraction_failed",
-      "symbol_index_unavailable"
+      "symbol_index_unavailable",
+      "cross_repo_scope_mismatch",
+      "cross_repo_edit_blocked"
     ];
 
     expect(types).toContain("missing_query_pack");
@@ -27,5 +29,17 @@ describe("tool-responses degraded reasons", () => {
 
     expect(reason.type).toBe("missing_query_pack");
     expect(reason.languageId).toBe("typescript");
+  });
+
+  it("supports action tool call metadata", () => {
+    const reason: DegradedReason = {
+      type: "missing_query_pack",
+      message: "Query pack is missing.",
+      actionId: "manage.doctor.parity",
+      actionToolCall: { tool: "manage", args: { command: "doctor", scope: "parity" } }
+    };
+
+    expect(reason.actionId).toBe("manage.doctor.parity");
+    expect(reason.actionToolCall?.tool).toBe("manage");
   });
 });
