@@ -6,6 +6,7 @@ import { ParsedIntent } from '../IntentRouter.js';
 import { metrics } from '../../utils/MetricsCollector.js';
 import { type TemplateType, type TemplateContext } from '../../generation/SimpleTemplateGenerator.js';
 import { FeatureFlags } from '../../config/FeatureFlags.js';
+import { NodeFileSystem, type IFileSystem } from '../../platform/FileSystem.js';
 
 import {
     smartWriteCode,
@@ -41,6 +42,7 @@ import { evaluateOverrideDecision } from "./shared/OverrideDecision.js";
 import { evaluateIntegrityGuardrailBlock } from "./shared/IntegrityGuardrailDecision.js";
 import type { OptionSource, TraceOptionResolution } from "../../types/option-trace.js";
 import { TraceBuilder } from "../trace/TraceBuilder.js";
+import { applyFormatterBridge } from "../formatter/FormatterBridge.js";
 
 const resolveOptionSource = (explicit: boolean, hasSession: boolean): OptionSource => {
   if (explicit) return "explicit";
@@ -61,11 +63,79 @@ const buildStringResolution = (
 });
 
 export class WritePillar {
+  private fileSystem?: IFileSystem;
+
   constructor(private readonly registry: InternalToolRegistry) {}
 
   private computeHash(content: string): { algorithm: 'xxhash' | 'sha256'; value: string } {
     const hash = crypto.createHash('sha256').update(content).digest('hex');
     return { algorithm: 'sha256', value: hash };
+  }
+
+  private resolveFileSystem(): IFileSystem {
+    if (this.fileSystem) return this.fileSystem;
+    const injected =
+      typeof this.registry.getMetadata === "function"
+        ? this.registry.getMetadata<IFileSystem>("fileSystem")
+        : undefined;
+    this.fileSystem = injected ?? new NodeFileSystem(process.cwd());
+    return this.fileSystem;
+  }
+
+  private resolveFormatterMode(constraints: any): string | undefined {
+    if (typeof constraints?.formatter === "string") return constraints.formatter;
+    if (typeof constraints?.options?.formatter === "string") return constraints.options.formatter;
+    return undefined;
+  }
+
+  private async applyFormatterIfNeeded(
+    mode: string | undefined,
+    filePath: string,
+    rollbackAvailable?: boolean
+  ): Promise<Awaited<ReturnType<typeof applyFormatterBridge>> | undefined> {
+    if (!mode) return undefined;
+    const fileSystem = this.resolveFileSystem();
+    return applyFormatterBridge({
+      mode,
+      filePaths: [filePath],
+      rootPath: process.cwd(),
+      fileSystem,
+      tool: "write",
+      rollbackAvailable
+    });
+  }
+
+  private applyFormatterOutcome<T extends Record<string, any>>(
+    payload: T,
+    formatterResult: Awaited<ReturnType<typeof applyFormatterBridge>> | undefined,
+    filePath: string
+  ): T {
+    if (!formatterResult) return payload;
+    const formatterReasons = formatterResult.degradedReasons?.length
+      ? buildDegradedReasons(formatterResult.degradedReasons, { filePath })
+      : [];
+    const existingReasons = Array.isArray(payload.degradedReasons) ? payload.degradedReasons : [];
+    const mergedReasons = formatterReasons && formatterReasons.length > 0
+      ? [...existingReasons, ...formatterReasons]
+      : existingReasons;
+    const guidance = payload.guidance ?? {};
+    const mergedActions = formatterResult.suggestedActions?.length
+      ? [
+          ...(Array.isArray(guidance.suggestedActions) ? guidance.suggestedActions : []),
+          ...formatterResult.suggestedActions
+        ]
+      : guidance.suggestedActions;
+    return {
+      ...payload,
+      formatter: formatterResult,
+      guidance: {
+        ...guidance,
+        ...(mergedActions ? { suggestedActions: mergedActions } : {})
+      },
+      ...(mergedReasons.length > 0
+        ? { degraded: Boolean(payload.degraded) || true, degradedReasons: mergedReasons }
+        : {})
+    };
   }
 
 
@@ -131,6 +201,7 @@ export class WritePillar {
           { startedAtMs: Date.now() }
         )
         : undefined;
+      const formatterMode = this.resolveFormatterMode(constraints);
       let content = initialContent;
       if (resolvedSessionId) {
         const policyPatch: Partial<{ profile?: string; safety?: string; write?: Record<string, unknown> }> = {};
@@ -751,7 +822,22 @@ export class WritePillar {
             }));
           }
 
-          return attachResponse({
+          const formatterResult = result?.success === false
+            ? undefined
+            : await this.applyFormatterIfNeeded(formatterMode, resolvedPath, true);
+          if (traceBuilder && formatterResult) {
+            traceBuilder.recordEvent({
+              area: "io",
+              code: "formatter_bridge",
+              data: {
+                mode: formatterMode,
+                applied: formatterResult.applied,
+                skippedReason: formatterResult.skippedReason ?? null,
+                degradedReasons: formatterResult.degradedReasons
+              }
+            });
+          }
+          const payload = this.applyFormatterOutcome({
             success: result.success ?? true,
             status: result.success === false ? 'failure' : 'success',
             createdFiles: result.success ? [{ path: resolvedPath, description: `Written (safe mode) from intent: ${originalIntent}` }] : [],
@@ -780,7 +866,8 @@ export class WritePillar {
                   ]
                 : []
             }
-          });
+          }, formatterResult, resolvedPath);
+          return attachResponse(payload);
         } catch (error: any) {
           stopSafePatch();
           return attachResponse({
@@ -897,7 +984,20 @@ export class WritePillar {
           }
         }
 
-        return attachResponse({
+        const formatterResult = await this.applyFormatterIfNeeded(formatterMode, resolvedPath, false);
+        if (traceBuilder && formatterResult) {
+          traceBuilder.recordEvent({
+            area: "io",
+            code: "formatter_bridge",
+            data: {
+              mode: formatterMode,
+              applied: formatterResult.applied,
+              skippedReason: formatterResult.skippedReason ?? null,
+              degradedReasons: formatterResult.degradedReasons
+            }
+          });
+        }
+        const payload = this.applyFormatterOutcome({
           success: true,
           status: 'success',
           createdFiles: [{ path: resolvedPath, description: `Written from intent: ${originalIntent}` }],
@@ -924,7 +1024,8 @@ export class WritePillar {
               }
             ]
           }
-        });
+        }, formatterResult, resolvedPath);
+        return attachResponse(payload);
       }
 
       let existingContent: string | null = null;
@@ -1082,7 +1183,22 @@ export class WritePillar {
         : undefined;
       const degradedReasons = buildDegradedReasons(reasonCodes, { filePath: resolvedPath });
 
-      return attachResponse({
+      const formatterResult = editResult?.success === false
+        ? undefined
+        : await this.applyFormatterIfNeeded(formatterMode, resolvedPath, true);
+      if (traceBuilder && formatterResult) {
+        traceBuilder.recordEvent({
+          area: "io",
+          code: "formatter_bridge",
+          data: {
+            mode: formatterMode,
+            applied: formatterResult.applied,
+            skippedReason: formatterResult.skippedReason ?? null,
+            degradedReasons: formatterResult.degradedReasons
+          }
+        });
+      }
+      const payload = this.applyFormatterOutcome({
         success: editResult.success ?? true,
         status: editResult.success === false ? 'failure' : 'success',
         createdFiles: [{ path: resolvedPath, description: `Written from intent: ${originalIntent}` }],
@@ -1111,7 +1227,8 @@ export class WritePillar {
               ]
             : []
         }
-      });
+      }, formatterResult, resolvedPath);
+      return attachResponse(payload);
     } finally {
       stopTotal();
     }
@@ -1587,7 +1704,10 @@ export class WritePillar {
           currentFileStates: result.updatedFileStates
         });
       }
-      return {
+      const formatterResult = result?.success === false
+        ? undefined
+        : await this.applyFormatterIfNeeded(this.resolveFormatterMode(constraints), filePath, true);
+      const payload = this.applyFormatterOutcome({
         success: result.success ?? true,
         status: result.success === false ? 'failure' : 'success',
         createdFiles: result.success ? [{ path: filePath, description: `Generated ${templateType} from intent: ${intent}` }] : [],
@@ -1618,7 +1738,8 @@ export class WritePillar {
               ]
             : []
         }
-      };
+      }, formatterResult, filePath);
+      return payload;
     } catch (error: any) {
       return { success: false, status: 'failure', createdFiles: [], transactionId: '', rollbackAvailable: false, writeMode: 'quickGenerate', sessionId, guidance: { message: `Quick generate failed: ${error.message}`, suggestedActions: [] } };
     }

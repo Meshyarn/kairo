@@ -437,8 +437,14 @@ export class ManageHandlers extends BaseHandler {
             : undefined;
         const artifacts = manager.listArtifacts();
         const artifactSummary = this.buildArtifactSummary(artifacts, manager.status());
-        const recommendedActions = this.buildRecommendedActions(currentSession, artifactSummary, manager.status());
-        return { currentSession, artifactSummary, recommendedActions };
+        const styleDrift = this.buildStyleDriftStatus(manager);
+        const recommendedActions = this.buildRecommendedActions(
+            currentSession,
+            artifactSummary,
+            manager.status(),
+            styleDrift?.suggestedActions
+        );
+        return { currentSession, artifactSummary, recommendedActions, styleDrift };
     }
 
     private buildCurrentSessionSummary(session: FlowSession) {
@@ -491,10 +497,66 @@ export class ManageHandlers extends BaseHandler {
         };
     }
 
+    private buildStyleDriftStatus(manager: { getByType: (type: any) => FlowArtifact[] }) {
+        const styleArtifacts = manager.getByType("style");
+        if (!styleArtifacts || styleArtifacts.length === 0) {
+            return {
+                available: false,
+                status: "missing",
+                message: "No StylePack artifacts found.",
+                suggestedActions: [
+                    {
+                        actionId: "understand.vibe.extract",
+                        reasonCode: "style_pack_missing",
+                        toolCall: {
+                            tool: "understand",
+                            args: { vibe: { extract: true } }
+                        },
+                        risk: "low" as const
+                    }
+                ]
+            };
+        }
+        const latest = styleArtifacts.sort((a, b) => b.createdAt - a.createdAt)[0];
+        const pack = (latest as any).pack;
+        const configDetections = Array.isArray(pack?.configDetections) ? pack.configDetections : [];
+        const references = Array.isArray(pack?.references) ? pack.references : [];
+        const referenceFiles = new Set(references.map((entry: any) => entry?.filePath).filter((value: any) => typeof value === "string"));
+        const hasGroundedRefs = references.length >= 3 && referenceFiles.size >= 2;
+        const grounded = configDetections.length > 0 || hasGroundedRefs;
+        const confidence = typeof pack?.confidence === "number" ? pack.confidence : undefined;
+        const status = grounded ? "grounded" : "unverified";
+        const suggestedActions = grounded
+            ? []
+            : [
+                {
+                    actionId: "understand.vibe.extract",
+                    reasonCode: "style_pack_low_confidence",
+                    toolCall: {
+                        tool: "understand",
+                        args: { vibe: { extract: true } }
+                    },
+                    risk: "low" as const
+                }
+            ];
+        return {
+            available: true,
+            status,
+            confidence,
+            scope: pack?.scope,
+            configDetections: configDetections.length,
+            references: references.length,
+            referenceFiles: referenceFiles.size,
+            grounded,
+            suggestedActions
+        };
+    }
+
     private buildRecommendedActions(
         currentSession: { sessionId: string; state: string; lastActivityAt: string } | undefined,
         artifactSummary: { expiringSoon: Array<{ id: string }>; expiringSoonTotal: number } | undefined,
-        status: ArtifactManagerStatus
+        status: ArtifactManagerStatus,
+        extraActions?: Array<{ actionId: string; reasonCode: string; toolCall: { tool: string; args: any }; risk: "low" | "med" | "high" }>
     ): Array<{ actionId: string; reasonCode: string; toolCall: { tool: string; args: any }; risk: "low" | "med" | "high" }> {
         const actions: Array<{ actionId: string; reasonCode: string; toolCall: { tool: string; args: any }; risk: "low" | "med" | "high" }> = [];
         const expiring = artifactSummary?.expiringSoon ?? [];
@@ -534,6 +596,9 @@ export class ManageHandlers extends BaseHandler {
                     risk: "low"
                 });
             }
+        }
+        if (Array.isArray(extraActions) && extraActions.length > 0) {
+            actions.push(...extraActions);
         }
         return actions.slice(0, 5);
     }

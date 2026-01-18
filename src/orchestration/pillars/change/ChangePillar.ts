@@ -80,11 +80,18 @@ import { evaluateOverrideDecision } from "../shared/OverrideDecision.js";
 import { evaluateIntegrityGuardrailBlock } from "../shared/IntegrityGuardrailDecision.js";
 import type { OptionSource, TraceOptionResolution } from "../../../types/option-trace.js";
 import { TraceBuilder } from "../../trace/TraceBuilder.js";
+import { applyFormatterBridge } from "../../formatter/FormatterBridge.js";
 
 const resolveOptionSource = (explicit: boolean, hasSession: boolean): OptionSource => {
   if (explicit) return "explicit";
   if (hasSession) return "session";
   return "default";
+};
+
+const resolveFormatterMode = (constraints: any): string | undefined => {
+  if (typeof constraints?.formatter === "string") return constraints.formatter;
+  if (typeof constraints?.options?.formatter === "string") return constraints.options.formatter;
+  return undefined;
 };
 
 const buildStringResolution = (
@@ -277,6 +284,7 @@ export class ChangePillar {
       const editPaths = this.collectEditPaths(rawEdits);
       const shouldBatch = this.shouldUseBatch(constraints, targetFiles, editPaths);
       const overrideTargets = targetFiles.length > 0 ? targetFiles : editPaths;
+      const formatterMode = resolveFormatterMode(constraints);
       const overrideEvaluation = await evaluateOverrideDecision({
         constraints,
         targetFiles: overrideTargets,
@@ -779,6 +787,7 @@ export class ChangePillar {
       const shouldBlockOn = !dryRun && blockOn.length > 0 && Boolean(targetPath);
       let preApplyReview: any = undefined;
       let preApplyReviewComputed = false;
+      let formatterResult: Awaited<ReturnType<typeof applyFormatterBridge>> = undefined;
       if (shouldBlockOn && targetPath) {
         preApplyReview = await new ReviewReportBuilder(
           { dependencyGraph, indexStateManager },
@@ -1199,6 +1208,50 @@ export class ChangePillar {
         });
       }
 
+      if (!dryRun && finalResult.success && formatterMode) {
+        const formatterTargets = Array.from(
+          new Set(
+            [
+              ...(targetPath ? [targetPath] : []),
+              ...targetFiles,
+              ...editPaths
+            ].filter((value): value is string => typeof value === "string" && value.length > 0)
+          )
+        );
+        formatterResult = await applyFormatterBridge({
+          mode: formatterMode,
+          filePaths: formatterTargets,
+          rootPath: process.cwd(),
+          fileSystem,
+          tool: "change",
+          rollbackAvailable: Boolean(finalResult.operation?.id)
+        });
+        if (formatterResult?.degradedReasons?.length) {
+          const formatterDegraded = buildDegradedReasons(formatterResult.degradedReasons ?? [], { filePath: targetPath });
+          if (formatterDegraded) {
+            mergedDegradedReasons.push(...formatterDegraded);
+          }
+        }
+        if (traceBuilder && formatterResult) {
+          traceBuilder.recordEvent({
+            area: "io",
+            code: "formatter_bridge",
+            data: {
+              mode: formatterMode,
+              applied: formatterResult.applied,
+              skippedReason: formatterResult.skippedReason ?? null,
+              degradedReasons: formatterResult.degradedReasons
+            }
+          });
+        }
+        if (formatterResult?.suggestedActions?.length) {
+          successGuidance.suggestedActions = [
+            ...(Array.isArray(successGuidance.suggestedActions) ? successGuidance.suggestedActions : []),
+            ...formatterResult.suggestedActions
+          ];
+        }
+      }
+
       let postReview: any = undefined;
       if (!dryRun && reviewOptions?.postApply && targetPath && finalResult.success) {
         let currentContent = "";
@@ -1331,6 +1384,7 @@ export class ChangePillar {
         guidance: failureGuidance ?? successGuidance,
         sessionId: resolvedSessionId,
         relatedDocs,
+        formatter: formatterResult,
         integrity: integrityReport,
         degraded: (!finalResult.success && autoCorrectionAttempts.length === 0) || mergedDegradedReasons.length > 0,
         degradedReasons: mergedDegradedReasons.length > 0 ? mergedDegradedReasons : undefined,
