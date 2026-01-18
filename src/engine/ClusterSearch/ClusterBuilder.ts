@@ -3,6 +3,7 @@ import { createHash } from "crypto";
 import { SymbolIndex } from "../../ast/SymbolIndex.js";
 import { CallGraphBuilder } from "../../ast/CallGraphBuilder.js";
 import { TypeDependencyTracker } from "../../ast/TypeDependencyTracker.js";
+import type { DependencyEdge, DependencyGraph } from "../../ast/DependencyGraph.js";
 import {
     DefinitionSymbol,
     SymbolInfo,
@@ -26,8 +27,9 @@ const DEFAULT_MAX_COLOCATED = 10;
 const DEFAULT_MAX_SIBLINGS = 6;
 const MAX_CALL_RELATIONS = 15;
 const MAX_TYPE_RELATIONS = 10;
+const MAX_DEP_RELATIONS = 12;
 
-export type ExpandableRelationship = "callers" | "callees" | "typeFamily";
+export type ExpandableRelationship = "callers" | "callees" | "typeFamily" | "dependency";
 
 
 export interface BuildClusterOptions {
@@ -36,6 +38,7 @@ export interface BuildClusterOptions {
         callers?: boolean;
         callees?: boolean;
         typeFamily?: boolean;
+        dependency?: boolean;
         colocated?: boolean;
         siblings?: boolean;
         all?: boolean;
@@ -53,6 +56,7 @@ export class ClusterBuilder {
         private readonly symbolIndex: SymbolIndex,
         private readonly callGraphBuilder: CallGraphBuilder,
         private readonly typeDependencyTracker: TypeDependencyTracker,
+        private readonly dependencyGraph: DependencyGraph,
         private readonly now: () => number = () => Date.now()
     ) {}
 
@@ -67,6 +71,9 @@ export class ClusterBuilder {
         }
         if (expandAll || expandConfig.siblings !== false) {
             related.siblings = await this.loadSiblings(seed);
+        }
+        if (expandAll || expandConfig.dependency !== false) {
+            related.dependency = await this.loadDependencies(seed);
         }
 
         const expensiveLoads: Promise<void>[] = [];
@@ -108,6 +115,8 @@ export class ClusterBuilder {
                 return this.loadCallees(seed, depth, limit);
             case "typeFamily":
                 return this.loadTypeFamily(seed, depth, limit);
+            case "dependency":
+                return this.loadDependencies(seed, limit);
             default:
                 return this.createContainer(ExpansionState.NOT_LOADED);
         }
@@ -208,6 +217,21 @@ export class ClusterBuilder {
                 return this.wrapAsLoaded([]);
             }
             const related = this.extractRelatedFromTypeGraph(graph);
+            return this.wrapWithLimit(related, limit);
+        } catch (error) {
+            return this.wrapAsFailed(error);
+        }
+    }
+
+    private async loadDependencies(
+        seed: ClusterSeed,
+        limit: number = MAX_DEP_RELATIONS
+    ): Promise<RelatedSymbolsContainer> {
+        try {
+            const edges = await this.dependencyGraph.getDependencies(seed.filePath, "both");
+            const related = edges
+                .map(edge => this.toDependencySymbol(seed.filePath, edge))
+                .filter(Boolean) as RelatedSymbol[];
             return this.wrapWithLimit(related, limit);
         } catch (error) {
             return this.wrapAsFailed(error);
@@ -316,11 +340,40 @@ export class ClusterBuilder {
         };
     }
 
+    private toDependencySymbol(seedPath: string, edge: DependencyEdge): RelatedSymbol | null {
+        const seedNormalized = this.normalizePath(seedPath);
+        const from = this.normalizePath(edge.from);
+        const to = this.normalizePath(edge.to);
+        if (!from || !to) return null;
+
+        if (seedNormalized === from) {
+            return {
+                filePath: to,
+                symbolName: edge.what ?? path.basename(to),
+                symbolType: "import",
+                relationship: "imports-from",
+                confidence: "definite"
+            };
+        }
+        if (seedNormalized === to) {
+            return {
+                filePath: from,
+                symbolName: edge.what ?? path.basename(from),
+                symbolType: "export",
+                relationship: "exports-to",
+                confidence: "definite"
+            };
+        }
+        return null;
+    }
+
     private computeMetadata(seed: ClusterSeed, related: SearchCluster["related"]): SearchClusterMetadata {
         const counts = {
             functionChain: (related.callers.data.length || 0) + (related.callees.data.length || 0),
             typeHierarchy: related.typeFamily.data.length || 0,
-            moduleBoundary: (related.colocated.data.length || 0) + (related.siblings.data.length || 0)
+            moduleBoundary: (related.colocated.data.length || 0)
+                + (related.siblings.data.length || 0)
+                + (related.dependency.data.length || 0)
         };
 
         let clusterType: SearchClusterMetadata["clusterType"] = "mixed";
@@ -346,6 +399,7 @@ export class ClusterBuilder {
         if (this.hasData(related.callers)) total += CLUSTER_TOKEN_BUDGET.callers;
         if (this.hasData(related.callees)) total += CLUSTER_TOKEN_BUDGET.callees;
         if (this.hasData(related.typeFamily)) total += CLUSTER_TOKEN_BUDGET.typeFamily;
+        if (this.hasData(related.dependency)) total += CLUSTER_TOKEN_BUDGET.dependency;
         if (this.hasData(related.colocated)) total += CLUSTER_TOKEN_BUDGET.colocated;
         if (this.hasData(related.siblings)) total += CLUSTER_TOKEN_BUDGET.siblings;
 
@@ -375,6 +429,7 @@ export class ClusterBuilder {
             callers: this.createContainer(ExpansionState.NOT_LOADED),
             callees: this.createContainer(ExpansionState.NOT_LOADED),
             typeFamily: this.createContainer(ExpansionState.NOT_LOADED),
+            dependency: this.createContainer(ExpansionState.NOT_LOADED),
             colocated: this.createContainer(ExpansionState.NOT_LOADED),
             siblings: this.createContainer(ExpansionState.NOT_LOADED)
         };
@@ -386,5 +441,9 @@ export class ClusterBuilder {
             data,
             loadedAt: state === ExpansionState.LOADED ? this.now() : undefined
         };
+    }
+
+    private normalizePath(filePath: string): string {
+        return filePath.replace(/\\/g, "/");
     }
 }

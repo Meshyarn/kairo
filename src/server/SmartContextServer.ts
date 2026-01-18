@@ -82,6 +82,8 @@ import { AlertDispatcher } from "../utils/AlertDispatcher.js";
 import { AdaptiveLodController } from "../orchestration/adaptive-flow/AdaptiveLodController.js";
 import { MetricsExportService } from "../utils/metrics/MetricsExportService.js";
 import { CacheInvalidationHub } from "./CacheInvalidationHub.js";
+import { BoundaryAdapterRegistry } from "../contracts/BoundaryAdapterRegistry.js";
+import { ContractRegistry } from "../contracts/ContractRegistry.js";
 
 // Orchestration Imports
 import { OrchestrationEngine } from "../orchestration/OrchestrationEngine.js";
@@ -115,6 +117,8 @@ export class SmartContextServer {
     private historyEngine: HistoryEngine;
     private configurationManager: ConfigurationManager;
     private repoRegistry: RepoRegistry;
+    private boundaryAdapterRegistry: BoundaryAdapterRegistry;
+    private contractRegistry: ContractRegistry;
     private graphRagConfig: GraphRagConfigLoader;
     private astManager: AstManager;
     private skeletonGenerator: SkeletonGenerator;
@@ -209,6 +213,11 @@ export class SmartContextServer {
         this.configurationManager = new ConfigurationManager(this.rootPath);
         this.graphRagConfig = new GraphRagConfigLoader(this.rootPath);
         this.repoRegistry = new RepoRegistry(this.rootPath);
+        this.boundaryAdapterRegistry = BoundaryAdapterRegistry.createDefault(this.rootPath, this.repoRegistry);
+        this.contractRegistry = new ContractRegistry(this.rootPath, this.repoRegistry);
+        for (const adapter of this.boundaryAdapterRegistry.getAll()) {
+            this.contractRegistry.registerAdapter(adapter);
+        }
         const packageAliasMap = new PackageAliasMap(this.repoRegistry);
         packageAliasMap.build();
         const initialIgnorePatterns = this.configurationManager.getIgnoreGlobs();
@@ -391,7 +400,10 @@ export class SmartContextServer {
         this.internalRegistry.setMetadata('indexStateManager', this.indexStateManager);
         this.internalRegistry.setMetadata('dependencyGraph', this.dependencyGraph);
         this.internalRegistry.setMetadata('flowArtifactManager', this.flowArtifactManager);
+        this.internalRegistry.setMetadata('rootPath', this.rootPath);
         this.internalRegistry.setMetadata('repoRegistry', this.repoRegistry);
+        this.internalRegistry.setMetadata('boundaryAdapterRegistry', this.boundaryAdapterRegistry);
+        this.internalRegistry.setMetadata('contractRegistry', this.contractRegistry);
         this.internalRegistry.setMetadata('pathNormalizer', this.pathNormalizer);
         this.internalRegistry.setMetadata('packageAliasMap', packageAliasMap);
         this.internalRegistry.setMetadata('impactAnalyzer', this.impactAnalyzer);

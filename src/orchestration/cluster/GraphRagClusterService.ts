@@ -5,6 +5,9 @@ import type { ClusterSearchOptions, ClusterSearchEngine } from "../../engine/Clu
 import type { SymbolEmbeddingIndex, SymbolSearchResult } from "../../indexing/SymbolEmbeddingIndex.js";
 import type { SymbolIndex } from "../../ast/SymbolIndex.js";
 import type { PathNormalizer } from "../../utils/PathNormalizer.js";
+import type { RepoRegistry } from "../../config/RepoRegistry.js";
+import type { BoundaryAdapterRegistry } from "../../contracts/BoundaryAdapterRegistry.js";
+import type { BoundaryKind, BoundaryInstance } from "../../contracts/boundaries/types.js";
 import type { SymbolInfo } from "../../types.js";
 import {
     ClusterSeed,
@@ -13,7 +16,8 @@ import {
     ClusterSummaryRelationshipState,
     ClusterSeedSource,
     ExpansionState,
-    RelatedSymbolsContainer
+    RelatedSymbolsContainer,
+    RelatedSymbol
 } from "../../types/cluster.js";
 import {
     DEFAULT_GRAPHRAG_CONFIG,
@@ -27,6 +31,12 @@ export type GraphRagClusterOptions = {
     maxClusters?: number;
     expansionDepth?: number;
     includePreview?: boolean;
+};
+
+type BoundaryEvidenceCache = {
+    builtAt: number;
+    byPath: Map<string, Set<BoundaryKind>>;
+    byRepoPair: Map<string, Set<BoundaryKind>>;
 };
 
 export type GraphRagClusterRequest = {
@@ -116,9 +126,22 @@ export class GraphRagClusterService {
             response = await clusterSearchEngine.search(query, clusterOptions);
         }
 
-        resolveCrossBoundaryCaps(config, args.projectFileCount);
+        const boundaryEvidence = await this.getBoundaryEvidence();
+        const crossBoundaryByCluster = new Map<string, ClusterSummary["crossBoundary"]>();
+        for (const cluster of response.clusters) {
+            const crossBoundary = this.applyCrossBoundaryPolicy(
+                cluster,
+                config,
+                args.projectFileCount,
+                degradedReasons,
+                boundaryEvidence
+            );
+            if (crossBoundary) {
+                crossBoundaryByCluster.set(cluster.clusterId, crossBoundary);
+            }
+        }
         const defaultSeedSource = this.resolveSeedSource(policyUsed);
-        const clusters = this.summarizeClusters(response, defaultSeedSource);
+        const clusters = this.summarizeClusters(response, defaultSeedSource, crossBoundaryByCluster);
         return {
             clusters,
             policy: policyUsed,
@@ -274,7 +297,11 @@ export class GraphRagClusterService {
         };
     }
 
-    private summarizeClusters(response: ClusterSearchResponse, defaultSeedSource: ClusterSeedSource): ClusterSummary[] {
+    private summarizeClusters(
+        response: ClusterSearchResponse,
+        defaultSeedSource: ClusterSeedSource,
+        crossBoundaryByCluster: Map<string, ClusterSummary["crossBoundary"]>
+    ): ClusterSummary[] {
         const hints = response.expansionHints?.recommendedExpansions ?? [];
         const hintsByCluster = new Map<string, string[]>();
         for (const hint of hints) {
@@ -307,10 +334,12 @@ export class GraphRagClusterService {
                     callers: this.summarizeRelationship(cluster.related.callers),
                     callees: this.summarizeRelationship(cluster.related.callees),
                     typeFamily: this.summarizeRelationship(cluster.related.typeFamily),
+                    dependency: this.summarizeRelationship(cluster.related.dependency),
                     colocated: this.summarizeRelationship(cluster.related.colocated),
                     siblings: this.summarizeRelationship(cluster.related.siblings)
                 },
-                expansionHints: hintsByCluster.get(cluster.clusterId)
+                expansionHints: hintsByCluster.get(cluster.clusterId),
+                crossBoundary: crossBoundaryByCluster.get(cluster.clusterId)
             };
         });
     }
@@ -361,5 +390,235 @@ export class GraphRagClusterService {
             return trimmed;
         }
         return null;
+    }
+
+    private async getBoundaryEvidence(): Promise<BoundaryEvidenceCache | null> {
+        const cached = this.registry.getMetadata<BoundaryEvidenceCache>("graphRagBoundaryEvidence");
+        if (cached) {
+            return cached;
+        }
+
+        const boundaryRegistry = this.registry.getMetadata<BoundaryAdapterRegistry>("boundaryAdapterRegistry");
+        const repoRegistry = this.registry.getMetadata<RepoRegistry>("repoRegistry");
+        const pathNormalizer = this.registry.getMetadata<PathNormalizer>("pathNormalizer");
+        const rootPath = this.registry.getMetadata<string>("rootPath");
+        if (!boundaryRegistry || !repoRegistry || !pathNormalizer || !rootPath) {
+            return null;
+        }
+
+        const cache = await this.buildBoundaryEvidence(rootPath, boundaryRegistry, repoRegistry, pathNormalizer);
+        if (cache) {
+            this.registry.setMetadata("graphRagBoundaryEvidence", cache);
+        }
+        return cache;
+    }
+
+    private async buildBoundaryEvidence(
+        rootPath: string,
+        boundaryRegistry: BoundaryAdapterRegistry,
+        repoRegistry: RepoRegistry,
+        pathNormalizer: PathNormalizer
+    ): Promise<BoundaryEvidenceCache | null> {
+        const adapters = boundaryRegistry.getAll();
+        if (adapters.length === 0) {
+            return null;
+        }
+
+        const cache: BoundaryEvidenceCache = {
+            builtAt: Date.now(),
+            byPath: new Map(),
+            byRepoPair: new Map()
+        };
+
+        for (const adapter of adapters) {
+            let instances: BoundaryInstance[] = [];
+            try {
+                instances = await adapter.discover(rootPath, repoRegistry);
+            } catch {
+                continue;
+            }
+            for (const instance of instances) {
+                this.indexBoundaryInstance(instance, cache, pathNormalizer);
+            }
+        }
+
+        return cache;
+    }
+
+    private indexBoundaryInstance(
+        instance: BoundaryInstance,
+        cache: BoundaryEvidenceCache,
+        pathNormalizer: PathNormalizer
+    ): void {
+        for (const evidence of instance.evidence ?? []) {
+            const key = this.toPathKey(evidence.path, pathNormalizer);
+            if (!key) continue;
+            this.addBoundaryKind(cache.byPath, key, instance.kind);
+        }
+        for (const consumerRepoId of instance.consumerRepoIds ?? []) {
+            const key = this.buildRepoPairKey(consumerRepoId, instance.producerRepoId);
+            this.addBoundaryKind(cache.byRepoPair, key, instance.kind);
+        }
+    }
+
+    private addBoundaryKind(
+        map: Map<string, Set<BoundaryKind>>,
+        key: string,
+        kind: BoundaryKind
+    ): void {
+        const existing = map.get(key);
+        if (existing) {
+            existing.add(kind);
+            return;
+        }
+        map.set(key, new Set([kind]));
+    }
+
+    private toPathKey(filePath: string, pathNormalizer: PathNormalizer): string {
+        const absolute = pathNormalizer.toAbsolute(filePath);
+        return absolute.replace(/\\/g, "/");
+    }
+
+    private buildRepoPairKey(consumerRepoId: string, producerRepoId: string): string {
+        return `${consumerRepoId}::${producerRepoId}`;
+    }
+
+    private resolveBoundaryKinds(
+        boundaryEvidence: BoundaryEvidenceCache | null,
+        filePathKey: string,
+        consumerRepoId: string,
+        producerRepoId: string
+    ): Set<BoundaryKind> {
+        const kinds = new Set<BoundaryKind>();
+        if (!boundaryEvidence) {
+            return kinds;
+        }
+
+        const byPath = boundaryEvidence.byPath.get(filePathKey);
+        if (byPath) {
+            for (const kind of byPath) {
+                kinds.add(kind);
+            }
+        }
+
+        const byRepoPair = boundaryEvidence.byRepoPair.get(this.buildRepoPairKey(consumerRepoId, producerRepoId));
+        if (byRepoPair) {
+            for (const kind of byRepoPair) {
+                kinds.add(kind);
+            }
+        }
+
+        return kinds;
+    }
+
+    private pickAllowedKind(kinds: Set<BoundaryKind>, allowlist: Set<string>): BoundaryKind | undefined {
+        for (const kind of kinds) {
+            if (allowlist.has(kind)) {
+                return kind;
+            }
+        }
+        return undefined;
+    }
+
+    private pickDominantKind(kindCounts: Map<string, number>): string | undefined {
+        let selected: string | undefined;
+        let best = 0;
+        for (const [kind, count] of kindCounts) {
+            if (count > best) {
+                best = count;
+                selected = kind;
+            }
+        }
+        return selected;
+    }
+
+    private applyCrossBoundaryPolicy(
+        cluster: ClusterSearchResponse["clusters"][number],
+        config: ReturnType<GraphRagClusterService["resolveConfig"]>,
+        projectFileCount: number | undefined,
+        degradedReasons: string[],
+        boundaryEvidence: BoundaryEvidenceCache | null
+    ): ClusterSummary["crossBoundary"] | undefined {
+        const repoRegistry = this.registry.getMetadata<RepoRegistry>("repoRegistry");
+        const pathNormalizer = this.registry.getMetadata<PathNormalizer>("pathNormalizer");
+        if (!repoRegistry || !pathNormalizer) {
+            return undefined;
+        }
+        const seedFile = cluster.seeds[0]?.filePath;
+        if (!seedFile || !cluster.related.dependency) {
+            return undefined;
+        }
+        const seedAbsolute = this.toPathKey(seedFile, pathNormalizer);
+        const seedRepo = repoRegistry.findRepoByPath(seedAbsolute);
+        if (!seedRepo) {
+            return undefined;
+        }
+
+        const container = cluster.related.dependency;
+        const originalData = container.data ?? [];
+        if (originalData.length === 0) {
+            return undefined;
+        }
+
+        const allowlist = new Set(config.crossBoundary.allowlist ?? []);
+        const sameRepo: RelatedSymbol[] = [];
+        const crossRepo: RelatedSymbol[] = [];
+        const blocked: RelatedSymbol[] = [];
+        const kindCounts = new Map<string, number>();
+
+        for (const symbol of originalData) {
+            const absolute = this.toPathKey(symbol.filePath, pathNormalizer);
+            const repo = repoRegistry.findRepoByPath(absolute);
+            if (!repo || repo.id === seedRepo.id) {
+                sameRepo.push(symbol);
+                continue;
+            }
+            const consumerRepoId = symbol.relationship === "exports-to" ? repo.id : seedRepo.id;
+            const producerRepoId = symbol.relationship === "exports-to" ? seedRepo.id : repo.id;
+            const kinds = this.resolveBoundaryKinds(boundaryEvidence, absolute, consumerRepoId, producerRepoId);
+            const allowedKind = this.pickAllowedKind(kinds, allowlist);
+            const allowedByBoundary = Boolean(allowedKind);
+            const allowedByPolicy = Boolean(seedRepo.allowCrossRepoEdits && repo.allowCrossRepoEdits);
+            const kindForCount = allowedKind ?? (kinds.size > 0 ? Array.from(kinds)[0] : undefined);
+            if (kindForCount) {
+                kindCounts.set(kindForCount, (kindCounts.get(kindForCount) ?? 0) + 1);
+            }
+
+            if (allowedByPolicy && allowedByBoundary) {
+                crossRepo.push(symbol);
+            } else {
+                blocked.push(symbol);
+            }
+        }
+
+        const caps = resolveCrossBoundaryCaps(config, projectFileCount);
+        let truncated = false;
+        let allowedCrossRepo = crossRepo;
+        if (Number.isFinite(caps.maxFiles) && caps.maxFiles > 0 && crossRepo.length > caps.maxFiles) {
+            allowedCrossRepo = crossRepo.slice(0, caps.maxFiles);
+            truncated = true;
+        }
+
+        const filtered = [...sameRepo, ...allowedCrossRepo];
+        if (filtered.length !== originalData.length) {
+            container.data = filtered;
+        }
+        if (truncated) {
+            container.state = ExpansionState.TRUNCATED;
+            container.totalCount = originalData.length;
+        }
+        if (blocked.length > 0) {
+            degradedReasons.push("graphrag_cross_boundary_blocked");
+        }
+
+        const hasCrossRepo = crossRepo.length > 0 || blocked.length > 0;
+        if (!hasCrossRepo) {
+            return undefined;
+        }
+        return {
+            kind: this.pickDominantKind(kindCounts),
+            autoExpanded: allowedCrossRepo.length > 0,
+            truncated
+        };
     }
 }

@@ -32,6 +32,7 @@ export const CLUSTER_TOKEN_BUDGET = {
     callers: 300,
     callees: 300,
     typeFamily: 200,
+    dependency: 200,
     colocated: 150,
     siblings: 100,
     metadata: 50
@@ -90,6 +91,7 @@ export interface SearchCluster {
         callers: RelatedSymbolsContainer;
         callees: RelatedSymbolsContainer;
         typeFamily: RelatedSymbolsContainer;
+        dependency: RelatedSymbolsContainer;
         colocated: RelatedSymbolsContainer;
         siblings: RelatedSymbolsContainer;
     };

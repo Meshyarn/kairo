@@ -60,7 +60,8 @@ export class ClusterSearchEngine {
             deps.rootPath,
             deps.symbolIndex,
             deps.callGraphBuilder,
-            deps.typeDependencyTracker
+            deps.typeDependencyTracker,
+            deps.dependencyGraph
         );
         this.previewGenerator = new PreviewGenerator(deps.rootPath, deps.fileSystem);
         this.clusterCache = new ClusterCache(deps.rootPath, config.cache);
@@ -252,7 +253,7 @@ export class ClusterSearchEngine {
     }
 
     private collectRecommendedExpansions(clusters: SearchCluster[]): string[] {
-        const relationships: ExpandableRelationship[] = ["callers", "callees", "typeFamily"];
+        const relationships: ExpandableRelationship[] = ["callers", "callees", "typeFamily", "dependency"];
         const recommendations: string[] = [];
         for (const cluster of clusters) {
             for (const relationship of relationships) {

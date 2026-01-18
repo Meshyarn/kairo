@@ -12,6 +12,9 @@ const makeMocks = () => {
         },
         typeTracker: {
             analyzeType: jest.fn().mockImplementation(() => Promise.resolve({ nodes: [] }))
+        },
+        dependencyGraph: {
+            getDependencies: jest.fn().mockImplementation(() => Promise.resolve([]))
         }
     };
 };
@@ -26,7 +29,8 @@ describe("ClusterBuilder Branches", () => {
             "/root",
             mocks.symbolIndex as any,
             mocks.callGraph as any,
-            mocks.typeTracker as any
+            mocks.typeTracker as any,
+            mocks.dependencyGraph as any
         );
     });
 
