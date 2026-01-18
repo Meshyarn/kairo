@@ -13,6 +13,8 @@ describe('CallGraphBuilder', () => {
 
     let symbolIndex: SymbolIndex;
     let callGraphBuilder: CallGraphBuilder;
+    const originalMaxNodes = process.env.KAIRO_CALLGRAPH_MAX_NODES;
+    const originalMaxEdges = process.env.KAIRO_CALLGRAPH_MAX_EDGES;
 
     const writeFile = (relativePath: string, content: string) => {
         const absPath = path.join(testDir, relativePath);
@@ -61,12 +63,24 @@ export function summarize(price: number, quantity: number) {
     });
 
     afterAll(() => {
+        if (originalMaxNodes === undefined) {
+            delete process.env.KAIRO_CALLGRAPH_MAX_NODES;
+        } else {
+            process.env.KAIRO_CALLGRAPH_MAX_NODES = originalMaxNodes;
+        }
+        if (originalMaxEdges === undefined) {
+            delete process.env.KAIRO_CALLGRAPH_MAX_EDGES;
+        } else {
+            process.env.KAIRO_CALLGRAPH_MAX_EDGES = originalMaxEdges;
+        }
         if (fs.existsSync(testDir)) {
             fs.rmSync(testDir, { recursive: true, force: true });
         }
     });
 
     beforeEach(() => {
+        delete process.env.KAIRO_CALLGRAPH_MAX_NODES;
+        delete process.env.KAIRO_CALLGRAPH_MAX_EDGES;
         const generator = new SkeletonGenerator();
         symbolIndex = new SymbolIndex(testDir, generator, []);
         const moduleResolver = new ModuleResolver(testDir);
@@ -119,5 +133,18 @@ export function summarize(price: number, quantity: number) {
 
         expect(graph.visitedNodes[checkoutId]).toBeUndefined();
         expect(graph.truncated).toBe(true);
+    });
+
+    it('truncates when node caps are exceeded', async () => {
+        process.env.KAIRO_CALLGRAPH_MAX_NODES = "1";
+        const generator = new SkeletonGenerator();
+        symbolIndex = new SymbolIndex(testDir, generator, []);
+        const moduleResolver = new ModuleResolver(testDir);
+        callGraphBuilder = new CallGraphBuilder(testDir, symbolIndex, moduleResolver);
+
+        const graph = await analyzeOrFail('computeTotal', path.join('services', 'cart.ts'), 'downstream', 2);
+        expect(Object.keys(graph.visitedNodes)).toHaveLength(1);
+        expect(graph.truncated).toBe(true);
+        expect(graph.truncatedReason).toBe("cap");
     });
 });

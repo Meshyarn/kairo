@@ -10,7 +10,15 @@ export function buildUnderstandResponse(args: {
   docProfile?: any;
   docReferences?: any;
   relatedCode?: any[] | undefined;
-  calls?: any;
+  callGraph?: any;
+  callGraphArtifactId?: string;
+  callGraphSummary?: {
+    mode: "symbol" | "file";
+    truncated: boolean;
+    totalNodes?: number;
+    totalEdges?: number;
+    topNodes?: Array<{ label: string; filePath?: string; degree?: number }>;
+  };
   deps?: any;
   hotSpots?: any[];
   integrityReport?: any;
@@ -56,15 +64,17 @@ export function buildUnderstandResponse(args: {
     docProfile,
     docReferences,
     relatedCode,
-    calls,
+    callGraph,
+    callGraphArtifactId,
+    callGraphSummary,
     deps,
     hotSpots,
     integrityReport,
     includeCalls,
     degraded,
-  degradedReasons,
-  degradedReasonDetails,
-  fallbackGraph,
+    degradedReasons,
+    degradedReasonDetails,
+    fallbackGraph,
     refinementReason,
     budget,
     allowGraphs,
@@ -105,10 +115,12 @@ export function buildUnderstandResponse(args: {
           relatedCode
         }
       : undefined,
-    callGraph: calls ?? undefined,
+    callGraph: callGraph ?? undefined,
+    callGraphArtifactId,
+    callGraphSummary,
     dependencies: dependencyEdges,
     relationships: {
-      calls: calls,
+      calls: undefined,
       dependencies: deps
     },
     hotSpots: hotSpots ?? [],
@@ -141,9 +153,20 @@ export function buildUnderstandResponse(args: {
           rationale: "Full content provides complete context.",
           toolCall: { tool: "read", args: { action: "view_full", target: filePath } }
         },
+        ...(callGraphArtifactId
+          ? [
+              {
+                id: "manage.call_graph",
+                priority: 2,
+                description: "Inspect the call graph artifact summary.",
+                rationale: "Use the graph summary to navigate callers/callees.",
+                toolCall: { tool: "manage", args: { command: "artifact", target: callGraphArtifactId, detail: "summary" } }
+              }
+            ]
+          : []),
         {
           id: "understand.expand",
-          priority: 2,
+          priority: callGraphArtifactId ? 3 : 2,
           description: "Expand analysis with call graph and dependencies.",
           rationale: "Deeper analysis improves confidence in changes.",
           toolCall: {

@@ -140,6 +140,8 @@ Kairo can cap responses using `limits.maxTokens` (token-first) in addition to `l
 | `KAIRO_EXPLORE_MAX_TOKENS` | Default token budget for `explore`. | Overrides `KAIRO_DEFAULT_MAX_TOKENS`. |
 | `KAIRO_UNDERSTAND_MAX_TOKENS` | Default token budget for `understand`. | Overrides `KAIRO_DEFAULT_MAX_TOKENS`. |
 | `KAIRO_READ_MAX_TOKENS` | Default token budget for `read`. | Overrides `KAIRO_DEFAULT_MAX_TOKENS`. |
+| `KAIRO_MANAGE_MAX_TOKENS` | Default token budget for `manage` responses. | Used for `manage command=artifact` envelope caps. |
+| `KAIRO_MANAGE_MAX_CHARS` | Default JSON char cap for `manage` responses. | Used for `manage command=artifact` envelope caps. |
 | `KAIRO_TOKEN_ESTIMATOR` | Token estimator mode. | `whitespace` (default) or `chars`. |
 
 ## Native engine toggles (ADR-053-H)
@@ -293,6 +295,8 @@ When `KAIRO_VECTOR_INDEX_REBUILD=manual`, use the CLI `kairo-build-vector-index`
 |---|---|---|
 | `KAIRO_STYLE_PACK_TTL_MS` | Cache TTL for StylePack reuse across sessions. | Default: `1800000` (30 min). |
 | `KAIRO_STYLE_PACK_CACHE_SIZE` | Max cached StylePacks. | Default: `50`. |
+| `KAIRO_CALLGRAPH_MAX_NODES` | Max nodes stored in call graph artifacts. | Default: `500`. |
+| `KAIRO_CALLGRAPH_MAX_EDGES` | Max edges stored in call graph artifacts. | Default: `1500`. |
 
 ## Full list (source of truth)
 

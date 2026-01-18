@@ -23,6 +23,7 @@ import { resolveRepoInfo } from "../../../utils/RepoScope.js";
 import type { OptionSource, TraceOptionResolution } from "../../../types/option-trace.js";
 import { TraceBuilder } from "../../trace/TraceBuilder.js";
 import { buildBudgetPlan, getSectionPlan } from "../../budget/TokenBudgetAllocatorV2.js";
+import { enforceExploreResponseBudget } from "../../budget/ResponseEnvelopeBudgeter.js";
 import type { ToolProfile } from "../../options/OptionResolver.js";
 import { FeatureFlags } from "../../../config/FeatureFlags.js";
 import { metrics } from "../../../utils/MetricsCollector.js";
@@ -869,6 +870,13 @@ export class ExplorePillar {
             response.degradedReasons = buildDegradedReasons(response.reasons);
         }
 
+        enforceExploreResponseBudget({
+            response,
+            maxTokens,
+            maxChars,
+            traceBuilder
+        });
+
         if (traceEnabled) {
             response.effectiveOptions = {
                 version: 1,
@@ -890,7 +898,6 @@ export class ExplorePillar {
                 response.decisionTrace = traceBuilder.finalize();
             }
         }
-
         this.addIndexStatusInsights(response);
         await this.attachIndexSnapshot(response);
 

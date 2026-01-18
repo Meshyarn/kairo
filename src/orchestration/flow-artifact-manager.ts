@@ -127,7 +127,8 @@ export class FlowArtifactManager {
             analysis: rawCounts.analysis ?? 0,
             style: rawCounts.style ?? 0,
             draft: rawCounts.draft ?? 0,
-            review: rawCounts.review ?? 0
+            review: rawCounts.review ?? 0,
+            graph: rawCounts.graph ?? 0
         };
         const lastUpdatedAt = Math.max(
             session.updatedAt ?? session.startedAt,
@@ -138,7 +139,8 @@ export class FlowArtifactManager {
             analysis: session.artifacts.analysis,
             style: session.artifacts.style,
             draft: session.artifacts.drafts.slice(-1)[0],
-            review: session.artifacts.reviews.slice(-1)[0]
+            review: session.artifacts.reviews.slice(-1)[0],
+            graph: session.artifacts.graphs?.slice(-1)[0]
         };
         return { session, summary: { counts, lastUpdatedAt, latestIds } };
     }
@@ -641,7 +643,7 @@ export class FlowArtifactManager {
         if (type || ensureDir) {
             return candidate;
         }
-        const types: ArtifactType[] = ["research", "analysis", "style", "draft", "review"];
+        const types: ArtifactType[] = ["research", "analysis", "style", "draft", "review", "graph"];
         for (const entryType of types) {
             const entryPath = path.join(this.persistPath, `${entryType}s`, `${id}.json`);
             if (await this.fileSystem.exists(entryPath)) {
@@ -707,7 +709,8 @@ export class FlowArtifactManager {
             status: "active",
             artifacts: {
                 drafts: [],
-                reviews: []
+                reviews: [],
+                graphs: []
             }
         };
         this.sessions.set(session.id, session);
@@ -738,6 +741,14 @@ export class FlowArtifactManager {
             case "review":
                 if (!session.artifacts.reviews.includes(artifact.report.id)) {
                     session.artifacts.reviews.push(artifact.report.id);
+                }
+                break;
+            case "graph":
+                if (!session.artifacts.graphs) {
+                    session.artifacts.graphs = [];
+                }
+                if (!session.artifacts.graphs.includes(artifact.pack.id)) {
+                    session.artifacts.graphs.push(artifact.pack.id);
                 }
                 break;
             default:
@@ -781,6 +792,11 @@ export class FlowArtifactManager {
                 session.artifacts.reviews = session.artifacts.reviews.filter((id) => id !== artifact.report.id);
                 if (session.outcome?.finalReviewId === artifact.report.id) {
                     session.outcome.finalReviewId = undefined;
+                }
+                break;
+            case "graph":
+                if (session.artifacts.graphs) {
+                    session.artifacts.graphs = session.artifacts.graphs.filter((id) => id !== artifact.pack.id);
                 }
                 break;
             default:

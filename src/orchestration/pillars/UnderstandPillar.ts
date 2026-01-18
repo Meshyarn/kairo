@@ -9,7 +9,7 @@ import { analyzeQuery, isStrongQuery } from '../../engine/search/QueryMetrics.js
 import { IntegrityEngine } from '../../integrity/IntegrityEngine.js';
 import { UnifiedContextGraph } from '../context/UnifiedContextGraph.js';
 import type { IndexStateManager } from '../../indexing/IndexStateManager.js';
-import type { AnalysisPack, StylePack } from '../../types/flow-artifacts.js';
+import type { AnalysisPack, StylePack, GraphPack } from '../../types/flow-artifacts.js';
 import { VibeProfileBuilder } from '../../generation/vibe-profile-builder.js';
 import { AnalysisPackBuilder } from '../../generation/analysis-pack-builder.js';
 import type { FlowArtifactManager } from '../flow-artifact-manager.js';
@@ -33,6 +33,7 @@ import { normalizeUnderstandInput } from './understand/UnderstandInputNormalizer
 import type { OptionSource, TraceOptionResolution } from '../../types/option-trace.js';
 import { TraceBuilder } from '../trace/TraceBuilder.js';
 import { buildBudgetPlan, getSectionPlan } from '../budget/TokenBudgetAllocatorV2.js';
+import { enforceUnderstandResponseBudget } from "../budget/ResponseEnvelopeBudgeter.js";
 import { FeatureFlags } from "../../config/FeatureFlags.js";
 import { metrics } from "../../utils/MetricsCollector.js";
 import type { ToolProfile } from '../options/OptionResolver.js';
@@ -66,6 +67,13 @@ const buildStringResolution = (
   resolved: resolved ?? null,
   ...(requested !== undefined ? { requested } : {})
 });
+
+const DEFAULT_CALLGRAPH_MAX_NODES = Number.parseInt(process.env.KAIRO_CALLGRAPH_MAX_NODES ?? "500", 10) || 500;
+const DEFAULT_CALLGRAPH_MAX_EDGES = Number.parseInt(process.env.KAIRO_CALLGRAPH_MAX_EDGES ?? "1500", 10) || 1500;
+const DEFAULT_CALLGRAPH_PREVIEW_NODES = 30;
+const DEFAULT_CALLGRAPH_PREVIEW_EDGES = 90;
+const DEFAULT_CALLGRAPH_TOP_NODES = 10;
+const DEFAULT_CALLGRAPH_ARTIFACT_TTL_MS = 30 * 60 * 1000;
 
 
 export class UnderstandPillar {
@@ -435,6 +443,9 @@ export class UnderstandPillar {
     const fileProfile = await this.runTool(context, 'file_profile', { filePath }, progress);
 
     let calls: any = null;
+    let callGraphArtifactId: string | undefined;
+    let callGraphSummary: GraphPack["summary"] | undefined;
+    let callGraphPreview: { nodes: any[]; edges: any[]; resolvedTarget?: any; meta?: any } | undefined;
     let deps: any = null;
     let hotSpots: any = [];
 
@@ -464,6 +475,28 @@ export class UnderstandPillar {
       refinementReason = refinementReason ?? 'budget_exceeded';
       if (traceBuilder) {
         traceBuilder.recordSkip("call_graph", "budget_exceeded", "graph budget gated");
+      }
+    }
+    if (calls) {
+      const graphPackResult = this.buildGraphPack({
+        calls,
+        filePath,
+        symbolName,
+        depth
+      });
+      callGraphArtifactId = graphPackResult.pack.id;
+      callGraphSummary = graphPackResult.pack.summary;
+      callGraphPreview = graphPackResult.preview;
+      if (artifactManager) {
+        artifactManager.store({
+          id: graphPackResult.pack.id,
+          type: "graph",
+          createdAt: graphPackResult.pack.meta.createdAt,
+          expiresAt: graphPackResult.expiresAt,
+          pack: graphPackResult.pack,
+          sessionId: resolvedSessionId,
+          metadata: { intent: subject }
+        });
       }
     }
 
@@ -624,7 +657,9 @@ export class UnderstandPillar {
       docProfile,
       docReferences,
       relatedCode,
-      calls,
+      callGraph: callGraphPreview,
+      callGraphArtifactId,
+      callGraphSummary,
       deps,
       hotSpots,
       integrityReport,
@@ -641,6 +676,12 @@ export class UnderstandPillar {
       analysisPack,
       sessionId: resolvedSessionId,
       compression: compressionDecision.compression
+    });
+    enforceUnderstandResponseBudget({
+      response,
+      maxTokens,
+      maxChars: limits.maxChars,
+      traceBuilder
     });
     if (traceEnabled) {
       response.effectiveOptions = {
@@ -670,6 +711,122 @@ export class UnderstandPillar {
     } finally {
       stopTotal();
     }
+  }
+
+  private buildGraphPack(input: {
+    calls: any;
+    filePath: string;
+    symbolName?: string | null;
+    depth: string;
+  }): {
+    pack: GraphPack;
+    preview: { nodes: any[]; edges: any[]; resolvedTarget?: any; meta?: any };
+    expiresAt: number;
+  } {
+    const rawNodes = Array.isArray(input.calls?.nodes) ? input.calls.nodes : [];
+    const rawEdges = Array.isArray(input.calls?.edges) ? input.calls.edges : [];
+    const totalNodes = rawNodes.length;
+    const totalEdges = rawEdges.length;
+    const maxNodes = DEFAULT_CALLGRAPH_MAX_NODES;
+    const maxEdges = DEFAULT_CALLGRAPH_MAX_EDGES;
+    let cappedNodes = rawNodes;
+    let cappedEdges = rawEdges;
+    let truncatedByCap = false;
+
+    if (Number.isFinite(maxNodes) && maxNodes > 0 && cappedNodes.length > maxNodes) {
+      cappedNodes = cappedNodes.slice(0, maxNodes);
+      truncatedByCap = true;
+    }
+    const nodeIds = new Set(cappedNodes.map((node: any) => node.id));
+    cappedEdges = cappedEdges.filter((edge: any) => nodeIds.has(edge.source) && nodeIds.has(edge.target));
+    if (Number.isFinite(maxEdges) && maxEdges > 0 && cappedEdges.length > maxEdges) {
+      cappedEdges = cappedEdges.slice(0, maxEdges);
+      truncatedByCap = true;
+    }
+    const truncatedReason = input.calls?.truncatedReason as ("cap" | "depth" | "unknown" | undefined);
+    if (truncatedReason === "cap") {
+      truncatedByCap = true;
+    }
+
+    const degreeMap = new Map<string, number>();
+    for (const edge of cappedEdges) {
+      degreeMap.set(edge.source, (degreeMap.get(edge.source) ?? 0) + 1);
+      degreeMap.set(edge.target, (degreeMap.get(edge.target) ?? 0) + 1);
+    }
+    type NodeDegree = { node: any; degree: number };
+    const topNodes = cappedNodes
+      .map((node: any): NodeDegree => ({ node, degree: degreeMap.get(node.id) ?? 0 }))
+      .sort((left: NodeDegree, right: NodeDegree) => right.degree - left.degree)
+      .slice(0, DEFAULT_CALLGRAPH_TOP_NODES)
+      .map((entry: NodeDegree) => ({
+        label: entry.node.label ?? entry.node.id,
+        filePath: entry.node.path,
+        degree: entry.degree
+      }));
+
+    const mode = input.calls?.resolvedTarget?.type === "file" ? "file" : "symbol";
+    const createdAt = Date.now();
+    const pack: GraphPack = {
+      id: this.generateGraphPackId(),
+      kind: "call_graph",
+      source: {
+        filePath: input.filePath,
+        ...(input.symbolName ? { symbolName: input.symbolName } : {}),
+        ...(input.depth ? { depth: input.depth } : {})
+      },
+      raw: {
+        nodes: cappedNodes,
+        edges: cappedEdges,
+        resolvedTarget: input.calls?.resolvedTarget
+      },
+      summary: {
+        mode,
+        truncated: input.calls?.truncated === true || truncatedByCap || totalNodes !== cappedNodes.length || totalEdges !== cappedEdges.length,
+        ...(truncatedReason ? { truncatedReason } : {}),
+        totalNodes,
+        totalEdges,
+        topNodes
+      },
+      meta: {
+        createdAt,
+        totalNodes,
+        totalEdges,
+        truncatedByCap,
+        ...(truncatedReason ? { truncatedReason } : {}),
+        caps: {
+          maxNodes,
+          maxEdges
+        }
+      }
+    };
+
+    const previewNodes = cappedNodes.slice(0, Math.min(DEFAULT_CALLGRAPH_PREVIEW_NODES, cappedNodes.length));
+    const previewNodeIds = new Set(previewNodes.map((node: any) => node.id));
+    const previewEdges = cappedEdges
+      .filter((edge: any) => previewNodeIds.has(edge.source) && previewNodeIds.has(edge.target))
+      .slice(0, DEFAULT_CALLGRAPH_PREVIEW_EDGES);
+
+    return {
+      pack,
+      expiresAt: createdAt + DEFAULT_CALLGRAPH_ARTIFACT_TTL_MS,
+      preview: {
+        nodes: previewNodes,
+        edges: previewEdges,
+        resolvedTarget: input.calls?.resolvedTarget,
+        meta: {
+          mode,
+          truncated: pack.summary.truncated,
+          totalNodes,
+          totalEdges,
+          artifactId: pack.id
+        }
+      }
+    };
+  }
+
+  private generateGraphPackId(): string {
+    const suffix = Math.random().toString(36).slice(2, 8);
+    return `graph_${Date.now().toString(36)}_${suffix}`;
   }
 
   private async buildStylePack(

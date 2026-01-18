@@ -17,10 +17,11 @@ import { FeatureFlags } from "../config/FeatureFlags.js";
 import { computeAdaptiveFlowGate, resolveRolloutPresetFromEnv } from "../orchestration/adaptive-flow/AdaptiveFlowGate.js";
 import { buildDegradedReasons } from "../orchestration/DegradedReasonMapper.js";
 import type { TransactionLogEntry } from "../engine/TransactionLog.js";
-import type { ArtifactManagerStatus, FlowArtifact, FlowSession } from "../types/flow-artifacts.js";
+import type { ArtifactManagerStatus, FlowArtifact, FlowSession, GraphPack } from "../types/flow-artifacts.js";
 import { hashContent } from "../utils/hash.js";
 import { detectServiceRoots } from "../utils/ServiceRootDetector.js";
 import { PatchStore } from "../engine/PatchStore.js";
+import { estimateTokens } from "../orchestration/TokenBudget.js";
 
 export class ManageHandlers extends BaseHandler {
     private reindexInProgress = false;
@@ -625,6 +626,152 @@ export class ManageHandlers extends BaseHandler {
         return "L";
     }
 
+    private resolveManageEnvelopeBudget(args: any): { maxTokens?: number; maxChars?: number } {
+        const limits = args?.limits ?? {};
+        const maxTokens = Number.isFinite(limits.maxTokens) && limits.maxTokens > 0
+            ? limits.maxTokens
+            : this.parseNumberEnv(process.env.KAIRO_MANAGE_MAX_TOKENS, NaN);
+        const fallbackTokens = Number.isFinite(maxTokens)
+            ? maxTokens
+            : this.parseNumberEnv(process.env.KAIRO_DEFAULT_MAX_TOKENS, NaN);
+        const maxChars = Number.isFinite(limits.maxChars) && limits.maxChars > 0
+            ? limits.maxChars
+            : this.parseNumberEnv(process.env.KAIRO_MANAGE_MAX_CHARS, NaN);
+        return {
+            maxTokens: Number.isFinite(fallbackTokens) ? fallbackTokens : undefined,
+            maxChars: Number.isFinite(maxChars) ? maxChars : undefined
+        };
+    }
+
+    private estimateResponseUsage(payload: any): { estimatedTokens: number; usedChars: number } {
+        const serialized = JSON.stringify(payload ?? {});
+        return {
+            usedChars: serialized.length,
+            estimatedTokens: estimateTokens(serialized, { languageId: "json" })
+        };
+    }
+
+    private applyGraphViewBudget(response: any, options: { maxTokens?: number; maxChars?: number }) {
+        const maxTokens = options.maxTokens;
+        const maxChars = options.maxChars;
+        const hasBudget = Number.isFinite(maxTokens) || Number.isFinite(maxChars);
+        if (!hasBudget) {
+            return { applied: false, estimatedTokens: 0, usedChars: 0 };
+        }
+
+        const withinBudget = (usage: { estimatedTokens: number; usedChars: number }) => {
+            const overTokens = Number.isFinite(maxTokens) && maxTokens! > 0 ? usage.estimatedTokens > maxTokens! : false;
+            const overChars = Number.isFinite(maxChars) && maxChars! > 0 ? usage.usedChars > maxChars! : false;
+            return !overTokens && !overChars;
+        };
+
+        let usage = this.estimateResponseUsage(response);
+        if (withinBudget(usage)) {
+            return { applied: false, ...usage };
+        }
+
+        let applied = false;
+        const view = response.view;
+        if (view?.graph?.edges?.length) {
+            view.graph.edges = [];
+            applied = true;
+            usage = this.estimateResponseUsage(response);
+        }
+
+        if (!withinBudget(usage) && view?.graph?.nodes?.length) {
+            const target = Math.max(1, Math.min(10, view.graph.nodes.length));
+            if (view.graph.nodes.length > target) {
+                view.graph.nodes = view.graph.nodes.slice(0, target);
+                view.graph.edges = [];
+                applied = true;
+                usage = this.estimateResponseUsage(response);
+            }
+        }
+
+        if (!withinBudget(usage) && view?.graph) {
+            view.graph = undefined;
+            applied = true;
+            usage = this.estimateResponseUsage(response);
+        }
+
+        if (applied) {
+            response.degraded = true;
+            response.reasons = Array.from(new Set([...(response.reasons ?? []), "budget_exceeded"]));
+            view.meta = {
+                ...(view.meta ?? {}),
+                budget: {
+                    applied: true,
+                    estimatedTokens: usage.estimatedTokens,
+                    usedChars: usage.usedChars,
+                    maxTokens,
+                    maxChars
+                }
+            };
+        }
+
+        return { applied, ...usage };
+    }
+
+    private buildGraphArtifactResponse(
+        artifact: FlowArtifact,
+        options: { detail: "summary" | "full"; limit?: number; maxTokens?: number; maxChars?: number }
+    ) {
+        const pack = (artifact as any).pack as GraphPack | undefined;
+        if (!pack) {
+            return {
+                success: false,
+                output: "Artifact not found."
+            };
+        }
+        const raw = pack.raw ?? { nodes: [], edges: [], resolvedTarget: undefined };
+        const caps = pack.meta?.caps ?? {};
+        const maxNodes = Number.isFinite(caps.maxNodes) && (caps.maxNodes as number) > 0 ? (caps.maxNodes as number) : 500;
+        const maxEdges = Number.isFinite(caps.maxEdges) && (caps.maxEdges as number) > 0 ? (caps.maxEdges as number) : 1500;
+        const previewLimit = options.detail === "summary" ? 20 : raw.nodes.length;
+        const nodeLimit = Number.isFinite(options.limit) && options.limit! > 0
+            ? Math.min(options.limit!, maxNodes)
+            : Math.min(previewLimit, maxNodes, raw.nodes.length);
+        const edgeLimit = Number.isFinite(options.limit) && options.limit! > 0
+            ? Math.min(options.limit! * 3, maxEdges)
+            : Math.min(nodeLimit * 3, maxEdges, raw.edges.length);
+
+        const nodes = raw.nodes.slice(0, nodeLimit);
+        const nodeIds = new Set(nodes.map((node: any) => node.id));
+        const edges = raw.edges.filter((edge: any) => nodeIds.has(edge.source) && nodeIds.has(edge.target)).slice(0, edgeLimit);
+        const truncated = nodeLimit < raw.nodes.length || edges.length < raw.edges.length || pack.summary?.truncated === true;
+
+        const view = {
+            detail: options.detail,
+            summary: pack.summary,
+            graph: {
+                nodes,
+                edges,
+                resolvedTarget: raw.resolvedTarget
+            },
+            meta: {
+                truncated,
+                totalNodes: pack.summary?.totalNodes,
+                totalEdges: pack.summary?.totalEdges,
+                truncatedReason: pack.summary?.truncatedReason ?? pack.meta?.truncatedReason,
+                caps: pack.meta?.caps
+            }
+        };
+
+        const artifactPayload: FlowArtifact = {
+            ...artifact,
+            pack: { ...pack, raw: undefined }
+        } as FlowArtifact;
+
+        const response: any = {
+            success: true,
+            output: "Artifact retrieved.",
+            artifact: artifactPayload,
+            view
+        };
+        this.applyGraphViewBudget(response, options);
+        return response;
+    }
+
     private parseNumberEnv(raw: string | undefined, fallback: number): number {
         if (!raw) return fallback;
         const value = Number(raw);
@@ -1218,11 +1365,23 @@ export class ManageHandlers extends BaseHandler {
                         artifacts = artifacts.sort((a, b) => (a.expiresAt ?? Infinity) - (b.expiresAt ?? Infinity));
                     }
                     artifacts = artifacts.slice(0, limit);
+                    const sanitized = artifacts.map((artifact) => {
+                        if (artifact.type !== "graph") return artifact;
+                        const pack = (artifact as any).pack as GraphPack | undefined;
+                        if (!pack) return artifact;
+                        return {
+                            ...artifact,
+                            pack: {
+                                ...pack,
+                                raw: undefined
+                            }
+                        } as FlowArtifact;
+                    });
                     const summary = this.buildWorkflowSummary();
                     return {
                         success: true,
                         output: "Artifacts listed.",
-                        artifacts,
+                        artifacts: sanitized,
                         ...(summary.recommendedActions ? { recommendedActions: summary.recommendedActions } : {})
                     };
                 }
@@ -1233,6 +1392,16 @@ export class ManageHandlers extends BaseHandler {
                         return { success: false, output: "Missing target artifact id." };
                     }
                     const artifact = this.context.flowArtifactManager.get(target);
+                    if (artifact?.type === "graph") {
+                        const detail = args?.detail === "full" ? "full" : "summary";
+                        const limit = Number.isFinite(args?.limit) && args.limit > 0 ? Math.floor(args.limit) : undefined;
+                        const envelopeBudget = this.resolveManageEnvelopeBudget(args);
+                        return this.buildGraphArtifactResponse(artifact, {
+                            detail,
+                            limit,
+                            ...envelopeBudget
+                        });
+                    }
                     return {
                         success: Boolean(artifact),
                         output: artifact ? "Artifact retrieved." : "Artifact not found.",
