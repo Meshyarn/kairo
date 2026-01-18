@@ -93,6 +93,34 @@ Create `.kairo/config/languages.json` to extend or override built-ins:
 }
 ```
 
+### GraphRAG policy (optional)
+
+Create `.kairo/config/graphrag.json` to tune GraphRAG defaults and seed policy:
+
+```json
+{
+  "version": 1,
+  "enabled": false,
+  "seedPolicy": {
+    "default": "lexical_default",
+    "policies": {
+      "path_first": { "weights": { "path": 1.0, "lexical": 0.6, "semantic": 0.2 } },
+      "symbol_semantic": { "weights": { "semantic": 1.0, "lexical": 0.5, "path": 0.2 } },
+      "lexical_default": { "weights": { "lexical": 1.0, "semantic": 0.3, "path": 0.3 } }
+    }
+  },
+  "tuning": { "primaryGoal": "followup_calls", "secondaryGoal": "token_usage" },
+  "crossBoundary": {
+    "allowlist": ["ffi_napi", "idl_proto", "http_openapi", "db_sql_schema"],
+    "caps": { "maxDepth": 1, "maxFiles": 8, "maxSymbols": 20, "maxTokens": 800 },
+    "autoScale": true
+  }
+}
+```
+
+- `KAIRO_GRAPHRAG_ENABLED=true` forces GraphRAG on (overrides config).
+- Cross-repo cluster expansion follows the same safety model as edits: repo config must allow it (`allowCrossRepoEdits: true`) and the tool call must also pass `allowCrossRepoEdits: true`.
+
 ### Config bootstrap (manage init/doctor)
 
 You can generate a starter config skeleton with the `manage` tool:
