@@ -8,6 +8,7 @@ import type { PathNormalizer } from "../../utils/PathNormalizer.js";
 import type { RepoRegistry } from "../../config/RepoRegistry.js";
 import type { BoundaryAdapterRegistry } from "../../contracts/BoundaryAdapterRegistry.js";
 import type { BoundaryKind, BoundaryInstance } from "../../contracts/boundaries/types.js";
+import { isRepoIdInScope, normalizeRepoScope, type NormalizedRepoScope, type RepoScope } from "../../utils/RepoScope.js";
 import type { SymbolInfo } from "../../types.js";
 import {
     ClusterSeed,
@@ -26,6 +27,7 @@ import {
     resolveCrossBoundaryCaps,
     resolveGraphRagEnabled
 } from "../../config/GraphRagConfig.js";
+import { metrics } from "../../utils/MetricsCollector.js";
 
 export type GraphRagClusterOptions = {
     maxClusters?: number;
@@ -44,6 +46,10 @@ export type GraphRagClusterRequest = {
     clusterOptions?: GraphRagClusterOptions;
     projectFileCount?: number;
     docHint?: boolean;
+    repoScope?: RepoScope;
+    repoId?: string;
+    repoIds?: string[];
+    allowCrossRepoEdits?: boolean;
 };
 
 export type GraphRagClusterResult = {
@@ -56,6 +62,9 @@ export class GraphRagClusterService {
     constructor(private readonly registry: InternalToolRegistry) {}
 
     public async buildClusters(args: GraphRagClusterRequest): Promise<GraphRagClusterResult | null> {
+        const stopTimer = metrics.startTimer("graphrag.build_clusters_ms", "detailed");
+        metrics.inc("graphrag.request_total");
+        try {
         const query = String(args.query ?? "").trim();
         if (!query) {
             return null;
@@ -89,13 +98,15 @@ export class GraphRagClusterService {
         const symbolEmbeddingIndex = this.registry.getMetadata<SymbolEmbeddingIndex>("symbolEmbeddingIndex");
         const symbolIndex = this.registry.getMetadata<SymbolIndex>("symbolIndex");
         const pathNormalizer = this.registry.getMetadata<PathNormalizer>("pathNormalizer");
-        const metrics = analyzeQuery(query);
+        const queryMetrics = analyzeQuery(query);
         const semanticEligible = this.isSemanticEligible(symbolEmbeddingIndex);
+        const repoScope = this.resolveRepoScope(args);
 
-        const selectedPolicy = this.selectPolicy(metrics, config, {
+        const selectedPolicy = this.selectPolicy(queryMetrics, config, {
             docHint: args.docHint,
             semanticEligible
         });
+        metrics.inc(`graphrag.policy.selected.${selectedPolicy}`);
 
         const degradedReasons: string[] = [];
         let policyUsed: GraphRagSeedPolicyName = selectedPolicy;
@@ -125,6 +136,10 @@ export class GraphRagClusterService {
         if (!response) {
             response = await clusterSearchEngine.search(query, clusterOptions);
         }
+        if (policyUsed !== selectedPolicy) {
+            metrics.inc("graphrag.policy.fallback_total");
+        }
+        metrics.inc(`graphrag.policy.used.${policyUsed}`);
 
         const boundaryEvidence = await this.getBoundaryEvidence();
         const crossBoundaryByCluster = new Map<string, ClusterSummary["crossBoundary"]>();
@@ -134,7 +149,11 @@ export class GraphRagClusterService {
                 config,
                 args.projectFileCount,
                 degradedReasons,
-                boundaryEvidence
+                boundaryEvidence,
+                {
+                    repoScope,
+                    allowCrossRepoEdits: args.allowCrossRepoEdits
+                }
             );
             if (crossBoundary) {
                 crossBoundaryByCluster.set(cluster.clusterId, crossBoundary);
@@ -142,11 +161,21 @@ export class GraphRagClusterService {
         }
         const defaultSeedSource = this.resolveSeedSource(policyUsed);
         const clusters = this.summarizeClusters(response, defaultSeedSource, crossBoundaryByCluster);
+        metrics.observe("graphrag.cluster_count", clusters.length, "detailed");
+        if (degradedReasons.length > 0) {
+            metrics.inc("graphrag.degraded_total");
+            for (const reason of new Set(degradedReasons)) {
+                metrics.inc(`graphrag.degraded.${reason}`);
+            }
+        }
         return {
             clusters,
             policy: policyUsed,
             degradedReasons: degradedReasons.length > 0 ? Array.from(new Set(degradedReasons)) : undefined
         };
+        } finally {
+            stopTimer();
+        }
     }
 
     private resolveConfig() {
@@ -392,6 +421,16 @@ export class GraphRagClusterService {
         return null;
     }
 
+    private resolveRepoScope(args: GraphRagClusterRequest): NormalizedRepoScope | null {
+        const repoRegistry = this.registry.getMetadata<RepoRegistry>("repoRegistry");
+        if (!repoRegistry) return null;
+        try {
+            return normalizeRepoScope(args, repoRegistry, { defaultMode: "all" });
+        } catch {
+            return null;
+        }
+    }
+
     private async getBoundaryEvidence(): Promise<BoundaryEvidenceCache | null> {
         const cached = this.registry.getMetadata<BoundaryEvidenceCache>("graphRagBoundaryEvidence");
         if (cached) {
@@ -537,7 +576,8 @@ export class GraphRagClusterService {
         config: ReturnType<GraphRagClusterService["resolveConfig"]>,
         projectFileCount: number | undefined,
         degradedReasons: string[],
-        boundaryEvidence: BoundaryEvidenceCache | null
+        boundaryEvidence: BoundaryEvidenceCache | null,
+        policy: { repoScope: NormalizedRepoScope | null; allowCrossRepoEdits?: boolean }
     ): ClusterSummary["crossBoundary"] | undefined {
         const repoRegistry = this.registry.getMetadata<RepoRegistry>("repoRegistry");
         const pathNormalizer = this.registry.getMetadata<PathNormalizer>("pathNormalizer");
@@ -561,6 +601,7 @@ export class GraphRagClusterService {
         }
 
         const allowlist = new Set(config.crossBoundary.allowlist ?? []);
+        const repoScope = policy.repoScope;
         const sameRepo: RelatedSymbol[] = [];
         const crossRepo: RelatedSymbol[] = [];
         const blocked: RelatedSymbol[] = [];
@@ -578,7 +619,12 @@ export class GraphRagClusterService {
             const kinds = this.resolveBoundaryKinds(boundaryEvidence, absolute, consumerRepoId, producerRepoId);
             const allowedKind = this.pickAllowedKind(kinds, allowlist);
             const allowedByBoundary = Boolean(allowedKind);
-            const allowedByPolicy = Boolean(seedRepo.allowCrossRepoEdits && repo.allowCrossRepoEdits);
+            const scopeAllows = !repoScope || (isRepoIdInScope(seedRepo.id, repoScope) && isRepoIdInScope(repo.id, repoScope));
+            const allowCrossRepoEdits = policy.allowCrossRepoEdits;
+            const policyAllows = allowCrossRepoEdits === undefined
+                ? true
+                : allowCrossRepoEdits;
+            const allowedByPolicy = Boolean(policyAllows && seedRepo.allowCrossRepoEdits && repo.allowCrossRepoEdits && scopeAllows);
             const kindForCount = allowedKind ?? (kinds.size > 0 ? Array.from(kinds)[0] : undefined);
             if (kindForCount) {
                 kindCounts.set(kindForCount, (kindCounts.get(kindForCount) ?? 0) + 1);

@@ -661,8 +661,23 @@ export class UnderstandPillar {
         query: subject,
         clusterOptions,
         projectFileCount: projectStats?.fileCount,
-        docHint: isDocument
+        docHint: isDocument,
+        repoScope: (constraints as any).repoScope,
+        repoId: (constraints as any).repoId,
+        repoIds: (constraints as any).repoIds,
+        allowCrossRepoEdits: (constraints as any).allowCrossRepoEdits
       });
+      if (graphRagClusters && traceBuilder) {
+        traceBuilder.recordEvent({
+          area: "policy",
+          code: "graphrag_clusters",
+          data: {
+            policy: graphRagClusters.policy,
+            clusters: graphRagClusters.clusters.length,
+            degradedReasons: graphRagClusters.degradedReasons
+          }
+        });
+      }
       if (graphRagClusters?.degradedReasons?.length) {
         degraded = true;
         degradedReasons.push(...graphRagClusters.degradedReasons);

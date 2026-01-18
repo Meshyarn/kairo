@@ -880,6 +880,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
               includePreview: { type: "boolean" }
             }
           },
+          allowCrossRepoEdits: { type: "boolean" },
           limits: {
             type: "object",
             properties: {
@@ -954,6 +955,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
           },
           repoId: { type: "string" },
           repoIds: { type: "array", items: { type: "string" } },
+          allowCrossRepoEdits: { type: "boolean" },
           section: {
             type: "object",
             properties: {
@@ -1401,6 +1403,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
               includePreview: { type: "boolean" }
             }
           },
+          allowCrossRepoEdits: { type: "boolean" },
           trace: { type: "boolean" }
         },
         required: ["target"],

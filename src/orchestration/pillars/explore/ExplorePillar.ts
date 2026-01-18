@@ -858,11 +858,26 @@ export class ExplorePillar {
                 query,
                 clusterOptions,
                 projectFileCount: projectStats?.fileCount,
-                docHint
+                docHint,
+                repoScope: (constraints as any).repoScope,
+                repoId: (constraints as any).repoId,
+                repoIds: (constraints as any).repoIds,
+                allowCrossRepoEdits: (constraints as any).allowCrossRepoEdits
             });
             if (clusterResult) {
                 response.clusters = clusterResult.clusters;
                 response.clusterPolicy = clusterResult.policy;
+                if (traceBuilder) {
+                    traceBuilder.recordEvent({
+                        area: "policy",
+                        code: "graphrag_clusters",
+                        data: {
+                            policy: clusterResult.policy,
+                            clusters: clusterResult.clusters.length,
+                            degradedReasons: clusterResult.degradedReasons
+                        }
+                    });
+                }
                 if (clusterResult.degradedReasons?.length) {
                     degraded = true;
                     reasons.push(...clusterResult.degradedReasons);
