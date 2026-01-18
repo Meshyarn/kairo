@@ -45,6 +45,12 @@ const CONTRACT_REASON_MAP: Record<string, {
     actionToolCall: CONTRACT_ACTION_TOOLCALL,
     actionId: CONTRACT_ACTION_ID
   },
+  contract_consumer_scan_capped: {
+    type: "cross_lang_contract_degraded",
+    message: "Contract consumer scan was capped; results may be incomplete.",
+    actionToolCall: CONTRACT_ACTION_TOOLCALL,
+    actionId: CONTRACT_ACTION_ID
+  },
   cross_lang_contract_degraded: {
     type: "cross_lang_contract_degraded",
     message: "Cross-language impact used fallback linking; results may be incomplete.",

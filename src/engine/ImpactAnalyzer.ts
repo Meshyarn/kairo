@@ -55,27 +55,47 @@ export class ImpactAnalyzer {
     public async analyzeCrossLangImpact(
         packageName: string,
         entryPath: string,
-        diff: ContractDiff
+        diff: ContractDiff,
+        options?: { maxConsumerFiles?: number }
     ): Promise<CrossLangImpact> {
         const importers = await this.dependencyGraph.getImporters(entryPath);
-        const consumerFiles = importers.map((edge) => edge.from).filter(Boolean);
+        let consumerFiles = importers.map((edge) => edge.from).filter(Boolean);
+        const maxConsumerFiles = options?.maxConsumerFiles;
+        const consumerLimit = Number.isFinite(maxConsumerFiles) && (maxConsumerFiles as number) > 0
+            ? Math.floor(maxConsumerFiles as number)
+            : undefined;
+        const consumerCapped = Boolean(consumerLimit && consumerFiles.length > consumerLimit);
+        if (consumerCapped && consumerLimit) {
+            consumerFiles = consumerFiles.slice(0, consumerLimit);
+        }
         const changedExports = [
             ...diff.added,
             ...diff.removed,
             ...diff.changed.map((entry) => entry.exportName)
         ];
-        const hasBreaking = diff.removed.length > 0 || diff.changed.some((entry) => entry.breaking);
+        const breakingExports = Array.from(new Set([
+            ...diff.removed,
+            ...diff.changed.filter((entry) => entry.breaking).map((entry) => entry.exportName)
+        ]));
+        const nonBreakingExports = Array.from(new Set([
+            ...diff.added,
+            ...diff.changed.filter((entry) => !entry.breaking).map((entry) => entry.exportName)
+        ]));
+        const hasBreaking = breakingExports.length > 0;
         const hasOnlyAdditions = diff.added.length > 0 && !hasBreaking;
-        const degraded = diff.degraded || hasOnlyAdditions;
+        const degraded = diff.degraded || hasOnlyAdditions || consumerCapped;
         const reasons = Array.from(new Set([
             ...(diff.reasons ?? []),
-            ...(hasOnlyAdditions ? ["contract_non_breaking_change"] : [])
+            ...(hasOnlyAdditions ? ["contract_non_breaking_change"] : []),
+            ...(consumerCapped ? ["contract_consumer_scan_capped"] : [])
         ]));
         const fieldImpacts = await this.collectFieldImpacts(packageName, consumerFiles, diff);
         return {
             packageName,
             consumerFiles: Array.from(new Set(consumerFiles)),
             changedExports: Array.from(new Set(changedExports)),
+            breakingExports: breakingExports.length > 0 ? breakingExports : undefined,
+            nonBreakingExports: nonBreakingExports.length > 0 ? nonBreakingExports : undefined,
             degraded,
             reasons,
             fieldImpacts: fieldImpacts.length > 0 ? fieldImpacts : undefined

@@ -25,6 +25,15 @@ export class ContractManifestGenerator {
     options: GeneratorOptions
   ): ContractManifest {
     const content = fs.readFileSync(dtsPath, "utf-8");
+    return this.generateFromDtsContent(packageName, dtsPath, content, options);
+  }
+
+  public generateFromDtsContent(
+    packageName: string,
+    dtsPath: string,
+    content: string,
+    options: GeneratorOptions
+  ): ContractManifest {
     const sourceFile = ts.createSourceFile(dtsPath, content, ts.ScriptTarget.ES2022, true);
 
     const exports: Record<string, unknown> = {};

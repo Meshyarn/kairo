@@ -101,4 +101,33 @@ console.log(result.text);
 
         fs.rmSync(root, { recursive: true, force: true });
     });
+
+    it("caps consumer scan results when maxConsumerFiles is set", async () => {
+        const dependencyGraph = {
+            getImporters: async () => [
+                { from: "src/consumer-a.ts", to: "crates/core-rs/index.d.ts", type: "named" },
+                { from: "src/consumer-b.ts", to: "crates/core-rs/index.d.ts", type: "named" },
+                { from: "src/consumer-c.ts", to: "crates/core-rs/index.d.ts", type: "named" }
+            ]
+        };
+        const analyzer = new ImpactAnalyzer(dependencyGraph as any, {} as any, {} as any);
+        const diff = {
+            added: ["NewExport"],
+            removed: [],
+            changed: [],
+            degraded: false,
+            reasons: []
+        };
+
+        const result = await analyzer.analyzeCrossLangImpact(
+            "@kairo/core-rs",
+            "crates/core-rs/index.d.ts",
+            diff,
+            { maxConsumerFiles: 2 }
+        );
+
+        expect(result.consumerFiles.length).toBe(2);
+        expect(result.degraded).toBe(true);
+        expect(result.reasons).toContain("contract_consumer_scan_capped");
+    });
 });
