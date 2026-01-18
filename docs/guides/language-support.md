@@ -25,6 +25,7 @@ L2: C/C++, C#, Docs (Markdown and similar document formats)
 1) Add file extension mapping in `src/config/LanguageConfig.ts`.
 2) Add query packs under `src/queries/<languageId>/`:
    - `imports.scm`, `exports.scm`, `symbols.scm`, `skeleton.scm`
+   - (optional) `guards.scm` for symbolic guards (ADR-083)
 3) Provide a tree-sitter WASM at `wasm/tree-sitter-<languageId>.wasm` (or set `KAIRO_WASM_DIR`).
 4) Register support level and parity requirements in `src/config/LanguageParityMatrix.ts`.
 5) Run `npm run validate:languages`.
@@ -41,6 +42,7 @@ Move an L2 language to L3 once:
 
 - Parser fails to load: ensure `wasm/tree-sitter-<languageId>.wasm` exists or set `KAIRO_WASM_DIR`.
 - Query pack missing: confirm `src/queries/<languageId>/` includes `imports/exports/symbols/skeleton` (or the `requiredQueries` list in the parity matrix).
+- Symbolic guards missing: add `src/queries/<languageId>/guards.scm` (used by ADR-083 rule-only symbolic checks).
 - Validation degraded: check `npm run validate:languages` for missing assets.
 - Guidance mentions a `manage doctor` action when parity/language assets are missing.
 - Syntax validator missing: ensure the syntax validation provider is enabled/available (see `manage doctor --scope=parity` and runtime capability diagnostics).

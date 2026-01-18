@@ -10,6 +10,7 @@
 
 ## What shipped
 - **`limits.maxTokens` 의미 고정:** `limits.maxTokens`는 **최종 응답 JSON의 토큰 상한**으로 해석한다.
+- **`limits.maxChars` 지원:** `limits.maxChars`는 **최종 응답 JSON의 char 하드캡**으로 적용한다(토큰/char가 함께 주어지면 둘 다 만족).
 - **Two-pass budget enforcement:**
   - (A) 섹션 계획(allocator v2)으로 생성 단계에서 downshift/omit 우선 적용
   - (B) 생성 후 **응답 envelope 기준**으로 한 번 더 감쇠(ladder) 적용
@@ -22,16 +23,22 @@
 ## How to use
 - 응답 envelope 예산 지정:
   - `explore({ ..., limits: { maxTokens: 8000 } })`
-  - `understand({ ..., limits: { maxTokens: 6000 } })`
+  - `understand({ ..., limits: { maxTokens: 6000, maxChars: 60000 } })`
 - call graph 확장(요약 + artifact):
   - `understand({ goal: "SomeSymbol", include: { callGraph: true } })`
   - 이후 `manage({ command: "artifact", target: callGraphArtifactId, detail: "summary" })`
 - 참고: `limits.maxTokens`는 “텍스트 일부”가 아니라 **최종 JSON 전체**가 기준이다.
+- 서버 기본값(환경변수, `limits.maxTokens` 미지정 시):
+  - `KAIRO_DEFAULT_MAX_TOKENS`, `KAIRO_EXPLORE_MAX_TOKENS`, `KAIRO_UNDERSTAND_MAX_TOKENS`
+  - artifact 조회(`manage command=artifact`)는 `KAIRO_MANAGE_MAX_TOKENS`/`KAIRO_MANAGE_MAX_CHARS`
+  - 토큰 추정기: `KAIRO_TOKEN_ESTIMATOR=whitespace`(기본) 또는 `KAIRO_TOKEN_ESTIMATOR=chars`
 
 ## Output signals
 - `degraded: true` + `reasons/degradedReasons`에 `budget_exceeded` (또는 관련 감쇠 사유)
 - `compression`:
   - `applied`, `mode`, `decisions`(가능한 경우)
+- `stats.responseBudget`:
+  - `applied`, `estimatedTokens`, `usedChars`, `maxTokens`, `maxChars`
 - `decisionTrace`:
   - budget/omit/downshift 이벤트 및 최종 적용 여부
 

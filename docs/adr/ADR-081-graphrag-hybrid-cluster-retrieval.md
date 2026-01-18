@@ -10,26 +10,28 @@ GraphRAG는 “좋은 seed를 잡고(lexical/semantic), 그래프 신호(call/ty
 
 ## What shipped
 - **Seed policy(동적 선택) + fallback:**
-  - path 힌트/심볼 힌트/문서 힌트에 따라 `path_first` / `symbol_semantic` / `lexical_default` 등을 선택
-  - semantic이 불가하면 `lexical_default`로 degrade (`graphrag_policy_degraded`)
+  - path 힌트/심볼 힌트/문서 힌트에 따라 `path_first` / `symbol_semantic` / `doc_first` / `lexical_default`를 선택
+  - semantic seed가 불가(또는 `doc_first` 미구현)하면 `lexical_default`로 degrade (`graphrag_policy_degraded`)
 - **DependencyGraph 관계 포함:** import/export 관계를 `dependency` relationship로 포함(`imports-from` / `exports-to`)
 - **Cluster summary 응답(1st-class context):**
   - `explore`/`understand`/`navigate`에서 `include.clusters=true`일 때 `clusters: ClusterSummary[]` 반환
   - `clusterPolicy`로 policy 이름을 함께 제공
 - **Cross-boundary auto-expand (allowlist + caps):**
   - boundary kind allowlist(`ffi_napi`, `idl_proto`, `http_openapi`, `db_sql_schema`)만 “코드까지 자동 확장” 대상으로 시작
-  - 프로젝트 규모(fileCount) 기반 autoScale caps 적용(S/M/L tier)
+  - 프로젝트 규모(fileCount) 기반 autoScale caps 적용(S/M/L tier; cap은 `maxDepth/maxFiles/maxSymbols/maxTokens`)
   - repoScope + repo allowCrossRepoEdits + tool input `allowCrossRepoEdits`를 모두 만족할 때만 cross-repo 확장 허용
 - **Explainability:** `degradedReasons`에 `graphrag_*` reason code를 노출하고, trace/metrics로 선택 근거를 기록
 
 ## How to enable
 - 켜기(둘 중 하나):
   - `KAIRO_GRAPHRAG_ENABLED=true`
-  - `.kairo/config/graphrag.json`에서 `"enabled": true`
+  - `.kairo/config/graphrag.json`에서 `"enabled": true` (base dir는 `KAIRO_DIR`로 변경 가능; legacy: `KAIRO_DIR/graphrag.json`, `.mcp` 사용 시 `KAIRO_ALLOW_LEGACY_MCP_DIR=true`)
 - 호출(예):
   - `explore({ query: "auth flow", include: { clusters: true } })`
   - `understand({ goal: "src/auth", include: { clusters: true } })`
   - (cross-repo 확장까지) `allowCrossRepoEdits: true` + `.kairo/config/mcp-config.json`에서 관련 repo들의 `allowCrossRepoEdits: true`
+- scale tier 임계값(환경변수):
+  - `KAIRO_SCALE_TIER_S_MAX_FILES` (default: 5000), `KAIRO_SCALE_TIER_M_MAX_FILES` (default: 50000)
 
 ## Output signals
 - `clusters: ClusterSummary[]` + `clusterPolicy`

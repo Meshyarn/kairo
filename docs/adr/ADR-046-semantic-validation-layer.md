@@ -60,5 +60,12 @@ Today, Kairo leans on:
 - guardrails + integrity checks: `src/orchestration/guardrails/IntegrityGuardrails.ts`, `src/integrity/*`
 - portable parsing/extraction building blocks (where available): `src/ast/*`, `src/ast/extraction/*`
 
-Practical “semantic validation” is typically performed as a final gate by running your repo’s tests/build (via `manage({ command: "test" })` or your own scripts).
+Additionally, a lightweight semantic review surface is implemented:
 
+- `ReviewReport.semantic` is populated during `change`/`write` review:
+  - name/link validation (`SemanticValidator`)
+  - language-agnostic symbolic guards (query pack + bounded cost)
+  - contract guard diagnostics for boundary surface changes
+- See `docs/adr/ADR-083-language-agnostic-symbolic-guards.md` for the concrete shipped shape and configuration.
+
+Practical “semantic validation” (typecheck/build/test) is still performed as an explicit final gate (via `manage({ command: "test" })` or repo scripts).

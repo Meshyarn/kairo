@@ -9,6 +9,7 @@ Kairo is configured via environment variables. Most users only need a few.
 | `KAIRO_ROOT_PATH` | Project root to analyze. | Preferred over cwd; equivalent to `--root` CLI arg. |
 | `KAIRO_ROOT` | Project root to analyze. | Alias for `KAIRO_ROOT_PATH`. |
 | `KAIRO_DIR` | Data directory. | Defaults to `.kairo` (contains index/cache/history). |
+| `KAIRO_ALLOW_LEGACY_MCP_DIR` | Allow legacy `.mcp` paths for `KAIRO_DIR`. | Set to `true` to permit `.mcp`/`.mcp/kairo`; otherwise Kairo uses `.kairo`. |
 | `KAIRO_MAX_RESULTS` | Search result cap. | Lower for token-efficiency; raise for recall. |
 | `KAIRO_LOG_LEVEL` | Structured logging level. | `debug|info|warn|error`. |
 | `KAIRO_LOG_TO_FILE` | Persist logs under `.kairo`. | Prefer this in MCP hosts (keeps stdout clean). |
@@ -119,7 +120,41 @@ Create `.kairo/config/graphrag.json` to tune GraphRAG defaults and seed policy:
 ```
 
 - `KAIRO_GRAPHRAG_ENABLED=true` forces GraphRAG on (overrides config).
+- The config path is resolved under `KAIRO_DIR` (default: `.kairo/config/graphrag.json`), with a legacy fallback `KAIRO_DIR/graphrag.json`.
 - Cross-repo cluster expansion follows the same safety model as edits: repo config must allow it (`allowCrossRepoEdits: true`) and the tool call must also pass `allowCrossRepoEdits: true`.
+
+### Symbolic guards policy (optional)
+
+Create `.kairo/config/symbolic-guards.json` to enable portable semantic checks (ADR-083):
+
+```json
+{
+  "version": 1,
+  "enabled": false,
+  "mode": "warn",
+  "timeoutMs": 1200,
+  "maxDiagnostics": 12,
+  "maxPaths": 64,
+  "maxConstraints": 400,
+  "rules": {
+    "index_bounds": { "enabled": true, "severity": "high" },
+    "division_by_zero": { "enabled": true, "severity": "high" },
+    "null_deref_without_guard": { "enabled": true, "severity": "warn" }
+  },
+  "contractGuard": {
+    "mode": "spec_only",
+    "consumerScan": { "enabled": false, "maxFiles": 200 }
+  },
+  "solver": { "enabled": false, "providerOrder": ["rust"], "timeSliceMs": 200 }
+}
+```
+
+- The config path is resolved under `KAIRO_DIR` (default: `.kairo/config/symbolic-guards.json`), with a legacy fallback `KAIRO_DIR/symbolic-guards.json`.
+- Env overrides:
+  - `KAIRO_SYMBOLIC_GUARDS_ENABLED=true|false`
+  - `KAIRO_SYMBOLIC_GUARDS_MODE=off|warn|block_high|strict`
+  - `KAIRO_SYMBOLIC_GUARDS_TIMEOUT_MS`, `KAIRO_SYMBOLIC_GUARDS_MAX_DIAGNOSTICS`, `KAIRO_SYMBOLIC_GUARDS_MAX_PATHS`, `KAIRO_SYMBOLIC_GUARDS_MAX_CONSTRAINTS`
+- Solver is attempted only when `mode=strict` + `solver.enabled=true`, and requires Rust capability (`KAIRO_RUST_CORE_ENABLED` + `KAIRO_RUST_SYMBOLIC_SOLVER_ENABLED`).
 
 ### Config bootstrap (manage init/doctor)
 
@@ -160,7 +195,7 @@ By default, `init` targets Kairo config files only. Pass `targets: ["vscode"]` t
 
 ## Token budgets (ADR-056)
 
-Kairo can cap responses using `limits.maxTokens` (token-first) in addition to `limits.maxChars` (character caps).
+Kairo can cap responses using `limits.maxTokens` (token-first) in addition to `limits.maxChars` (character caps). See `docs/adr/ADR-080-response-envelope-token-budget-explore-understand.md` for the response envelope post-pass.
 
 | Variable | Purpose | Notes |
 |---|---|---|
@@ -181,6 +216,7 @@ Kairo can cap responses using `limits.maxTokens` (token-first) in addition to `l
 | `KAIRO_RUST_DIFF_ENABLED` | Enable Rust diffing. | `on/off` (default: on). |
 | `KAIRO_RUST_SYNTAX_ENABLED` | Enable Rust syntax validation. | `on/off` (default: on). |
 | `KAIRO_RUST_VECTOR_ENABLED` | Enable Rust vector math. | `on/off` (default: on). |
+| `KAIRO_RUST_SYMBOLIC_SOLVER_ENABLED` | Enable Rust symbolic solver capability. | `on/off` (default: on; only when Rust core enabled). |
 | `KAIRO_WASM_CHUNKING_ENABLED` | Enable WASM chunking provider. | `on/off` (default: off). |
 | `KAIRO_RUST_CHUNKING` | Legacy Rust chunking toggle. | Backward-compat; prefer `KAIRO_RUST_CHUNKING_ENABLED`. |
 | `KAIRO_TOKENIZER_PATH` | Absolute path to `tokenizer.json`. | Optional; Kairo automatically discovers this in standard cache/model paths. |

@@ -25,11 +25,12 @@ ADR-053-H replaces point-to-point native imports with a centralized capability r
 - `CAP_DIFF_UNIFIED`: unified diff
 - `CAP_SYNTAX_VALIDATE`: syntax validation
 - `CAP_VECTOR_COSINE_BATCH`: vector cosine batch
+- `CAP_SYMBOLIC_SOLVE`: symbolic solve (optional; used by ADR-083 strict-mode solver)
 - `CAP_TEXT_STATS`: text stats (js-only)
 
 ### Providers (current)
 
-- Native: Rust providers for chunking/diff/syntax/vector (when core is available)
+- Native: Rust providers for chunking/diff/syntax/vector/symbolic solve (when core is available)
 - WASM: Tree-sitter syntax fallback, optional wasm chunking
 - JS: diff, vector, chunking, text stats
 

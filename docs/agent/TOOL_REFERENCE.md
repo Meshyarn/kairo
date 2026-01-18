@@ -53,7 +53,7 @@ Unified search + read interface for docs and code.
 | `cursor.items` | `string` |  | Page through results (items). |
 | `cursor.content` | `string` |  | Expand content from a pack without re-search. |
 | `limits.maxResults` | `number` |  | Per-group result cap. |
-| `limits.maxChars` | `number` |  | Total content budget. |
+| `limits.maxChars` | `number` |  | Total content budget (also used as a response envelope char cap when set). |
 | `limits.maxTokens` | `number` |  | Response envelope token budget cap (final tool output JSON). |
 | `limits.maxItemChars` | `number` |  | Per-item cap. |
 | `limits.maxBytes` | `number` |  | Hard cap for full reads. |

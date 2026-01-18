@@ -8,7 +8,7 @@
 기존 `maxChars` 기반 하드 커팅은 실제 모델 토큰 소비량과 불일치하고(언어/밀도 차이), 코드/문서가 “문장/블록 중간에서” 끊겨 에이전트 오판과 재호출을 유발했다.
 
 ## What shipped
-- **Token-first 예산:** `limits.maxTokens` 지원(Explore/Understand/Read), `maxChars`와 함께 주어지면 둘 다 만족(더 빡센 제한 적용)
+- **Token-first 예산:** `limits.maxTokens` 지원(Explore/Understand/Read), `maxChars`와 함께 주어지면 둘 다 만족(더 빡센 제한 적용). 0.4.27+에서는 최종 응답 JSON(envelope)도 post-pass로 추가 감쇠한다(ADR-080).
 - **Elastic truncation:** 토큰 기준 절단 시 “블록/문단/문장 경계” 근처에서 자르도록 완화(± window)
 - **Distill(LOD 하향):** 예산 초과 시 일부 full content를 preview/skeleton로 다운그레이드(Explore), skeleton은 digest로 축약(Understand)
 - **표준 degraded:** 예산으로 축약되면 `degraded: true` + `reasons: ["budget_exceeded"]` + `compression` 메타데이터 제공
