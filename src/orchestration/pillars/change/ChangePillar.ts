@@ -80,11 +80,18 @@ import { evaluateOverrideDecision } from "../shared/OverrideDecision.js";
 import { evaluateIntegrityGuardrailBlock } from "../shared/IntegrityGuardrailDecision.js";
 import type { OptionSource, TraceOptionResolution } from "../../../types/option-trace.js";
 import { TraceBuilder } from "../../trace/TraceBuilder.js";
+import { applyFormatterBridge } from "../../formatter/FormatterBridge.js";
 
 const resolveOptionSource = (explicit: boolean, hasSession: boolean): OptionSource => {
   if (explicit) return "explicit";
   if (hasSession) return "session";
   return "default";
+};
+
+const resolveFormatterMode = (constraints: any): string | undefined => {
+  if (typeof constraints?.formatter === "string") return constraints.formatter;
+  if (typeof constraints?.options?.formatter === "string") return constraints.options.formatter;
+  return undefined;
 };
 
 const buildStringResolution = (
@@ -277,6 +284,7 @@ export class ChangePillar {
       const editPaths = this.collectEditPaths(rawEdits);
       const shouldBatch = this.shouldUseBatch(constraints, targetFiles, editPaths);
       const overrideTargets = targetFiles.length > 0 ? targetFiles : editPaths;
+      const formatterMode = resolveFormatterMode(constraints);
       const overrideEvaluation = await evaluateOverrideDecision({
         constraints,
         targetFiles: overrideTargets,
@@ -560,8 +568,14 @@ export class ChangePillar {
         if (edits.length === 0) {
           return attachWorkflow({
             success: false,
+            errorCode: "SCHEMA_VALIDATION_FAILED",
             message: 'No valid edits provided. Ensure targetContent/targetString and replacement/template are set. Example: { edits: [{ targetString: "old", replacementString: "new" }] }.',
             invalidEdits: normalization.invalidEdits,
+            schemaCoaching: this.buildSchemaCoaching({
+              errorCode: "SCHEMA_VALIDATION_FAILED",
+              targetPath,
+              intent: originalIntent
+            }),
             guidance: {
               message: 'Use read to copy exact text or provide a shorter targetString. Example edits: [{ targetString: "old", replacementString: "new" }].',
               suggestedActions: [
@@ -773,6 +787,7 @@ export class ChangePillar {
       const shouldBlockOn = !dryRun && blockOn.length > 0 && Boolean(targetPath);
       let preApplyReview: any = undefined;
       let preApplyReviewComputed = false;
+      let formatterResult: Awaited<ReturnType<typeof applyFormatterBridge>> = undefined;
       if (shouldBlockOn && targetPath) {
         preApplyReview = await new ReviewReportBuilder(
           { dependencyGraph, indexStateManager },
@@ -1193,6 +1208,50 @@ export class ChangePillar {
         });
       }
 
+      if (!dryRun && finalResult.success && formatterMode) {
+        const formatterTargets = Array.from(
+          new Set(
+            [
+              ...(targetPath ? [targetPath] : []),
+              ...targetFiles,
+              ...editPaths
+            ].filter((value): value is string => typeof value === "string" && value.length > 0)
+          )
+        );
+        formatterResult = await applyFormatterBridge({
+          mode: formatterMode,
+          filePaths: formatterTargets,
+          rootPath: process.cwd(),
+          fileSystem,
+          tool: "change",
+          rollbackAvailable: Boolean(finalResult.operation?.id)
+        });
+        if (formatterResult?.degradedReasons?.length) {
+          const formatterDegraded = buildDegradedReasons(formatterResult.degradedReasons ?? [], { filePath: targetPath });
+          if (formatterDegraded) {
+            mergedDegradedReasons.push(...formatterDegraded);
+          }
+        }
+        if (traceBuilder && formatterResult) {
+          traceBuilder.recordEvent({
+            area: "io",
+            code: "formatter_bridge",
+            data: {
+              mode: formatterMode,
+              applied: formatterResult.applied,
+              skippedReason: formatterResult.skippedReason ?? null,
+              degradedReasons: formatterResult.degradedReasons
+            }
+          });
+        }
+        if (formatterResult?.suggestedActions?.length) {
+          successGuidance.suggestedActions = [
+            ...(Array.isArray(successGuidance.suggestedActions) ? successGuidance.suggestedActions : []),
+            ...formatterResult.suggestedActions
+          ];
+        }
+      }
+
       let postReview: any = undefined;
       if (!dryRun && reviewOptions?.postApply && targetPath && finalResult.success) {
         let currentContent = "";
@@ -1325,6 +1384,7 @@ export class ChangePillar {
         guidance: failureGuidance ?? successGuidance,
         sessionId: resolvedSessionId,
         relatedDocs,
+        formatter: formatterResult,
         integrity: integrityReport,
         degraded: (!finalResult.success && autoCorrectionAttempts.length === 0) || mergedDegradedReasons.length > 0,
         degradedReasons: mergedDegradedReasons.length > 0 ? mergedDegradedReasons : undefined,
@@ -1378,6 +1438,38 @@ export class ChangePillar {
     return Array.from(paths);
   }
 
+  private buildSchemaCoaching(args: { errorCode: string; targetPath?: string; intent?: string }) {
+    return {
+      errorCode: args.errorCode,
+      retryable: true,
+      nextAttemptHints: [
+        "Provide edits with targetString and replacementString.",
+        "Use read to capture exact target text before retry."
+      ],
+      requiredFields: ["edits[].targetString", "edits[].replacementString"],
+      unknownFields: [],
+      editsTemplate: {
+        edits: [
+          {
+            targetString: "<exact text>",
+            replacementString: "<replacement>"
+          }
+        ]
+      },
+      schemaExample: {
+        edits: [
+          {
+            targetString: "old",
+            replacementString: "new"
+          }
+        ]
+      },
+      helpUrl: "docs/guides/getting-started.md",
+      targetPath: args.targetPath,
+      intent: args.intent
+    };
+  }
+
   private shouldUseBatch(constraints: any, targetFiles: string[], editPaths: string[]): boolean {
     return Boolean(constraints?.batchMode) || targetFiles.length > 1 || editPaths.length > 1;
   }
@@ -1388,7 +1480,7 @@ export class ChangePillar {
       return reviewOptions;
     }
     const defaults = hasSession
-      ? { preApply: true, postApply: false, strictness: "balanced", blockOn: ["syntax", "guardrails", "vibe"] }
+      ? { preApply: true, postApply: false, strictness: "balanced", blockOn: ["syntax", "guardrails"] }
       : { preApply: true, postApply: false, strictness: "permissive", blockOn: ["syntax"] };
     const hasBlockOn = Array.isArray(reviewOptions?.blockOn);
     return {

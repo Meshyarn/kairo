@@ -4,7 +4,15 @@ import { StyleInference } from "./StyleInference.js";
 import { PatternExtractor, type ProjectPatterns } from "./PatternExtractor.js";
 import { extractClaimsFromText } from "../integrity/ClaimExtractor.js";
 import { normalizePath, toRelativePath } from "../utils/PathHelpers.js";
-import type { CodeStyle, NormClaim, PatternSet, StylePack, VibeProfile } from "../types/flow-artifacts.js";
+import type {
+    CodeStyle,
+    NormClaim,
+    PatternSet,
+    StylePack,
+    StylePackConfigDetection,
+    StylePackReference,
+    VibeProfile
+} from "../types/flow-artifacts.js";
 
 export interface VibeProfileBuilderOptions {
     sampleSize?: number;
@@ -42,6 +50,8 @@ export class VibeProfileBuilder {
         const { confidence: styleConfidence, ...codeStyle } = styleResult;
 
         const sampleFiles = await this.collectSampleFiles(scope, this.options.sampleSize ?? 20);
+        const references = await this.buildReferences(sampleFiles);
+        const configDetections = await this.detectConfigDetections();
         const extracted = await this.patternExtractor.extractPatterns(sampleFiles);
         const patterns = this.normalizePatterns(extracted);
 
@@ -49,7 +59,8 @@ export class VibeProfileBuilder {
             ? await this.extractNorms(scope)
             : undefined;
 
-        const confidence = this.computeConfidence(styleConfidence);
+        const packConfidence = this.computePackConfidence(styleConfidence, references, configDetections);
+        const confidence = this.computeProfileConfidence(packConfidence);
 
         return {
             id: this.generatePackId(),
@@ -61,7 +72,10 @@ export class VibeProfileBuilder {
             },
             scope,
             createdAt: Date.now(),
-            expiresAt: Date.now() + 30 * 60 * 1000
+            expiresAt: Date.now() + 30 * 60 * 1000,
+            references,
+            configDetections,
+            confidence: packConfidence
         };
     }
 
@@ -159,10 +173,103 @@ export class VibeProfileBuilder {
         return norms.length > 0 ? norms : undefined;
     }
 
-    private computeConfidence(styleConfidence: number): VibeProfile["confidence"] {
-        if (styleConfidence >= 0.9) return "high";
-        if (styleConfidence >= 0.7) return "medium";
+    private computeProfileConfidence(confidence: number): VibeProfile["confidence"] {
+        if (confidence >= 0.85) return "high";
+        if (confidence >= 0.6) return "medium";
         return "low";
+    }
+
+    private computePackConfidence(
+        styleConfidence: number,
+        references: StylePackReference[],
+        configDetections: StylePackConfigDetection[]
+    ): number {
+        const uniqueRefs = new Set(references.map(ref => ref.filePath));
+        const hasConfig = configDetections.length > 0;
+        const hasReferences = references.length >= 3 && uniqueRefs.size >= 2;
+        if (!hasConfig && !hasReferences) {
+            return Math.min(styleConfidence, 0.4);
+        }
+        return Math.max(styleConfidence, 0.7);
+    }
+
+    private async buildReferences(sampleFiles: string[]): Promise<StylePackReference[]> {
+        const refs: StylePackReference[] = [];
+        for (const filePath of sampleFiles) {
+            try {
+                const content = await this.fileSystem.readFile(filePath);
+                const lineCount = content.split(/\r?\n/).length;
+                const relative = normalizePath(toRelativePath(this.rootPath, filePath));
+                refs.push({
+                    filePath: relative,
+                    lineStart: 1,
+                    lineEnd: Math.max(1, Math.min(10, lineCount)),
+                    reason: "sample"
+                });
+            } catch {
+                continue;
+            }
+        }
+        return refs;
+    }
+
+    private async detectConfigDetections(): Promise<StylePackConfigDetection[]> {
+        const detections: StylePackConfigDetection[] = [];
+        const configGroups: Array<{ kind: string; files: string[] }> = [
+            {
+                kind: "prettier",
+                files: [
+                    ".prettierrc",
+                    ".prettierrc.json",
+                    ".prettierrc.js",
+                    ".prettierrc.cjs",
+                    ".prettierrc.yml",
+                    ".prettierrc.yaml",
+                    "prettier.config.js",
+                    "prettier.config.cjs",
+                    "prettier.config.mjs"
+                ]
+            },
+            {
+                kind: "eslint",
+                files: [
+                    ".eslintrc",
+                    ".eslintrc.json",
+                    ".eslintrc.js",
+                    ".eslintrc.cjs",
+                    ".eslintrc.yml",
+                    ".eslintrc.yaml",
+                    "eslint.config.js",
+                    "eslint.config.mjs",
+                    "eslint.config.cjs"
+                ]
+            },
+            {
+                kind: "biome",
+                files: [
+                    "biome.json",
+                    "biome.jsonc"
+                ]
+            },
+            {
+                kind: "rustfmt",
+                files: [
+                    "rustfmt.toml"
+                ]
+            }
+        ];
+        for (const group of configGroups) {
+            for (const file of group.files) {
+                if (await this.fileSystem.exists(file)) {
+                    detections.push({
+                        kind: group.kind,
+                        path: normalizePath(file),
+                        scope: "repoRoot"
+                    });
+                }
+            }
+        }
+        return detections;
     }
 
     private generatePackId(): string {

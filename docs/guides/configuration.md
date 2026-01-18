@@ -22,6 +22,8 @@ Timeouts are primarily controlled by your MCP host (per-request timeout). Some o
 | Variable | Purpose | Notes |
 |---|---|---|
 | `KAIRO_DRIFT_CHECK_MAX_FILES` | Max indexed files sampled when computing workspace drift. | Default 200. |
+| `KAIRO_FORMATTER_MAX_FILES` | Max files for formatter bridge apply. | Default 10. |
+| `KAIRO_FORMATTER_ALLOW_UNTRACKED` | Allow formatter bridge to write even when undo/rollback is available (untracked by history). | Default `false`. |
 | `KAIRO_PATCH_STORAGE_WARN_FREE_PCT` | Patch ledger disk free warning threshold (%). | Default 8. |
 | `KAIRO_PATCH_STORAGE_BLOCK_FREE_PCT` | Patch ledger disk free block threshold (%). | Default 3. |
 | `.kairo/config/scopes.json` | Manual scope overrides. | Optional; defines `serviceRoot` scopes for drift grouping. |

@@ -327,7 +327,7 @@ export class OptionResolver {
       return {};
     }
     return hasSession
-      ? { preApply: true, postApply: false, strictness: "balanced", blockOn: ["syntax", "guardrails", "vibe"] }
+      ? { preApply: true, postApply: false, strictness: "balanced", blockOn: ["syntax", "guardrails"] }
       : { preApply: true, postApply: false, strictness: "permissive", blockOn: ["syntax"] };
   }
 
