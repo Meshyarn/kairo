@@ -68,6 +68,33 @@ export interface AnalysisPack {
     degraded?: boolean;
 }
 
+export type GraphPackId = string;
+
+export interface GraphPack {
+    id: GraphPackId;
+    kind: "call_graph";
+    source: { filePath: string; symbolName?: string; depth?: string };
+    raw?: {
+        nodes: Array<{ id: string; type: string; path?: string; label?: string }>;
+        edges: Array<{ source: string; target: string; relation?: string }>;
+        resolvedTarget?: any;
+    };
+    summary: {
+        mode: "symbol" | "file";
+        truncated: boolean;
+        totalNodes?: number;
+        totalEdges?: number;
+        topNodes?: Array<{ label: string; filePath?: string; degree?: number }>;
+    };
+    meta: {
+        createdAt: number;
+        totalNodes?: number;
+        totalEdges?: number;
+        truncatedByCap?: boolean;
+        caps?: { maxNodes?: number; maxEdges?: number };
+    };
+}
+
 export type StylePackId = string;
 
 export interface CodeStyle {
@@ -338,8 +365,8 @@ export interface ReviewReport {
     reviewedFiles: string[];
 }
 
-export type ArtifactType = "research" | "analysis" | "style" | "draft" | "review";
-export type ArtifactId = ResearchPackId | AnalysisPackId | StylePackId | DraftPackId | ReviewReportId;
+export type ArtifactType = "research" | "analysis" | "style" | "draft" | "review" | "graph";
+export type ArtifactId = ResearchPackId | AnalysisPackId | StylePackId | DraftPackId | ReviewReportId | GraphPackId;
 
 export interface FlowArtifactBase {
     id: ArtifactId;
@@ -377,12 +404,18 @@ export interface ReviewArtifact extends FlowArtifactBase {
     targetDraftId?: DraftPackId;
 }
 
+export interface GraphArtifact extends FlowArtifactBase {
+    type: "graph";
+    pack: GraphPack;
+}
+
 export type FlowArtifact =
     | ResearchArtifact
     | AnalysisArtifact
     | StyleArtifact
     | DraftArtifact
-    | ReviewArtifact;
+    | ReviewArtifact
+    | GraphArtifact;
 
 export interface ArtifactManagerStatus {
     totalCount: number;
@@ -425,6 +458,7 @@ export interface FlowSession {
         style?: StylePackId;
         drafts: DraftPackId[];
         reviews: ReviewReportId[];
+        graphs?: GraphPackId[];
     };
     updatedAt?: number;
     outcome?: FlowSessionOutcome;

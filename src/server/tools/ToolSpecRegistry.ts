@@ -875,6 +875,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
             type: "object",
             properties: {
               maxTokens: { type: "number" },
+              maxChars: { type: "number" },
               timeoutMs: { type: "number" }
             }
           }
@@ -1285,6 +1286,13 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
           sessionId: { type: "string" },
           policy: { type: "object" },
           policyMode: { type: "string", enum: ["merge", "replace"] },
+          limits: {
+            type: "object",
+            properties: {
+              maxTokens: { type: "number" },
+              maxChars: { type: "number" }
+            }
+          },
           artifactOptions: {
             type: "object",
             properties: {
