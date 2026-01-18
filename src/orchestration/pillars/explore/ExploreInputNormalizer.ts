@@ -22,6 +22,8 @@ export type ExploreInput = {
     view: ReturnType<typeof OptionResolver.resolveExploreOptions>["effective"]["view"];
     include: any;
     includeExplicit: boolean;
+    includeClusters: boolean;
+    clusterOptions?: { maxClusters?: number; expansionDepth?: number; includePreview?: boolean };
     sourcesWantsDocs: boolean;
     traceEnabled: boolean;
     profile?: string;
@@ -65,6 +67,8 @@ export function normalizeExploreInput(
     const view = resolvedOptions.effective.view;
     const include = resolvedOptions.effective.include;
     const includeExplicit = resolvedOptions.meta.includeExplicit;
+    const includeClusters = include?.clusters === true;
+    const clusterOptions = constraints.clusterOptions as ExploreInput["clusterOptions"] | undefined;
     const sourcesWantsDocs = resolvedOptions.meta.sourcesWantsDocs;
     const traceEnabled = resolvedOptions.effective.traceEnabled;
     const profile = resolvedOptions.effective.profile;
@@ -89,6 +93,8 @@ export function normalizeExploreInput(
         view,
         include,
         includeExplicit,
+        includeClusters,
+        clusterOptions,
         sourcesWantsDocs,
         traceEnabled,
         profile,

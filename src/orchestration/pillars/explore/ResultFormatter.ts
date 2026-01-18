@@ -3,6 +3,7 @@ import type { IndexSnapshot } from "../../../indexing/IndexStateManager.js";
 import type { ResearchPack } from "../../../types/flow-artifacts.js";
 import type { DecisionTraceV1, EffectiveOptionsV1 } from "../../../types/option-trace.js";
 import type { DegradedReason } from "../../../types/tool-responses.js";
+import type { ClusterSummary } from "../../../types/cluster.js";
 
 export type ExploreItem = {
     kind: "document_section" | "file_preview" | "file_full" | "symbol" | "directory";
@@ -22,6 +23,8 @@ export type ExploreResponse = {
     message?: string;
     query?: string;
     data: { docs: ExploreItem[]; code: ExploreItem[] };
+    clusters?: ClusterSummary[];
+    clusterPolicy?: string;
     pack?: { packId: string; hit: boolean; createdAt: number; expiresAt?: number };
     next?: { itemsCursor?: string; contentCursor?: string };
     integrity?: IntegrityReport;

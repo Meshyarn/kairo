@@ -5,6 +5,7 @@ import ignore from "ignore";
 import { createRequire } from "module";
 import { fileURLToPath } from "url";
 import { LanguageConfigLoader, BUILTIN_LANGUAGE_MAPPINGS } from "./LanguageConfig.js";
+import { DEFAULT_GRAPHRAG_CONFIG } from "./GraphRagConfig.js";
 import { getSupportForLanguageId, SupportLevel } from "./LanguageSupportLevels.js";
 import { LANGUAGE_PARITY_MATRIX, resolveRequiredQueries } from "./LanguageParityMatrix.js";
 import { ContractManifestLoader } from "../contracts/ContractManifestLoader.js";
@@ -134,6 +135,7 @@ export class ConfigBootstrapper {
         const legacyMcpPath = path.join(rootPath, ".mcp-config.json");
         const repoConfigPath = path.join(configDir, "mcp-config.json");
         const languagesConfigPath = path.join(configDir, "languages.json");
+        const graphragConfigPath = path.join(configDir, "graphrag.json");
         const vscodeConfigPath = path.join(rootPath, ".vscode", "mcp.json");
 
         const scanOptions = this.resolveScanOptions(args);
@@ -186,6 +188,17 @@ export class ConfigBootstrapper {
                 message: `Failed to parse ${path.basename(legacyMcpPath)}.`,
                 action: "fix_json",
                 evidence: { path: legacyMcpPath }
+            });
+        }
+
+        const graphragConfig = this.readJsonFile(graphragConfigPath);
+        if (graphragConfig.error) {
+            findings.push({
+                code: "CONFIG_PARSE_ERROR",
+                severity: "error",
+                message: `Failed to parse ${path.basename(graphragConfigPath)}.`,
+                action: "fix_json",
+                evidence: { path: graphragConfigPath }
             });
         }
 
@@ -244,6 +257,11 @@ export class ConfigBootstrapper {
             );
             if (languagesPlan) {
                 plan.push(languagesPlan);
+            }
+
+            const graphragPlan = this.buildGraphRagConfigPlan(graphragConfigPath);
+            if (graphragPlan) {
+                plan.push(graphragPlan);
             }
 
             const mcpPlan = this.buildLegacyMcpPlan(legacyMcpPath);
@@ -975,6 +993,30 @@ export class ConfigBootstrapper {
         };
     }
 
+    private buildGraphRagConfigPlan(configPath: string): ConfigWriteOp | null {
+        const existing = this.readJsonFile(configPath);
+        if (existing.value) {
+            const patch = this.buildMissingPatch(existing.value, DEFAULT_GRAPHRAG_CONFIG);
+            if (!patch) {
+                return { op: "noop", path: configPath, reason: "GraphRAG config already present." };
+            }
+            return {
+                op: "update",
+                path: configPath,
+                patch: {
+                    beforeHash: existing.hash,
+                    jsonMerge: patch
+                },
+                reason: "Backfill GraphRAG defaults."
+            };
+        }
+        return {
+            op: "create",
+            path: configPath,
+            content: JSON.stringify(DEFAULT_GRAPHRAG_CONFIG, null, 2)
+        };
+    }
+
     private buildLegacyMcpPlan(configPath: string): ConfigWriteOp | null {
         const existing = this.readJsonFile(configPath);
         const baseConfig = {
@@ -1190,7 +1232,8 @@ export class ConfigBootstrapper {
             const normalized = filePath.replace(/\\\\/g, "/");
             return normalized.endsWith("/.mcp-config.json")
                 || normalized.endsWith("/.kairo/config/mcp-config.json")
-                || normalized.endsWith("/.kairo/config/languages.json");
+                || normalized.endsWith("/.kairo/config/languages.json")
+                || normalized.endsWith("/.kairo/config/graphrag.json");
         }
         if (scope === "contracts") {
             return filePath.replace(/\\\\/g, "/").includes("/.kairo/contracts");

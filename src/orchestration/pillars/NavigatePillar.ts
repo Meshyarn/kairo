@@ -11,6 +11,7 @@ import { AstManager } from '../../ast/AstManager.js';
 import type { RepoRegistry } from '../../config/RepoRegistry.js';
 import type { PathNormalizer } from '../../utils/PathNormalizer.js';
 import { resolveRepoInfo } from '../../utils/RepoScope.js';
+import { GraphRagClusterService } from "../cluster/GraphRagClusterService.js";
 
 
 export class NavigatePillar {
@@ -22,6 +23,8 @@ export class NavigatePillar {
     const limit = constraints.limit || 10;
     const contextMode = constraints.context ?? 'all';
     const include = (constraints.include ?? {}) as any;
+    const includeClusters = include.clusters === true;
+    const clusterOptions = constraints.clusterOptions as { maxClusters?: number; expansionDepth?: number; includePreview?: boolean } | undefined;
     const repoRegistry = this.registry.getMetadata<RepoRegistry>("repoRegistry");
     const pathNormalizer = this.registry.getMetadata<PathNormalizer>("pathNormalizer");
     const progress = resolveProgressState('Navigate', constraints);
@@ -58,7 +61,7 @@ export class NavigatePillar {
           const maxSnippetChars = Number.parseInt(process.env.KAIRO_DOC_SNIPPET_MAX_CHARS ?? "1200", 10);
           const skeletonSnippet = truncateText(docSkeleton?.skeleton ?? "", maxSnippetChars);
           const repoInfo = resolveSafeRepoInfo(resolvedDoc, repoRegistry, pathNormalizer);
-          return {
+          const response: any = {
             success: true,
             status: 'success',
             locations: [
@@ -80,6 +83,19 @@ export class NavigatePillar {
             degraded: Boolean(docSkeleton?.degraded || docToc?.degraded || docRefs?.degraded),
             budget
           };
+          const docClusterReasons = await this.attachGraphRagClusters({
+            response,
+            query: target,
+            includeClusters,
+            clusterOptions,
+            projectFileCount: projectStats?.fileCount,
+            docHint: true
+          });
+          if (docClusterReasons.length > 0) {
+            response.degraded = true;
+            response.degradedReasons = buildDegradedReasons(docClusterReasons);
+          }
+          return response;
         } catch {
           // fall back to search
         }
@@ -110,7 +126,7 @@ export class NavigatePillar {
             };
           });
           logProgress(progress, `Doc search results: ${locations.length}.`);
-          return {
+          const response: any = {
             success: true,
             status: 'success',
             locations,
@@ -123,6 +139,19 @@ export class NavigatePillar {
             degraded: docResults?.degraded ?? false,
             budget
           };
+          const docClusterReasons = await this.attachGraphRagClusters({
+            response,
+            query: target,
+            includeClusters,
+            clusterOptions,
+            projectFileCount: projectStats?.fileCount,
+            docHint: true
+          });
+          if (docClusterReasons.length > 0) {
+            response.degraded = true;
+            response.degradedReasons = buildDegradedReasons(docClusterReasons);
+          }
+          return response;
         }
       } catch {
         // fall back to filename/content search
@@ -266,6 +295,18 @@ export class NavigatePillar {
       }
     }
 
+    const clusterReasons = await this.attachGraphRagClusters({
+      response,
+      query: target,
+      includeClusters,
+      clusterOptions,
+      projectFileCount: projectStats?.fileCount,
+      docHint: contextMode === "docs"
+    });
+    if (clusterReasons.length > 0) {
+      parityReasons.push(...clusterReasons);
+    }
+
     response.degradedReasons = buildDegradedReasons(
       parityReasons.length > 0 ? parityReasons : undefined,
       parityPath ? { filePath: parityPath, languageId: parityLanguageId } : undefined
@@ -298,6 +339,36 @@ export class NavigatePillar {
       duration
     });
     return output;
+  }
+
+  private async attachGraphRagClusters(args: {
+    response: any;
+    query: string;
+    includeClusters: boolean;
+    clusterOptions?: { maxClusters?: number; expansionDepth?: number; includePreview?: boolean };
+    projectFileCount?: number;
+    docHint?: boolean;
+  }): Promise<string[]> {
+    if (!args.includeClusters || !args.query) {
+      return [];
+    }
+    const graphRagService = this.registry.getMetadata<GraphRagClusterService>("graphRagClusterService")
+      ?? new GraphRagClusterService(this.registry);
+    if (!this.registry.getMetadata("graphRagClusterService")) {
+      this.registry.setMetadata("graphRagClusterService", graphRagService);
+    }
+    const result = await graphRagService.buildClusters({
+      query: args.query,
+      clusterOptions: args.clusterOptions,
+      projectFileCount: args.projectFileCount,
+      docHint: args.docHint
+    });
+    if (!result) {
+      return [];
+    }
+    args.response.clusters = result.clusters;
+    args.response.clusterPolicy = result.policy;
+    return result.degradedReasons ?? [];
   }
 
   private async loadHotSpotSet(

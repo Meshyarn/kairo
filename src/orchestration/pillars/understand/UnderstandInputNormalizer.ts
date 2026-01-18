@@ -16,6 +16,8 @@ export type UnderstandInput = {
     wantsVibe: boolean;
     analysis?: { clusters?: boolean; maxClusters?: number; maxFilesPerCluster?: number };
     wantsAnalysis: boolean;
+    includeClusters: boolean;
+    clusterOptions?: { maxClusters?: number; expansionDepth?: number; includePreview?: boolean };
     includeDependencies: boolean;
     includeCalls: boolean;
     explicitPath?: string | null;
@@ -51,6 +53,8 @@ export function normalizeUnderstandInput(
     const wantsVibe = vibe?.extract === true;
     const analysis = constraints.analysis as { clusters?: boolean; maxClusters?: number; maxFilesPerCluster?: number } | undefined;
     const wantsAnalysis = analysis?.clusters === true;
+    const includeClusters = include?.clusters === true;
+    const clusterOptions = constraints.clusterOptions as UnderstandInput["clusterOptions"] | undefined;
     const includeDependencies = include.dependencies === true || include.pageRank === true;
     const includeCalls = include.callGraph === true;
     const explicitPath = helpers.extractPath(subject) ?? (typeof originalIntent === "string" ? helpers.extractPath(originalIntent) : null);
@@ -84,6 +88,8 @@ export function normalizeUnderstandInput(
         wantsVibe,
         analysis,
         wantsAnalysis,
+        includeClusters,
+        clusterOptions,
         includeDependencies,
         includeCalls,
         explicitPath,

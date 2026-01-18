@@ -65,12 +65,15 @@ export interface RelatedSymbolsContainer {
     loadedAt?: number;
 }
 
+export type ClusterSeedSource = "semantic" | "lexical" | "path" | "doc";
+
 export interface ClusterSeed {
     filePath: string;
     symbol: SymbolInfo;
     matchType: "exact" | "prefix" | "contains" | "fuzzy";
     matchScore: number;
     fullPreview?: string;
+    source?: ClusterSeedSource;
 }
 
 export interface SearchClusterMetadata {
@@ -110,4 +113,30 @@ export interface ClusterSearchResponse {
         }>;
         recommendedExpansions: string[];
     };
+}
+
+export type ClusterSummaryRelationshipState = "loaded" | "truncated" | "not_loaded" | "failed";
+
+export interface ClusterSummary {
+    clusterId: string;
+    entryPoint: { filePath: string; symbolName?: string };
+    relevanceScore: number;
+    tokenEstimate: number;
+    seed: {
+        source: ClusterSeedSource;
+        filePath: string;
+        symbolName?: string;
+        matchType?: ClusterSeed["matchType"];
+        matchScore?: number;
+    };
+    relationships: {
+        callers?: { count: number; state: ClusterSummaryRelationshipState };
+        callees?: { count: number; state: ClusterSummaryRelationshipState };
+        typeFamily?: { count: number; state: ClusterSummaryRelationshipState };
+        dependency?: { count: number; state: ClusterSummaryRelationshipState };
+        colocated?: { count: number; state: ClusterSummaryRelationshipState };
+        siblings?: { count: number; state: ClusterSummaryRelationshipState };
+    };
+    expansionHints?: string[];
+    crossBoundary?: { kind?: string; autoExpanded?: boolean; truncated?: boolean };
 }
