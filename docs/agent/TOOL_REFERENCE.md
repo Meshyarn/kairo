@@ -136,6 +136,7 @@ Plan/apply safe edits with impact analysis.
 | `options.batchMode` | `boolean` |  | Reserved (implementation-dependent). |
 | `options.suggestDocs` | `boolean` |  | Enable doc update suggestions on successful apply. |
 | `options.batchImpactLimit` | `number` |  | Max files to include in batch impact preview. |
+| `options.formatter` | `"auto" \| "off" \| "prettier"` |  | Opt-in formatter run after apply. |
 | `trace` | `boolean` |  | Return v1 `effectiveOptions` + v1 `decisionTrace`. |
 
 **Notes**
@@ -198,7 +199,12 @@ Create or scaffold files.
 | `options.quickGenerate` | `boolean` |  | Generate content from intent when `content` is not provided. |
 | `options.smartWrite` | `boolean` |  | Pattern-aware generation using similar files (when possible). |
 | `options.styleReference` | `string[]` |  | Optional explicit reference files for pattern extraction. |
+| `options.formatter` | `"auto" \| "off" \| "prettier"` |  | Opt-in formatter run after apply. |
 | `trace` | `boolean` |  | Return v1 `effectiveOptions` + v1 `decisionTrace`. |
+
+**Notes**
+
+- `change(plan)` failure may include `schemaCoaching` with `requiredFields`, `editsTemplate`, and `helpUrl` to guide a retry.
 
 **Workflow output**
 
@@ -226,6 +232,7 @@ Project/session state utilities.
 - `manage({ command: "status" })`는 `rollout` 필드로 preset/userIdHash/flag mode + adaptive flow gate 요약을 함께 반환한다.
 - `manage({ command: "status" })`는 `symbolIndex` 필드로 심볼 시맨틱 검색 인덱스 상태(활성/빌드 시각/degraded)를 함께 반환한다.
 - `manage({ command: "status" })`는 `drift` 필드로 workspace 드리프트 상태 요약을 함께 반환한다.
+- `manage({ command: "status" })`는 `styleDrift` 필드로 StylePack 근거/신뢰도 요약을 함께 반환한다.
 - `manage({ command: "doctor" })`도 `rollout` 필드로 동일한 운영 진단 정보를 반환한다.
 - `manage({ command: "history" })`는 최근 커밋된 트랜잭션 체크포인트 요약(`checkpoints`)을 함께 반환한다.
 - `manage({ command: "reindex", paths: [...] })`는 지정한 파일들의 국소 재인덱싱을 시도한다(가능한 런타임에서만).

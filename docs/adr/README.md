@@ -82,6 +82,7 @@ The entries below cover all ADRs from the project history. Items marked “retou
 - ADR-076: Symbol semantic search E2E (opt-in) → `docs/adr/ADR-076-symbol-semantic-search-e2e-integrate-or-deprecate.md`
 - ADR-077: Mixed-workflow resilience (drift + checkpoints) → `docs/adr/ADR-077-mixed-workflow-resilience.md`
 - ADR-078 (summary): Cost stabilization & adaptive LOD (Lean-first) → `docs/adr/ADR-078-cost-stabilization-and-adaptive-lod.md`
+- ADR-079 (summary): Workflow UX & style reliability v2 → `docs/adr/ADR-079-workflow-ux-and-style-reliability-v2.md`
 - ADR-055-H: Adaptive trust policy (no curated summary)
 - ADR-055-L: Action guidance + Understand fallback graph (no curated summary)
 - ADR-033: “Six Pillars” precursor to ADR-040; introduced orchestration primitives and earlier public surface.
