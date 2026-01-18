@@ -1,4 +1,6 @@
 import { SyntaxValidator } from "../engine/validators/syntax-validator.js";
+import { SemanticValidator } from "../engine/validators/semantic-validator.js";
+import { ConfigurationManager } from "../config/ConfigurationManager.js";
 import { evaluateIntegrityGuardrails, normalizeGuardrailContent, resolveGuardrailTargetPath } from "../orchestration/guardrails/IntegrityGuardrails.js";
 import type { DependencyGraph } from "../ast/DependencyGraph.js";
 import type { IndexStateManager } from "../indexing/IndexStateManager.js";
@@ -7,21 +9,26 @@ import type {
     ReviewReport,
     SuggestedAction,
     SyntaxValidation,
+    SemanticValidation,
     VibeAlignmentValidation,
     Verdict
 } from "../types/flow-artifacts.js";
 import { scoreVibeAlignment } from "./vibe-alignment-scorer.js";
 import type { StylePack } from "../types/flow-artifacts.js";
+import type { ValidationMode } from "../types/validation.js";
 
 export interface ReviewReportBuilderOptions {
     strictness?: "strict" | "balanced" | "permissive";
     enableSyntax?: boolean;
+    enableSemantic?: boolean;
     enableVibe?: boolean;
     enableGuardrails?: boolean;
 }
 
 export class ReviewReportBuilder {
     private readonly syntaxValidator = new SyntaxValidator();
+    private readonly semanticValidator?: SemanticValidator;
+    private readonly semanticMode: ValidationMode;
 
     constructor(
         private readonly args: {
@@ -29,7 +36,13 @@ export class ReviewReportBuilder {
             indexStateManager?: IndexStateManager;
         },
         private readonly options: ReviewReportBuilderOptions = {}
-    ) {}
+    ) {
+        const validationConfig = ConfigurationManager.getValidationConfig();
+        this.semanticMode = validationConfig.semantic;
+        if (this.semanticMode !== "off") {
+            this.semanticValidator = new SemanticValidator({ rootPath: process.cwd() });
+        }
+    }
 
     async review(input: {
         filePath: string;
@@ -47,16 +60,21 @@ export class ReviewReportBuilder {
             ? undefined
             : await this.validateGuardrails(input);
 
+        const semantic = this.options.enableSemantic === false
+            ? undefined
+            : await this.validateSemantic(input.filePath, input.content);
+
         const vibeAlignment = this.options.enableVibe === false
             ? undefined
             : this.validateVibeAlignment(input);
 
-        const verdict = this.computeVerdict([syntax, guardrails, vibeAlignment].filter(Boolean) as Array<{ verdict: Verdict }>);
+        const verdict = this.computeVerdict([syntax, semantic, guardrails, vibeAlignment].filter(Boolean) as Array<{ verdict: Verdict }>);
 
         return {
             id: this.generateReportId(),
             verdict,
             syntax,
+            semantic,
             guardrails,
             vibeAlignment,
             suggestedActions: this.suggestActions(verdict),
@@ -121,6 +139,54 @@ export class ReviewReportBuilder {
             summary: guardrailResult?.status === "block"
                 ? "Guardrails blocked the change."
                 : "Guardrails check completed."
+        };
+    }
+
+    private async validateSemantic(filePath: string, content: string): Promise<SemanticValidation> {
+        if (!this.semanticValidator || this.semanticMode === "off") {
+            return {
+                verdict: "pass",
+                diagnostics: [],
+                summary: "Semantic validation skipped (disabled).",
+                degradedReasons: [{
+                    type: "degraded",
+                    message: "Semantic validation is disabled by policy.",
+                    severity: "info"
+                }],
+                stats: { durationMs: 0, nameLinkUsed: false }
+            };
+        }
+
+        const start = Date.now();
+        const result = await this.semanticValidator.validate(filePath, content);
+        const durationMs = Number.isFinite(result.durationMs) ? Math.round(result.durationMs as number) : Date.now() - start;
+        const diagnostics = [...(result.blockingErrors ?? []), ...(result.warnings ?? [])].map((diag) => {
+            const diagSeverity: "error" | "warning" =
+                this.semanticMode === "error"
+                    ? "error"
+                    : (diag.severity === "warning" ? "warning" : "error");
+            return {
+                file: diag.filePath,
+                line: diag.line ?? 0,
+                column: diag.column ?? 0,
+                message: diag.message,
+                code: diag.code ?? "SEMANTIC_VALIDATION",
+                severity: diagSeverity
+            };
+        });
+
+        const verdict: Verdict = result.success
+            ? "pass"
+            : (this.semanticMode === "error" ? "block" : "warn");
+
+        return {
+            verdict,
+            diagnostics,
+            summary: result.success ? "Semantic validation passed." : "Semantic validation found issues.",
+            stats: {
+                durationMs,
+                nameLinkUsed: true
+            }
         };
     }
 

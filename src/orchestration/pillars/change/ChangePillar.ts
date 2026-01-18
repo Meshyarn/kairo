@@ -801,6 +801,18 @@ export class ChangePillar {
           stylePack: sessionStylePack
         });
         preApplyReviewComputed = true;
+        if (traceBuilder && preApplyReview?.semantic) {
+          traceBuilder.recordEvent({
+            area: "other",
+            code: "semantic_validation",
+            data: {
+              verdict: preApplyReview.semantic.verdict,
+              diagnostics: Array.isArray(preApplyReview.semantic.diagnostics) ? preApplyReview.semantic.diagnostics.length : 0,
+              durationMs: preApplyReview.semantic.stats?.durationMs,
+              degraded: Array.isArray(preApplyReview.semantic.degradedReasons) && preApplyReview.semantic.degradedReasons.length > 0
+            }
+          });
+        }
 
         const blockReasons = collectBlockReasons(preApplyReview, blockOn);
         if (blockReasons.length > 0) {
@@ -1206,6 +1218,18 @@ export class ChangePillar {
           constraints,
           stylePack: sessionStylePack
         });
+        if (traceBuilder && preApplyReview?.semantic) {
+          traceBuilder.recordEvent({
+            area: "other",
+            code: "semantic_validation",
+            data: {
+              verdict: preApplyReview.semantic.verdict,
+              diagnostics: Array.isArray(preApplyReview.semantic.diagnostics) ? preApplyReview.semantic.diagnostics.length : 0,
+              durationMs: preApplyReview.semantic.stats?.durationMs,
+              degraded: Array.isArray(preApplyReview.semantic.degradedReasons) && preApplyReview.semantic.degradedReasons.length > 0
+            }
+          });
+        }
       }
 
       if (!dryRun && finalResult.success && formatterMode) {
@@ -1270,6 +1294,19 @@ export class ChangePillar {
           constraints,
           stylePack: sessionStylePack
         });
+        if (traceBuilder && postReview?.semantic) {
+          traceBuilder.recordEvent({
+            area: "other",
+            code: "semantic_validation",
+            data: {
+              verdict: postReview.semantic.verdict,
+              diagnostics: Array.isArray(postReview.semantic.diagnostics) ? postReview.semantic.diagnostics.length : 0,
+              durationMs: postReview.semantic.stats?.durationMs,
+              degraded: Array.isArray(postReview.semantic.degradedReasons) && postReview.semantic.degradedReasons.length > 0,
+              phase: "post_apply"
+            }
+          });
+        }
       }
       if (artifactManager) {
         if (draftPack) {

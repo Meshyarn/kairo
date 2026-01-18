@@ -565,6 +565,19 @@ export class WritePillar {
               stylePack: sessionStylePack
             })
           : undefined;
+        if (traceBuilder && preApplyReview?.semantic) {
+          traceBuilder.recordEvent({
+            area: "other",
+            code: "semantic_validation",
+            data: {
+              verdict: preApplyReview.semantic.verdict,
+              diagnostics: Array.isArray(preApplyReview.semantic.diagnostics) ? preApplyReview.semantic.diagnostics.length : 0,
+              durationMs: preApplyReview.semantic.stats?.durationMs,
+              degraded: Array.isArray(preApplyReview.semantic.degradedReasons) && preApplyReview.semantic.degradedReasons.length > 0,
+              phase: "draft_pre_apply"
+            }
+          });
+        }
         if (artifactManager) {
           artifactManager.store({
             id: draftPack.id,
@@ -647,7 +660,8 @@ export class WritePillar {
               reviewOptions,
               sessionStylePack,
               fileVersions,
-              { integrityGuardrails: bypassIntegrityGuardrails, reviewPolicy: bypassReviewBlock }
+              { integrityGuardrails: bypassIntegrityGuardrails, reviewPolicy: bypassReviewBlock },
+              traceBuilder
             );
             return attachResponse(result);
           }
@@ -676,7 +690,8 @@ export class WritePillar {
               reviewOptions,
               sessionStylePack,
               fileVersions,
-              { integrityGuardrails: bypassIntegrityGuardrails, reviewPolicy: bypassReviewBlock }
+              { integrityGuardrails: bypassIntegrityGuardrails, reviewPolicy: bypassReviewBlock },
+              traceBuilder
             );
             return attachResponse(result);
           }
@@ -762,7 +777,8 @@ export class WritePillar {
             constraints,
             reviewOptions,
             stylePack: sessionStylePack,
-            overrideBypass: bypassReviewBlock
+            overrideBypass: bypassReviewBlock,
+            traceBuilder
           });
           if (reviewBlock.blocked) {
             stopSafePatch();
@@ -944,7 +960,8 @@ export class WritePillar {
           constraints,
           reviewOptions,
           stylePack: sessionStylePack,
-          overrideBypass: bypassReviewBlock
+          overrideBypass: bypassReviewBlock,
+          traceBuilder
         });
         if (reviewBlock.blocked) {
           return attachResponse({
@@ -1129,7 +1146,8 @@ export class WritePillar {
         constraints,
         reviewOptions,
         stylePack: sessionStylePack,
-        overrideBypass: bypassReviewBlock
+        overrideBypass: bypassReviewBlock,
+        traceBuilder
       });
       if (reviewBlock.blocked) {
         return attachResponse({
@@ -1423,6 +1441,7 @@ export class WritePillar {
     reviewOptions: any;
     stylePack?: any;
     overrideBypass?: boolean;
+    traceBuilder?: TraceBuilder;
   }): Promise<{ blocked: boolean; review?: any; message?: string; reasons?: Array<{ kind: string; verdict: string }> }> {
     const blockOn = Array.isArray(params.reviewOptions?.blockOn) ? params.reviewOptions.blockOn : [];
     if (blockOn.length === 0) {
@@ -1443,6 +1462,18 @@ export class WritePillar {
       constraints: params.constraints,
       stylePack: params.stylePack
     });
+    if (params.traceBuilder && review?.semantic) {
+      params.traceBuilder.recordEvent({
+        area: "other",
+        code: "semantic_validation",
+        data: {
+          verdict: review.semantic.verdict,
+          diagnostics: Array.isArray(review.semantic.diagnostics) ? review.semantic.diagnostics.length : 0,
+          durationMs: review.semantic.stats?.durationMs,
+          degraded: Array.isArray(review.semantic.degradedReasons) && review.semantic.degradedReasons.length > 0
+        }
+      });
+    }
 
     const reasons = collectBlockReasons(review, blockOn);
     if (reasons.length === 0) {
@@ -1594,7 +1625,8 @@ export class WritePillar {
     reviewOptions?: any,
     stylePack?: StylePack,
     fileVersions?: Record<string, { expectedVersion?: number; expectedHash?: string }>,
-    overrideBypass?: { integrityGuardrails?: boolean; reviewPolicy?: boolean }
+    overrideBypass?: { integrityGuardrails?: boolean; reviewPolicy?: boolean },
+    traceBuilder?: TraceBuilder
   ): Promise<any> {
     try {
       let finalContent = content;
@@ -1659,7 +1691,8 @@ export class WritePillar {
         stylePack: stylePack ?? (sessionId
           ? this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager")?.getLatestStylePack(sessionId)
           : undefined),
-        overrideBypass: overrideBypass?.reviewPolicy === true
+        overrideBypass: overrideBypass?.reviewPolicy === true,
+        traceBuilder
       });
       if (reviewBlock.blocked) {
         return {
