@@ -1,9 +1,11 @@
 import { SyntaxValidator } from "../engine/validators/syntax-validator.js";
 import { SemanticValidator } from "../engine/validators/semantic-validator.js";
+import { SymbolicGuardEngine } from "../engine/validators/symbolic-guard-engine.js";
 import { ConfigurationManager } from "../config/ConfigurationManager.js";
 import { evaluateIntegrityGuardrails, normalizeGuardrailContent, resolveGuardrailTargetPath } from "../orchestration/guardrails/IntegrityGuardrails.js";
 import type { DependencyGraph } from "../ast/DependencyGraph.js";
 import type { IndexStateManager } from "../indexing/IndexStateManager.js";
+import { buildDegradedReasons } from "../orchestration/DegradedReasonMapper.js";
 import type {
     GuardrailsValidation,
     ReviewReport,
@@ -29,6 +31,7 @@ export class ReviewReportBuilder {
     private readonly syntaxValidator = new SyntaxValidator();
     private readonly semanticValidator?: SemanticValidator;
     private readonly semanticMode: ValidationMode;
+    private readonly symbolicGuardEngine = new SymbolicGuardEngine();
 
     constructor(
         private readonly args: {
@@ -143,49 +146,87 @@ export class ReviewReportBuilder {
     }
 
     private async validateSemantic(filePath: string, content: string): Promise<SemanticValidation> {
-        if (!this.semanticValidator || this.semanticMode === "off") {
-            return {
-                verdict: "pass",
-                diagnostics: [],
-                summary: "Semantic validation skipped (disabled).",
-                degradedReasons: [{
-                    type: "degraded",
-                    message: "Semantic validation is disabled by policy.",
-                    severity: "info"
-                }],
-                stats: { durationMs: 0, nameLinkUsed: false }
-            };
+        const degradedReasons: NonNullable<SemanticValidation["degradedReasons"]> = [];
+        const diagnostics: SemanticValidation["diagnostics"] = [];
+        let nameLinkUsed = false;
+        let nameLinkDurationMs = 0;
+        let nameLinkVerdict: Verdict = "pass";
+
+        if (this.semanticValidator && this.semanticMode !== "off") {
+            nameLinkUsed = true;
+            const start = Date.now();
+            const result = await this.semanticValidator.validate(filePath, content);
+            nameLinkDurationMs = Number.isFinite(result.durationMs)
+                ? Math.round(result.durationMs as number)
+                : Date.now() - start;
+            diagnostics.push(
+                ...[...(result.blockingErrors ?? []), ...(result.warnings ?? [])].map((diag) => {
+                    const diagSeverity: "error" | "warning" =
+                        this.semanticMode === "error"
+                            ? "error"
+                            : (diag.severity === "warning" ? "warning" : "error");
+                    return {
+                        file: diag.filePath,
+                        line: diag.line ?? 0,
+                        column: diag.column ?? 0,
+                        message: diag.message,
+                        code: diag.code ?? "SEMANTIC_VALIDATION",
+                        severity: diagSeverity
+                    };
+                })
+            );
+            if (!result.success) {
+                nameLinkVerdict = this.semanticMode === "error" ? "block" : "warn";
+            }
+        } else {
+            degradedReasons.push({
+                type: "degraded" as const,
+                message: "Name/link semantic validation is disabled by policy.",
+                severity: "info" as const
+            });
         }
 
-        const start = Date.now();
-        const result = await this.semanticValidator.validate(filePath, content);
-        const durationMs = Number.isFinite(result.durationMs) ? Math.round(result.durationMs as number) : Date.now() - start;
-        const diagnostics = [...(result.blockingErrors ?? []), ...(result.warnings ?? [])].map((diag) => {
-            const diagSeverity: "error" | "warning" =
-                this.semanticMode === "error"
-                    ? "error"
-                    : (diag.severity === "warning" ? "warning" : "error");
+        const symbolicResult = await this.symbolicGuardEngine.evaluate({ filePath, content });
+        const symbolicDiagnostics = symbolicResult.diagnostics.map((diag) => {
+            const severity: "error" | "warning" = diag.severity === "high" ? "error" : "warning";
             return {
-                file: diag.filePath,
+                file: diag.filePath ?? filePath,
                 line: diag.line ?? 0,
                 column: diag.column ?? 0,
                 message: diag.message,
-                code: diag.code ?? "SEMANTIC_VALIDATION",
-                severity: diagSeverity
+                code: diag.code,
+                severity
             };
         });
+        diagnostics.push(...symbolicDiagnostics);
 
-        const verdict: Verdict = result.success
-            ? "pass"
-            : (this.semanticMode === "error" ? "block" : "warn");
+        const symbolicDegraded = buildDegradedReasons(symbolicResult.degradedReasons ?? [], { filePath });
+        if (symbolicDegraded?.length) {
+            degradedReasons.push(...symbolicDegraded);
+        }
+
+        const hasBlock = nameLinkVerdict === "block"
+            || (symbolicResult.mode === "block_high" || symbolicResult.mode === "strict")
+                && symbolicResult.diagnostics.some((diag) => diag.severity === "high");
+        const hasWarn = nameLinkVerdict === "warn"
+            || diagnostics.length > 0;
+        const verdict: Verdict = hasBlock ? "block" : hasWarn ? "warn" : "pass";
+        const durationMs = nameLinkDurationMs + (symbolicResult.stats?.durationMs ?? 0);
 
         return {
             verdict,
             diagnostics,
-            summary: result.success ? "Semantic validation passed." : "Semantic validation found issues.",
+            summary: verdict === "pass" ? "Semantic validation passed." : "Semantic validation found issues.",
+            degradedReasons: degradedReasons.length > 0 ? degradedReasons : undefined,
             stats: {
                 durationMs,
-                nameLinkUsed: true
+                nameLinkUsed,
+                symbolic: {
+                    queryUsed: symbolicResult.stats.queryUsed,
+                    solverUsed: symbolicResult.stats.solverUsed,
+                    constraintsBuilt: symbolicResult.stats.constraintsBuilt,
+                    pathsExplored: symbolicResult.stats.pathsExplored
+                }
             }
         };
     }

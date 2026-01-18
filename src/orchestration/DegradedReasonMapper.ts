@@ -235,6 +235,28 @@ const PARITY_REASON_MAP: Record<string, {
     type: "degraded",
     message: "GraphRAG seed policy fell back to lexical retrieval.",
     severity: "warning"
+  },
+  symbolic_guards_disabled: {
+    type: "degraded",
+    message: "Symbolic guards are disabled.",
+    severity: "info"
+  },
+  symbolic_query_missing: {
+    type: "missing_query_pack",
+    message: "Symbolic guard query pack is missing.",
+    severity: "warning",
+    actionToolCall: PARITY_ACTION_TOOLCALL,
+    actionId: PARITY_ACTION_ID
+  },
+  symbolic_budget_exceeded: {
+    type: "budget_exceeded",
+    message: "Symbolic guard budget exceeded; results may be partial.",
+    severity: "warning"
+  },
+  solver_unavailable: {
+    type: "degraded",
+    message: "Symbolic solver unavailable; using rule-only guards.",
+    severity: "warning"
   }
 };
 
