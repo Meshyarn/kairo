@@ -310,7 +310,14 @@ export interface SemanticValidation {
         durationMs: number;
         nameLinkUsed?: boolean;
         contractGuard?: { mode: "spec_only" | "spec_plus_consumer_scan"; consumerScanUsed?: boolean };
-        symbolic?: { queryUsed: boolean; solverUsed: boolean; constraintsBuilt?: number; pathsExplored?: number };
+        symbolic?: {
+            enabled?: boolean;
+            mode?: "off" | "warn" | "block_high" | "strict";
+            queryUsed: boolean;
+            solverUsed: boolean;
+            constraintsBuilt?: number;
+            pathsExplored?: number;
+        };
     };
 }
 

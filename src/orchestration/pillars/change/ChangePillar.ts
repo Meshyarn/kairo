@@ -803,6 +803,42 @@ export class ChangePillar {
       let preApplyReview: any = undefined;
       let preApplyReviewComputed = false;
       let formatterResult: Awaited<ReturnType<typeof applyFormatterBridge>> = undefined;
+      let symbolicTraceRecorded = false;
+      const recordSymbolicTrace = (review: any, phase?: string) => {
+        if (!traceBuilder || symbolicTraceRecorded) return;
+        const semantic = review?.semantic;
+        const symbolic = semantic?.stats?.symbolic;
+        if (!symbolic) return;
+        const diagnosticsCount = Array.isArray(semantic.diagnostics) ? semantic.diagnostics.length : 0;
+        const degraded = Array.isArray(semantic.degradedReasons) && semantic.degradedReasons.length > 0;
+        traceBuilder.recordEvent({
+          area: "guardrails",
+          code: "symbolic_guards",
+          data: {
+            enabled: symbolic.enabled,
+            mode: symbolic.mode,
+            queryUsed: symbolic.queryUsed,
+            solverUsed: symbolic.solverUsed,
+            constraintsBuilt: symbolic.constraintsBuilt,
+            pathsExplored: symbolic.pathsExplored,
+            diagnostics: diagnosticsCount,
+            degraded,
+            ...(phase ? { phase } : {})
+          }
+        });
+        symbolicTraceRecorded = true;
+        if (symbolic.enabled === false || symbolic.mode === "off") {
+          traceBuilder.recordSkip("symbolic_guards", "policy_disabled", "symbolic guards disabled");
+          return;
+        }
+        if (symbolic.queryUsed === false) {
+          traceBuilder.recordSkip("symbolic_guards", "unsupported", "symbolic guard query missing or unsupported language");
+          return;
+        }
+        if (Array.isArray(semantic.degradedReasons) && semantic.degradedReasons.some((item: any) => item?.type === "budget_exceeded")) {
+          traceBuilder.recordSkip("symbolic_guards", "budget_exceeded", "symbolic guard budget exceeded");
+        }
+      };
       if (shouldBlockOn && targetPath) {
         preApplyReview = await new ReviewReportBuilder(
           { dependencyGraph, indexStateManager },
@@ -828,6 +864,7 @@ export class ChangePillar {
               degraded: Array.isArray(preApplyReview.semantic.degradedReasons) && preApplyReview.semantic.degradedReasons.length > 0
             }
           });
+          recordSymbolicTrace(preApplyReview, "pre_apply");
         }
 
         const blockReasons = collectBlockReasons(preApplyReview, blockOn);
@@ -1237,6 +1274,7 @@ export class ChangePillar {
               degraded: Array.isArray(preApplyReview.semantic.degradedReasons) && preApplyReview.semantic.degradedReasons.length > 0
             }
           });
+          recordSymbolicTrace(preApplyReview, "pre_apply");
         }
       }
 
@@ -1315,6 +1353,7 @@ export class ChangePillar {
               phase: "post_apply"
             }
           });
+          recordSymbolicTrace(postReview, "post_apply");
         }
       }
       if (artifactManager) {

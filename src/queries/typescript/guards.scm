@@ -4,8 +4,10 @@
 (if_statement condition: (parenthesized_expression) @guard.condition)
 (while_statement condition: (parenthesized_expression) @guard.condition)
 (do_statement condition: (parenthesized_expression) @guard.condition)
-(for_statement condition: (expression) @guard.condition)
-(conditional_expression condition: (_) @guard.condition)
+(for_statement
+  (expression_statement
+    (expression) @guard.condition))
+(ternary_expression) @guard.condition
 
 ;; Index access
 (subscript_expression) @guard.index_access

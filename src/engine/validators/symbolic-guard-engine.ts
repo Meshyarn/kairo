@@ -1,5 +1,9 @@
 import { AstManager } from "../../ast/AstManager.js";
 import { resolveSymbolicGuardConfig, type SymbolicGuardMode } from "../../config/SymbolicGuardConfig.js";
+import { EngineManager } from "../../orchestration/capabilities/EngineManager.js";
+import { CAP_SYMBOLIC_SOLVE } from "../../orchestration/capabilities/CapabilityIds.js";
+import type { ISymbolicSolverProvider, SymbolicSolverConstraint } from "../../orchestration/capabilities/SymbolicSolver.js";
+import { metrics } from "../../utils/MetricsCollector.js";
 
 export type SymbolicGuardSeverity = "warn" | "high";
 
@@ -172,6 +176,25 @@ export class SymbolicGuardEngine {
             const indexAccesses: Array<{ node: any; scopeKey: string }> = [];
             const derefAccesses: Array<{ node: any; scopeKey: string }> = [];
             const binaryExpressions: Array<{ node: any; scopeKey: string }> = [];
+            const solverConstraints: SymbolicSolverConstraint[] = [];
+
+            const pushSolverConstraint = (
+                kind: SymbolicSolverConstraint["kind"],
+                node: any,
+                scopeKey: string
+            ) => {
+                if (solverConstraints.length >= config.maxConstraints) return;
+                const text = extractNodeText(node, args.content).trim();
+                if (!text) return;
+                const position = node.startPosition;
+                solverConstraints.push({
+                    kind,
+                    text: text.slice(0, 200),
+                    scopeKey,
+                    line: position?.row ? position.row + 1 : 0,
+                    column: position?.column ? position.column + 1 : 0
+                });
+            };
 
             let constraintsBuilt = 0;
             for (const capture of captures) {
@@ -195,22 +218,26 @@ export class SymbolicGuardEngine {
                             guardTextsByScope.set(scopeKey, list);
                             constraintsBuilt += 1;
                         }
+                        pushSolverConstraint("guard", capture.node, scopeKey);
                         break;
                     }
                     case "guard.index_access":
                         if (indexAccesses.length < config.maxConstraints) {
                             indexAccesses.push({ node: capture.node, scopeKey });
                         }
+                        pushSolverConstraint("index_access", capture.node, scopeKey);
                         break;
                     case "guard.deref":
                         if (derefAccesses.length < config.maxConstraints) {
                             derefAccesses.push({ node: capture.node, scopeKey });
                         }
+                        pushSolverConstraint("deref", capture.node, scopeKey);
                         break;
                     case "guard.binary":
                         if (binaryExpressions.length < config.maxConstraints) {
                             binaryExpressions.push({ node: capture.node, scopeKey });
                         }
+                        pushSolverConstraint("binary", capture.node, scopeKey);
                         break;
                     default:
                         break;
@@ -335,6 +362,64 @@ export class SymbolicGuardEngine {
                 }
             }
 
+            const ruleCodesSnapshot = new Set(diagnostics.map((diag) => String(diag.code)));
+            let solverUsed = false;
+            let solverStats: { durationMs?: number; pathsExplored?: number; constraintsBuilt?: number } | undefined;
+            if (mode === "strict" && config.solver.enabled) {
+                const provider = EngineManager.getProvider<ISymbolicSolverProvider>(CAP_SYMBOLIC_SOLVE, { preferredTier: "native" });
+                if (!provider) {
+                    degradedReasons.push("solver_unavailable");
+                } else {
+                    const stopTimer = metrics.startTimer("symbolic_solver.duration_ms", "detailed");
+                    try {
+                        metrics.inc("symbolic_solver.used", 1, "detailed");
+                        const solverResult = await provider.solve({
+                            filePath: args.filePath,
+                            content: args.content,
+                            constraints: solverConstraints,
+                            maxPaths: config.maxPaths,
+                            maxConstraints: config.maxConstraints,
+                            timeSliceMs: config.solver.timeSliceMs
+                        });
+                        solverUsed = true;
+                        solverStats = solverResult.stats;
+                        if (Array.isArray(solverResult.degradedReasons)) {
+                            degradedReasons.push(...solverResult.degradedReasons);
+                        }
+                        const solverDiagnostics = solverResult.diagnostics ?? [];
+                        metrics.inc("symbolic_solver.diagnostics", solverDiagnostics.length, "detailed");
+                        const solverCodes = new Set(solverDiagnostics.map((diag) => String(diag.code)));
+                        const solverOnly = Array.from(solverCodes).filter((code) => !ruleCodesSnapshot.has(code)).length;
+                        const ruleOnly = Array.from(ruleCodesSnapshot).filter((code) => !solverCodes.has(code)).length;
+                        metrics.inc("symbolic_solver.rule_only_missed", solverOnly, "detailed");
+                        metrics.inc("symbolic_solver.solver_only_missed", ruleOnly, "detailed");
+                        for (const diag of solverDiagnostics) {
+                            const ruleEnabled = config.rules[diag.code]?.enabled;
+                            if (ruleEnabled === false) {
+                                continue;
+                            }
+                            const normalized: SymbolicGuardDiagnostic = {
+                                code: diag.code,
+                                severity: diag.severity,
+                                message: diag.message,
+                                filePath: diag.filePath ?? args.filePath,
+                                line: diag.line ?? 0,
+                                column: diag.column ?? 0,
+                                evidence: diag.evidence
+                            };
+                            pushDiagnostic(normalized);
+                        }
+                        stopTimer();
+                    } catch {
+                        stopTimer();
+                        degradedReasons.push("solver_unavailable");
+                    }
+                }
+            }
+
+            const mergedConstraints = Math.max(constraintsBuilt, solverConstraints.length, solverStats?.constraintsBuilt ?? 0);
+            const pathsExplored = Math.max(guardTextsByScope.size, solverStats?.pathsExplored ?? 0);
+
             return {
                 enabled: true,
                 mode,
@@ -343,9 +428,9 @@ export class SymbolicGuardEngine {
                 stats: {
                     durationMs: Date.now() - start,
                     queryUsed: true,
-                    solverUsed: false,
-                    constraintsBuilt,
-                    pathsExplored: guardTextsByScope.size
+                    solverUsed,
+                    constraintsBuilt: mergedConstraints,
+                    pathsExplored
                 }
             };
         } catch {

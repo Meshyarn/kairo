@@ -308,6 +308,8 @@ export class ReviewReportBuilder {
                     }
                     : undefined,
                 symbolic: {
+                    enabled: symbolicResult.enabled,
+                    mode: symbolicResult.mode,
                     queryUsed: symbolicResult.stats.queryUsed,
                     solverUsed: symbolicResult.stats.solverUsed,
                     constraintsBuilt: symbolicResult.stats.constraintsBuilt,

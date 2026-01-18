@@ -3,10 +3,12 @@ import type { DegradedReason, DegradedReasonType } from "../types/tool-responses
 const CONTRACT_ACTION_TOOLCALL = { tool: "manage", args: { command: "doctor", scope: "contracts" } };
 const LANGUAGE_ACTION_TOOLCALL = { tool: "manage", args: { command: "doctor", scope: "languages" } };
 const PARITY_ACTION_TOOLCALL = { tool: "manage", args: { command: "doctor", scope: "parity" } };
+const CAPABILITY_ACTION_TOOLCALL = { tool: "manage", args: { command: "doctor", scope: "capabilities" } };
 
 const CONTRACT_ACTION_ID = "manage.doctor.contracts";
 const LANGUAGE_ACTION_ID = "manage.doctor.languages";
 const PARITY_ACTION_ID = "manage.doctor.parity";
+const CAPABILITY_ACTION_ID = "manage.doctor.capabilities";
 
 const CONTRACT_REASON_MAP: Record<string, {
   type: DegradedReasonType;
@@ -262,7 +264,9 @@ const PARITY_REASON_MAP: Record<string, {
   solver_unavailable: {
     type: "degraded",
     message: "Symbolic solver unavailable; using rule-only guards.",
-    severity: "warning"
+    severity: "warning",
+    actionToolCall: CAPABILITY_ACTION_TOOLCALL,
+    actionId: CAPABILITY_ACTION_ID
   }
 };
 

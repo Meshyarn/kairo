@@ -1473,6 +1473,31 @@ export class WritePillar {
           degraded: Array.isArray(review.semantic.degradedReasons) && review.semantic.degradedReasons.length > 0
         }
       });
+      const symbolic = review.semantic.stats?.symbolic;
+      if (symbolic) {
+        params.traceBuilder.recordEvent({
+          area: "guardrails",
+          code: "symbolic_guards",
+          data: {
+            enabled: symbolic.enabled,
+            mode: symbolic.mode,
+            queryUsed: symbolic.queryUsed,
+            solverUsed: symbolic.solverUsed,
+            constraintsBuilt: symbolic.constraintsBuilt,
+            pathsExplored: symbolic.pathsExplored,
+            diagnostics: Array.isArray(review.semantic.diagnostics) ? review.semantic.diagnostics.length : 0,
+            degraded: Array.isArray(review.semantic.degradedReasons) && review.semantic.degradedReasons.length > 0
+          }
+        });
+        if (symbolic.enabled === false || symbolic.mode === "off") {
+          params.traceBuilder.recordSkip("symbolic_guards", "policy_disabled", "symbolic guards disabled");
+        } else if (symbolic.queryUsed === false) {
+          params.traceBuilder.recordSkip("symbolic_guards", "unsupported", "symbolic guard query missing or unsupported language");
+        } else if (Array.isArray(review.semantic.degradedReasons)
+          && review.semantic.degradedReasons.some((item: any) => item?.type === "budget_exceeded")) {
+          params.traceBuilder.recordSkip("symbolic_guards", "budget_exceeded", "symbolic guard budget exceeded");
+        }
+      }
     }
 
     const reasons = collectBlockReasons(review, blockOn);

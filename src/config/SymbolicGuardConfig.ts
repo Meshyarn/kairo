@@ -90,9 +90,10 @@ const resolveBaseDir = (): string => {
 
 const resolveConfigPath = (rootPath: string): string => {
     const baseDir = resolveBaseDir();
-    const primary = path.join(rootPath, baseDir, "config", "symbolic-guards.json");
+    const baseSegments = path.isAbsolute(baseDir) ? [baseDir] : [rootPath, baseDir];
+    const primary = path.join(...baseSegments, "config", "symbolic-guards.json");
     if (fs.existsSync(primary)) return primary;
-    const legacy = path.join(rootPath, baseDir, "symbolic-guards.json");
+    const legacy = path.join(...baseSegments, "symbolic-guards.json");
     if (fs.existsSync(legacy)) return legacy;
     return primary;
 };
