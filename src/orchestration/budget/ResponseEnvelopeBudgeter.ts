@@ -16,6 +16,7 @@ type EnvelopeBudgetResult = {
 
 const DEFAULT_PREVIEW_CHARS = 800;
 const MIN_PREVIEW_CHARS = 240;
+const DEFAULT_ELASTIC_WINDOW_PCT = 0.05;
 
 function estimateResponseUsage(response: unknown): { estimatedTokens: number; usedChars: number; serialized: string } {
   const serialized = JSON.stringify(response ?? {});
@@ -28,7 +29,7 @@ function estimateResponseUsage(response: unknown): { estimatedTokens: number; us
 
 function withinBudget(usage: { estimatedTokens: number; usedChars: number }, options: EnvelopeBudgetOptions): boolean {
   const overTokens = typeof options.maxTokens === "number" && options.maxTokens > 0
-    ? usage.estimatedTokens > options.maxTokens
+    ? usage.estimatedTokens > Math.ceil(options.maxTokens * (1 + DEFAULT_ELASTIC_WINDOW_PCT))
     : false;
   const overChars = typeof options.maxChars === "number" && options.maxChars > 0
     ? usage.usedChars > options.maxChars
@@ -47,6 +48,15 @@ function recordTrace(traceBuilder: TraceBuilder | undefined, usage: { estimatedT
       maxTokens: options.maxTokens,
       maxChars: options.maxChars
     }
+  });
+}
+
+function recordBudgetAction(traceBuilder: TraceBuilder | undefined, code: string, data?: Record<string, unknown>) {
+  if (!traceBuilder) return;
+  traceBuilder.recordEvent({
+    area: "budget",
+    code,
+    ...(data ? { data } : {})
   });
 }
 
@@ -122,6 +132,7 @@ export function enforceExploreResponseBudget(args: {
     if (response[key] !== undefined) {
       (response as any)[key] = undefined;
       applied = true;
+      recordBudgetAction(options.traceBuilder, "budget.response.drop_field", { field: key });
     }
   };
 
@@ -134,14 +145,18 @@ export function enforceExploreResponseBudget(args: {
   if (!withinBudget(usage, options)) dropField("insights");
 
   if (!withinBudget(usage, options)) {
+    const before = { docs: response.data.docs.length, code: response.data.code.length };
     applied = trimExploreItems(response.data.docs, { removeContent: true, previewChars: DEFAULT_PREVIEW_CHARS }) || applied;
     applied = trimExploreItems(response.data.code, { removeContent: true, previewChars: DEFAULT_PREVIEW_CHARS }) || applied;
+    recordBudgetAction(options.traceBuilder, "budget.response.trim_items", { step: "remove_content", previewChars: DEFAULT_PREVIEW_CHARS, ...before });
     usage = estimateResponseUsage(response);
   }
 
   if (!withinBudget(usage, options)) {
+    const before = { docs: response.data.docs.length, code: response.data.code.length };
     applied = trimExploreItems(response.data.docs, { removeContent: true, previewChars: MIN_PREVIEW_CHARS }) || applied;
     applied = trimExploreItems(response.data.code, { removeContent: true, previewChars: MIN_PREVIEW_CHARS }) || applied;
+    recordBudgetAction(options.traceBuilder, "budget.response.trim_items", { step: "shrink_preview", previewChars: MIN_PREVIEW_CHARS, ...before });
     usage = estimateResponseUsage(response);
   }
 
@@ -149,6 +164,7 @@ export function enforceExploreResponseBudget(args: {
   while (!withinBudget(usage, options) && guard < 50) {
     if (!shrinkExploreLists(response, minCounts)) break;
     applied = true;
+    recordBudgetAction(options.traceBuilder, "budget.response.shrink_lists", { returnedDocs: response.data.docs.length, returnedCode: response.data.code.length });
     usage = estimateResponseUsage(response);
     guard += 1;
   }
@@ -174,6 +190,7 @@ export function enforceExploreResponseBudget(args: {
         applied: true,
         estimatedTokens: usage.estimatedTokens,
         usedChars: usage.usedChars,
+        elasticWindowPct: DEFAULT_ELASTIC_WINDOW_PCT,
         maxTokens: options.maxTokens,
         maxChars: options.maxChars
       },
@@ -216,12 +233,14 @@ export function enforceUnderstandResponseBudget(args: {
     if (response[key] !== undefined) {
       response[key] = undefined;
       applied = true;
+      recordBudgetAction(options.traceBuilder, "budget.response.drop_field", { field: key });
     }
   };
 
   if (response.relationships?.calls) {
     response.relationships.calls = undefined;
     applied = true;
+    recordBudgetAction(options.traceBuilder, "budget.response.drop_field", { field: "relationships.calls" });
   }
   usage = estimateResponseUsage(response);
   if (!withinBudget(usage, options)) dropField("analysisPack");
@@ -243,11 +262,13 @@ export function enforceUnderstandResponseBudget(args: {
   if (!withinBudget(usage, options)) {
     trimList("symbols", 200);
     trimList("hotSpots", 20);
+    recordBudgetAction(options.traceBuilder, "budget.response.trim_lists", { step: "trim_lists", symbols: 200, hotSpots: 20 });
     usage = estimateResponseUsage(response);
   }
   if (!withinBudget(usage, options)) {
     trimList("symbols", 50);
     trimList("hotSpots", 10);
+    recordBudgetAction(options.traceBuilder, "budget.response.trim_lists", { step: "trim_lists", symbols: 50, hotSpots: 10 });
     usage = estimateResponseUsage(response);
   }
 
@@ -256,6 +277,7 @@ export function enforceUnderstandResponseBudget(args: {
     if (Array.isArray(related) && related.length > 5) {
       response.document.relatedCode = related.slice(0, 5);
       applied = true;
+      recordBudgetAction(options.traceBuilder, "budget.response.trim_lists", { step: "document.relatedCode", relatedCode: 5 });
       usage = estimateResponseUsage(response);
     }
   }
@@ -274,6 +296,7 @@ export function enforceUnderstandResponseBudget(args: {
         applied: true,
         estimatedTokens: usage.estimatedTokens,
         usedChars: usage.usedChars,
+        elasticWindowPct: DEFAULT_ELASTIC_WINDOW_PCT,
         maxTokens: options.maxTokens,
         maxChars: options.maxChars
       }

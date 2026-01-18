@@ -197,6 +197,7 @@ export interface CallGraphResult {
     root: CallGraphNode;
     visitedNodes: Record<string, CallGraphNode>;
     truncated: boolean;
+    truncatedReason?: "cap" | "depth" | "unknown";
 }
 
 export type TypeRelationKind = "extends" | "implements" | "alias" | "constraint" | "usage";

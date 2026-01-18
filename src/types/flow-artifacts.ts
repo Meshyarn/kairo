@@ -82,6 +82,7 @@ export interface GraphPack {
     summary: {
         mode: "symbol" | "file";
         truncated: boolean;
+        truncatedReason?: "cap" | "depth" | "unknown";
         totalNodes?: number;
         totalEdges?: number;
         topNodes?: Array<{ label: string; filePath?: string; degree?: number }>;
@@ -91,6 +92,7 @@ export interface GraphPack {
         totalNodes?: number;
         totalEdges?: number;
         truncatedByCap?: boolean;
+        truncatedReason?: "cap" | "depth" | "unknown";
         caps?: { maxNodes?: number; maxEdges?: number };
     };
 }

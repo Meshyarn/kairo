@@ -77,7 +77,9 @@ export const analyzeRelationshipRaw = async (deps: CodeHandlerDeps, args: any) =
         return {
             nodes,
             edges,
-            resolvedTarget: { type: "symbol", path: filePath, symbolName }
+            resolvedTarget: { type: "symbol", path: filePath, symbolName },
+            truncated: graph.truncated,
+            ...(graph.truncatedReason ? { truncatedReason: graph.truncatedReason } : {})
         };
     }
 

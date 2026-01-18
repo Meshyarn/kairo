@@ -743,6 +743,10 @@ export class UnderstandPillar {
       cappedEdges = cappedEdges.slice(0, maxEdges);
       truncatedByCap = true;
     }
+    const truncatedReason = input.calls?.truncatedReason as ("cap" | "depth" | "unknown" | undefined);
+    if (truncatedReason === "cap") {
+      truncatedByCap = true;
+    }
 
     const degreeMap = new Map<string, number>();
     for (const edge of cappedEdges) {
@@ -777,7 +781,8 @@ export class UnderstandPillar {
       },
       summary: {
         mode,
-        truncated: truncatedByCap || totalNodes !== cappedNodes.length || totalEdges !== cappedEdges.length,
+        truncated: input.calls?.truncated === true || truncatedByCap || totalNodes !== cappedNodes.length || totalEdges !== cappedEdges.length,
+        ...(truncatedReason ? { truncatedReason } : {}),
         totalNodes,
         totalEdges,
         topNodes
@@ -787,6 +792,7 @@ export class UnderstandPillar {
         totalNodes,
         totalEdges,
         truncatedByCap,
+        ...(truncatedReason ? { truncatedReason } : {}),
         caps: {
           maxNodes,
           maxEdges

@@ -752,6 +752,7 @@ export class ManageHandlers extends BaseHandler {
                 truncated,
                 totalNodes: pack.summary?.totalNodes,
                 totalEdges: pack.summary?.totalEdges,
+                truncatedReason: pack.summary?.truncatedReason ?? pack.meta?.truncatedReason,
                 caps: pack.meta?.caps
             }
         };
