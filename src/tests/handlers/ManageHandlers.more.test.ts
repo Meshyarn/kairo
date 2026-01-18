@@ -3,6 +3,8 @@ import { ManageHandlers } from "../../handlers/ManageHandlers.js";
 import { MemoryFileSystem } from "../../platform/FileSystem.js";
 import { FeatureFlags } from "../../config/FeatureFlags.js";
 import { createDefaultToolSpecRegistry } from "../../server/tools/ToolSpecRegistry.js";
+import { FlowArtifactManager } from "../../orchestration/flow-artifact-manager.js";
+import type { GraphPack } from "../../types/flow-artifacts.js";
 
 const makeContext = () => {
     return {
@@ -56,6 +58,16 @@ const makeContext = () => {
         },
         toolSpecRegistry: createDefaultToolSpecRegistry(),
         isTestEnv: () => true
+    };
+};
+
+const makeArtifactContext = () => {
+    const flowArtifactManager = new FlowArtifactManager({
+        fileSystem: new MemoryFileSystem(process.cwd())
+    });
+    return {
+        flowArtifactManager,
+        toolSpecRegistry: createDefaultToolSpecRegistry()
     };
 };
 
@@ -123,5 +135,60 @@ describe("ManageHandlers additional paths", () => {
 
         const provided = await raw({ command: "test", target: "src/file.ts" });
         expect(provided.suggestedTests).toContain("a.test.ts");
+    });
+
+    it("summarizes graph artifacts in list and returns truncated graph view", async () => {
+        const context = makeArtifactContext();
+        const handler = new ManageHandlers(context as any);
+        const raw = (handler as any).manageProjectRaw.bind(handler);
+
+        const pack: GraphPack = {
+            id: "graph_test",
+            kind: "call_graph",
+            source: { filePath: "src/main.ts", symbolName: "main" },
+            raw: {
+                nodes: Array.from({ length: 25 }, (_, idx) => ({ id: `n${idx}`, type: "function" })),
+                edges: Array.from({ length: 40 }, (_, idx) => ({
+                    source: `n${idx % 10}`,
+                    target: `n${(idx + 1) % 10}`,
+                    relation: "calls"
+                })),
+                resolvedTarget: { type: "symbol", path: "src/main.ts", symbolName: "main" }
+            },
+            summary: {
+                mode: "symbol",
+                truncated: false,
+                totalNodes: 25,
+                totalEdges: 40,
+                topNodes: [{ label: "main", filePath: "src/main.ts", degree: 10 }]
+            },
+            meta: {
+                createdAt: Date.now(),
+                totalNodes: 25,
+                totalEdges: 40,
+                truncatedByCap: false,
+                caps: { maxNodes: 500, maxEdges: 1500 }
+            }
+        };
+        context.flowArtifactManager.store({
+            id: pack.id,
+            type: "graph",
+            createdAt: pack.meta.createdAt,
+            pack
+        });
+
+        const listed = await raw({ command: "artifacts", artifactOptions: { limit: 1 } });
+        expect(listed.success).toBe(true);
+        expect(listed.artifacts[0]?.pack?.raw).toBeUndefined();
+
+        const summary = await raw({ command: "artifact", target: pack.id });
+        expect(summary.success).toBe(true);
+        expect(summary.view?.detail).toBe("summary");
+        expect(summary.view?.graph?.nodes?.length).toBeLessThanOrEqual(20);
+
+        const detail = await raw({ command: "artifact", target: pack.id, detail: "full", limit: 5 });
+        expect(detail.success).toBe(true);
+        expect(detail.view?.graph?.nodes?.length).toBeLessThanOrEqual(5);
+        expect(detail.view?.meta?.truncated).toBe(true);
     });
 });

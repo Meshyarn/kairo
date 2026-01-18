@@ -1364,11 +1364,23 @@ export class ManageHandlers extends BaseHandler {
                         artifacts = artifacts.sort((a, b) => (a.expiresAt ?? Infinity) - (b.expiresAt ?? Infinity));
                     }
                     artifacts = artifacts.slice(0, limit);
+                    const sanitized = artifacts.map((artifact) => {
+                        if (artifact.type !== "graph") return artifact;
+                        const pack = (artifact as any).pack as GraphPack | undefined;
+                        if (!pack) return artifact;
+                        return {
+                            ...artifact,
+                            pack: {
+                                ...pack,
+                                raw: undefined
+                            }
+                        } as FlowArtifact;
+                    });
                     const summary = this.buildWorkflowSummary();
                     return {
                         success: true,
                         output: "Artifacts listed.",
-                        artifacts,
+                        artifacts: sanitized,
                         ...(summary.recommendedActions ? { recommendedActions: summary.recommendedActions } : {})
                     };
                 }
