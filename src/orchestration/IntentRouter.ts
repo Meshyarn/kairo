@@ -4,6 +4,44 @@ import type { IntegrityOptions } from "../integrity/IntegrityTypes.js";
 
 export type IntentCategory = 'explore' | 'understand' | 'change' | 'navigate' | 'read' | 'write' | 'manage';
 
+export type StrategySearchMode = "off" | "auto" | "force";
+
+export type StrategySearchStage = "r0" | "r1" | "r2";
+
+export interface StrategySearchCandidate {
+  id: string;
+  label?: string;
+  intent?: string;
+  target?: string;
+  targetFiles?: string[];
+  edits: any[];
+  options?: { diffMode?: "myers" | "semantic"; includeImpact?: boolean };
+  notes?: string;
+}
+
+export interface StrategySearchRequest {
+  mode: StrategySearchMode;
+  stage: StrategySearchStage;
+  candidates: StrategySearchCandidate[];
+  maxCandidates: number;
+  timeboxMs: number;
+  maxSimulationMs: number;
+  maxImpactMs: number;
+  maxTouchedFiles: number;
+  maxTokensEstimated: number;
+  scoring: {
+    weights: {
+      files: number;
+      diff: number;
+      tokens: number;
+      risk: number;
+      breaking: number;
+      contract: number;
+      guardsHigh: number;
+    };
+  };
+}
+
 export interface IntentConstraints {
   goal?: string;
   depth?: 'shallow' | 'standard' | 'deep';
@@ -103,6 +141,7 @@ export interface IntentConstraints {
     strictness?: "strict" | "balanced" | "permissive";
     blockOn?: Array<"syntax" | "semantic" | "guardrails" | "vibe">;
   };
+  strategySearch?: StrategySearchRequest;
   profile?: "lean" | "fast" | "balanced" | "deep";
   sources?: "code" | "docs" | "both";
   safety?: "plan" | "apply";

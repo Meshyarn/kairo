@@ -149,11 +149,36 @@ Plan/apply safe edits with impact analysis.
 | `options.suggestDocs` | `boolean` |  | Enable doc update suggestions on successful apply. |
 | `options.batchImpactLimit` | `number` |  | Max files to include in batch impact preview. |
 | `options.formatter` | `"auto" \| "off" \| "prettier"` |  | Opt-in formatter run after apply. |
+| `strategySearch.mode` | `"off" \| "auto" \| "force"` |  | Default `auto`. `off` disables; `force` always runs at `stage`. |
+| `strategySearch.stage` | `"r0" \| "r1" \| "r2"` |  | Default `r1` when mode is not `off`. |
+| `strategySearch.candidates` | `object[]` |  | Required when mode is not `off`. |
+| `strategySearch.maxCandidates` | `number` |  | Default `2` (hard cap `3`). |
+| `strategySearch.timeboxMs` | `number` |  | Default `700`. |
+| `strategySearch.maxSimulationMs` | `number` |  | Default `350`. |
+| `strategySearch.maxImpactMs` | `number` |  | Default `250`. |
+| `strategySearch.maxTouchedFiles` | `number` |  | Default `20`. |
+| `strategySearch.maxTokensEstimated` | `number` |  | Default `2400`. |
+| `strategySearch.scoring.weights.*` | `number` |  | Weights for files/diff/tokens/risk/breaking/contract/guardsHigh. |
 | `trace` | `boolean` |  | Return v1 `effectiveOptions` + v1 `decisionTrace`. |
 
 **Notes**
 
 - `profile` may be automatically downshifted for cost stability unless explicitly provided; set `trace: true` to inspect the final decision (`decisionTrace`).
+- If `strategySearch.mode` is `auto` or `force` but no candidates are supplied, the engine falls back to R0 and returns a degraded reason.
+
+**StrategySearch candidates**
+
+| Field | Type | Required | Notes |
+|---|---|---:|---|
+| `strategySearch.candidates[].id` | `string` | ✓ | Unique candidate id. |
+| `strategySearch.candidates[].label` | `string` |  | Label such as `baseline` or `alt`. |
+| `strategySearch.candidates[].intent` | `string` |  | Overrides top-level `intent` for this candidate. |
+| `strategySearch.candidates[].target` | `string` |  | Optional `target` hint. |
+| `strategySearch.candidates[].targetFiles` | `string[]` |  | Constrain blast radius for this candidate. |
+| `strategySearch.candidates[].edits` | `object[]` | ✓ | Structured edits (MVP requires explicit edits). |
+| `strategySearch.candidates[].options.diffMode` | `"myers" \| "semantic"` |  | Diff mode for dry-run evaluation. |
+| `strategySearch.candidates[].options.includeImpact` | `boolean` |  | Candidate-level impact toggle. |
+| `strategySearch.candidates[].notes` | `string` |  | Freeform notes for trace/debugging. |
 
 **Workflow output**
 
