@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from "@jest/globals";
+import { describe, it, expect, beforeEach, afterEach, jest } from "@jest/globals";
 import { InternalToolRegistry } from "../../orchestration/InternalToolRegistry.js";
 import { OrchestrationContext } from "../../orchestration/OrchestrationContext.js";
 import { ChangePillar } from "../../orchestration/pillars/change/ChangePillar.js";
+import { SymbolicGuardEngine } from "../../engine/validators/symbolic-guard-engine.js";
 
 describe("ChangePillar strategySearch", () => {
   const originalParity = process.env.KAIRO_SKIP_PARITY_CHECK;
@@ -106,5 +107,99 @@ describe("ChangePillar strategySearch", () => {
 
     const lastCall = editCalls[editCalls.length - 1];
     expect(lastCall.edits[0].targetString).toBe("BASE");
+  });
+
+  it("prefers lower contract/guard risk candidates", async () => {
+    const registry = new InternalToolRegistry();
+    registry.register("edit_transaction", async (args: any) => {
+      const target = args?.edits?.[0]?.targetString ?? "";
+      const content = target === "A" ? "BREAK_GUARD" : "SAFE_GUARD";
+      return {
+        success: true,
+        diff: "diff",
+        structuredDiff: [{ added: 5, removed: 0 }],
+        newContent: content
+      } as any;
+    });
+    registry.register("impact_analyze", async () => ({ riskLevel: "low" } as any));
+    registry.register("relationship_analyze", async () => ({ nodes: [], edges: [] } as any));
+    registry.register("hotspot_detect", async () => ([] as any));
+
+    const originalEnabled = process.env.KAIRO_SYMBOLIC_GUARDS_ENABLED;
+    const originalMode = process.env.KAIRO_SYMBOLIC_GUARDS_MODE;
+    process.env.KAIRO_SYMBOLIC_GUARDS_ENABLED = "true";
+    process.env.KAIRO_SYMBOLIC_GUARDS_MODE = "warn";
+
+    const guardSpy = jest.spyOn(SymbolicGuardEngine.prototype, "evaluate");
+    guardSpy.mockImplementation(async ({ content }) => {
+      const isRisky = String(content).includes("BREAK_GUARD");
+      return {
+        enabled: true,
+        mode: "warn",
+        diagnostics: isRisky
+          ? [{ code: "index_bounds", severity: "high", message: "guard high" }]
+          : [],
+        degradedReasons: [],
+        stats: { durationMs: 1, queryUsed: true, solverUsed: false }
+      };
+    });
+
+    const pillar = new ChangePillar(registry) as any;
+    pillar.buildCrossLangImpact = jest.fn(async (_targetPath: string, _context: any, options?: any) => {
+      if (String(options?.afterContent).includes("BREAK_GUARD")) {
+        return {
+          packageName: "demo",
+          consumerFiles: ["src/consumer.ts"],
+          changedExports: ["foo"],
+          breakingExports: ["foo"],
+          degraded: false
+        };
+      }
+      return {
+        packageName: "demo",
+        consumerFiles: [],
+        changedExports: [],
+        degraded: false
+      };
+    });
+
+    const intent = {
+      category: "change",
+      action: "modify",
+      targets: ["src/demo.ts"],
+      originalIntent: "update demo",
+      constraints: {
+        dryRun: true,
+        includeImpact: true,
+        edits: [{ targetString: "BASE", replacementString: "BASE_NEW" }],
+        strategySearch: {
+          mode: "force",
+          stage: "r1",
+          candidates: [
+            { id: "risky", edits: [{ targetString: "A", replacementString: "A1" }] },
+            { id: "safe", edits: [{ targetString: "B", replacementString: "B1" }] }
+          ]
+        }
+      },
+      confidence: 1
+    };
+
+    try {
+      const result = await pillar.execute(intent as any, new OrchestrationContext());
+      expect(result.success).toBe(true);
+      expect(result.strategySearch?.selectedCandidateId).toBe("safe");
+    } finally {
+      guardSpy.mockRestore();
+      if (originalEnabled === undefined) {
+        delete process.env.KAIRO_SYMBOLIC_GUARDS_ENABLED;
+      } else {
+        process.env.KAIRO_SYMBOLIC_GUARDS_ENABLED = originalEnabled;
+      }
+      if (originalMode === undefined) {
+        delete process.env.KAIRO_SYMBOLIC_GUARDS_MODE;
+      } else {
+        process.env.KAIRO_SYMBOLIC_GUARDS_MODE = originalMode;
+      }
+    }
   });
 });

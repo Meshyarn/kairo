@@ -58,6 +58,7 @@ import { diffManifests } from "../../../contracts/ContractDiffer.js";
 import type { PackageAliasMap } from "../../../config/PackageAliasMap.js";
 import type { RepoRegistry } from "../../../config/RepoRegistry.js";
 import type { ImpactAnalyzer } from "../../../engine/ImpactAnalyzer.js";
+import { SymbolicGuardEngine } from "../../../engine/validators/symbolic-guard-engine.js";
 import type { CrossLangImpact } from "../../../types/engine.js";
 import type { FileVersionManager } from "../../../engine/FileVersionManager.js";
 import { buildDegradedReasons } from "../../DegradedReasonMapper.js";
@@ -1910,6 +1911,18 @@ export class ChangePillar {
           ...(typeof candidateSummary.estimatedTokens === "number"
             ? { estimatedTokens: candidateSummary.estimatedTokens }
             : {}),
+          ...(typeof candidateSummary.contractBreaking === "number"
+            ? { contractBreaking: candidateSummary.contractBreaking }
+            : {}),
+          ...(typeof candidateSummary.contractConsumers === "number"
+            ? { contractConsumers: candidateSummary.contractConsumers }
+            : {}),
+          ...(typeof candidateSummary.guardsHigh === "number"
+            ? { guardsHigh: candidateSummary.guardsHigh }
+            : {}),
+          ...(typeof candidateSummary.guardsDiagnostics === "number"
+            ? { guardsDiagnostics: candidateSummary.guardsDiagnostics }
+            : {}),
           ...(candidateSummary.riskLevel ? { riskLevel: candidateSummary.riskLevel } : {}),
           ...(Array.isArray(candidateSummary.degradedReasons) && candidateSummary.degradedReasons.length > 0
             ? { degradedReasons: candidateSummary.degradedReasons }
@@ -1981,6 +1994,9 @@ export class ChangePillar {
     const deadline = startTime + config.timeboxMs;
     const dependencyGraph = this.registry.getMetadata<DependencyGraph>("dependencyGraph");
     const indexStateManager = this.registry.getMetadata<IndexStateManager>("indexStateManager");
+    const symbolicGuardConfig = resolveSymbolicGuardConfig();
+    const symbolicGuardEnabled = symbolicGuardConfig.enabled && symbolicGuardConfig.mode !== "off";
+    const symbolicGuardEngine = symbolicGuardEnabled ? new SymbolicGuardEngine() : undefined;
 
     const evaluated: Array<any> = [];
     for (const entry of normalizedCandidates) {
@@ -2005,6 +2021,12 @@ export class ChangePillar {
         id: entry.id,
         label: candidate.label,
         dryRunOk: false
+      };
+      const appendCandidateDegraded = (reason: string) => {
+        candidateSummary.degradedReasons = Array.from(new Set([
+          ...(candidateSummary.degradedReasons ?? []),
+          reason
+        ]));
       };
       const candidateEdits = Array.isArray(candidate.edits) ? candidate.edits : [];
       if (candidateEdits.length === 0) {
@@ -2043,6 +2065,13 @@ export class ChangePillar {
       let touchedFiles = targetFiles.length > 0 ? targetFiles.length : editPaths.length;
       let riskScore = 0;
       let riskLevel: string | undefined;
+      let candidateNormalization: ReturnType<typeof normalizeEdits> | undefined;
+      let candidateNewContent: string | undefined;
+      let contractBreaking = 0;
+      let contractConsumers = 0;
+      let guardsHigh = 0;
+      let guardsDiagnostics = 0;
+      let contractPenalty = 0;
 
       if (shouldBatch) {
         const batchResult = await executeBatchChange(
@@ -2077,8 +2106,8 @@ export class ChangePillar {
           evaluated.push(candidateSummary);
           continue;
         }
-        const normalization = normalizeEdits(candidateEdits, targetPath);
-        if (normalization.edits.length === 0) {
+        candidateNormalization = normalizeEdits(candidateEdits, targetPath);
+        if (candidateNormalization.edits.length === 0) {
           candidateSummary.errorCode = "candidate_edits_invalid";
           candidateSummary.message = "Strategy candidate edits are invalid.";
           recordCandidateTrace(candidateSummary, { durationMs: Date.now() - candidateStart });
@@ -2087,7 +2116,7 @@ export class ChangePillar {
         }
         const editResult = await this.runTool(args.context, "edit_transaction", {
           filePath: targetPath,
-          edits: normalization.edits,
+          edits: candidateNormalization.edits,
           dryRun: true,
           options: {
             skipImpactPreview: true,
@@ -2104,6 +2133,7 @@ export class ChangePillar {
           const added = typeof structured?.added === "number" ? structured.added : 0;
           const removed = typeof structured?.removed === "number" ? structured.removed : 0;
           diffSize = added + removed;
+          candidateNewContent = typeof editResult?.newContent === "string" ? editResult.newContent : undefined;
         }
       }
 
@@ -2131,10 +2161,99 @@ export class ChangePillar {
           riskLevel = impact?.riskLevel ?? impact?.preview?.riskLevel;
           riskScore = this.mapRiskLevelToScore(riskLevel);
         } else if (candidateIncludeImpact) {
-          candidateSummary.degradedReasons = Array.from(new Set([
-            ...(candidateSummary.degradedReasons ?? []),
-            "reasoning_impact_skipped"
-          ]));
+          appendCandidateDegraded("reasoning_impact_skipped");
+        }
+
+        const resolveCandidateContent = async (): Promise<string | undefined> => {
+          if (candidateNewContent) return candidateNewContent;
+          if (!targetPath) return undefined;
+          if (!candidateNormalization) {
+            candidateNormalization = normalizeEdits(candidateEdits, targetPath);
+          }
+          const resolvedTarget = path.resolve(targetPath);
+          const scopedEdits = candidateNormalization.edits.filter(
+            (edit) => path.resolve(edit.filePath ?? targetPath) === resolvedTarget
+          );
+          if (scopedEdits.length === 0) {
+            return undefined;
+          }
+          const fileSystem = this.resolveFileSystem();
+          if (!await fileSystem.exists(targetPath)) {
+            return undefined;
+          }
+          let existingContent = "";
+          try {
+            existingContent = await fileSystem.readFile(targetPath);
+          } catch {
+            return undefined;
+          }
+          try {
+            candidateNewContent = applyEditsToContent(existingContent, scopedEdits).newContent;
+          } catch {
+            return undefined;
+          }
+          return candidateNewContent;
+        };
+
+        if (candidateIncludeImpact && config.maxImpactMs > 0) {
+          if (Date.now() > deadline) {
+            appendCandidateDegraded("reasoning_budget_exceeded");
+          } else if (targetFiles.length === 1 && targetPath) {
+            if (Date.now() + config.maxImpactMs > deadline) {
+              appendCandidateDegraded("reasoning_budget_exceeded");
+            } else {
+              const content = await resolveCandidateContent();
+              if (!content) {
+                appendCandidateDegraded("reasoning_contract_skipped");
+                appendCandidateDegraded("reasoning_guards_skipped");
+              } else {
+                const contractImpact = await this.buildCrossLangImpact(targetPath, args.context, {
+                  afterContent: content
+                });
+                if (contractImpact) {
+                  contractBreaking = Array.isArray(contractImpact.breakingExports)
+                    ? contractImpact.breakingExports.length
+                    : 0;
+                  contractConsumers = Array.isArray(contractImpact.consumerFiles)
+                    ? contractImpact.consumerFiles.length
+                    : 0;
+                  contractPenalty = contractBreaking + Math.ceil(Math.min(contractConsumers, 20) / 5);
+                  candidateSummary.contractBreaking = contractBreaking;
+                  candidateSummary.contractConsumers = contractConsumers;
+                  if (contractImpact.degraded && Array.isArray(contractImpact.reasons)) {
+                    for (const reason of contractImpact.reasons) {
+                      if (typeof reason === "string" && reason.length > 0) {
+                        appendCandidateDegraded(reason);
+                      }
+                    }
+                  }
+                }
+
+                if (symbolicGuardEngine) {
+                  const guardResult = await symbolicGuardEngine.evaluate({ filePath: targetPath, content });
+                  guardsDiagnostics = guardResult.diagnostics.length;
+                  guardsHigh = guardResult.diagnostics.filter((diag) => diag.severity === "high").length;
+                  candidateSummary.guardsDiagnostics = guardsDiagnostics;
+                  candidateSummary.guardsHigh = guardsHigh;
+                  if (Array.isArray(guardResult.degradedReasons)) {
+                    for (const reason of guardResult.degradedReasons) {
+                      if (typeof reason === "string" && reason.length > 0) {
+                        appendCandidateDegraded(reason);
+                      }
+                    }
+                  }
+                } else {
+                  appendCandidateDegraded("symbolic_guards_disabled");
+                }
+              }
+            }
+          } else {
+            appendCandidateDegraded("reasoning_contract_skipped");
+            appendCandidateDegraded("reasoning_guards_skipped");
+          }
+        } else if (candidateIncludeImpact) {
+          appendCandidateDegraded("reasoning_contract_skipped");
+          appendCandidateDegraded("reasoning_guards_skipped");
         }
 
         const weights = config.scoring.weights;
@@ -2142,7 +2261,9 @@ export class ChangePillar {
           - weights.files * touchedFiles
           - weights.diff * diffSize
           - weights.tokens * estimatedTokens
-          - weights.risk * riskScore;
+          - weights.risk * riskScore
+          - weights.contract * contractPenalty
+          - weights.guardsHigh * guardsHigh;
         candidateSummary.reward = reward;
         if (riskLevel) {
           candidateSummary.riskLevel = riskLevel;
