@@ -1,7 +1,7 @@
 import path from "path";
 import { InternalToolRegistry } from '../../InternalToolRegistry.js';
 import { OrchestrationContext } from '../../OrchestrationContext.js';
-import { ParsedIntent } from '../../IntentRouter.js';
+import { ParsedIntent, type StrategySearchCandidate, type StrategySearchRequest } from '../../IntentRouter.js';
 import { ChangeBudgetManager } from '../../ChangeBudgetManager.js';
 import { IntegrityEngine } from '../../../integrity/IntegrityEngine.js';
 import type { IntegrityReport } from '../../../integrity/IntegrityTypes.js';
@@ -36,7 +36,8 @@ import {
 import { 
     normalizeEdits, 
     formatResolveErrors,
-    isLikelyFilePath
+    isLikelyFilePath,
+    mapEditsToFiles
 } from "./EditExecution.js";
 import {
     applyEditsToContent,
@@ -58,12 +59,14 @@ import { diffManifests } from "../../../contracts/ContractDiffer.js";
 import type { PackageAliasMap } from "../../../config/PackageAliasMap.js";
 import type { RepoRegistry } from "../../../config/RepoRegistry.js";
 import type { ImpactAnalyzer } from "../../../engine/ImpactAnalyzer.js";
+import { SymbolicGuardEngine } from "../../../engine/validators/symbolic-guard-engine.js";
 import type { CrossLangImpact } from "../../../types/engine.js";
 import type { FileVersionManager } from "../../../engine/FileVersionManager.js";
 import { buildDegradedReasons } from "../../DegradedReasonMapper.js";
 import { AstManager } from "../../../ast/AstManager.js";
 import type { PathNormalizer } from "../../../utils/PathNormalizer.js";
 import { resolveSymbolicGuardConfig } from "../../../config/SymbolicGuardConfig.js";
+import { estimateTokens } from "../../TokenBudget.js";
 import {
     computeAdaptiveFlowGate,
     recordAdaptiveFlowGateTrace,
@@ -88,6 +91,32 @@ const resolveOptionSource = (explicit: boolean, hasSession: boolean): OptionSour
   if (explicit) return "explicit";
   if (hasSession) return "session";
   return "default";
+};
+
+const STRATEGY_SEARCH_DEFAULTS = {
+  mode: "auto" as const,
+  stage: "r1" as const,
+  maxCandidates: 2,
+  timeboxMs: 700,
+  maxSimulationMs: 350,
+  maxImpactMs: 250,
+  maxTouchedFiles: 20,
+  maxTokensEstimated: 2400,
+  weights: {
+    files: 1,
+    diff: 1,
+    tokens: 1,
+    risk: 2,
+    breaking: 3,
+    contract: 3,
+    guardsHigh: 2
+  },
+  mcts: {
+    maxDepth: 2,
+    maxRollouts: 5,
+    exploration: 1.4,
+    seed: undefined as number | undefined
+  }
 };
 
 const resolveFormatterMode = (constraints: any): string | undefined => {
@@ -144,26 +173,23 @@ export class ChangePillar {
       const fileSystem = this.resolveFileSystem();
       const ucg = context.getState<UnifiedContextGraph>('ucg');
       const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
+      const input = normalizeChangeInput(intent, {
+        resolveSessionId: (rawSessionId, fallback) => artifactManager?.resolveSessionId(rawSessionId, fallback),
+        getSessionPolicy: (sessionId) => (sessionId ? artifactManager?.getSession(sessionId)?.policy : undefined)
+      });
       const {
         targets,
         constraints,
         originalIntent,
-        includeImpact,
-        includeSymbolImpact,
         integrityOptions,
         resolvedSessionId,
         sessionPolicy,
         resolvedOptions,
         dryRun,
-        reviewOptions,
         traceEnabled,
-        diffMode,
-        draftId,
-        refinedIntent
-      } = normalizeChangeInput(intent, {
-        resolveSessionId: (rawSessionId, fallback) => artifactManager?.resolveSessionId(rawSessionId, fallback),
-        getSessionPolicy: (sessionId) => (sessionId ? artifactManager?.getSession(sessionId)?.policy : undefined)
-      });
+        draftId
+      } = input;
+      let { includeImpact, includeSymbolImpact, reviewOptions, diffMode, refinedIntent } = input;
       const sessionProfile = sessionPolicy?.change?.profile ?? sessionPolicy?.profile;
       const sessionSafety = sessionPolicy?.change?.safety ?? sessionPolicy?.safety;
       const traceBuilder = traceEnabled
@@ -252,11 +278,13 @@ export class ChangePillar {
         artifactManager
       });
       const workflowWarnings = buildWorkflowWarnings(workflowMeta, Boolean(resolvedSessionId));
+      let strategySearchSummary: any | undefined;
       let overrideTrace: OverrideTrace | undefined;
       const attachWorkflow = <T extends Record<string, any>>(payload: T): T & { workflowMeta: WorkflowMeta; workflowWarnings?: string[] } => {
         const next = {
           ...payload,
           workflowMeta,
+          ...(strategySearchSummary ? { strategySearch: strategySearchSummary } : {}),
           ...(traceEnabled
             ? {
                 effectiveOptions: {
@@ -281,12 +309,62 @@ export class ChangePillar {
         return next;
       };
 
-      const rawEdits = Array.isArray(constraints.edits) ? constraints.edits : [];
-      const targetFiles = this.resolveTargetFiles(constraints, targets);
-      const editPaths = this.collectEditPaths(rawEdits);
-      const shouldBatch = this.shouldUseBatch(constraints, targetFiles, editPaths);
-      const overrideTargets = targetFiles.length > 0 ? targetFiles : editPaths;
+      let rawEdits = Array.isArray(constraints.edits) ? constraints.edits : [];
+      let targetFiles = this.resolveTargetFiles(constraints, targets);
+      let editPaths = this.collectEditPaths(rawEdits);
+      let shouldBatch = this.shouldUseBatch(constraints, targetFiles, editPaths);
+      let overrideTargets = targetFiles.length > 0 ? targetFiles : editPaths;
       const formatterMode = resolveFormatterMode(constraints);
+
+      const strategyOutcome = await this.evaluateStrategySearch({
+        strategy: (constraints as any).strategySearch,
+        context,
+        intent,
+        baseConstraints: constraints,
+        baseTargets: targets,
+        baseTargetFiles: targetFiles,
+        baseDiffMode: diffMode,
+        includeImpact,
+        traceBuilder
+      });
+      if (strategyOutcome?.summary) {
+        strategySearchSummary = strategyOutcome.summary;
+      }
+      if (strategyOutcome?.selected) {
+        const selected = strategyOutcome.selected;
+        rawEdits = selected.edits;
+        if (Array.isArray(selected.targetFiles) && selected.targetFiles.length > 0) {
+          constraints.targetFiles = selected.targetFiles;
+          targetFiles = selected.targetFiles;
+          if (selected.targetFiles.length === 1) {
+            constraints.targetPath = selected.targetFiles[0];
+            constraints.target = selected.targetFiles[0];
+          }
+        } else if (typeof selected.target === "string" && selected.target.length > 0) {
+          constraints.targetFiles = [selected.target];
+          constraints.targetPath = selected.target;
+          constraints.target = selected.target;
+          targetFiles = [selected.target];
+        } else {
+          targetFiles = this.resolveTargetFiles(constraints, targets);
+        }
+        if (typeof selected.intent === "string" && selected.intent.length > 0) {
+          refinedIntent = selected.intent;
+        }
+        if (selected.options && typeof selected.options === "object") {
+          if (typeof selected.options.includeImpact === "boolean") {
+            includeImpact = selected.options.includeImpact;
+            constraints.includeImpact = selected.options.includeImpact;
+          }
+          if (typeof selected.options.diffMode === "string") {
+            diffMode = selected.options.diffMode as any;
+          }
+        }
+        constraints.edits = rawEdits;
+        editPaths = this.collectEditPaths(rawEdits);
+        shouldBatch = this.shouldUseBatch(constraints, targetFiles, editPaths);
+        overrideTargets = targetFiles.length > 0 ? targetFiles : editPaths;
+      }
       const overrideEvaluation = await evaluateOverrideDecision({
         constraints,
         targetFiles: overrideTargets,
@@ -1704,6 +1782,860 @@ export class ChangePillar {
       replacementString: args.draftContent,
       indexRange: { start: 0, end: args.originalContent.length }
     }];
+  }
+
+  private resolveStrategySearchConfig(raw: any): StrategySearchRequest | null {
+    if (!raw || typeof raw !== "object") return null;
+    const mode = raw.mode === "off" || raw.mode === "auto" || raw.mode === "force"
+      ? raw.mode
+      : STRATEGY_SEARCH_DEFAULTS.mode;
+    const stage = raw.stage === "r0" || raw.stage === "r1" || raw.stage === "r2" || raw.stage === "r3"
+      ? raw.stage
+      : STRATEGY_SEARCH_DEFAULTS.stage;
+    const candidates = Array.isArray(raw.candidates)
+      ? raw.candidates.filter((entry: any) => entry && typeof entry === "object")
+      : [];
+    const normalizeInt = (value: any, fallback: number, min: number, max: number) => {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) return fallback;
+      return Math.min(max, Math.max(min, Math.floor(parsed)));
+    };
+    const normalizeNumber = (value: any, fallback: number) => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : fallback;
+    };
+    const weightsRaw = raw?.scoring?.weights ?? {};
+    const weights = {
+      files: normalizeNumber(weightsRaw.files, STRATEGY_SEARCH_DEFAULTS.weights.files),
+      diff: normalizeNumber(weightsRaw.diff, STRATEGY_SEARCH_DEFAULTS.weights.diff),
+      tokens: normalizeNumber(weightsRaw.tokens, STRATEGY_SEARCH_DEFAULTS.weights.tokens),
+      risk: normalizeNumber(weightsRaw.risk, STRATEGY_SEARCH_DEFAULTS.weights.risk),
+      breaking: normalizeNumber(weightsRaw.breaking, STRATEGY_SEARCH_DEFAULTS.weights.breaking),
+      contract: normalizeNumber(weightsRaw.contract, STRATEGY_SEARCH_DEFAULTS.weights.contract),
+      guardsHigh: normalizeNumber(weightsRaw.guardsHigh, STRATEGY_SEARCH_DEFAULTS.weights.guardsHigh)
+    };
+    const mctsRaw = raw?.mcts ?? {};
+    const seedValue = Number(mctsRaw.seed);
+    const mcts = {
+      maxDepth: normalizeInt(mctsRaw.maxDepth, STRATEGY_SEARCH_DEFAULTS.mcts.maxDepth, 1, 6),
+      maxRollouts: normalizeInt(mctsRaw.maxRollouts, STRATEGY_SEARCH_DEFAULTS.mcts.maxRollouts, 1, 64),
+      exploration: normalizeNumber(mctsRaw.exploration, STRATEGY_SEARCH_DEFAULTS.mcts.exploration),
+      ...(Number.isFinite(seedValue) ? { seed: seedValue } : {})
+    };
+    return {
+      mode,
+      stage,
+      candidates,
+      maxCandidates: normalizeInt(raw.maxCandidates, STRATEGY_SEARCH_DEFAULTS.maxCandidates, 1, 8),
+      timeboxMs: normalizeInt(raw.timeboxMs, STRATEGY_SEARCH_DEFAULTS.timeboxMs, 100, 10_000),
+      maxSimulationMs: normalizeInt(raw.maxSimulationMs, STRATEGY_SEARCH_DEFAULTS.maxSimulationMs, 50, 10_000),
+      maxImpactMs: normalizeInt(raw.maxImpactMs, STRATEGY_SEARCH_DEFAULTS.maxImpactMs, 0, 10_000),
+      maxTouchedFiles: normalizeInt(raw.maxTouchedFiles, STRATEGY_SEARCH_DEFAULTS.maxTouchedFiles, 1, 200),
+      maxTokensEstimated: normalizeInt(raw.maxTokensEstimated, STRATEGY_SEARCH_DEFAULTS.maxTokensEstimated, 100, 50_000),
+      scoring: { weights },
+      mcts
+    };
+  }
+
+  private createSeededRng(seed?: number): () => number {
+    if (!Number.isFinite(seed)) {
+      return () => Math.random();
+    }
+    let state = Math.floor(seed as number) >>> 0;
+    return () => {
+      state = (state * 1664525 + 1013904223) >>> 0;
+      return state / 0x100000000;
+    };
+  }
+
+  private mapRiskLevelToScore(value?: string): number {
+    if (!value) return 0;
+    if (value === "low") return 1;
+    if (value === "medium") return 2;
+    if (value === "high") return 3;
+    return 0;
+  }
+
+  private resolveCandidateTargets(args: {
+    candidate: StrategySearchCandidate;
+    baseTargets: string[];
+    baseTargetFiles: string[];
+  }): { targetFiles: string[]; targetPath?: string } {
+    const { candidate, baseTargets, baseTargetFiles } = args;
+    const targetFiles: string[] = Array.isArray(candidate.targetFiles)
+      ? candidate.targetFiles.filter((entry) => typeof entry === "string" && entry.length > 0)
+      : [];
+    if (targetFiles.length === 0 && typeof candidate.target === "string" && candidate.target.length > 0) {
+      targetFiles.push(candidate.target);
+    }
+    if (targetFiles.length === 0) {
+      targetFiles.push(...this.collectEditPaths(candidate.edits));
+    }
+    if (targetFiles.length === 0) {
+      targetFiles.push(...baseTargetFiles);
+    }
+    if (targetFiles.length === 0) {
+      targetFiles.push(...baseTargets);
+    }
+    const targetPath = targetFiles.length === 1 ? targetFiles[0] : undefined;
+    return { targetFiles, targetPath };
+  }
+
+  private async evaluateStrategySearch(args: {
+    strategy: StrategySearchRequest | undefined;
+    context: OrchestrationContext;
+    intent: ParsedIntent;
+    baseConstraints: any;
+    baseTargets: string[];
+    baseTargetFiles: string[];
+    baseDiffMode?: "myers" | "semantic";
+    includeImpact: boolean;
+    traceBuilder?: TraceBuilder;
+  }): Promise<{ selected?: StrategySearchCandidate; summary?: any } | null> {
+    const config = this.resolveStrategySearchConfig(args.strategy);
+    if (!config) return null;
+
+    const summary: any = {
+      mode: config.mode,
+      stage: config.stage,
+      candidates: [],
+      degradedReasons: []
+    };
+
+    const recordDegraded = (reason: string, data?: Record<string, unknown>) => {
+      summary.degradedReasons.push(reason);
+      if (args.traceBuilder) {
+        args.traceBuilder.recordEvent({
+          area: "policy",
+          code: "strategy_search_degraded",
+          data: { reason, ...(data ?? {}) }
+        });
+      }
+    };
+
+    const recordCandidateTrace = (
+      candidateSummary: any,
+      detail: {
+        targetFilesCount?: number;
+        shouldBatch?: boolean;
+        diffMode?: string;
+        includeImpact?: boolean;
+        durationMs?: number;
+      } = {}
+    ) => {
+      if (!args.traceBuilder) return;
+      args.traceBuilder.recordEvent({
+        area: "policy",
+        code: "strategy_search_candidate",
+        data: {
+          id: candidateSummary.id,
+          label: candidateSummary.label,
+          dryRunOk: candidateSummary.dryRunOk,
+          ...(candidateSummary.errorCode ? { errorCode: candidateSummary.errorCode } : {}),
+          ...(typeof candidateSummary.reward === "number" ? { reward: candidateSummary.reward } : {}),
+          ...(typeof candidateSummary.touchedFiles === "number" ? { touchedFiles: candidateSummary.touchedFiles } : {}),
+          ...(typeof candidateSummary.diffSize === "number" ? { diffSize: candidateSummary.diffSize } : {}),
+          ...(typeof candidateSummary.estimatedTokens === "number"
+            ? { estimatedTokens: candidateSummary.estimatedTokens }
+            : {}),
+          ...(typeof candidateSummary.contractBreaking === "number"
+            ? { contractBreaking: candidateSummary.contractBreaking }
+            : {}),
+          ...(typeof candidateSummary.contractConsumers === "number"
+            ? { contractConsumers: candidateSummary.contractConsumers }
+            : {}),
+          ...(typeof candidateSummary.guardsHigh === "number"
+            ? { guardsHigh: candidateSummary.guardsHigh }
+            : {}),
+          ...(typeof candidateSummary.guardsDiagnostics === "number"
+            ? { guardsDiagnostics: candidateSummary.guardsDiagnostics }
+            : {}),
+          ...(candidateSummary.riskLevel ? { riskLevel: candidateSummary.riskLevel } : {}),
+          ...(Array.isArray(candidateSummary.degradedReasons) && candidateSummary.degradedReasons.length > 0
+            ? { degradedReasons: candidateSummary.degradedReasons }
+            : {}),
+          ...(candidateSummary.rewardBreakdown ? { rewardBreakdown: candidateSummary.rewardBreakdown } : {}),
+          ...(typeof detail.targetFilesCount === "number"
+            ? { targetFilesCount: detail.targetFilesCount }
+            : {}),
+          ...(typeof detail.shouldBatch === "boolean" ? { shouldBatch: detail.shouldBatch } : {}),
+          ...(typeof detail.diffMode === "string" ? { diffMode: detail.diffMode } : {}),
+          ...(typeof detail.includeImpact === "boolean" ? { includeImpact: detail.includeImpact } : {}),
+          ...(typeof detail.durationMs === "number" ? { durationMs: detail.durationMs } : {})
+        }
+      });
+    };
+
+    if (config.mode === "off" || config.stage === "r0") {
+      if (args.traceBuilder) {
+        args.traceBuilder.recordEvent({
+          area: "policy",
+          code: "strategy_search_skipped",
+          data: {
+            reason: config.mode === "off" ? "mode_off" : "stage_r0",
+            mode: config.mode,
+            stage: config.stage
+          }
+        });
+      }
+      return { summary };
+    }
+
+    if (!Array.isArray(config.candidates) || config.candidates.length === 0) {
+      recordDegraded("reasoning_candidates_missing");
+      return { summary };
+    }
+
+    const stageLimit = config.stage === "r2" ? 3 : 2;
+    const maxCandidates = config.stage === "r3"
+      ? config.maxCandidates
+      : Math.min(config.maxCandidates, stageLimit);
+    const candidates = config.candidates.slice(0, maxCandidates) as StrategySearchCandidate[];
+    const normalizedCandidates = candidates.map((candidate, index) => {
+      const id = typeof candidate.id === "string" && candidate.id.length > 0
+        ? candidate.id
+        : `candidate_${index + 1}`;
+      const candidateWithId = candidate.id === id ? candidate : { ...candidate, id };
+      return { candidate: candidateWithId, id };
+    });
+    const candidateLookup = new Map<string, StrategySearchCandidate>();
+    for (const entry of normalizedCandidates) {
+      candidateLookup.set(entry.id, entry.candidate);
+    }
+    if (config.candidates.length > normalizedCandidates.length) {
+      recordDegraded("reasoning_candidates_truncated", {
+        requestedCount: config.candidates.length,
+        usedCount: normalizedCandidates.length
+      });
+    }
+
+    if (args.traceBuilder) {
+      args.traceBuilder.recordEvent({
+        area: "policy",
+        code: "strategy_search_start",
+        data: {
+          mode: config.mode,
+          stage: config.stage,
+          candidates: normalizedCandidates.length,
+          timeboxMs: config.timeboxMs,
+          maxImpactMs: config.maxImpactMs,
+          maxTouchedFiles: config.maxTouchedFiles,
+          maxTokensEstimated: config.maxTokensEstimated
+        }
+      });
+    }
+
+    const startTime = Date.now();
+    const deadline = startTime + config.timeboxMs;
+    const dependencyGraph = this.registry.getMetadata<DependencyGraph>("dependencyGraph");
+    const indexStateManager = this.registry.getMetadata<IndexStateManager>("indexStateManager");
+    const symbolicGuardConfig = resolveSymbolicGuardConfig();
+    const symbolicGuardEnabled = symbolicGuardConfig.enabled && symbolicGuardConfig.mode !== "off";
+    const symbolicGuardEngine = symbolicGuardEnabled ? new SymbolicGuardEngine() : undefined;
+
+    const evaluated: Array<any> = [];
+    const evaluatedById = new Map<string, any>();
+    const evaluateCandidate = async (entry: { candidate: StrategySearchCandidate; id: string }): Promise<any> => {
+      const cached = evaluatedById.get(entry.id);
+      if (cached) return cached;
+
+      const candidate = entry.candidate;
+      const candidateStart = Date.now();
+      const simulationDeadline = candidateStart + config.maxSimulationMs;
+      const candidateSummary: any = {
+        id: entry.id,
+        label: candidate.label,
+        dryRunOk: false
+      };
+      const appendCandidateDegraded = (reason: string) => {
+        candidateSummary.degradedReasons = Array.from(new Set([
+          ...(candidateSummary.degradedReasons ?? []),
+          reason
+        ]));
+      };
+      const candidateEdits = Array.isArray(candidate.edits) ? candidate.edits : [];
+      if (candidateEdits.length === 0) {
+        candidateSummary.errorCode = "candidate_edits_missing";
+        candidateSummary.message = "Strategy candidate edits are required.";
+        recordCandidateTrace(candidateSummary, { durationMs: Date.now() - candidateStart });
+        evaluatedById.set(entry.id, candidateSummary);
+        evaluated.push(candidateSummary);
+        return candidateSummary;
+      }
+
+      const { targetFiles, targetPath } = this.resolveCandidateTargets({
+        candidate,
+        baseTargets: args.baseTargets,
+        baseTargetFiles: args.baseTargetFiles
+      });
+      if (targetFiles.length === 0) {
+        candidateSummary.errorCode = "candidate_target_missing";
+        candidateSummary.message = "Strategy candidate target is missing.";
+        recordCandidateTrace(candidateSummary, {
+          targetFilesCount: targetFiles.length,
+          durationMs: Date.now() - candidateStart
+        });
+        evaluatedById.set(entry.id, candidateSummary);
+        evaluated.push(candidateSummary);
+        return candidateSummary;
+      }
+
+      const candidateDiffMode = candidate.options?.diffMode ?? args.baseDiffMode;
+      const candidateIncludeImpact = typeof candidate.options?.includeImpact === "boolean"
+        ? candidate.options.includeImpact
+        : args.includeImpact;
+      const editPaths = this.collectEditPaths(candidateEdits);
+      const shouldBatch = this.shouldUseBatch(args.baseConstraints, targetFiles, editPaths);
+
+      let diffText = "";
+      let diffSize = 0;
+      let touchedFiles = targetFiles.length > 0 ? targetFiles.length : editPaths.length;
+      let riskScore = 0;
+      let riskLevel: string | undefined;
+      let breakingChanges = 0;
+      let candidateNormalization: ReturnType<typeof normalizeEdits> | undefined;
+      let candidateNewContent: string | undefined;
+      let contractBreaking = 0;
+      let contractConsumers = 0;
+      let guardsHigh = 0;
+      let guardsDiagnostics = 0;
+      let contractPenalty = 0;
+
+      if (shouldBatch) {
+        const batchResult = await executeBatchChange(
+          {
+            intent: args.intent,
+            context: args.context,
+            rawEdits: candidateEdits,
+            targetFiles,
+            dryRun: true,
+            includeImpact: false,
+            dependencyGraph,
+            indexStateManager,
+            constraints: args.baseConstraints,
+            diffMode: candidateDiffMode
+          },
+          (ctx, tool, toolArgs) => this.runTool(ctx, tool, toolArgs),
+          (e) => this.extractEditFilePath(e),
+          (failureArgs) => this.buildFailureGuidance(failureArgs)
+        );
+        candidateSummary.dryRunOk = Boolean(batchResult?.success);
+        if (!batchResult?.success) {
+          candidateSummary.errorCode = batchResult?.errorCode ?? "candidate_dryrun_failed";
+          candidateSummary.message = batchResult?.message ?? "Candidate dry-run failed.";
+        } else {
+          diffText = typeof batchResult?.diff === "string" ? batchResult.diff : "";
+        }
+      } else {
+        if (!targetPath) {
+          candidateSummary.errorCode = "candidate_target_missing";
+          candidateSummary.message = "Strategy candidate target is missing.";
+          recordCandidateTrace(candidateSummary, { durationMs: Date.now() - candidateStart });
+          evaluatedById.set(entry.id, candidateSummary);
+          evaluated.push(candidateSummary);
+          return candidateSummary;
+        }
+        candidateNormalization = normalizeEdits(candidateEdits, targetPath);
+        if (candidateNormalization.edits.length === 0) {
+          candidateSummary.errorCode = "candidate_edits_invalid";
+          candidateSummary.message = "Strategy candidate edits are invalid.";
+          recordCandidateTrace(candidateSummary, { durationMs: Date.now() - candidateStart });
+          evaluatedById.set(entry.id, candidateSummary);
+          evaluated.push(candidateSummary);
+          return candidateSummary;
+        }
+        const editResult = await this.runTool(args.context, "edit_transaction", {
+          filePath: targetPath,
+          edits: candidateNormalization.edits,
+          dryRun: true,
+          options: {
+            skipImpactPreview: true,
+            ...(candidateDiffMode ? { diffMode: candidateDiffMode } : {})
+          }
+        });
+        candidateSummary.dryRunOk = Boolean(editResult?.success);
+        if (!editResult?.success) {
+          candidateSummary.errorCode = editResult?.errorCode ?? "candidate_dryrun_failed";
+          candidateSummary.message = editResult?.message ?? "Candidate dry-run failed.";
+        } else {
+          diffText = typeof editResult?.diff === "string" ? editResult.diff : "";
+          const structured = Array.isArray(editResult?.structuredDiff) ? editResult.structuredDiff[0] : undefined;
+          const added = typeof structured?.added === "number" ? structured.added : 0;
+          const removed = typeof structured?.removed === "number" ? structured.removed : 0;
+          diffSize = added + removed;
+          candidateNewContent = typeof editResult?.newContent === "string" ? editResult.newContent : undefined;
+        }
+      }
+
+      if (candidateSummary.dryRunOk) {
+        if (diffSize === 0) {
+          diffSize = Math.ceil(diffText.length / 80);
+        }
+        const estimatedTokens = diffText ? estimateTokens(diffText) : 0;
+        candidateSummary.touchedFiles = touchedFiles;
+        candidateSummary.diffSize = diffSize;
+        candidateSummary.estimatedTokens = estimatedTokens;
+
+        if (touchedFiles > config.maxTouchedFiles || estimatedTokens > config.maxTokensEstimated) {
+          candidateSummary.degradedReasons = ["reasoning_budget_exceeded"];
+        }
+
+        const simulationBudgetExceeded = Date.now() > simulationDeadline;
+        if (simulationBudgetExceeded) {
+          appendCandidateDegraded("reasoning_budget_exceeded");
+        }
+
+        const impactStart = Date.now();
+        const impactDeadline = impactStart + config.maxImpactMs;
+        const hasImpactBudget = candidateIncludeImpact
+          && config.maxImpactMs > 0
+          && !simulationBudgetExceeded
+          && impactDeadline <= deadline;
+        if (hasImpactBudget && targetFiles.length === 1) {
+          const impact = await this.runTool(args.context, "impact_analyze", {
+            target: targetFiles[0],
+            edits: candidateEdits
+          });
+          riskLevel = impact?.riskLevel ?? impact?.preview?.riskLevel;
+          riskScore = this.mapRiskLevelToScore(riskLevel);
+          const breakingNotes = Array.isArray(impact?.notes)
+            ? impact.notes.filter((note: any) => typeof note === "string" && note.startsWith("BREAKING CHANGE:"))
+            : [];
+          breakingChanges = Array.isArray(impact?.breakingChanges)
+            ? impact.breakingChanges.length
+            : breakingNotes.length;
+        } else if (candidateIncludeImpact) {
+          appendCandidateDegraded("reasoning_impact_skipped");
+        }
+
+        const resolveCandidateContent = async (): Promise<string | undefined> => {
+          if (candidateNewContent) return candidateNewContent;
+          if (!targetPath) return undefined;
+          if (!candidateNormalization) {
+            candidateNormalization = normalizeEdits(candidateEdits, targetPath);
+          }
+          const resolvedTarget = path.resolve(targetPath);
+          const scopedEdits = candidateNormalization.edits.filter(
+            (edit) => path.resolve(edit.filePath ?? targetPath) === resolvedTarget
+          );
+          if (scopedEdits.length === 0) {
+            return undefined;
+          }
+          const fileSystem = this.resolveFileSystem();
+          if (!await fileSystem.exists(targetPath)) {
+            return undefined;
+          }
+          let existingContent = "";
+          try {
+            existingContent = await fileSystem.readFile(targetPath);
+          } catch {
+            return undefined;
+          }
+          try {
+            candidateNewContent = applyEditsToContent(existingContent, scopedEdits).newContent;
+          } catch {
+            return undefined;
+          }
+          return candidateNewContent;
+        };
+
+        const evaluateContractAndGuards = async (): Promise<void> => {
+          if (!hasImpactBudget) {
+            if (candidateIncludeImpact) {
+              appendCandidateDegraded("reasoning_contract_skipped");
+              appendCandidateDegraded("reasoning_guards_skipped");
+            }
+            return;
+          }
+          if (Date.now() > deadline || Date.now() > impactDeadline) {
+            appendCandidateDegraded("reasoning_budget_exceeded");
+            return;
+          }
+
+          const contractBreakingSet = new Set<string>();
+          const contractConsumerSet = new Set<string>();
+          let evaluatedAny = false;
+
+          if (!shouldBatch) {
+            if (!targetPath) {
+              appendCandidateDegraded("reasoning_contract_skipped");
+              appendCandidateDegraded("reasoning_guards_skipped");
+              return;
+            }
+            const content = await resolveCandidateContent();
+            if (!content) {
+              appendCandidateDegraded("reasoning_contract_skipped");
+              appendCandidateDegraded("reasoning_guards_skipped");
+              return;
+            }
+            evaluatedAny = true;
+            const contractImpact = await this.buildCrossLangImpact(targetPath, args.context, {
+              afterContent: content
+            });
+            if (contractImpact) {
+              const breaking = Array.isArray(contractImpact.breakingExports) ? contractImpact.breakingExports : [];
+              const consumers = Array.isArray(contractImpact.consumerFiles) ? contractImpact.consumerFiles : [];
+              for (const entry of breaking) {
+                contractBreakingSet.add(`${contractImpact.packageName}:${entry}`);
+              }
+              for (const entry of consumers) {
+                contractConsumerSet.add(entry);
+              }
+              if (contractImpact.degraded && Array.isArray(contractImpact.reasons)) {
+                for (const reason of contractImpact.reasons) {
+                  if (typeof reason === "string" && reason.length > 0) {
+                    appendCandidateDegraded(reason);
+                  }
+                }
+              }
+            }
+            if (symbolicGuardEngine) {
+              const guardResult = await symbolicGuardEngine.evaluate({ filePath: targetPath, content });
+              guardsDiagnostics += guardResult.diagnostics.length;
+              guardsHigh += guardResult.diagnostics.filter((diag) => diag.severity === "high").length;
+              if (Array.isArray(guardResult.degradedReasons)) {
+                for (const reason of guardResult.degradedReasons) {
+                  if (typeof reason === "string" && reason.length > 0) {
+                    appendCandidateDegraded(reason);
+                  }
+                }
+              }
+            } else {
+              appendCandidateDegraded("symbolic_guards_disabled");
+            }
+          } else {
+            const mapped = mapEditsToFiles({
+              targetFiles,
+              rawEdits: candidateEdits,
+              fallbackTarget: targetPath,
+              extractEditFilePath: (edit) => this.extractEditFilePath(edit)
+            });
+            if (mapped.error || !mapped.fileEdits) {
+              appendCandidateDegraded("reasoning_contract_skipped");
+              appendCandidateDegraded("reasoning_guards_skipped");
+              return;
+            }
+            const fileSystem = this.resolveFileSystem();
+            for (const [filePath, editsForFile] of mapped.fileEdits.entries()) {
+              if (Date.now() > deadline || Date.now() > impactDeadline) {
+                appendCandidateDegraded("reasoning_budget_exceeded");
+                break;
+              }
+              const normalization = normalizeEdits(editsForFile, filePath);
+              if (normalization.edits.length === 0) {
+                continue;
+              }
+              if (!await fileSystem.exists(filePath)) {
+                continue;
+              }
+              let existingContent = "";
+              try {
+                existingContent = await fileSystem.readFile(filePath);
+              } catch {
+                continue;
+              }
+              let newContent = "";
+              try {
+                newContent = applyEditsToContent(existingContent, normalization.edits).newContent;
+              } catch {
+                continue;
+              }
+              evaluatedAny = true;
+              const contractImpact = await this.buildCrossLangImpact(filePath, args.context, {
+                afterContent: newContent
+              });
+              if (contractImpact) {
+                const breaking = Array.isArray(contractImpact.breakingExports) ? contractImpact.breakingExports : [];
+                const consumers = Array.isArray(contractImpact.consumerFiles) ? contractImpact.consumerFiles : [];
+                for (const entry of breaking) {
+                  contractBreakingSet.add(`${contractImpact.packageName}:${entry}`);
+                }
+                for (const entry of consumers) {
+                  contractConsumerSet.add(entry);
+                }
+                if (contractImpact.degraded && Array.isArray(contractImpact.reasons)) {
+                  for (const reason of contractImpact.reasons) {
+                    if (typeof reason === "string" && reason.length > 0) {
+                      appendCandidateDegraded(reason);
+                    }
+                  }
+                }
+              }
+              if (symbolicGuardEngine) {
+                const guardResult = await symbolicGuardEngine.evaluate({ filePath, content: newContent });
+                guardsDiagnostics += guardResult.diagnostics.length;
+                guardsHigh += guardResult.diagnostics.filter((diag) => diag.severity === "high").length;
+                if (Array.isArray(guardResult.degradedReasons)) {
+                  for (const reason of guardResult.degradedReasons) {
+                    if (typeof reason === "string" && reason.length > 0) {
+                      appendCandidateDegraded(reason);
+                    }
+                  }
+                }
+              } else {
+                appendCandidateDegraded("symbolic_guards_disabled");
+              }
+            }
+          }
+
+          if (!evaluatedAny) {
+            appendCandidateDegraded("reasoning_contract_skipped");
+            appendCandidateDegraded("reasoning_guards_skipped");
+            return;
+          }
+
+          contractBreaking = contractBreakingSet.size;
+          contractConsumers = contractConsumerSet.size;
+          contractPenalty = contractBreaking + Math.ceil(Math.min(contractConsumers, 20) / 5);
+          candidateSummary.contractBreaking = contractBreaking;
+          candidateSummary.contractConsumers = contractConsumers;
+          candidateSummary.guardsDiagnostics = guardsDiagnostics;
+          candidateSummary.guardsHigh = guardsHigh;
+        };
+
+        await evaluateContractAndGuards();
+
+        const weights = config.scoring.weights;
+        const filesPenalty = weights.files * touchedFiles;
+        const diffPenalty = weights.diff * diffSize;
+        const tokensPenalty = weights.tokens * estimatedTokens;
+        const riskPenalty = weights.risk * riskScore;
+        const breakingPenalty = weights.breaking * breakingChanges;
+        const contractWeightedPenalty = weights.contract * contractPenalty;
+        const guardsPenalty = weights.guardsHigh * guardsHigh;
+        const reward = 100
+          - filesPenalty
+          - diffPenalty
+          - tokensPenalty
+          - riskPenalty
+          - breakingPenalty
+          - contractWeightedPenalty
+          - guardsPenalty;
+        candidateSummary.reward = reward;
+        candidateSummary.breakingChanges = breakingChanges;
+        candidateSummary.rewardBreakdown = {
+          base: 100,
+          penalties: {
+            files: filesPenalty,
+            diff: diffPenalty,
+            tokens: tokensPenalty,
+            risk: riskPenalty,
+            breaking: breakingPenalty,
+            contract: contractWeightedPenalty,
+            guardsHigh: guardsPenalty
+          },
+          signals: {
+            touchedFiles,
+            diffSize,
+            estimatedTokens,
+            riskScore,
+            breakingChanges,
+            contractBreaking,
+            contractConsumers,
+            guardsHigh
+          }
+        };
+        if (riskLevel) {
+          candidateSummary.riskLevel = riskLevel;
+        }
+      }
+
+      recordCandidateTrace(candidateSummary, {
+        targetFilesCount: targetFiles.length,
+        shouldBatch,
+        diffMode: candidateDiffMode,
+        includeImpact: candidateIncludeImpact,
+        durationMs: Date.now() - candidateStart
+      });
+      evaluatedById.set(entry.id, candidateSummary);
+      evaluated.push(candidateSummary);
+      return candidateSummary;
+    };
+
+    if (config.stage === "r3") {
+      const mctsConfig = config.mcts ?? STRATEGY_SEARCH_DEFAULTS.mcts;
+      if (normalizedCandidates.length === 0) {
+        recordDegraded("reasoning_candidates_missing");
+      } else if (mctsConfig.maxRollouts < 1 || mctsConfig.maxDepth < 1) {
+        recordDegraded("reasoning_mcts_disabled");
+      } else {
+        type MctsNode = {
+          id: string;
+          candidate?: StrategySearchCandidate;
+          parent?: MctsNode;
+          children: MctsNode[];
+          unexpanded: StrategySearchCandidate[];
+          visits: number;
+          value: number;
+          depth: number;
+        };
+
+        const rng = this.createSeededRng(mctsConfig.seed);
+        const usedIds = new Set<string>();
+        const makeNode = (candidate: StrategySearchCandidate, parent: MctsNode, index: number): MctsNode => {
+          const rawId = typeof candidate.id === "string" && candidate.id.length > 0
+            ? candidate.id
+            : `${parent.id}_${index + 1}`;
+          let id = rawId;
+          if (usedIds.has(id)) {
+            id = `${rawId}_${usedIds.size + 1}`;
+          }
+          usedIds.add(id);
+          const candidateWithId = candidate.id === id ? candidate : { ...candidate, id };
+          candidateLookup.set(id, candidateWithId);
+          return {
+            id,
+            candidate: candidateWithId,
+            parent,
+            children: [],
+            unexpanded: Array.isArray(candidateWithId.children) ? candidateWithId.children : [],
+            visits: 0,
+            value: 0,
+            depth: parent.depth + 1
+          };
+        };
+
+        const root: MctsNode = {
+          id: "root",
+          children: [],
+          unexpanded: normalizedCandidates.map((entry) => entry.candidate),
+          visits: 0,
+          value: 0,
+          depth: 0
+        };
+
+        const selectChild = (node: MctsNode): MctsNode => {
+          let best = node.children[0];
+          let bestScore = -Infinity;
+          const logVisits = Math.log(Math.max(1, node.visits));
+          for (const child of node.children) {
+            if (child.visits === 0) {
+              return child;
+            }
+            const exploitation = child.value / child.visits;
+            const exploration = mctsConfig.exploration * Math.sqrt(logVisits / child.visits);
+            const score = exploitation + exploration;
+            if (score > bestScore) {
+              bestScore = score;
+              best = child;
+            }
+          }
+          return best;
+        };
+
+        const pickUnexpanded = (node: MctsNode): MctsNode => {
+          const index = Math.floor(rng() * node.unexpanded.length);
+          const candidate = node.unexpanded.splice(index, 1)[0];
+          const childNode = makeNode(candidate, node, index);
+          node.children.push(childNode);
+          return childNode;
+        };
+
+        const failedReward = -1000;
+        let rollouts = 0;
+        while (rollouts < mctsConfig.maxRollouts) {
+          if (Date.now() > deadline) {
+            recordDegraded("reasoning_budget_exceeded", { evaluatedCount: evaluated.length });
+            if (args.traceBuilder) {
+              args.traceBuilder.recordEvent({
+                area: "budget",
+                code: "strategy_search_budget_exceeded",
+                data: {
+                  timeboxMs: config.timeboxMs,
+                  evaluatedCount: evaluated.length
+                }
+              });
+            }
+            break;
+          }
+          let node = root;
+          while (node.depth < mctsConfig.maxDepth && node.unexpanded.length === 0 && node.children.length > 0) {
+            node = selectChild(node);
+          }
+          if (node.depth < mctsConfig.maxDepth && node.unexpanded.length > 0) {
+            node = pickUnexpanded(node);
+          }
+          if (!node.candidate) {
+            break;
+          }
+          const entry = { candidate: node.candidate, id: node.id };
+          const candidateSummary = await evaluateCandidate(entry);
+          const reward = typeof candidateSummary.reward === "number" ? candidateSummary.reward : failedReward;
+          let cursor: MctsNode | undefined = node;
+          while (cursor) {
+            cursor.visits += 1;
+            cursor.value += reward;
+            cursor = cursor.parent;
+          }
+          rollouts += 1;
+        }
+
+        summary.search = {
+          algorithm: "uct",
+          rollouts,
+          maxDepth: mctsConfig.maxDepth,
+          exploration: mctsConfig.exploration,
+          ...(Number.isFinite(mctsConfig.seed) ? { seed: mctsConfig.seed } : {}),
+          evaluatedCount: evaluated.length
+        };
+        if (args.traceBuilder) {
+          args.traceBuilder.recordEvent({
+            area: "policy",
+            code: "strategy_search_mcts",
+            data: summary.search
+          });
+        }
+      }
+    } else {
+      for (const entry of normalizedCandidates) {
+        if (Date.now() > deadline) {
+          summary.degradedReasons.push("reasoning_budget_exceeded");
+          if (args.traceBuilder) {
+            args.traceBuilder.recordEvent({
+              area: "budget",
+              code: "strategy_search_budget_exceeded",
+              data: {
+                timeboxMs: config.timeboxMs,
+                evaluatedCount: evaluated.length
+              }
+            });
+          }
+          break;
+        }
+        await evaluateCandidate(entry);
+      }
+    }
+
+    summary.candidates = evaluated;
+    const successful = evaluated.filter((item) => item.dryRunOk && typeof item.reward === "number");
+    if (successful.length === 0) {
+      recordDegraded("reasoning_all_failed", { evaluatedCount: evaluated.length });
+      return { summary };
+    }
+
+    const best = successful.reduce((acc, current) => (current.reward > acc.reward ? current : acc));
+    summary.selectedCandidateId = best.id;
+    if (best.rewardBreakdown) {
+      summary.selectedRewardBreakdown = best.rewardBreakdown;
+    }
+    if (args.traceBuilder) {
+      args.traceBuilder.recordEvent({
+        area: "policy",
+        code: "strategy_search_selected",
+        data: {
+          selected: best.id,
+          reward: best.reward,
+          evaluatedCount: evaluated.length,
+          successCount: successful.length,
+          durationMs: Math.max(0, Date.now() - startTime)
+        }
+      });
+    }
+
+    return {
+      selected: candidateLookup.get(best.id) ?? normalizedCandidates.find((entry) => entry.id === best.id)?.candidate,
+      summary
+    };
   }
 
   private async buildCrossLangImpact(

@@ -149,11 +149,88 @@ Plan/apply safe edits with impact analysis.
 | `options.suggestDocs` | `boolean` |  | Enable doc update suggestions on successful apply. |
 | `options.batchImpactLimit` | `number` |  | Max files to include in batch impact preview. |
 | `options.formatter` | `"auto" \| "off" \| "prettier"` |  | Opt-in formatter run after apply. |
+| `strategySearch.mode` | `"off" \| "auto" \| "force"` |  | Default `auto`. `off` disables; `force` always runs at `stage`. |
+| `strategySearch.stage` | `"r0" \| "r1" \| "r2" \| "r3"` |  | Default `r1` when mode is not `off`. |
+| `strategySearch.candidates` | `object[]` |  | Required when mode is not `off`. |
+| `strategySearch.maxCandidates` | `number` |  | Default `2` (hard cap `3`). |
+| `strategySearch.timeboxMs` | `number` |  | Default `700`. |
+| `strategySearch.maxSimulationMs` | `number` |  | Default `350`. |
+| `strategySearch.maxImpactMs` | `number` |  | Default `250`. |
+| `strategySearch.maxTouchedFiles` | `number` |  | Default `20`. |
+| `strategySearch.maxTokensEstimated` | `number` |  | Default `2400`. |
+| `strategySearch.scoring.weights.*` | `number` |  | Weights for files/diff/tokens/risk/breaking/contract/guardsHigh. |
+| `strategySearch.mcts.*` | `object` |  | R3 only: `{ maxDepth, maxRollouts, exploration, seed? }`. |
 | `trace` | `boolean` |  | Return v1 `effectiveOptions` + v1 `decisionTrace`. |
 
 **Notes**
 
 - `profile` may be automatically downshifted for cost stability unless explicitly provided; set `trace: true` to inspect the final decision (`decisionTrace`).
+- StrategySearch is opt-in: if `strategySearch` is omitted, no candidate evaluation runs (R0 baseline).
+- If `strategySearch.mode` is `auto` or `force` but no candidates are supplied, the engine falls back to R0 and returns a degraded reason.
+
+**StrategySearch candidates**
+
+| Field | Type | Required | Notes |
+|---|---|---:|---|
+| `strategySearch.candidates[].id` | `string` | ✓ | Unique candidate id. |
+| `strategySearch.candidates[].label` | `string` |  | Label such as `baseline` or `alt`. |
+| `strategySearch.candidates[].intent` | `string` |  | Overrides top-level `intent` for this candidate. |
+| `strategySearch.candidates[].target` | `string` |  | Optional `target` hint. |
+| `strategySearch.candidates[].targetFiles` | `string[]` |  | Constrain blast radius for this candidate. |
+| `strategySearch.candidates[].edits` | `object[]` | ✓ | Structured edits (MVP requires explicit edits). |
+| `strategySearch.candidates[].children` | `object[]` |  | Optional child candidates for MCTS expansion (R3). |
+| `strategySearch.candidates[].options.diffMode` | `"myers" \| "semantic"` |  | Diff mode for dry-run evaluation. |
+| `strategySearch.candidates[].options.includeImpact` | `boolean` |  | Candidate-level impact toggle. |
+| `strategySearch.candidates[].notes` | `string` |  | Freeform notes for trace/debugging. |
+
+**R3 MCTS example**
+
+```json
+{
+  "strategySearch": {
+    "mode": "force",
+    "stage": "r3",
+    "maxCandidates": 1,
+    "mcts": { "maxDepth": 2, "maxRollouts": 5, "exploration": 1.4, "seed": 7 },
+    "candidates": [
+      {
+        "id": "root",
+        "edits": [{ "targetString": "ROOT", "replacementString": "ROOT1" }],
+        "children": [
+          { "id": "leaf_a", "edits": [{ "targetString": "A", "replacementString": "A1" }] },
+          { "id": "leaf_b", "edits": [{ "targetString": "B", "replacementString": "B1" }] }
+        ]
+      }
+    ]
+  }
+}
+```
+
+**R3 Tree guidance**
+
+- Each node must be a complete, executable candidate (`edits` required on every node).
+- Root nodes represent distinct strategies; children are refinements (smaller diff, fewer files, added guards).
+- Default `mcts` is `{ maxDepth: 2, maxRollouts: 5, exploration: 1.4 }`.
+- Keep depth ≤2 and branching ≤3 for predictable timeboxes; increase `maxRollouts` if deeper.
+- Use `targetFiles` to bound blast radius; use `notes` to capture rationale.
+
+**StrategySearch output (change)**
+
+When `strategySearch` runs, the response includes:
+
+- `strategySearch.mode`, `strategySearch.stage`
+- `strategySearch.selectedCandidateId`
+- `strategySearch.selectedRewardBreakdown` (reward breakdown for the selected candidate)
+- `strategySearch.degradedReasons[]`
+- `strategySearch.search` (R3 only: `{ algorithm, rollouts, maxDepth, exploration, seed?, evaluatedCount }`)
+- `strategySearch.candidates[]` with:
+  - `id`, `label`, `dryRunOk`, `reward`, `riskLevel?`
+  - `touchedFiles`, `diffSize`, `estimatedTokens`
+  - `breakingChanges`
+  - `contractBreaking`, `contractConsumers`, `guardsHigh`, `guardsDiagnostics`
+  - `rewardBreakdown` (`base`, `penalties.*`, `signals.*`)
+
+See `docs/adr/ADR-082-simulate-reason-execute-mcts.md` for rationale, defaults, and tuning guidance.
 
 **Workflow output**
 

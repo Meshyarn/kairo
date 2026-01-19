@@ -1086,6 +1086,68 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
               batchImpactLimit: { type: "number" }
             }
           },
+          strategySearch: {
+            type: "object",
+            properties: {
+              mode: { type: "string", enum: ["off", "auto", "force"] },
+              stage: { type: "string", enum: ["r0", "r1", "r2", "r3"] },
+              candidates: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    id: { type: "string" },
+                    label: { type: "string" },
+                    intent: { type: "string" },
+                    target: { type: "string" },
+                    targetFiles: { type: "array", items: { type: "string" } },
+                    edits: { type: "array", items: { type: "object" } },
+                    children: { type: "array", items: { type: "object" } },
+                    options: {
+                      type: "object",
+                      properties: {
+                        diffMode: { type: "string", enum: ["myers", "semantic"] },
+                        includeImpact: { type: "boolean" }
+                      }
+                    },
+                    notes: { type: "string" }
+                  }
+                }
+              },
+              maxCandidates: { type: "number" },
+              timeboxMs: { type: "number" },
+              maxSimulationMs: { type: "number" },
+              maxImpactMs: { type: "number" },
+              maxTouchedFiles: { type: "number" },
+              maxTokensEstimated: { type: "number" },
+              scoring: {
+                type: "object",
+                properties: {
+                  weights: {
+                    type: "object",
+                    properties: {
+                      files: { type: "number" },
+                      diff: { type: "number" },
+                      tokens: { type: "number" },
+                      risk: { type: "number" },
+                      breaking: { type: "number" },
+                      contract: { type: "number" },
+                      guardsHigh: { type: "number" }
+                    }
+                  }
+                }
+              },
+              mcts: {
+                type: "object",
+                properties: {
+                  maxDepth: { type: "number" },
+                  maxRollouts: { type: "number" },
+                  exploration: { type: "number" },
+                  seed: { type: "number" }
+                }
+              }
+            }
+          },
           override: {
             type: "object",
             properties: {
