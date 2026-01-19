@@ -16,20 +16,13 @@ export interface DiffResult {
   removed: number
 }
 export declare function diffUnified(oldText: string, newText: string, contextLines: number): DiffResult
-export interface SyntaxIssue {
-  line: number
-  column: number
-  message: string
-}
-export declare function validateSyntax(language: string, content: string): Array<SyntaxIssue>
-export declare function cosineScores(query: Float32Array, vectors: Array<Float32Array>): Array<number>
 export interface SymbolicSolverEvidence {
   snippet?: string
   note?: string
 }
 export interface SymbolicSolverDiagnostic {
   code: string
-  severity: "warn" | "high"
+  severity: string
   message: string
   filePath?: string
   line?: number
@@ -62,6 +55,13 @@ export interface SymbolicSolverResult {
   stats?: SymbolicSolverStats
 }
 export declare function symbolicSolve(input: SymbolicSolverInput): SymbolicSolverResult
+export interface SyntaxIssue {
+  line: number
+  column: number
+  message: string
+}
+export declare function validateSyntax(language: string, content: string): Array<SyntaxIssue>
+export declare function cosineScores(query: Float32Array, vectors: Array<Float32Array>): Array<number>
 export declare class SmartChunker {
   constructor(modelPath: string)
   chunk(text: string, maxTokens: number, overlap: number): Array<ChunkResult>
