@@ -324,4 +324,55 @@ describe("ChangePillar strategySearch", () => {
       }
     }
   });
+
+  it("selects best candidate via mcts expansion", async () => {
+    const registry = new InternalToolRegistry();
+    registry.register("edit_transaction", async (args: any) => {
+      const target = args?.edits?.[0]?.targetString ?? "";
+      if (target === "GOOD") {
+        return { success: true, diff: "diffGood", structuredDiff: [{ added: 2, removed: 0 }] } as any;
+      }
+      if (target === "BAD") {
+        return { success: true, diff: "diffBad", structuredDiff: [{ added: 20, removed: 0 }] } as any;
+      }
+      return { success: true, diff: "diffRoot", structuredDiff: [{ added: 10, removed: 0 }] } as any;
+    });
+    registry.register("relationship_analyze", async () => ({ nodes: [], edges: [] } as any));
+    registry.register("hotspot_detect", async () => ([] as any));
+
+    const pillar = new ChangePillar(registry);
+    const intent = {
+      category: "change",
+      action: "modify",
+      targets: ["src/demo.ts"],
+      originalIntent: "update demo",
+      constraints: {
+        dryRun: true,
+        includeImpact: false,
+        edits: [{ targetString: "BASE", replacementString: "BASE_NEW" }],
+        strategySearch: {
+          mode: "force",
+          stage: "r3",
+          maxCandidates: 1,
+          mcts: { maxDepth: 2, maxRollouts: 2, exploration: 1.4, seed: 7 },
+          candidates: [
+            {
+              id: "root",
+              edits: [{ targetString: "ROOT", replacementString: "ROOT1" }],
+              children: [
+                { id: "leaf_bad", edits: [{ targetString: "BAD", replacementString: "B1" }] },
+                { id: "leaf_good", edits: [{ targetString: "GOOD", replacementString: "G1" }] }
+              ]
+            }
+          ]
+        }
+      },
+      confidence: 1
+    };
+
+    const result = await pillar.execute(intent as any, new OrchestrationContext());
+    expect(result.success).toBe(true);
+    expect(result.strategySearch?.selectedCandidateId).toBe("leaf_good");
+    expect(result.strategySearch?.search?.algorithm).toBe("uct");
+  });
 });

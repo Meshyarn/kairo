@@ -119,6 +119,10 @@ export class SymbolIndex {
         if (results.length > 0) {
             return results;
         }
+        const fallback = this.searchAllSymbolsLinear(query, 100);
+        if (fallback.length > 0) {
+            return fallback;
+        }
         if (!this.shouldRunFuzzySearch()) {
             return [];
         }
@@ -418,6 +422,27 @@ export class SymbolIndex {
         const maxFilesRaw = Number.parseInt(process.env.KAIRO_SYMBOL_FUZZY_MAX_FILES ?? "2000", 10);
         const maxFiles = Number.isFinite(maxFilesRaw) ? maxFilesRaw : 2000;
         return this.db.listFiles().length <= maxFiles;
+    }
+
+    private searchAllSymbolsLinear(query: string, limit: number): SymbolSearchResult[] {
+        const normalizedQuery = query.trim().toLowerCase();
+        if (!normalizedQuery) {
+            return [];
+        }
+        const results: SymbolSearchResult[] = [];
+        const symbolMap = this.db.streamAllSymbols();
+        for (const [filePath, symbols] of symbolMap) {
+            for (const symbol of symbols) {
+                const name = symbol?.name;
+                if (typeof name !== "string") continue;
+                if (!name.toLowerCase().includes(normalizedQuery)) continue;
+                results.push({ filePath, symbol });
+                if (results.length >= limit) {
+                    return results;
+                }
+            }
+        }
+        return results;
     }
 
     public fuzzySearch(

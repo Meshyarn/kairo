@@ -110,6 +110,12 @@ const STRATEGY_SEARCH_DEFAULTS = {
     breaking: 3,
     contract: 3,
     guardsHigh: 2
+  },
+  mcts: {
+    maxDepth: 2,
+    maxRollouts: 5,
+    exploration: 1.4,
+    seed: undefined as number | undefined
   }
 };
 
@@ -1783,7 +1789,7 @@ export class ChangePillar {
     const mode = raw.mode === "off" || raw.mode === "auto" || raw.mode === "force"
       ? raw.mode
       : STRATEGY_SEARCH_DEFAULTS.mode;
-    const stage = raw.stage === "r0" || raw.stage === "r1" || raw.stage === "r2"
+    const stage = raw.stage === "r0" || raw.stage === "r1" || raw.stage === "r2" || raw.stage === "r3"
       ? raw.stage
       : STRATEGY_SEARCH_DEFAULTS.stage;
     const candidates = Array.isArray(raw.candidates)
@@ -1808,17 +1814,37 @@ export class ChangePillar {
       contract: normalizeNumber(weightsRaw.contract, STRATEGY_SEARCH_DEFAULTS.weights.contract),
       guardsHigh: normalizeNumber(weightsRaw.guardsHigh, STRATEGY_SEARCH_DEFAULTS.weights.guardsHigh)
     };
+    const mctsRaw = raw?.mcts ?? {};
+    const seedValue = Number(mctsRaw.seed);
+    const mcts = {
+      maxDepth: normalizeInt(mctsRaw.maxDepth, STRATEGY_SEARCH_DEFAULTS.mcts.maxDepth, 1, 6),
+      maxRollouts: normalizeInt(mctsRaw.maxRollouts, STRATEGY_SEARCH_DEFAULTS.mcts.maxRollouts, 1, 64),
+      exploration: normalizeNumber(mctsRaw.exploration, STRATEGY_SEARCH_DEFAULTS.mcts.exploration),
+      ...(Number.isFinite(seedValue) ? { seed: seedValue } : {})
+    };
     return {
       mode,
       stage,
       candidates,
-      maxCandidates: normalizeInt(raw.maxCandidates, STRATEGY_SEARCH_DEFAULTS.maxCandidates, 1, 3),
+      maxCandidates: normalizeInt(raw.maxCandidates, STRATEGY_SEARCH_DEFAULTS.maxCandidates, 1, 8),
       timeboxMs: normalizeInt(raw.timeboxMs, STRATEGY_SEARCH_DEFAULTS.timeboxMs, 100, 10_000),
       maxSimulationMs: normalizeInt(raw.maxSimulationMs, STRATEGY_SEARCH_DEFAULTS.maxSimulationMs, 50, 10_000),
       maxImpactMs: normalizeInt(raw.maxImpactMs, STRATEGY_SEARCH_DEFAULTS.maxImpactMs, 0, 10_000),
       maxTouchedFiles: normalizeInt(raw.maxTouchedFiles, STRATEGY_SEARCH_DEFAULTS.maxTouchedFiles, 1, 200),
       maxTokensEstimated: normalizeInt(raw.maxTokensEstimated, STRATEGY_SEARCH_DEFAULTS.maxTokensEstimated, 100, 50_000),
-      scoring: { weights }
+      scoring: { weights },
+      mcts
+    };
+  }
+
+  private createSeededRng(seed?: number): () => number {
+    if (!Number.isFinite(seed)) {
+      return () => Math.random();
+    }
+    let state = Math.floor(seed as number) >>> 0;
+    return () => {
+      state = (state * 1664525 + 1013904223) >>> 0;
+      return state / 0x100000000;
     };
   }
 
@@ -1961,14 +1987,21 @@ export class ChangePillar {
     }
 
     const stageLimit = config.stage === "r2" ? 3 : 2;
-    const maxCandidates = Math.min(config.maxCandidates, stageLimit);
+    const maxCandidates = config.stage === "r3"
+      ? config.maxCandidates
+      : Math.min(config.maxCandidates, stageLimit);
     const candidates = config.candidates.slice(0, maxCandidates) as StrategySearchCandidate[];
     const normalizedCandidates = candidates.map((candidate, index) => {
       const id = typeof candidate.id === "string" && candidate.id.length > 0
         ? candidate.id
         : `candidate_${index + 1}`;
-      return { candidate, id };
+      const candidateWithId = candidate.id === id ? candidate : { ...candidate, id };
+      return { candidate: candidateWithId, id };
     });
+    const candidateLookup = new Map<string, StrategySearchCandidate>();
+    for (const entry of normalizedCandidates) {
+      candidateLookup.set(entry.id, entry.candidate);
+    }
     if (config.candidates.length > normalizedCandidates.length) {
       recordDegraded("reasoning_candidates_truncated", {
         requestedCount: config.candidates.length,
@@ -2001,24 +2034,14 @@ export class ChangePillar {
     const symbolicGuardEngine = symbolicGuardEnabled ? new SymbolicGuardEngine() : undefined;
 
     const evaluated: Array<any> = [];
-    for (const entry of normalizedCandidates) {
+    const evaluatedById = new Map<string, any>();
+    const evaluateCandidate = async (entry: { candidate: StrategySearchCandidate; id: string }): Promise<any> => {
+      const cached = evaluatedById.get(entry.id);
+      if (cached) return cached;
+
       const candidate = entry.candidate;
       const candidateStart = Date.now();
-      if (Date.now() > deadline) {
-        summary.degradedReasons.push("reasoning_budget_exceeded");
-        if (args.traceBuilder) {
-          args.traceBuilder.recordEvent({
-            area: "budget",
-            code: "strategy_search_budget_exceeded",
-            data: {
-              timeboxMs: config.timeboxMs,
-              evaluatedCount: evaluated.length
-            }
-          });
-        }
-        break;
-      }
-
+      const simulationDeadline = candidateStart + config.maxSimulationMs;
       const candidateSummary: any = {
         id: entry.id,
         label: candidate.label,
@@ -2035,8 +2058,9 @@ export class ChangePillar {
         candidateSummary.errorCode = "candidate_edits_missing";
         candidateSummary.message = "Strategy candidate edits are required.";
         recordCandidateTrace(candidateSummary, { durationMs: Date.now() - candidateStart });
+        evaluatedById.set(entry.id, candidateSummary);
         evaluated.push(candidateSummary);
-        continue;
+        return candidateSummary;
       }
 
       const { targetFiles, targetPath } = this.resolveCandidateTargets({
@@ -2051,8 +2075,9 @@ export class ChangePillar {
           targetFilesCount: targetFiles.length,
           durationMs: Date.now() - candidateStart
         });
+        evaluatedById.set(entry.id, candidateSummary);
         evaluated.push(candidateSummary);
-        continue;
+        return candidateSummary;
       }
 
       const candidateDiffMode = candidate.options?.diffMode ?? args.baseDiffMode;
@@ -2067,6 +2092,7 @@ export class ChangePillar {
       let touchedFiles = targetFiles.length > 0 ? targetFiles.length : editPaths.length;
       let riskScore = 0;
       let riskLevel: string | undefined;
+      let breakingChanges = 0;
       let candidateNormalization: ReturnType<typeof normalizeEdits> | undefined;
       let candidateNewContent: string | undefined;
       let contractBreaking = 0;
@@ -2105,16 +2131,18 @@ export class ChangePillar {
           candidateSummary.errorCode = "candidate_target_missing";
           candidateSummary.message = "Strategy candidate target is missing.";
           recordCandidateTrace(candidateSummary, { durationMs: Date.now() - candidateStart });
+          evaluatedById.set(entry.id, candidateSummary);
           evaluated.push(candidateSummary);
-          continue;
+          return candidateSummary;
         }
         candidateNormalization = normalizeEdits(candidateEdits, targetPath);
         if (candidateNormalization.edits.length === 0) {
           candidateSummary.errorCode = "candidate_edits_invalid";
           candidateSummary.message = "Strategy candidate edits are invalid.";
           recordCandidateTrace(candidateSummary, { durationMs: Date.now() - candidateStart });
+          evaluatedById.set(entry.id, candidateSummary);
           evaluated.push(candidateSummary);
-          continue;
+          return candidateSummary;
         }
         const editResult = await this.runTool(args.context, "edit_transaction", {
           filePath: targetPath,
@@ -2152,10 +2180,16 @@ export class ChangePillar {
           candidateSummary.degradedReasons = ["reasoning_budget_exceeded"];
         }
 
+        const simulationBudgetExceeded = Date.now() > simulationDeadline;
+        if (simulationBudgetExceeded) {
+          appendCandidateDegraded("reasoning_budget_exceeded");
+        }
+
         const impactStart = Date.now();
         const impactDeadline = impactStart + config.maxImpactMs;
         const hasImpactBudget = candidateIncludeImpact
           && config.maxImpactMs > 0
+          && !simulationBudgetExceeded
           && impactDeadline <= deadline;
         if (hasImpactBudget && targetFiles.length === 1) {
           const impact = await this.runTool(args.context, "impact_analyze", {
@@ -2164,6 +2198,12 @@ export class ChangePillar {
           });
           riskLevel = impact?.riskLevel ?? impact?.preview?.riskLevel;
           riskScore = this.mapRiskLevelToScore(riskLevel);
+          const breakingNotes = Array.isArray(impact?.notes)
+            ? impact.notes.filter((note: any) => typeof note === "string" && note.startsWith("BREAKING CHANGE:"))
+            : [];
+          breakingChanges = Array.isArray(impact?.breakingChanges)
+            ? impact.breakingChanges.length
+            : breakingNotes.length;
         } else if (candidateIncludeImpact) {
           appendCandidateDegraded("reasoning_impact_skipped");
         }
@@ -2360,6 +2400,7 @@ export class ChangePillar {
         const diffPenalty = weights.diff * diffSize;
         const tokensPenalty = weights.tokens * estimatedTokens;
         const riskPenalty = weights.risk * riskScore;
+        const breakingPenalty = weights.breaking * breakingChanges;
         const contractWeightedPenalty = weights.contract * contractPenalty;
         const guardsPenalty = weights.guardsHigh * guardsHigh;
         const reward = 100
@@ -2367,9 +2408,11 @@ export class ChangePillar {
           - diffPenalty
           - tokensPenalty
           - riskPenalty
+          - breakingPenalty
           - contractWeightedPenalty
           - guardsPenalty;
         candidateSummary.reward = reward;
+        candidateSummary.breakingChanges = breakingChanges;
         candidateSummary.rewardBreakdown = {
           base: 100,
           penalties: {
@@ -2377,6 +2420,7 @@ export class ChangePillar {
             diff: diffPenalty,
             tokens: tokensPenalty,
             risk: riskPenalty,
+            breaking: breakingPenalty,
             contract: contractWeightedPenalty,
             guardsHigh: guardsPenalty
           },
@@ -2385,6 +2429,7 @@ export class ChangePillar {
             diffSize,
             estimatedTokens,
             riskScore,
+            breakingChanges,
             contractBreaking,
             contractConsumers,
             guardsHigh
@@ -2402,7 +2447,163 @@ export class ChangePillar {
         includeImpact: candidateIncludeImpact,
         durationMs: Date.now() - candidateStart
       });
+      evaluatedById.set(entry.id, candidateSummary);
       evaluated.push(candidateSummary);
+      return candidateSummary;
+    };
+
+    if (config.stage === "r3") {
+      const mctsConfig = config.mcts ?? STRATEGY_SEARCH_DEFAULTS.mcts;
+      if (normalizedCandidates.length === 0) {
+        recordDegraded("reasoning_candidates_missing");
+      } else if (mctsConfig.maxRollouts < 1 || mctsConfig.maxDepth < 1) {
+        recordDegraded("reasoning_mcts_disabled");
+      } else {
+        type MctsNode = {
+          id: string;
+          candidate?: StrategySearchCandidate;
+          parent?: MctsNode;
+          children: MctsNode[];
+          unexpanded: StrategySearchCandidate[];
+          visits: number;
+          value: number;
+          depth: number;
+        };
+
+        const rng = this.createSeededRng(mctsConfig.seed);
+        const usedIds = new Set<string>();
+        const makeNode = (candidate: StrategySearchCandidate, parent: MctsNode, index: number): MctsNode => {
+          const rawId = typeof candidate.id === "string" && candidate.id.length > 0
+            ? candidate.id
+            : `${parent.id}_${index + 1}`;
+          let id = rawId;
+          if (usedIds.has(id)) {
+            id = `${rawId}_${usedIds.size + 1}`;
+          }
+          usedIds.add(id);
+          const candidateWithId = candidate.id === id ? candidate : { ...candidate, id };
+          candidateLookup.set(id, candidateWithId);
+          return {
+            id,
+            candidate: candidateWithId,
+            parent,
+            children: [],
+            unexpanded: Array.isArray(candidateWithId.children) ? candidateWithId.children : [],
+            visits: 0,
+            value: 0,
+            depth: parent.depth + 1
+          };
+        };
+
+        const root: MctsNode = {
+          id: "root",
+          children: [],
+          unexpanded: normalizedCandidates.map((entry) => entry.candidate),
+          visits: 0,
+          value: 0,
+          depth: 0
+        };
+
+        const selectChild = (node: MctsNode): MctsNode => {
+          let best = node.children[0];
+          let bestScore = -Infinity;
+          const logVisits = Math.log(Math.max(1, node.visits));
+          for (const child of node.children) {
+            if (child.visits === 0) {
+              return child;
+            }
+            const exploitation = child.value / child.visits;
+            const exploration = mctsConfig.exploration * Math.sqrt(logVisits / child.visits);
+            const score = exploitation + exploration;
+            if (score > bestScore) {
+              bestScore = score;
+              best = child;
+            }
+          }
+          return best;
+        };
+
+        const pickUnexpanded = (node: MctsNode): MctsNode => {
+          const index = Math.floor(rng() * node.unexpanded.length);
+          const candidate = node.unexpanded.splice(index, 1)[0];
+          const childNode = makeNode(candidate, node, index);
+          node.children.push(childNode);
+          return childNode;
+        };
+
+        const failedReward = -1000;
+        let rollouts = 0;
+        while (rollouts < mctsConfig.maxRollouts) {
+          if (Date.now() > deadline) {
+            recordDegraded("reasoning_budget_exceeded", { evaluatedCount: evaluated.length });
+            if (args.traceBuilder) {
+              args.traceBuilder.recordEvent({
+                area: "budget",
+                code: "strategy_search_budget_exceeded",
+                data: {
+                  timeboxMs: config.timeboxMs,
+                  evaluatedCount: evaluated.length
+                }
+              });
+            }
+            break;
+          }
+          let node = root;
+          while (node.depth < mctsConfig.maxDepth && node.unexpanded.length === 0 && node.children.length > 0) {
+            node = selectChild(node);
+          }
+          if (node.depth < mctsConfig.maxDepth && node.unexpanded.length > 0) {
+            node = pickUnexpanded(node);
+          }
+          if (!node.candidate) {
+            break;
+          }
+          const entry = { candidate: node.candidate, id: node.id };
+          const candidateSummary = await evaluateCandidate(entry);
+          const reward = typeof candidateSummary.reward === "number" ? candidateSummary.reward : failedReward;
+          let cursor: MctsNode | undefined = node;
+          while (cursor) {
+            cursor.visits += 1;
+            cursor.value += reward;
+            cursor = cursor.parent;
+          }
+          rollouts += 1;
+        }
+
+        summary.search = {
+          algorithm: "uct",
+          rollouts,
+          maxDepth: mctsConfig.maxDepth,
+          exploration: mctsConfig.exploration,
+          ...(Number.isFinite(mctsConfig.seed) ? { seed: mctsConfig.seed } : {}),
+          evaluatedCount: evaluated.length
+        };
+        if (args.traceBuilder) {
+          args.traceBuilder.recordEvent({
+            area: "policy",
+            code: "strategy_search_mcts",
+            data: summary.search
+          });
+        }
+      }
+    } else {
+      for (const entry of normalizedCandidates) {
+        if (Date.now() > deadline) {
+          summary.degradedReasons.push("reasoning_budget_exceeded");
+          if (args.traceBuilder) {
+            args.traceBuilder.recordEvent({
+              area: "budget",
+              code: "strategy_search_budget_exceeded",
+              data: {
+                timeboxMs: config.timeboxMs,
+                evaluatedCount: evaluated.length
+              }
+            });
+          }
+          break;
+        }
+        await evaluateCandidate(entry);
+      }
     }
 
     summary.candidates = evaluated;
@@ -2432,7 +2633,7 @@ export class ChangePillar {
     }
 
     return {
-      selected: normalizedCandidates.find((entry) => entry.id === best.id)?.candidate,
+      selected: candidateLookup.get(best.id) ?? normalizedCandidates.find((entry) => entry.id === best.id)?.candidate,
       summary
     };
   }

@@ -1090,7 +1090,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
             type: "object",
             properties: {
               mode: { type: "string", enum: ["off", "auto", "force"] },
-              stage: { type: "string", enum: ["r0", "r1", "r2"] },
+              stage: { type: "string", enum: ["r0", "r1", "r2", "r3"] },
               candidates: {
                 type: "array",
                 items: {
@@ -1102,6 +1102,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
                     target: { type: "string" },
                     targetFiles: { type: "array", items: { type: "string" } },
                     edits: { type: "array", items: { type: "object" } },
+                    children: { type: "array", items: { type: "object" } },
                     options: {
                       type: "object",
                       properties: {
@@ -1134,6 +1135,15 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
                       guardsHigh: { type: "number" }
                     }
                   }
+                }
+              },
+              mcts: {
+                type: "object",
+                properties: {
+                  maxDepth: { type: "number" },
+                  maxRollouts: { type: "number" },
+                  exploration: { type: "number" },
+                  seed: { type: "number" }
                 }
               }
             }

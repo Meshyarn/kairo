@@ -6,7 +6,7 @@ export type IntentCategory = 'explore' | 'understand' | 'change' | 'navigate' | 
 
 export type StrategySearchMode = "off" | "auto" | "force";
 
-export type StrategySearchStage = "r0" | "r1" | "r2";
+export type StrategySearchStage = "r0" | "r1" | "r2" | "r3";
 
 export interface StrategySearchCandidate {
   id: string;
@@ -17,6 +17,7 @@ export interface StrategySearchCandidate {
   edits: any[];
   options?: { diffMode?: "myers" | "semantic"; includeImpact?: boolean };
   notes?: string;
+  children?: StrategySearchCandidate[];
 }
 
 export interface StrategySearchRequest {
@@ -39,6 +40,12 @@ export interface StrategySearchRequest {
       contract: number;
       guardsHigh: number;
     };
+  };
+  mcts?: {
+    maxDepth: number;
+    maxRollouts: number;
+    exploration: number;
+    seed?: number;
   };
 }
 
