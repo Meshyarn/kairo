@@ -2,7 +2,7 @@
 
 **Status:** Implemented  
 **Date:** 2026-01-12  
-**Related:** `docs/adr/ADR-055-universal-parity-and-standardization.md`, `docs/adr/ADR-056-token-aware-dynamic-context-compression.md`, `docs/plans/loadmap.md`
+**Related:** `docs/adr/ADR-055-universal-parity-and-standardization.md`, `docs/adr/ADR-056-token-aware-dynamic-context-compression.md`
 
 ## Summary
 

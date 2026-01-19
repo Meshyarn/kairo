@@ -1361,13 +1361,17 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
           },
           scope: { type: "string", enum: ["file", "transaction", "project", "config", "languages", "wasm", "host", "contracts", "parity", "capabilities"] },
           target: { type: "string" },
+          targetType: { type: "string", enum: ["artifact", "transaction", "patchRef"] },
+          format: { type: "string", enum: ["unified_diff", "structured_edits", "both"] },
           limit: { type: "number" },
+          checkpointLimit: { type: "number" },
           detail: { type: "string", enum: ["summary", "full"] },
           trace: { type: "boolean" },
           outcome: { type: "object" },
           sessionId: { type: "string" },
           policy: { type: "object" },
           policyMode: { type: "string", enum: ["merge", "replace"] },
+          paths: { type: "array", items: { type: "string" } },
           limits: {
             type: "object",
             properties: {

@@ -2,7 +2,7 @@
 
 **Status:** Implemented (Phase A/B/C)  
 **Date:** 2026-01-14  
-**Related:** `docs/plans/loadmap.md`, `benchmarks/main.ts`, `src/utils/MetricsCollector.ts`
+**Related:** `benchmarks/main.ts`, `src/utils/MetricsCollector.ts`
 
 ## Summary
 

@@ -10,7 +10,7 @@ ADR-082는 `change`에 **전략 탐색(strategySearch)** 단계를 넣어 “여
 
 ## What shipped
 - **StrategySearch (R0~R2): Best-of-N**
-  - 호출자가 제공한 후보(`constraints.strategySearch.candidates`)를 dry-run + 비용/리스크 신호로 평가하고 reward가 가장 큰 후보를 선택
+  - 호출자가 제공한 후보(`strategySearch.candidates`)를 dry-run + 비용/리스크 신호로 평가하고 reward가 가장 큰 후보를 선택
   - R1: 최대 2개, R2: 최대 3개 (stage별 hard cap)
 - **R3: MCTS/UCT (optional stage)**
   - 후보를 트리로 표현(`children`)하고, 제한된 rollouts/timebox 내 UCT로 확장 탐색
@@ -25,17 +25,17 @@ ADR-082는 `change`에 **전략 탐색(strategySearch)** 단계를 넣어 “여
   - `strategy_search_start/candidate/selected/degraded/budget_exceeded/skipped/mcts` 이벤트로 선택 근거와 degrade 사유를 남김
   - 후보별 `rewardBreakdown`, 선택된 후보의 `selectedRewardBreakdown` 제공
 
-## How to use (Change constraints)
-`strategySearch`는 기본적으로 **opt-in**이며, `constraints.strategySearch`가 주어졌을 때만 동작한다.
+## How to use (change input)
+`strategySearch`는 기본적으로 **opt-in**이며, `strategySearch`가 주어졌을 때만 동작한다.
 
 - 기본 동작
   - `mode: "off"` 또는 `stage: "r0"` → strategySearch 스킵(R0)
   - `mode: "auto" | "force"`인데 `candidates`가 없으면 → R0 폴백 + `reasoning_candidates_missing`
 - 대표 입력(요약)
-  - `constraints.strategySearch.mode`: `"off" | "auto" | "force"`
-  - `constraints.strategySearch.stage`: `"r0" | "r1" | "r2" | "r3"`
-  - `constraints.strategySearch.candidates[]`: `{ id, edits, targetFiles?, options?, children? }`
-  - `constraints.strategySearch.mcts` (R3 only): `{ maxDepth, maxRollouts, exploration, seed? }`
+  - `strategySearch.mode`: `"off" | "auto" | "force"`
+  - `strategySearch.stage`: `"r0" | "r1" | "r2" | "r3"`
+  - `strategySearch.candidates[]`: `{ id, edits, targetFiles?, options?, children? }`
+  - `strategySearch.mcts` (R3 only): `{ maxDepth, maxRollouts, exploration, seed? }`
 
 ## Reward function (current)
 기본 reward는 “작고/안전한 변경”을 선호한다.

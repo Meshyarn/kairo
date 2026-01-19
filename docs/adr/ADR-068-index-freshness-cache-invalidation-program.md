@@ -2,7 +2,7 @@
 
 **Status:** Implemented (Phase A/B/C)  
 **Date:** 2026-01-14  
-**Related:** `docs/plans/loadmap.md`, `src/server/CacheInvalidationHub.ts`
+**Related:** `src/server/CacheInvalidationHub.ts`
 
 ## Summary
 

@@ -333,12 +333,14 @@ Project/session state utilities.
 
 | Field | Type | Required | Notes |
 |---|---|---:|---|
-| `command` | `"status" \| "undo" \| "redo" \| "reindex" \| "rebuild" \| "history" \| "test" \| "sessions" \| "session" \| "session_complete" \| "session_update" \| "artifacts" \| "artifact" \| "discard" \| "prune" \| "export" \| "import"` | ✓ | `rebuild` maps to `reindex`. |
+| `command` | `"status" \| "undo" \| "redo" \| "reindex" \| "rebuild" \| "history" \| "test" \| "init" \| "doctor" \| "sessions" \| "session" \| "session_complete" \| "session_update" \| "artifacts" \| "artifact" \| "discard" \| "prune" \| "export" \| "import"` | ✓ | `rebuild` maps to `reindex`. |
 | `scope` | `"file" \| "transaction" \| "project" \| "config" \| "languages" \| "wasm" \| "host" \| "contracts" \| "parity" \| "capabilities"` |  | Used by `test`/`doctor`. |
 | `target` | `string` |  | Mainly used by `test`. |
+| `paths` | `string[]` |  | Used by `reindex` for incremental/path-scoped refresh (when supported). |
 | `targetType` | `"artifact" \| "transaction" \| "patchRef"` |  | `export` 대상 유형. |
 | `format` | `"unified_diff" \| "structured_edits" \| "both"` |  | `export` 결과 형식. |
 | `limit` | `number` |  | Max items for list commands (sessions); graph artifact view caps node count. |
+| `checkpointLimit` | `number` |  | Max checkpoints returned by `history` (default 10). |
 | `detail` | `"summary" \| "full"` |  | Detail level for `status`/`doctor`. |
 | `limits.maxTokens` | `number` |  | Response envelope token budget for `artifact` retrieval. |
 | `limits.maxChars` | `number` |  | Response envelope char budget for `artifact` retrieval. |

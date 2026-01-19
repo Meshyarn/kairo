@@ -2,7 +2,7 @@
 
 **Status:** Implemented (Phase A/B/C)  
 **Date:** 2026-01-13  
-**Related:** `docs/adr/ADR-064-fileversion-handshake-read-apply.md`, `docs/plans/loadmap.md`
+**Related:** `docs/adr/ADR-064-fileversion-handshake-read-apply.md`
 
 ## Summary
 

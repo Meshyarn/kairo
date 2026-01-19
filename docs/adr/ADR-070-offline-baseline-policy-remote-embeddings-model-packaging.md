@@ -2,7 +2,7 @@
 
 **Status:** Implemented (Phase A/B/C)  
 **Date:** 2026-01-14  
-**Related:** `docs/plans/loadmap.md`, `src/embeddings/*`, `scripts/bundle-models.mjs`, `src/handlers/ManageHandlers.ts`, `src/orchestration/capabilities/TokenizerDiagnostics.ts`
+**Related:** `src/embeddings/*`, `scripts/bundle-models.mjs`, `src/handlers/ManageHandlers.ts`, `src/orchestration/capabilities/TokenizerDiagnostics.ts`
 
 ## Summary
 

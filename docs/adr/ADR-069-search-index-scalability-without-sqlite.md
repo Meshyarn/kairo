@@ -2,7 +2,7 @@
 
 **Status:** Implemented (Phase A/B/C)  
 **Date:** 2026-01-14  
-**Related:** `docs/plans/loadmap.md`, `src/ast/SymbolIndex.ts`, `src/indexing/IncrementalIndexer.ts`, `src/storage/index/IndexStore.ts`, `src/handlers/ManageHandlers.ts`
+**Related:** `src/ast/SymbolIndex.ts`, `src/indexing/IncrementalIndexer.ts`, `src/storage/index/IndexStore.ts`, `src/handlers/ManageHandlers.ts`
 
 ## Summary
 

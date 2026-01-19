@@ -15,6 +15,9 @@ Kairo is configured via environment variables. Most users only need a few.
 | `KAIRO_LOG_TO_FILE` | Persist logs under `.kairo`. | Prefer this in MCP hosts (keeps stdout clean). |
 | `KAIRO_ALLOW_STDOUT_LOGS` | Allow stdout logs. | Avoid in MCP hosts; stdout is reserved for MCP frames. |
 | `KAIRO_STORAGE_MODE` | Storage backend. | `file` (default) or `memory` (non-persistent). |
+| `KAIRO_TOOL_SCHEMA_MODE` | Tool schema mode (contract enforcement). | `compat` (default) drops unknown top-level fields; `strict` rejects them. |
+| `KAIRO_EXPOSE_INTERNAL_TOOLS` | Show internal tools in MCP `list_tools`. | Default `false`; internal tool names are unstable. |
+| `KAIRO_EXPOSE_FILE_TOOLS` | Show compat file tools in MCP `list_tools`. | Default `false`; prefer the Five Pillars. |
 
 Timeouts are primarily controlled by your MCP host (per-request timeout). Some operations also accept per-call timeouts via `limits.timeoutMs` (see `docs/agent/TOOL_REFERENCE.md`).
 

@@ -2,7 +2,7 @@
 
 **Status:** Implemented  
 **Date:** 2026-01-13  
-**Related:** `docs/adr/ADR-055-universal-parity-and-standardization.md`, `docs/adr/ADR-057-unified-degraded-reasons-and-action-guidance-v1.md`, `docs/plans/loadmap.md`
+**Related:** `docs/adr/ADR-055-universal-parity-and-standardization.md`, `docs/adr/ADR-057-unified-degraded-reasons-and-action-guidance-v1.md`
 
 ## Summary
 

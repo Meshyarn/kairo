@@ -170,6 +170,7 @@ export class SmartContextServer {
     private cacheStrategy: CachingStrategy;
     private toolSpecRegistry = createDefaultToolSpecRegistry();
     private handlerContext?: HandlerContext;
+    private vectorIndexInitPromise?: Promise<void>;
 
     private searchHandlers!: SearchHandlers;
     private codeHandlers!: CodeHandlers;
@@ -231,7 +232,13 @@ export class SmartContextServer {
         this.embeddingRepository = new EmbeddingRepository(this.indexDatabase);
         this.embeddingProviderFactory = new EmbeddingProviderFactory(resolveEmbeddingConfigFromEnv());
         this.vectorIndexManager = new VectorIndexManager(this.rootPath, this.embeddingRepository);
-        void this.vectorIndexManager.initializeFromEmbeddingConfig(this.embeddingProviderFactory.getConfig());
+        this.vectorIndexInitPromise = this.vectorIndexManager
+            .initializeFromEmbeddingConfig(this.embeddingProviderFactory.getConfig())
+            .catch((error) => {
+                if (!this.isTestEnv()) {
+                    console.warn("[SmartContextServer] Vector index initialization failed:", error);
+                }
+            });
         this.documentProfiler = new DocumentProfiler(this.rootPath);
         this.documentIndexer = new DocumentIndexer(this.rootPath, this.fileSystem, this.indexDatabase, {
             embeddingRepository: this.embeddingRepository,
@@ -1230,6 +1237,9 @@ export class SmartContextServer {
         this.clusterSearchEngine.stopBackgroundTasks();
         if (this.incrementalIndexer) {
             await this.incrementalIndexer.stop();
+        }
+        if (this.vectorIndexInitPromise) {
+            await this.vectorIndexInitPromise;
         }
         await this.searchEngine.dispose();
         await this.symbolIndex.dispose();

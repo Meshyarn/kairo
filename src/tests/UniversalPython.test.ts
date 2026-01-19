@@ -6,7 +6,7 @@ describe('Universal Language Parity - Python Support', () => {
     beforeAll(async () => {
         astManager = AstManager.getInstance();
         await astManager.init();
-    });
+    }, 60000);
 
     it('should extract Python symbols and imports correctly', async () => {
         const code = `
