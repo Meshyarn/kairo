@@ -85,6 +85,7 @@ The entries below cover all ADRs from the project history. Items marked “retou
 - ADR-079 (summary): Workflow UX & style reliability v2 → `docs/adr/ADR-079-workflow-ux-and-style-reliability-v2.md`
 - ADR-080 (summary): Explore/Understand response envelope token budget → `docs/adr/ADR-080-response-envelope-token-budget-explore-understand.md`
 - ADR-081 (summary): GraphRAG hybrid cluster retrieval → `docs/adr/ADR-081-graphrag-hybrid-cluster-retrieval.md`
+- ADR-082 (summary): Simulate → Reason → Execute (StrategySearch + MCTS) for Change reliability → `docs/adr/ADR-082-simulate-reason-execute-mcts.md`
 - ADR-083 (summary): Language-agnostic symbolic guards (portable semantic checks + optional solver) → `docs/adr/ADR-083-language-agnostic-symbolic-guards.md`
 - ADR-055-H: Adaptive trust policy (no curated summary)
 - ADR-055-L: Action guidance + Understand fallback graph (no curated summary)

@@ -34,6 +34,29 @@ change({ intent: "Add domain whitelist", options: { dryRun: true } })
 change({ intent: "Add domain whitelist" })
 ```
 
+### 1.2 StrategySearch (Best-of-N / MCTS)
+
+후보 패치를 2개 이상 “구체적인 edits”로 제공할 수 있다면, `strategySearch`로 **dry-run 기반 후보 비교 → 1개 선택**을 시킬 수 있다.
+
+```typescript
+const plan = await change({
+  intent: "Tighten JWT validation",
+  targetFiles: ["src/auth/jwt.ts"],
+  options: { dryRun: true, includeImpact: true },
+  strategySearch: {
+    mode: "force",
+    stage: "r1",
+    candidates: [
+      { id: "safe_small", edits: [{ filePath: "src/auth/jwt.ts", targetString: "OLD", replacementString: "NEW1" }] },
+      { id: "fast_big", edits: [{ filePath: "src/auth/jwt.ts", targetString: "OLD", replacementString: "NEW2" }] }
+    ]
+  },
+  trace: true
+})
+```
+
+R3(MCTS)는 `children` 트리 + `mcts` 설정으로 제한 탐색을 수행한다. 자세한 스키마/출력은 `docs/agent/TOOL_REFERENCE.md`를 참고한다.
+
 ### 1.5 Writer's Flow (best review quality)
 
 ```typescript
