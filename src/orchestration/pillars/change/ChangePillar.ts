@@ -36,7 +36,8 @@ import {
 import { 
     normalizeEdits, 
     formatResolveErrors,
-    isLikelyFilePath
+    isLikelyFilePath,
+    mapEditsToFiles
 } from "./EditExecution.js";
 import {
     applyEditsToContent,
@@ -1927,6 +1928,7 @@ export class ChangePillar {
           ...(Array.isArray(candidateSummary.degradedReasons) && candidateSummary.degradedReasons.length > 0
             ? { degradedReasons: candidateSummary.degradedReasons }
             : {}),
+          ...(candidateSummary.rewardBreakdown ? { rewardBreakdown: candidateSummary.rewardBreakdown } : {}),
           ...(typeof detail.targetFilesCount === "number"
             ? { targetFilesCount: detail.targetFilesCount }
             : {}),
@@ -2150,10 +2152,12 @@ export class ChangePillar {
           candidateSummary.degradedReasons = ["reasoning_budget_exceeded"];
         }
 
-        const canEvaluateImpact = candidateIncludeImpact
+        const impactStart = Date.now();
+        const impactDeadline = impactStart + config.maxImpactMs;
+        const hasImpactBudget = candidateIncludeImpact
           && config.maxImpactMs > 0
-          && Date.now() + config.maxImpactMs <= deadline;
-        if (canEvaluateImpact && targetFiles.length === 1) {
+          && impactDeadline <= deadline;
+        if (hasImpactBudget && targetFiles.length === 1) {
           const impact = await this.runTool(args.context, "impact_analyze", {
             target: targetFiles[0],
             edits: candidateEdits
@@ -2195,76 +2199,197 @@ export class ChangePillar {
           return candidateNewContent;
         };
 
-        if (candidateIncludeImpact && config.maxImpactMs > 0) {
-          if (Date.now() > deadline) {
+        const evaluateContractAndGuards = async (): Promise<void> => {
+          if (!hasImpactBudget) {
+            if (candidateIncludeImpact) {
+              appendCandidateDegraded("reasoning_contract_skipped");
+              appendCandidateDegraded("reasoning_guards_skipped");
+            }
+            return;
+          }
+          if (Date.now() > deadline || Date.now() > impactDeadline) {
             appendCandidateDegraded("reasoning_budget_exceeded");
-          } else if (targetFiles.length === 1 && targetPath) {
-            if (Date.now() + config.maxImpactMs > deadline) {
-              appendCandidateDegraded("reasoning_budget_exceeded");
-            } else {
-              const content = await resolveCandidateContent();
-              if (!content) {
-                appendCandidateDegraded("reasoning_contract_skipped");
-                appendCandidateDegraded("reasoning_guards_skipped");
-              } else {
-                const contractImpact = await this.buildCrossLangImpact(targetPath, args.context, {
-                  afterContent: content
-                });
-                if (contractImpact) {
-                  contractBreaking = Array.isArray(contractImpact.breakingExports)
-                    ? contractImpact.breakingExports.length
-                    : 0;
-                  contractConsumers = Array.isArray(contractImpact.consumerFiles)
-                    ? contractImpact.consumerFiles.length
-                    : 0;
-                  contractPenalty = contractBreaking + Math.ceil(Math.min(contractConsumers, 20) / 5);
-                  candidateSummary.contractBreaking = contractBreaking;
-                  candidateSummary.contractConsumers = contractConsumers;
-                  if (contractImpact.degraded && Array.isArray(contractImpact.reasons)) {
-                    for (const reason of contractImpact.reasons) {
-                      if (typeof reason === "string" && reason.length > 0) {
-                        appendCandidateDegraded(reason);
-                      }
-                    }
-                  }
-                }
+            return;
+          }
 
-                if (symbolicGuardEngine) {
-                  const guardResult = await symbolicGuardEngine.evaluate({ filePath: targetPath, content });
-                  guardsDiagnostics = guardResult.diagnostics.length;
-                  guardsHigh = guardResult.diagnostics.filter((diag) => diag.severity === "high").length;
-                  candidateSummary.guardsDiagnostics = guardsDiagnostics;
-                  candidateSummary.guardsHigh = guardsHigh;
-                  if (Array.isArray(guardResult.degradedReasons)) {
-                    for (const reason of guardResult.degradedReasons) {
-                      if (typeof reason === "string" && reason.length > 0) {
-                        appendCandidateDegraded(reason);
-                      }
-                    }
+          const contractBreakingSet = new Set<string>();
+          const contractConsumerSet = new Set<string>();
+          let evaluatedAny = false;
+
+          if (!shouldBatch) {
+            if (!targetPath) {
+              appendCandidateDegraded("reasoning_contract_skipped");
+              appendCandidateDegraded("reasoning_guards_skipped");
+              return;
+            }
+            const content = await resolveCandidateContent();
+            if (!content) {
+              appendCandidateDegraded("reasoning_contract_skipped");
+              appendCandidateDegraded("reasoning_guards_skipped");
+              return;
+            }
+            evaluatedAny = true;
+            const contractImpact = await this.buildCrossLangImpact(targetPath, args.context, {
+              afterContent: content
+            });
+            if (contractImpact) {
+              const breaking = Array.isArray(contractImpact.breakingExports) ? contractImpact.breakingExports : [];
+              const consumers = Array.isArray(contractImpact.consumerFiles) ? contractImpact.consumerFiles : [];
+              for (const entry of breaking) {
+                contractBreakingSet.add(`${contractImpact.packageName}:${entry}`);
+              }
+              for (const entry of consumers) {
+                contractConsumerSet.add(entry);
+              }
+              if (contractImpact.degraded && Array.isArray(contractImpact.reasons)) {
+                for (const reason of contractImpact.reasons) {
+                  if (typeof reason === "string" && reason.length > 0) {
+                    appendCandidateDegraded(reason);
                   }
-                } else {
-                  appendCandidateDegraded("symbolic_guards_disabled");
                 }
               }
             }
+            if (symbolicGuardEngine) {
+              const guardResult = await symbolicGuardEngine.evaluate({ filePath: targetPath, content });
+              guardsDiagnostics += guardResult.diagnostics.length;
+              guardsHigh += guardResult.diagnostics.filter((diag) => diag.severity === "high").length;
+              if (Array.isArray(guardResult.degradedReasons)) {
+                for (const reason of guardResult.degradedReasons) {
+                  if (typeof reason === "string" && reason.length > 0) {
+                    appendCandidateDegraded(reason);
+                  }
+                }
+              }
+            } else {
+              appendCandidateDegraded("symbolic_guards_disabled");
+            }
           } else {
+            const mapped = mapEditsToFiles({
+              targetFiles,
+              rawEdits: candidateEdits,
+              fallbackTarget: targetPath,
+              extractEditFilePath: (edit) => this.extractEditFilePath(edit)
+            });
+            if (mapped.error || !mapped.fileEdits) {
+              appendCandidateDegraded("reasoning_contract_skipped");
+              appendCandidateDegraded("reasoning_guards_skipped");
+              return;
+            }
+            const fileSystem = this.resolveFileSystem();
+            for (const [filePath, editsForFile] of mapped.fileEdits.entries()) {
+              if (Date.now() > deadline || Date.now() > impactDeadline) {
+                appendCandidateDegraded("reasoning_budget_exceeded");
+                break;
+              }
+              const normalization = normalizeEdits(editsForFile, filePath);
+              if (normalization.edits.length === 0) {
+                continue;
+              }
+              if (!await fileSystem.exists(filePath)) {
+                continue;
+              }
+              let existingContent = "";
+              try {
+                existingContent = await fileSystem.readFile(filePath);
+              } catch {
+                continue;
+              }
+              let newContent = "";
+              try {
+                newContent = applyEditsToContent(existingContent, normalization.edits).newContent;
+              } catch {
+                continue;
+              }
+              evaluatedAny = true;
+              const contractImpact = await this.buildCrossLangImpact(filePath, args.context, {
+                afterContent: newContent
+              });
+              if (contractImpact) {
+                const breaking = Array.isArray(contractImpact.breakingExports) ? contractImpact.breakingExports : [];
+                const consumers = Array.isArray(contractImpact.consumerFiles) ? contractImpact.consumerFiles : [];
+                for (const entry of breaking) {
+                  contractBreakingSet.add(`${contractImpact.packageName}:${entry}`);
+                }
+                for (const entry of consumers) {
+                  contractConsumerSet.add(entry);
+                }
+                if (contractImpact.degraded && Array.isArray(contractImpact.reasons)) {
+                  for (const reason of contractImpact.reasons) {
+                    if (typeof reason === "string" && reason.length > 0) {
+                      appendCandidateDegraded(reason);
+                    }
+                  }
+                }
+              }
+              if (symbolicGuardEngine) {
+                const guardResult = await symbolicGuardEngine.evaluate({ filePath, content: newContent });
+                guardsDiagnostics += guardResult.diagnostics.length;
+                guardsHigh += guardResult.diagnostics.filter((diag) => diag.severity === "high").length;
+                if (Array.isArray(guardResult.degradedReasons)) {
+                  for (const reason of guardResult.degradedReasons) {
+                    if (typeof reason === "string" && reason.length > 0) {
+                      appendCandidateDegraded(reason);
+                    }
+                  }
+                }
+              } else {
+                appendCandidateDegraded("symbolic_guards_disabled");
+              }
+            }
+          }
+
+          if (!evaluatedAny) {
             appendCandidateDegraded("reasoning_contract_skipped");
             appendCandidateDegraded("reasoning_guards_skipped");
+            return;
           }
-        } else if (candidateIncludeImpact) {
-          appendCandidateDegraded("reasoning_contract_skipped");
-          appendCandidateDegraded("reasoning_guards_skipped");
-        }
+
+          contractBreaking = contractBreakingSet.size;
+          contractConsumers = contractConsumerSet.size;
+          contractPenalty = contractBreaking + Math.ceil(Math.min(contractConsumers, 20) / 5);
+          candidateSummary.contractBreaking = contractBreaking;
+          candidateSummary.contractConsumers = contractConsumers;
+          candidateSummary.guardsDiagnostics = guardsDiagnostics;
+          candidateSummary.guardsHigh = guardsHigh;
+        };
+
+        await evaluateContractAndGuards();
 
         const weights = config.scoring.weights;
+        const filesPenalty = weights.files * touchedFiles;
+        const diffPenalty = weights.diff * diffSize;
+        const tokensPenalty = weights.tokens * estimatedTokens;
+        const riskPenalty = weights.risk * riskScore;
+        const contractWeightedPenalty = weights.contract * contractPenalty;
+        const guardsPenalty = weights.guardsHigh * guardsHigh;
         const reward = 100
-          - weights.files * touchedFiles
-          - weights.diff * diffSize
-          - weights.tokens * estimatedTokens
-          - weights.risk * riskScore
-          - weights.contract * contractPenalty
-          - weights.guardsHigh * guardsHigh;
+          - filesPenalty
+          - diffPenalty
+          - tokensPenalty
+          - riskPenalty
+          - contractWeightedPenalty
+          - guardsPenalty;
         candidateSummary.reward = reward;
+        candidateSummary.rewardBreakdown = {
+          base: 100,
+          penalties: {
+            files: filesPenalty,
+            diff: diffPenalty,
+            tokens: tokensPenalty,
+            risk: riskPenalty,
+            contract: contractWeightedPenalty,
+            guardsHigh: guardsPenalty
+          },
+          signals: {
+            touchedFiles,
+            diffSize,
+            estimatedTokens,
+            riskScore,
+            contractBreaking,
+            contractConsumers,
+            guardsHigh
+          }
+        };
         if (riskLevel) {
           candidateSummary.riskLevel = riskLevel;
         }
@@ -2289,6 +2414,9 @@ export class ChangePillar {
 
     const best = successful.reduce((acc, current) => (current.reward > acc.reward ? current : acc));
     summary.selectedCandidateId = best.id;
+    if (best.rewardBreakdown) {
+      summary.selectedRewardBreakdown = best.rewardBreakdown;
+    }
     if (args.traceBuilder) {
       args.traceBuilder.recordEvent({
         area: "policy",
