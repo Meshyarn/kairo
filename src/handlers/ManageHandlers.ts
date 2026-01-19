@@ -1524,6 +1524,7 @@ export class ManageHandlers extends BaseHandler {
         const actionHints: Record<string, string> = {
             CAP_CHUNKING_TOKENS: "Enable Rust chunking (KAIRO_RUST_CORE_ENABLED/KAIRO_RUST_CHUNKING_ENABLED) or WASM chunking (KAIRO_WASM_CHUNKING_ENABLED).",
             CAP_DIFF_UNIFIED: "Enable Rust diffing (KAIRO_RUST_CORE_ENABLED/KAIRO_RUST_DIFF_ENABLED) or rely on JS diffing (default).",
+            CAP_SYMBOLIC_SOLVE: "Enable Rust symbolic solver (KAIRO_RUST_CORE_ENABLED/KAIRO_RUST_SYMBOLIC_SOLVER_ENABLED).",
             CAP_SYNTAX_VALIDATE: "Enable Rust syntax (KAIRO_RUST_CORE_ENABLED/KAIRO_RUST_SYNTAX_ENABLED) or ensure tree-sitter WASM assets are available.",
             CAP_VECTOR_COSINE_BATCH: "Enable Rust vector math (KAIRO_RUST_CORE_ENABLED/KAIRO_RUST_VECTOR_ENABLED) or rely on JS vector math (default).",
             CAP_TEXT_STATS: "Ensure JsTextStatsProvider is registered (default)."

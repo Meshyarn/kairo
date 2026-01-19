@@ -13,5 +13,6 @@ Implemented phases:
 - **Phase 2 (Diffing):** Rust unified diff generation with JS fallback; profile maps to diff mode.
 - **Phase 3 (Syntax):** Rust syntax validation for JS/TS/TSX with Tree-sitter(WASM) fallback.
 - **Phase 4 (Vector math):** Rust cosine similarity batch scoring for bruteforce vector search with JS fallback.
+- **Phase 5 (Symbolic solve):** Rust `symbolicSolve` entrypoint (optional; used by ADR-083 strict-mode solver).
 
 The direct Rust imports in TS modules were replaced in **ADR-053-H** with a capability registry and provider selection model.

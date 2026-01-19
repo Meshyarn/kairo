@@ -162,6 +162,8 @@ export interface CrossLangImpact {
     packageName: string;
     consumerFiles: string[];
     changedExports: string[];
+    breakingExports?: string[];
+    nonBreakingExports?: string[];
     degraded: boolean;
     reasons?: string[];
     fieldImpacts?: CrossLangFieldImpact[];

@@ -1,6 +1,6 @@
 {
   "name": "kairo",
-  "version": "0.4.27",
+  "version": "0.4.28",
   "type": "module",
   "bin": {
     "kairo": "dist/index.js",

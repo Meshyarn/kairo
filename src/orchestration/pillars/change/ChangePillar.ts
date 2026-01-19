@@ -1,3 +1,4 @@
+import path from "path";
 import { InternalToolRegistry } from '../../InternalToolRegistry.js';
 import { OrchestrationContext } from '../../OrchestrationContext.js';
 import { ParsedIntent } from '../../IntentRouter.js';
@@ -62,6 +63,7 @@ import type { FileVersionManager } from "../../../engine/FileVersionManager.js";
 import { buildDegradedReasons } from "../../DegradedReasonMapper.js";
 import { AstManager } from "../../../ast/AstManager.js";
 import type { PathNormalizer } from "../../../utils/PathNormalizer.js";
+import { resolveSymbolicGuardConfig } from "../../../config/SymbolicGuardConfig.js";
 import {
     computeAdaptiveFlowGate,
     recordAdaptiveFlowGateTrace,
@@ -785,9 +787,58 @@ export class ChangePillar {
 
       const blockOn = Array.isArray(reviewOptions?.blockOn) ? reviewOptions.blockOn : [];
       const shouldBlockOn = !dryRun && blockOn.length > 0 && Boolean(targetPath);
+      const shouldComputeReview = Boolean(targetPath) && (shouldBlockOn || (reviewOptions?.preApply ?? dryRun) || (reviewOptions?.postApply && !dryRun));
+      const publicSurface = guardrailResult?.architecturalRisk?.publicSurface;
+      const forcedExports = Array.isArray(publicSurface?.changes)
+        ? publicSurface.changes.map((change: any) => change?.name).filter((name: any) => typeof name === "string")
+        : [];
+      let crossLangImpact: CrossLangImpact | undefined = undefined;
+      if (targetPath && (includeImpact || shouldComputeReview)) {
+        crossLangImpact = await this.buildCrossLangImpact(targetPath, context, {
+          force: Boolean(publicSurface?.hasChanges),
+          changedExports: forcedExports,
+          afterContent: reviewNextContent
+        });
+      }
       let preApplyReview: any = undefined;
       let preApplyReviewComputed = false;
       let formatterResult: Awaited<ReturnType<typeof applyFormatterBridge>> = undefined;
+      let symbolicTraceRecorded = false;
+      const recordSymbolicTrace = (review: any, phase?: string) => {
+        if (!traceBuilder || symbolicTraceRecorded) return;
+        const semantic = review?.semantic;
+        const symbolic = semantic?.stats?.symbolic;
+        if (!symbolic) return;
+        const diagnosticsCount = Array.isArray(semantic.diagnostics) ? semantic.diagnostics.length : 0;
+        const degraded = Array.isArray(semantic.degradedReasons) && semantic.degradedReasons.length > 0;
+        traceBuilder.recordEvent({
+          area: "guardrails",
+          code: "symbolic_guards",
+          data: {
+            enabled: symbolic.enabled,
+            mode: symbolic.mode,
+            queryUsed: symbolic.queryUsed,
+            solverUsed: symbolic.solverUsed,
+            constraintsBuilt: symbolic.constraintsBuilt,
+            pathsExplored: symbolic.pathsExplored,
+            diagnostics: diagnosticsCount,
+            degraded,
+            ...(phase ? { phase } : {})
+          }
+        });
+        symbolicTraceRecorded = true;
+        if (symbolic.enabled === false || symbolic.mode === "off") {
+          traceBuilder.recordSkip("symbolic_guards", "policy_disabled", "symbolic guards disabled");
+          return;
+        }
+        if (symbolic.queryUsed === false) {
+          traceBuilder.recordSkip("symbolic_guards", "unsupported", "symbolic guard query missing or unsupported language");
+          return;
+        }
+        if (Array.isArray(semantic.degradedReasons) && semantic.degradedReasons.some((item: any) => item?.type === "budget_exceeded")) {
+          traceBuilder.recordSkip("symbolic_guards", "budget_exceeded", "symbolic guard budget exceeded");
+        }
+      };
       if (shouldBlockOn && targetPath) {
         preApplyReview = await new ReviewReportBuilder(
           { dependencyGraph, indexStateManager },
@@ -798,9 +849,23 @@ export class ChangePillar {
           oldContent: reviewOriginalContent,
           guardrailResult,
           constraints,
-          stylePack: sessionStylePack
+          stylePack: sessionStylePack,
+          contractImpact: crossLangImpact
         });
         preApplyReviewComputed = true;
+        if (traceBuilder && preApplyReview?.semantic) {
+          traceBuilder.recordEvent({
+            area: "other",
+            code: "semantic_validation",
+            data: {
+              verdict: preApplyReview.semantic.verdict,
+              diagnostics: Array.isArray(preApplyReview.semantic.diagnostics) ? preApplyReview.semantic.diagnostics.length : 0,
+              durationMs: preApplyReview.semantic.stats?.durationMs,
+              degraded: Array.isArray(preApplyReview.semantic.degradedReasons) && preApplyReview.semantic.degradedReasons.length > 0
+            }
+          });
+          recordSymbolicTrace(preApplyReview, "pre_apply");
+        }
 
         const blockReasons = collectBlockReasons(preApplyReview, blockOn);
         if (blockReasons.length > 0) {
@@ -1077,26 +1142,17 @@ export class ChangePillar {
       const deps = await dependencyPromise;
       const hotSpots = await hotSpotPromise;
       const symbolImpact = await symbolImpactPromise;
-      const publicSurface = guardrailResult?.architecturalRisk?.publicSurface;
-      const forcedExports = Array.isArray(publicSurface?.changes)
-        ? publicSurface.changes.map((change: any) => change?.name).filter((name: any) => typeof name === "string")
-        : [];
-      const crossLangImpact = includeImpact && targetPath
-        ? await this.buildCrossLangImpact(targetPath, context, {
-            force: Boolean(publicSurface?.hasChanges),
-            changedExports: forcedExports
-          })
-        : undefined;
-      const degradedReasonDetails = crossLangImpact?.reasons
-        ? buildDegradedReasons(crossLangImpact.reasons, {
-          packageName: crossLangImpact.packageName
+      const outputCrossLangImpact = includeImpact ? crossLangImpact : undefined;
+      const degradedReasonDetails = outputCrossLangImpact?.reasons
+        ? buildDegradedReasons(outputCrossLangImpact.reasons, {
+          packageName: outputCrossLangImpact.packageName
         })
         : undefined;
       const mergedDegradedReasons = [
         ...(degradedReasonDetails ?? []),
         ...(parityDegradedReasons ?? [])
       ];
-      let impactReport = toImpactReport(impact, deps, targetPath, hotSpots, crossLangImpact);
+      let impactReport = toImpactReport(impact, deps, targetPath, hotSpots, outputCrossLangImpact);
       let architecturalRisk: any = guardrailResult?.architecturalRisk;
       const architecturalWarnings: string[] = Array.isArray(guardrailResult?.architecturalWarnings)
         ? guardrailResult.architecturalWarnings
@@ -1204,8 +1260,22 @@ export class ChangePillar {
           oldContent: reviewOriginalContent,
           guardrailResult,
           constraints,
-          stylePack: sessionStylePack
+          stylePack: sessionStylePack,
+          contractImpact: crossLangImpact
         });
+        if (traceBuilder && preApplyReview?.semantic) {
+          traceBuilder.recordEvent({
+            area: "other",
+            code: "semantic_validation",
+            data: {
+              verdict: preApplyReview.semantic.verdict,
+              diagnostics: Array.isArray(preApplyReview.semantic.diagnostics) ? preApplyReview.semantic.diagnostics.length : 0,
+              durationMs: preApplyReview.semantic.stats?.durationMs,
+              degraded: Array.isArray(preApplyReview.semantic.degradedReasons) && preApplyReview.semantic.degradedReasons.length > 0
+            }
+          });
+          recordSymbolicTrace(preApplyReview, "pre_apply");
+        }
       }
 
       if (!dryRun && finalResult.success && formatterMode) {
@@ -1268,8 +1338,23 @@ export class ChangePillar {
           content: currentContent,
           oldContent: reviewOriginalContent,
           constraints,
-          stylePack: sessionStylePack
+          stylePack: sessionStylePack,
+          contractImpact: crossLangImpact
         });
+        if (traceBuilder && postReview?.semantic) {
+          traceBuilder.recordEvent({
+            area: "other",
+            code: "semantic_validation",
+            data: {
+              verdict: postReview.semantic.verdict,
+              diagnostics: Array.isArray(postReview.semantic.diagnostics) ? postReview.semantic.diagnostics.length : 0,
+              durationMs: postReview.semantic.stats?.durationMs,
+              degraded: Array.isArray(postReview.semantic.degradedReasons) && postReview.semantic.degradedReasons.length > 0,
+              phase: "post_apply"
+            }
+          });
+          recordSymbolicTrace(postReview, "post_apply");
+        }
       }
       if (artifactManager) {
         if (draftPack) {
@@ -1624,7 +1709,7 @@ export class ChangePillar {
   private async buildCrossLangImpact(
     targetPath: string,
     context: OrchestrationContext,
-    options?: { force?: boolean; changedExports?: string[] }
+    options?: { force?: boolean; changedExports?: string[]; afterContent?: string }
   ): Promise<CrossLangImpact | undefined> {
     const repoRegistry = this.registry.getMetadata<RepoRegistry>("repoRegistry");
     const packageAliasMap = this.registry.getMetadata<PackageAliasMap>("packageAliasMap");
@@ -1642,6 +1727,13 @@ export class ChangePillar {
     }
 
     const manifestLoader = new ContractManifestLoader(process.cwd());
+    const guardConfig = resolveSymbolicGuardConfig();
+    const contractMode = guardConfig.contractGuard.mode;
+    const allowConsumerScan = contractMode === "spec_plus_consumer_scan" && guardConfig.contractGuard.consumerScan.enabled;
+    const maxConsumerFiles = guardConfig.contractGuard.consumerScan.maxFiles;
+    const consumerLimit = Number.isFinite(maxConsumerFiles) && maxConsumerFiles > 0
+      ? Math.floor(maxConsumerFiles)
+      : undefined;
     const loadResult = manifestLoader.loadManifest(alias.packageName, "ffi_napi", {
       autoGenerate: true
     });
@@ -1652,9 +1744,15 @@ export class ChangePillar {
       const fileSystem = this.resolveFileSystem();
       if (await fileSystem.exists(alias.entryPath)) {
       const generator = new ContractManifestGenerator();
-      afterManifest = generator.generateFromDts(alias.packageName, alias.entryPath, {
-        sourceRepo: repo.path
-      });
+      const useOverride = typeof options?.afterContent === "string"
+        && path.resolve(alias.entryPath) === path.resolve(targetPath);
+      afterManifest = useOverride
+        ? generator.generateFromDtsContent(alias.packageName, alias.entryPath, options!.afterContent as string, {
+          sourceRepo: repo.path
+        })
+        : generator.generateFromDts(alias.packageName, alias.entryPath, {
+          sourceRepo: repo.path
+        });
       }
     }
 
@@ -1702,30 +1800,58 @@ export class ChangePillar {
       };
     }
 
+    const breakingExports = Array.from(new Set([
+      ...diff.removed,
+      ...diff.changed.filter((entry) => entry.breaking).map((entry) => entry.exportName)
+    ]));
+    const nonBreakingExports = Array.from(new Set([
+      ...diff.added,
+      ...diff.changed.filter((entry) => !entry.breaking).map((entry) => entry.exportName)
+    ]));
     const hasChanges = diff.added.length + diff.removed.length + diff.changed.length > 0;
+    const hasBreaking = breakingExports.length > 0;
+    const hasOnlyAdditions = diff.added.length > 0 && !hasBreaking;
     if (!diff.degraded && !hasChanges) {
       return undefined;
+    }
+    if (!diff.degraded && hasOnlyAdditions) {
+      diff = {
+        ...diff,
+        degraded: true,
+        reasons: Array.from(new Set([...(diff.reasons ?? []), "contract_non_breaking_change"]))
+      };
     }
 
     const importers = await dependencyGraph.getImporters(alias.entryPath);
     let consumerFiles = importers.map((edge) => edge.from).filter(Boolean);
     let usedFallback = false;
-    if (consumerFiles.length === 0) {
+    let consumerCapped = false;
+    if (consumerFiles.length === 0 && allowConsumerScan) {
       const fallback = await this.findFallbackConsumers(context, alias.packageName, alias.entryPath);
       if (fallback.length > 0) {
         consumerFiles = fallback;
         usedFallback = true;
       }
     }
+    if (allowConsumerScan && consumerLimit && consumerFiles.length > consumerLimit) {
+      consumerFiles = consumerFiles.slice(0, consumerLimit);
+      consumerCapped = true;
+    }
 
-    if (impactAnalyzer) {
-      const enriched = await impactAnalyzer.analyzeCrossLangImpact(alias.packageName, alias.entryPath, diff);
+    if (impactAnalyzer && allowConsumerScan) {
+      const enriched = await impactAnalyzer.analyzeCrossLangImpact(alias.packageName, alias.entryPath, diff, {
+        maxConsumerFiles: consumerLimit
+      });
       if (consumerFiles.length > 0 && enriched.consumerFiles.length === 0) {
         enriched.consumerFiles = consumerFiles;
       }
       if (usedFallback) {
         enriched.degraded = true;
         enriched.reasons = Array.from(new Set([...(enriched.reasons ?? []), "cross_lang_contract_degraded"]));
+      }
+      if (consumerCapped) {
+        enriched.degraded = true;
+        enriched.reasons = Array.from(new Set([...(enriched.reasons ?? []), "contract_consumer_scan_capped"]));
       }
       return enriched;
     }
@@ -1739,8 +1865,14 @@ export class ChangePillar {
       packageName: alias.packageName,
       consumerFiles: Array.from(new Set(consumerFiles)),
       changedExports: Array.from(new Set(changedExports)),
-      degraded: diff.degraded || usedFallback,
-      reasons: Array.from(new Set([...(diff.reasons ?? []), ...(usedFallback ? ["cross_lang_contract_degraded"] : [])]))
+      breakingExports: breakingExports.length > 0 ? breakingExports : undefined,
+      nonBreakingExports: nonBreakingExports.length > 0 ? nonBreakingExports : undefined,
+      degraded: diff.degraded || usedFallback || consumerCapped,
+      reasons: Array.from(new Set([
+        ...(diff.reasons ?? []),
+        ...(usedFallback ? ["cross_lang_contract_degraded"] : []),
+        ...(consumerCapped ? ["contract_consumer_scan_capped"] : [])
+      ]))
     };
   }
 

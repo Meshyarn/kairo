@@ -23,6 +23,45 @@ export interface SyntaxIssue {
 }
 export declare function validateSyntax(language: string, content: string): Array<SyntaxIssue>
 export declare function cosineScores(query: Float32Array, vectors: Array<Float32Array>): Array<number>
+export interface SymbolicSolverEvidence {
+  snippet?: string
+  note?: string
+}
+export interface SymbolicSolverDiagnostic {
+  code: string
+  severity: "warn" | "high"
+  message: string
+  filePath?: string
+  line?: number
+  column?: number
+  evidence?: SymbolicSolverEvidence
+}
+export interface SymbolicSolverConstraint {
+  kind: string
+  text: string
+  scopeKey: string
+  line: number
+  column: number
+}
+export interface SymbolicSolverInput {
+  filePath: string
+  content: string
+  constraints: Array<SymbolicSolverConstraint>
+  maxPaths: number
+  maxConstraints: number
+  timeSliceMs: number
+}
+export interface SymbolicSolverStats {
+  durationMs?: number
+  pathsExplored?: number
+  constraintsBuilt?: number
+}
+export interface SymbolicSolverResult {
+  diagnostics: Array<SymbolicSolverDiagnostic>
+  degradedReasons?: Array<string>
+  stats?: SymbolicSolverStats
+}
+export declare function symbolicSolve(input: SymbolicSolverInput): SymbolicSolverResult
 export declare class SmartChunker {
   constructor(modelPath: string)
   chunk(text: string, maxTokens: number, overlap: number): Array<ChunkResult>

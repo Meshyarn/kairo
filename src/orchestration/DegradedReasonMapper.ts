@@ -3,10 +3,12 @@ import type { DegradedReason, DegradedReasonType } from "../types/tool-responses
 const CONTRACT_ACTION_TOOLCALL = { tool: "manage", args: { command: "doctor", scope: "contracts" } };
 const LANGUAGE_ACTION_TOOLCALL = { tool: "manage", args: { command: "doctor", scope: "languages" } };
 const PARITY_ACTION_TOOLCALL = { tool: "manage", args: { command: "doctor", scope: "parity" } };
+const CAPABILITY_ACTION_TOOLCALL = { tool: "manage", args: { command: "doctor", scope: "capabilities" } };
 
 const CONTRACT_ACTION_ID = "manage.doctor.contracts";
 const LANGUAGE_ACTION_ID = "manage.doctor.languages";
 const PARITY_ACTION_ID = "manage.doctor.parity";
+const CAPABILITY_ACTION_ID = "manage.doctor.capabilities";
 
 const CONTRACT_REASON_MAP: Record<string, {
   type: DegradedReasonType;
@@ -42,6 +44,12 @@ const CONTRACT_REASON_MAP: Record<string, {
   contract_non_breaking_change: {
     type: "cross_lang_contract_degraded",
     message: "Contract surface changed (non-breaking).",
+    actionToolCall: CONTRACT_ACTION_TOOLCALL,
+    actionId: CONTRACT_ACTION_ID
+  },
+  contract_consumer_scan_capped: {
+    type: "cross_lang_contract_degraded",
+    message: "Contract consumer scan was capped; results may be incomplete.",
     actionToolCall: CONTRACT_ACTION_TOOLCALL,
     actionId: CONTRACT_ACTION_ID
   },
@@ -235,6 +243,30 @@ const PARITY_REASON_MAP: Record<string, {
     type: "degraded",
     message: "GraphRAG seed policy fell back to lexical retrieval.",
     severity: "warning"
+  },
+  symbolic_guards_disabled: {
+    type: "degraded",
+    message: "Symbolic guards are disabled.",
+    severity: "info"
+  },
+  symbolic_query_missing: {
+    type: "missing_query_pack",
+    message: "Symbolic guard query pack is missing.",
+    severity: "warning",
+    actionToolCall: PARITY_ACTION_TOOLCALL,
+    actionId: PARITY_ACTION_ID
+  },
+  symbolic_budget_exceeded: {
+    type: "budget_exceeded",
+    message: "Symbolic guard budget exceeded; results may be partial.",
+    severity: "warning"
+  },
+  solver_unavailable: {
+    type: "degraded",
+    message: "Symbolic solver unavailable; using rule-only guards.",
+    severity: "warning",
+    actionToolCall: CAPABILITY_ACTION_TOOLCALL,
+    actionId: CAPABILITY_ACTION_ID
   }
 };
 

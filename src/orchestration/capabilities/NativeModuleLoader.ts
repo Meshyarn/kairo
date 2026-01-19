@@ -14,6 +14,7 @@ export type RustCoreModule = {
     diffUnified: (oldText: string, newText: string, contextLines: number) => { diff: string; added: number; removed: number };
     validateSyntax: (language: string, content: string) => Array<{ line: number; column: number; message: string }>;
     cosineScores: (query: Float32Array, vectors: Float32Array[]) => number[];
+    symbolicSolve?: (input: unknown) => unknown;
 };
 
 export type RustCoreLoader = () => RustCoreModule;

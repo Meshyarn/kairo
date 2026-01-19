@@ -160,6 +160,8 @@ For the best review quality and iteration speed, use a session and build the cor
 2) `understand` with `vibe.extract=true` and `analysis.clusters=true`
 3) `write` / `change` in `dryRun` first, then apply
 
+Note: cluster summaries require GraphRAG to be enabled (`KAIRO_GRAPHRAG_ENABLED=true` or `.kairo/config/graphrag.json`). See `docs/guides/configuration.md`.
+
 Example:
 
 ```ts

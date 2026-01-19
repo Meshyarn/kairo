@@ -119,6 +119,13 @@ export class FeatureFlags {
     static RUST_VECTOR_ENABLED = 'rust_vector_enabled';
 
     /**
+     * Enables Rust symbolic solver capability.
+     * Default: true (when core enabled)
+     * Env var: KAIRO_RUST_SYMBOLIC_SOLVER_ENABLED
+     */
+    static RUST_SYMBOLIC_SOLVER_ENABLED = 'rust_symbolic_solver_enabled';
+
+    /**
      * Enables WASM chunking provider.
      * Default: false
      * Env var: KAIRO_WASM_CHUNKING_ENABLED
@@ -144,6 +151,7 @@ export class FeatureFlags {
         this.applyEnvFlag(this.RUST_DIFF_ENABLED, process.env.KAIRO_RUST_DIFF_ENABLED);
         this.applyEnvFlag(this.RUST_SYNTAX_ENABLED, process.env.KAIRO_RUST_SYNTAX_ENABLED);
         this.applyEnvFlag(this.RUST_VECTOR_ENABLED, process.env.KAIRO_RUST_VECTOR_ENABLED);
+        this.applyEnvFlag(this.RUST_SYMBOLIC_SOLVER_ENABLED, process.env.KAIRO_RUST_SYMBOLIC_SOLVER_ENABLED);
         this.applyEnvFlag(this.WASM_CHUNKING_ENABLED, process.env.KAIRO_WASM_CHUNKING_ENABLED);
         const modularPercent = process.env.KAIRO_MODULAR_ROLLOUT_PERCENT;
         if (!process.env.KAIRO_MODULAR_HANDLERS_ENABLED && modularPercent === undefined) {
@@ -170,6 +178,9 @@ export class FeatureFlags {
         }
         if (!this.isExplicit(this.RUST_VECTOR_ENABLED)) {
             this.set(this.RUST_VECTOR_ENABLED, true, 'on');
+        }
+        if (!this.isExplicit(this.RUST_SYMBOLIC_SOLVER_ENABLED)) {
+            this.set(this.RUST_SYMBOLIC_SOLVER_ENABLED, true, 'on');
         }
 
         console.log('[FeatureFlags] Initialized:', this.debugState());

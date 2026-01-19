@@ -56,6 +56,8 @@ await change({ ...plan, options: { dryRun: false }, sessionId })
 ```
 
 Tip: `workflowMeta` + `workflowWarnings` make missing session artifacts visible without breaking legacy calls.
+Tip: `analysis.clusters=true` requires GraphRAG to be enabled (`KAIRO_GRAPHRAG_ENABLED=true` or `.kairo/config/graphrag.json`).
+Tip: To make semantic findings block apply, set `reviewOptions.blockOn=["semantic"]` and enable symbolic guards via `.kairo/config/symbolic-guards.json` (ADR-083).
 
 ### 2. Search → Deep Dive
 ```typescript

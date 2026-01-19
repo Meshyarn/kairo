@@ -89,6 +89,41 @@ describe("WritePillar", () => {
     expect(editTransaction).not.toHaveBeenCalled();
   });
 
+  it("blocks apply when reviewOptions.blockOn triggers semantic", async () => {
+    const originalSemantic = process.env.MCP_VALIDATION_SEMANTIC;
+    process.env.MCP_VALIDATION_SEMANTIC = "error";
+    try {
+      const registry = new InternalToolRegistry();
+      registry.register("code_read", async () => "");
+      const editTransaction = jest.fn(async () => ({ success: true, operation: { id: "op-3" } }));
+      registry.register("edit_transaction", editTransaction);
+
+      const pillar = new WritePillar(registry);
+      const context = new OrchestrationContext();
+      const result = await pillar.execute(
+        makeIntent({
+          targetPath: "src/bad.ts",
+          content: "export const value = __kairo_missing_symbol__;",
+          safeWrite: true,
+          reviewOptions: { blockOn: ["semantic"] }
+        }) as any,
+        context
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.status).toBe("blocked");
+      expect(result.blockedReason).toBe("review_blocked");
+      expect(Array.isArray(result.reviewBlockReasons)).toBe(true);
+      expect(editTransaction).not.toHaveBeenCalled();
+    } finally {
+      if (originalSemantic === undefined) {
+        delete process.env.MCP_VALIDATION_SEMANTIC;
+      } else {
+        process.env.MCP_VALIDATION_SEMANTIC = originalSemantic;
+      }
+    }
+  });
+
   it("reuses draft content when draftId is provided in dryRun", async () => {
     const registry = new InternalToolRegistry();
     registry.register("code_read", async () => {

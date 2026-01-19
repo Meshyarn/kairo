@@ -1,4 +1,5 @@
 import type { SuggestedActionV1 } from "./guidance.js";
+import type { DegradedReason } from "./tool-responses.js";
 
 export type ResearchPackId = string;
 
@@ -304,6 +305,20 @@ export interface SemanticValidation {
     unresolvedImports?: string[];
     typeErrors?: number;
     summary: string;
+    degradedReasons?: DegradedReason[];
+    stats?: {
+        durationMs: number;
+        nameLinkUsed?: boolean;
+        contractGuard?: { mode: "spec_only" | "spec_plus_consumer_scan"; consumerScanUsed?: boolean };
+        symbolic?: {
+            enabled?: boolean;
+            mode?: "off" | "warn" | "block_high" | "strict";
+            queryUsed: boolean;
+            solverUsed: boolean;
+            constraintsBuilt?: number;
+            pathsExplored?: number;
+        };
+    };
 }
 
 export interface GuardrailsValidation {
