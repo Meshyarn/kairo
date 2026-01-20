@@ -101,6 +101,14 @@ export class IndexStateManager {
         };
     }
 
+    public getDirtyFiles(limit?: number): string[] {
+        const entries = Array.from(this.dirtyFiles.values()).sort();
+        if (typeof limit === "number" && limit > 0) {
+            return entries.slice(0, limit);
+        }
+        return entries;
+    }
+
     private async refreshTotals(): Promise<void> {
         if (!this.resolveTotals) return;
         try {

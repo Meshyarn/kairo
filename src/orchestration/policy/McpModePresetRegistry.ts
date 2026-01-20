@@ -14,6 +14,13 @@ export type ApplyHandshakePolicy = {
   invalidateOnDrift: boolean;
 };
 
+export type AutopilotPolicy = {
+  autoModeNeverApplies: boolean;
+  defaultOutputFormat: "summary" | "standard";
+  maxAutoRepairAttempts: number;
+  allowAutoReindex: boolean;
+};
+
 export type EnvelopeMaxTokens = {
   explore?: number;
   understand?: number;
@@ -68,6 +75,7 @@ export type McpResolvedPolicy = {
   publicSurface: McpPublicSurface;
   profile?: PolicyProfile;
   applyHandshake: ApplyHandshakePolicy;
+  autopilot: AutopilotPolicy;
   budgets: {
     envelopeMaxTokens: EnvelopeMaxTokens;
   };
@@ -322,6 +330,23 @@ export const resolveMcpPolicy = (overrides?: McpPolicyOverrides): McpResolvedPol
   const profile = overrides?.budgets?.profile
     ?? (mode === "mcp" ? config?.budgets?.profile : undefined)
     ?? preset?.profile;
+  const autopilotDefaults: AutopilotPolicy = {
+    autoModeNeverApplies: true,
+    defaultOutputFormat: mode === "mcp" ? "summary" : "standard",
+    maxAutoRepairAttempts: 0,
+    allowAutoReindex: false
+  };
+  const autopilotConfig = mode === "mcp" ? config?.autopilot : undefined;
+  const autopilot: AutopilotPolicy = {
+    autoModeNeverApplies: typeof autopilotConfig?.autoModeNeverApplies === "boolean"
+      ? autopilotConfig.autoModeNeverApplies
+      : autopilotDefaults.autoModeNeverApplies,
+    defaultOutputFormat: autopilotConfig?.defaultOutputFormat ?? autopilotDefaults.defaultOutputFormat,
+    maxAutoRepairAttempts: parseNumber(autopilotConfig?.maxAutoRepairAttempts) ?? autopilotDefaults.maxAutoRepairAttempts,
+    allowAutoReindex: typeof autopilotConfig?.allowAutoReindex === "boolean"
+      ? autopilotConfig.allowAutoReindex
+      : autopilotDefaults.allowAutoReindex
+  };
 
   return {
     mode,
@@ -329,6 +354,7 @@ export const resolveMcpPolicy = (overrides?: McpPolicyOverrides): McpResolvedPol
     publicSurface,
     profile,
     applyHandshake,
+    autopilot,
     budgets: {
       envelopeMaxTokens: {
         explore: resolveEnvelopeBudget(mode, "explore", preset, overrides, config),
@@ -360,6 +386,10 @@ export const resolveMcpMode = (): McpMode => {
 
 export const resolveApplyHandshakePolicy = (): ApplyHandshakePolicy => {
   return resolveMcpPolicy().applyHandshake;
+};
+
+export const resolveAutopilotPolicy = (): AutopilotPolicy => {
+  return resolveMcpPolicy().autopilot;
 };
 
 export const resolvePublicSurface = (): McpPublicSurface => {
