@@ -25,6 +25,8 @@ import { DraftPackBuilder } from "../../generation/draft-pack-builder.js";
 import { ReviewReportBuilder } from "../../generation/review-report-builder.js";
 import type { FlowArtifactManager } from "../flow-artifact-manager.js";
 import { buildDegradedReasons } from "../DegradedReasonMapper.js";
+import { enforceWriteResponseBudget } from "../budget/ResponseEnvelopeBudgeter.js";
+import { resolveEnvelopeMaxTokens } from "../policy/McpModePresetRegistry.js";
 import type { FileVersionManager } from "../../engine/FileVersionManager.js";
 import {
   evaluateLanguageParityGate,
@@ -80,6 +82,21 @@ export class WritePillar {
         : undefined;
     this.fileSystem = injected ?? new NodeFileSystem(process.cwd());
     return this.fileSystem;
+  }
+
+  private resolveEnvelopeBudget(constraints: any): { maxTokens?: number; maxChars?: number } {
+    const limits = constraints?.limits ?? {};
+    const policyMaxTokens = resolveEnvelopeMaxTokens("write");
+    const maxTokens = Number.isFinite(limits.maxTokens) && limits.maxTokens > 0
+      ? limits.maxTokens
+      : policyMaxTokens;
+    const maxChars = Number.isFinite(limits.maxChars) && limits.maxChars > 0
+      ? limits.maxChars
+      : undefined;
+    return {
+      maxTokens: Number.isFinite(maxTokens) ? maxTokens : undefined,
+      maxChars: Number.isFinite(maxChars) ? maxChars : undefined
+    };
   }
 
   private resolveFormatterMode(constraints: any): string | undefined {
@@ -233,6 +250,7 @@ export class WritePillar {
         artifactManager
       });
       const workflowWarnings = buildWorkflowWarnings(workflowMeta, Boolean(resolvedSessionId));
+      const responseEnvelope = this.resolveEnvelopeBudget(constraints);
       let overrideTrace: OverrideTrace | undefined;
       const repoRegistry = this.registry.getMetadata<RepoRegistry>("repoRegistry");
       const pathNormalizer = this.registry.getMetadata<PathNormalizer>("pathNormalizer");
@@ -259,22 +277,28 @@ export class WritePillar {
       const attachSession = <T extends Record<string, any>>(payload: T): T & { sessionId?: string; workflowMeta: WorkflowMeta; workflowWarnings?: string[] } => {
         const next = {
           ...payload,
-          workflowMeta,
-          ...(traceEnabled
-            ? {
-                effectiveOptions: {
-                  version: 1,
-                  pillar: "write",
-                  profile: resolvedOptions.effective.profile,
-                  safety: resolvedOptions.effective.safety,
-                  dryRun,
-                  reviewOptions,
-                  diffMode: resolvedOptions.effective.diffMode
-                },
-                decisionTrace: traceBuilder?.finalize()
-              }
-            : {})
+          workflowMeta
         } as T & { sessionId?: string; workflowMeta: WorkflowMeta; workflowWarnings?: string[] };
+        if (responseEnvelope.maxTokens || responseEnvelope.maxChars) {
+          enforceWriteResponseBudget({
+            response: next,
+            maxTokens: responseEnvelope.maxTokens,
+            maxChars: responseEnvelope.maxChars,
+            traceBuilder
+          });
+        }
+        if (traceEnabled) {
+          (next as any).effectiveOptions = {
+            version: 1,
+            pillar: "write",
+            profile: resolvedOptions.effective.profile,
+            safety: resolvedOptions.effective.safety,
+            dryRun,
+            reviewOptions,
+            diffMode: resolvedOptions.effective.diffMode
+          };
+          (next as any).decisionTrace = traceBuilder?.finalize();
+        }
         if (workflowWarnings.length > 0) {
           next.workflowWarnings = workflowWarnings;
         }

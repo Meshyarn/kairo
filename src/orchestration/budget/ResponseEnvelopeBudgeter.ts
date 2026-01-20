@@ -1,5 +1,6 @@
 import type { TraceBuilder } from "../trace/TraceBuilder.js";
 import { estimateTokens } from "../TokenBudget.js";
+import { buildDegradedReasons } from "../DegradedReasonMapper.js";
 import { truncate, type ExploreResponse } from "../pillars/explore/ResultFormatter.js";
 
 type EnvelopeBudgetOptions = {
@@ -17,6 +18,8 @@ type EnvelopeBudgetResult = {
 const DEFAULT_PREVIEW_CHARS = 800;
 const MIN_PREVIEW_CHARS = 240;
 const DEFAULT_ELASTIC_WINDOW_PCT = 0.05;
+const DEFAULT_DIFF_CHARS = 2000;
+const MIN_DIFF_CHARS = 800;
 
 function estimateResponseUsage(response: unknown): { estimatedTokens: number; usedChars: number; serialized: string } {
   const serialized = JSON.stringify(response ?? {});
@@ -65,6 +68,17 @@ function markBudgetExceeded(response: { degraded?: boolean; reasons?: string[] }
   response.reasons = Array.from(new Set([...(response.reasons ?? []), "budget_exceeded"]));
 }
 
+function markBudgetExceededWithReasons(response: { degraded?: boolean; degradedReasons?: any[] }): void {
+  response.degraded = true;
+  const existing = Array.isArray(response.degradedReasons) ? response.degradedReasons : [];
+  if (existing.some((reason) => reason?.type === "budget_exceeded")) {
+    response.degradedReasons = existing;
+    return;
+  }
+  const additions = buildDegradedReasons(["budget_exceeded"]) ?? [];
+  response.degradedReasons = [...existing, ...additions];
+}
+
 function trimExploreItems(items: ExploreResponse["data"]["docs"], options: { removeContent?: boolean; previewChars?: number }): boolean {
   let changed = false;
   const previewChars = options.previewChars ?? DEFAULT_PREVIEW_CHARS;
@@ -99,6 +113,131 @@ function shrinkExploreLists(response: ExploreResponse, minCounts: { docs: number
     return true;
   }
   return false;
+}
+
+function truncateStringField(
+  response: Record<string, any>,
+  key: string,
+  maxChars: number,
+  traceBuilder?: TraceBuilder
+): boolean {
+  const value = response[key];
+  if (typeof value !== "string" || value.length <= maxChars) return false;
+  response[key] = truncate(value, maxChars);
+  recordBudgetAction(traceBuilder, "budget.response.truncate_field", { field: key, maxChars });
+  return true;
+}
+
+function trimArrayField(
+  response: Record<string, any>,
+  key: string,
+  limit: number,
+  traceBuilder?: TraceBuilder
+): boolean {
+  const value = response[key];
+  if (!Array.isArray(value) || value.length <= limit) return false;
+  response[key] = value.slice(0, limit);
+  recordBudgetAction(traceBuilder, "budget.response.trim_lists", { field: key, limit });
+  return true;
+}
+
+function compactDraftPack(pack: any): any {
+  if (!pack || typeof pack !== "object") return pack;
+  return {
+    id: pack.id,
+    intent: pack.intent,
+    status: pack.status,
+    createdAt: pack.createdAt,
+    fileVersions: pack.fileVersions,
+    preflightCheck: pack.preflightCheck,
+    workflowMeta: pack.workflowMeta
+  };
+}
+
+function compactReviewReport(report: any): any {
+  if (!report || typeof report !== "object") return report;
+  return {
+    id: report.id,
+    verdict: report.verdict,
+    reviewedAt: report.reviewedAt,
+    reviewedFiles: report.reviewedFiles,
+    suggestedActions: Array.isArray(report.suggestedActions)
+      ? report.suggestedActions.slice(0, 3)
+      : undefined
+  };
+}
+
+function compactImpactReport(report: any): any {
+  if (!report || typeof report !== "object") return report;
+  const preview = report.preview && typeof report.preview === "object"
+    ? {
+        summary: report.preview.summary,
+        riskLevel: report.preview.riskLevel,
+        impactedFiles: Array.isArray(report.preview.summary?.impactedFiles)
+          ? report.preview.summary.impactedFiles.slice(0, 10)
+          : undefined
+      }
+    : undefined;
+  return {
+    breakingChangeRisk: report.breakingChangeRisk,
+    suggestedTests: Array.isArray(report.suggestedTests) ? report.suggestedTests.slice(0, 5) : undefined,
+    preview
+  };
+}
+
+function compactArtifact(artifact: any): any {
+  if (!artifact || typeof artifact !== "object") return artifact;
+  if (artifact.type === "draft" && artifact.pack) {
+    return { ...artifact, pack: compactDraftPack(artifact.pack) };
+  }
+  if (artifact.type === "review" && artifact.report) {
+    return { ...artifact, report: compactReviewReport(artifact.report) };
+  }
+  if (artifact.type === "analysis" && artifact.pack) {
+    const pack = artifact.pack;
+    return {
+      ...artifact,
+      pack: {
+        id: pack.id,
+        goal: pack.goal,
+        clusters: Array.isArray(pack.clusters) ? pack.clusters.slice(0, 3) : [],
+        createdAt: pack.createdAt,
+        degraded: pack.degraded
+      }
+    };
+  }
+  if (artifact.type === "research" && artifact.pack) {
+    const pack = artifact.pack;
+    return {
+      ...artifact,
+      pack: {
+        id: pack.id,
+        createdAt: pack.createdAt,
+        expiresAt: pack.expiresAt,
+        sketch: pack.sketch
+          ? {
+              summary: pack.sketch.summary,
+              topModules: Array.isArray(pack.sketch.topModules) ? pack.sketch.topModules.slice(0, 3) : [],
+              edgesSample: Array.isArray(pack.sketch.edgesSample) ? pack.sketch.edgesSample.slice(0, 5) : []
+            }
+          : undefined
+      }
+    };
+  }
+  if (artifact.type === "style" && artifact.pack) {
+    const pack = artifact.pack;
+    return {
+      ...artifact,
+      pack: {
+        id: pack.id,
+        scope: pack.scope,
+        createdAt: pack.createdAt,
+        confidence: pack.confidence,
+        profile: pack.profile ? { codeStyle: pack.profile.codeStyle } : undefined
+      }
+    };
+  }
+  return artifact;
 }
 
 export function enforceExploreResponseBudget(args: {
@@ -298,6 +437,302 @@ export function enforceUnderstandResponseBudget(args: {
 
   if (applied) {
     markBudgetExceeded(response);
+    response.stats = {
+      ...(response.stats ?? {}),
+      responseBudget: {
+        applied: true,
+        estimatedTokens: usage.estimatedTokens,
+        usedChars: usage.usedChars,
+        elasticWindowPct: DEFAULT_ELASTIC_WINDOW_PCT,
+        maxTokens: options.maxTokens,
+        maxChars: options.maxChars
+      }
+    };
+    recordTrace(options.traceBuilder, usage, options, true);
+  } else {
+    recordTrace(options.traceBuilder, usage, options, false);
+  }
+
+  return { applied, estimatedTokens: usage.estimatedTokens, usedChars: usage.usedChars };
+}
+
+export function enforceChangeResponseBudget(args: {
+  response: Record<string, any>;
+  maxTokens?: number;
+  maxChars?: number;
+  traceBuilder?: TraceBuilder;
+}): EnvelopeBudgetResult {
+  const options: EnvelopeBudgetOptions = { maxTokens: args.maxTokens, maxChars: args.maxChars, traceBuilder: args.traceBuilder };
+  if (!options.maxTokens && !options.maxChars) {
+    const usage = estimateResponseUsage(args.response);
+    recordTrace(options.traceBuilder, usage, options, false);
+    return { applied: false, estimatedTokens: usage.estimatedTokens, usedChars: usage.usedChars };
+  }
+
+  const response = args.response;
+  let usage = estimateResponseUsage(response);
+  if (withinBudget(usage, options)) {
+    recordTrace(options.traceBuilder, usage, options, false);
+    return { applied: false, estimatedTokens: usage.estimatedTokens, usedChars: usage.usedChars };
+  }
+
+  let applied = false;
+  const dropField = (key: string) => {
+    if (response[key] !== undefined) {
+      response[key] = undefined;
+      applied = true;
+      recordBudgetAction(options.traceBuilder, "budget.response.drop_field", { field: key });
+    }
+  };
+
+  if (!withinBudget(usage, options)) {
+    applied = truncateStringField(response, "diff", DEFAULT_DIFF_CHARS, options.traceBuilder) || applied;
+    usage = estimateResponseUsage(response);
+  }
+  if (!withinBudget(usage, options) && response.draftPack) {
+    response.draftPack = compactDraftPack(response.draftPack);
+    applied = true;
+    recordBudgetAction(options.traceBuilder, "budget.response.compact_field", { field: "draftPack" });
+    usage = estimateResponseUsage(response);
+  }
+  if (!withinBudget(usage, options) && response.review) {
+    response.review = compactReviewReport(response.review);
+    applied = true;
+    recordBudgetAction(options.traceBuilder, "budget.response.compact_field", { field: "review" });
+    usage = estimateResponseUsage(response);
+  }
+  if (!withinBudget(usage, options) && response.postReview) {
+    response.postReview = compactReviewReport(response.postReview);
+    applied = true;
+    recordBudgetAction(options.traceBuilder, "budget.response.compact_field", { field: "postReview" });
+    usage = estimateResponseUsage(response);
+  }
+  if (!withinBudget(usage, options) && response.impactReport) {
+    response.impactReport = compactImpactReport(response.impactReport);
+    applied = true;
+    recordBudgetAction(options.traceBuilder, "budget.response.compact_field", { field: "impactReport" });
+    usage = estimateResponseUsage(response);
+  }
+  if (!withinBudget(usage, options)) {
+    applied = trimArrayField(response, "relatedDocs", 5, options.traceBuilder) || applied;
+    usage = estimateResponseUsage(response);
+  }
+
+  if (!withinBudget(usage, options)) dropField("symbolImpact");
+  usage = estimateResponseUsage(response);
+  if (!withinBudget(usage, options)) dropField("suggestedEdits");
+  usage = estimateResponseUsage(response);
+  if (!withinBudget(usage, options)) dropField("editResult");
+  usage = estimateResponseUsage(response);
+  if (!withinBudget(usage, options)) dropField("formatter");
+  usage = estimateResponseUsage(response);
+  if (!withinBudget(usage, options)) dropField("integrity");
+  usage = estimateResponseUsage(response);
+  if (!withinBudget(usage, options)) dropField("plan");
+  usage = estimateResponseUsage(response);
+  if (!withinBudget(usage, options)) {
+    applied = truncateStringField(response, "diff", MIN_DIFF_CHARS, options.traceBuilder) || applied;
+    usage = estimateResponseUsage(response);
+  }
+
+  if (!withinBudget(usage, options)) {
+    dropField("draftPack");
+    dropField("review");
+    dropField("postReview");
+    dropField("impactReport");
+    dropField("diff");
+    usage = estimateResponseUsage(response);
+  }
+
+  if (applied) {
+    markBudgetExceededWithReasons(response);
+    response.stats = {
+      ...(response.stats ?? {}),
+      responseBudget: {
+        applied: true,
+        estimatedTokens: usage.estimatedTokens,
+        usedChars: usage.usedChars,
+        elasticWindowPct: DEFAULT_ELASTIC_WINDOW_PCT,
+        maxTokens: options.maxTokens,
+        maxChars: options.maxChars
+      }
+    };
+    recordTrace(options.traceBuilder, usage, options, true);
+  } else {
+    recordTrace(options.traceBuilder, usage, options, false);
+  }
+
+  return { applied, estimatedTokens: usage.estimatedTokens, usedChars: usage.usedChars };
+}
+
+export function enforceWriteResponseBudget(args: {
+  response: Record<string, any>;
+  maxTokens?: number;
+  maxChars?: number;
+  traceBuilder?: TraceBuilder;
+}): EnvelopeBudgetResult {
+  const options: EnvelopeBudgetOptions = { maxTokens: args.maxTokens, maxChars: args.maxChars, traceBuilder: args.traceBuilder };
+  if (!options.maxTokens && !options.maxChars) {
+    const usage = estimateResponseUsage(args.response);
+    recordTrace(options.traceBuilder, usage, options, false);
+    return { applied: false, estimatedTokens: usage.estimatedTokens, usedChars: usage.usedChars };
+  }
+
+  const response = args.response;
+  let usage = estimateResponseUsage(response);
+  if (withinBudget(usage, options)) {
+    recordTrace(options.traceBuilder, usage, options, false);
+    return { applied: false, estimatedTokens: usage.estimatedTokens, usedChars: usage.usedChars };
+  }
+
+  let applied = false;
+  const dropField = (key: string) => {
+    if (response[key] !== undefined) {
+      response[key] = undefined;
+      applied = true;
+      recordBudgetAction(options.traceBuilder, "budget.response.drop_field", { field: key });
+    }
+  };
+
+  if (!withinBudget(usage, options) && response.draftPack) {
+    response.draftPack = compactDraftPack(response.draftPack);
+    applied = true;
+    recordBudgetAction(options.traceBuilder, "budget.response.compact_field", { field: "draftPack" });
+    usage = estimateResponseUsage(response);
+  }
+  if (!withinBudget(usage, options) && response.review) {
+    response.review = compactReviewReport(response.review);
+    applied = true;
+    recordBudgetAction(options.traceBuilder, "budget.response.compact_field", { field: "review" });
+    usage = estimateResponseUsage(response);
+  }
+  if (!withinBudget(usage, options) && response.postReview) {
+    response.postReview = compactReviewReport(response.postReview);
+    applied = true;
+    recordBudgetAction(options.traceBuilder, "budget.response.compact_field", { field: "postReview" });
+    usage = estimateResponseUsage(response);
+  }
+  if (!withinBudget(usage, options)) {
+    applied = truncateStringField(response, "diff", DEFAULT_DIFF_CHARS, options.traceBuilder) || applied;
+    usage = estimateResponseUsage(response);
+  }
+  if (!withinBudget(usage, options)) {
+    dropField("editResult");
+    usage = estimateResponseUsage(response);
+  }
+  if (!withinBudget(usage, options)) dropField("formatter");
+  usage = estimateResponseUsage(response);
+  if (!withinBudget(usage, options)) dropField("integrity");
+  usage = estimateResponseUsage(response);
+
+  if (!withinBudget(usage, options)) {
+    dropField("draftPack");
+    dropField("review");
+    dropField("postReview");
+    dropField("diff");
+    usage = estimateResponseUsage(response);
+  }
+
+  if (applied) {
+    markBudgetExceededWithReasons(response);
+    response.stats = {
+      ...(response.stats ?? {}),
+      responseBudget: {
+        applied: true,
+        estimatedTokens: usage.estimatedTokens,
+        usedChars: usage.usedChars,
+        elasticWindowPct: DEFAULT_ELASTIC_WINDOW_PCT,
+        maxTokens: options.maxTokens,
+        maxChars: options.maxChars
+      }
+    };
+    recordTrace(options.traceBuilder, usage, options, true);
+  } else {
+    recordTrace(options.traceBuilder, usage, options, false);
+  }
+
+  return { applied, estimatedTokens: usage.estimatedTokens, usedChars: usage.usedChars };
+}
+
+export function enforceManageResponseBudget(args: {
+  response: Record<string, any>;
+  maxTokens?: number;
+  maxChars?: number;
+  traceBuilder?: TraceBuilder;
+}): EnvelopeBudgetResult {
+  const options: EnvelopeBudgetOptions = { maxTokens: args.maxTokens, maxChars: args.maxChars, traceBuilder: args.traceBuilder };
+  if (!options.maxTokens && !options.maxChars) {
+    const usage = estimateResponseUsage(args.response);
+    recordTrace(options.traceBuilder, usage, options, false);
+    return { applied: false, estimatedTokens: usage.estimatedTokens, usedChars: usage.usedChars };
+  }
+
+  const response = args.response;
+  let usage = estimateResponseUsage(response);
+  if (withinBudget(usage, options)) {
+    recordTrace(options.traceBuilder, usage, options, false);
+    return { applied: false, estimatedTokens: usage.estimatedTokens, usedChars: usage.usedChars };
+  }
+
+  let applied = false;
+  const dropResultField = (key: string) => {
+    if (response.result && response.result[key] !== undefined) {
+      response.result[key] = undefined;
+      applied = true;
+      recordBudgetAction(options.traceBuilder, "budget.response.drop_field", { field: `result.${key}` });
+    }
+  };
+
+  if (response.result?.artifact) {
+    response.result.artifact = compactArtifact(response.result.artifact);
+    applied = true;
+    recordBudgetAction(options.traceBuilder, "budget.response.compact_field", { field: "result.artifact" });
+    usage = estimateResponseUsage(response);
+  }
+
+  if (!withinBudget(usage, options) && response.result?.view) {
+    response.result.view = undefined;
+    applied = true;
+    recordBudgetAction(options.traceBuilder, "budget.response.drop_field", { field: "result.view" });
+    usage = estimateResponseUsage(response);
+  }
+
+  const heavyKeys = [
+    "capabilityDiagnostics",
+    "capabilityHints",
+    "embeddingDiagnostics",
+    "embeddingFindings",
+    "indexSnapshot",
+    "status",
+    "history",
+    "artifacts",
+    "sessions",
+    "session",
+    "metrics",
+    "telemetry",
+    "cost",
+    "rollout",
+    "drift",
+    "budget"
+  ];
+  for (const key of heavyKeys) {
+    if (withinBudget(usage, options)) break;
+    dropResultField(key);
+    usage = estimateResponseUsage(response);
+  }
+
+  if (!withinBudget(usage, options) && response.result) {
+    response.result = {
+      success: response.result.success ?? response.success,
+      output: response.result.output ?? response.output
+    };
+    applied = true;
+    recordBudgetAction(options.traceBuilder, "budget.response.compact_field", { field: "result" });
+    usage = estimateResponseUsage(response);
+  }
+
+  if (applied) {
+    markBudgetExceededWithReasons(response);
     response.stats = {
       ...(response.stats ?? {}),
       responseBudget: {

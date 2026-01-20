@@ -5,6 +5,8 @@ import { ParsedIntent } from '../IntentRouter.js';
 import { buildDegradedReasons } from '../DegradedReasonMapper.js';
 import { TraceBuilder } from '../trace/TraceBuilder.js';
 import { AdaptiveLodController } from '../adaptive-flow/AdaptiveLodController.js';
+import { enforceManageResponseBudget } from '../budget/ResponseEnvelopeBudgeter.js';
+import { resolveEnvelopeMaxTokens } from '../policy/McpModePresetRegistry.js';
 
 
 export class ManagePillar {
@@ -49,6 +51,7 @@ export class ManagePillar {
     const pruneOptions = (constraints as any).pruneOptions;
     const apply = (constraints as any).apply;
     const adaptiveLod = this.registry.getMetadata<AdaptiveLodController>("adaptiveLodController");
+    const responseEnvelope = this.resolveEnvelopeBudget(constraints);
     const execute = async (command: string) => {
       const started = Date.now();
         const output = await this.registry.execute('project_manage', {
@@ -116,7 +119,7 @@ export class ManagePillar {
         scope,
         detail,
         traceBuilder
-      });
+      }, responseEnvelope);
     
     switch (action) {
       case 'undo':
@@ -190,7 +193,11 @@ export class ManagePillar {
     }
   }
 
-  private wrapResponse(raw: any, trace?: { command?: string; scope?: string; detail?: string; traceBuilder?: TraceBuilder }) {
+  private wrapResponse(
+    raw: any,
+    trace?: { command?: string; scope?: string; detail?: string; traceBuilder?: TraceBuilder },
+    budget?: { maxTokens?: number; maxChars?: number }
+  ) {
     const indexStatus = raw?.status?.status ?? raw?.status ?? undefined;
     const projectState = indexStatus ? { indexStatus, pendingTransactions: raw?.history?.pendingTransactions?.length ?? 0, lastModified: new Date().toISOString() } : undefined;
     const reasons = Array.isArray(raw?.reasons)
@@ -204,6 +211,14 @@ export class ManagePillar {
       degraded,
       degradedReasons: buildDegradedReasons(reasons)
     };
+    if (budget?.maxTokens || budget?.maxChars) {
+      enforceManageResponseBudget({
+        response,
+        maxTokens: budget.maxTokens,
+        maxChars: budget.maxChars,
+        traceBuilder: trace?.traceBuilder
+      });
+    }
     if (trace?.traceBuilder) {
       return {
         ...response,
@@ -218,5 +233,20 @@ export class ManagePillar {
       };
     }
     return response;
+  }
+
+  private resolveEnvelopeBudget(constraints: any): { maxTokens?: number; maxChars?: number } {
+    const limits = constraints?.limits ?? {};
+    const policyMaxTokens = resolveEnvelopeMaxTokens("manage");
+    const maxTokens = Number.isFinite(limits.maxTokens) && limits.maxTokens > 0
+      ? limits.maxTokens
+      : policyMaxTokens;
+    const maxChars = Number.isFinite(limits.maxChars) && limits.maxChars > 0
+      ? limits.maxChars
+      : undefined;
+    return {
+      maxTokens: Number.isFinite(maxTokens) ? maxTokens : undefined,
+      maxChars: Number.isFinite(maxChars) ? maxChars : undefined
+    };
   }
 }

@@ -67,6 +67,8 @@ import { AstManager } from "../../../ast/AstManager.js";
 import type { PathNormalizer } from "../../../utils/PathNormalizer.js";
 import { resolveSymbolicGuardConfig } from "../../../config/SymbolicGuardConfig.js";
 import { estimateTokens } from "../../TokenBudget.js";
+import { enforceChangeResponseBudget } from "../../budget/ResponseEnvelopeBudgeter.js";
+import { resolveEnvelopeMaxTokens } from "../../policy/McpModePresetRegistry.js";
 import {
     computeAdaptiveFlowGate,
     recordAdaptiveFlowGateTrace,
@@ -283,28 +285,35 @@ export class ChangePillar {
         artifactManager
       });
       const workflowWarnings = buildWorkflowWarnings(workflowMeta, Boolean(resolvedSessionId));
+      const responseEnvelope = this.resolveEnvelopeBudget(constraints);
       let strategySearchSummary: any | undefined;
       let overrideTrace: OverrideTrace | undefined;
       const attachWorkflow = <T extends Record<string, any>>(payload: T): T & { workflowMeta: WorkflowMeta; workflowWarnings?: string[] } => {
         const next = {
           ...payload,
           workflowMeta,
-          ...(strategySearchSummary ? { strategySearch: strategySearchSummary } : {}),
-          ...(traceEnabled
-            ? {
-                effectiveOptions: {
-                  version: 1,
-                  pillar: "change",
-                  profile: resolvedOptions.effective.profile,
-                  safety: resolvedOptions.effective.safety,
-                  dryRun,
-                  reviewOptions,
-                  diffMode
-                },
-                decisionTrace: traceBuilder?.finalize()
-              }
-            : {})
+          ...(strategySearchSummary ? { strategySearch: strategySearchSummary } : {})
         } as T & { workflowMeta: WorkflowMeta; workflowWarnings?: string[] };
+        if (responseEnvelope.maxTokens || responseEnvelope.maxChars) {
+          enforceChangeResponseBudget({
+            response: next,
+            maxTokens: responseEnvelope.maxTokens,
+            maxChars: responseEnvelope.maxChars,
+            traceBuilder
+          });
+        }
+        if (traceEnabled) {
+          (next as any).effectiveOptions = {
+            version: 1,
+            pillar: "change",
+            profile: resolvedOptions.effective.profile,
+            safety: resolvedOptions.effective.safety,
+            dryRun,
+            reviewOptions,
+            diffMode
+          };
+          (next as any).decisionTrace = traceBuilder?.finalize();
+        }
         if (workflowWarnings.length > 0) {
           next.workflowWarnings = workflowWarnings;
         }
@@ -1585,6 +1594,21 @@ export class ChangePillar {
   private resolveTargetFiles(constraints: any, targets: string[]): string[] {
     const fromConstraints = Array.isArray(constraints?.targetFiles) ? constraints.targetFiles : [];
     return (fromConstraints.length > 0 ? fromConstraints : targets).filter((t: any) => typeof t === 'string');
+  }
+
+  private resolveEnvelopeBudget(constraints: any): { maxTokens?: number; maxChars?: number } {
+    const limits = constraints?.limits ?? {};
+    const policyMaxTokens = resolveEnvelopeMaxTokens("change");
+    const maxTokens = Number.isFinite(limits.maxTokens) && limits.maxTokens > 0
+      ? limits.maxTokens
+      : policyMaxTokens;
+    const maxChars = Number.isFinite(limits.maxChars) && limits.maxChars > 0
+      ? limits.maxChars
+      : undefined;
+    return {
+      maxTokens: Number.isFinite(maxTokens) ? maxTokens : undefined,
+      maxChars: Number.isFinite(maxChars) ? maxChars : undefined
+    };
   }
 
   private async resolveParityGate(

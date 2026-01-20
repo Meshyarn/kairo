@@ -11,6 +11,7 @@ export type EnvelopeMaxTokens = {
   explore?: number;
   understand?: number;
   change?: number;
+  write?: number;
   manage?: number;
 };
 
@@ -92,6 +93,7 @@ const MCP_PRESETS: Record<McpPresetId, McpPreset> = {
         explore: 4000,
         understand: 5000,
         change: 4000,
+        write: 4000,
         manage: 6000
       }
     },
@@ -109,6 +111,7 @@ const MCP_PRESETS: Record<McpPresetId, McpPreset> = {
         explore: 6000,
         understand: 8000,
         change: 6000,
+        write: 6000,
         manage: 10000
       }
     },
@@ -126,6 +129,7 @@ const MCP_PRESETS: Record<McpPresetId, McpPreset> = {
         explore: 10000,
         understand: 12000,
         change: 10000,
+        write: 10000,
         manage: 20000
       }
     },
@@ -302,6 +306,7 @@ export const resolveMcpPolicy = (overrides?: McpPolicyOverrides): McpResolvedPol
         explore: resolveEnvelopeBudget(mode, "explore", preset, overrides, config),
         understand: resolveEnvelopeBudget(mode, "understand", preset, overrides, config),
         change: resolveEnvelopeBudget(mode, "change", preset, overrides, config),
+        write: resolveEnvelopeBudget(mode, "write", preset, overrides, config),
         manage: resolveEnvelopeBudget(mode, "manage", preset, overrides, config)
       }
     },
