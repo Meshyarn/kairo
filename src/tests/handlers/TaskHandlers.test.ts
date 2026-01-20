@@ -61,4 +61,55 @@ describe("TaskHandlers", () => {
         expect(payload.summary.title).toContain("core structure");
         expect(payload.status).toBe("success");
     });
+
+    it("returns change prep when plan_change has no edits", async () => {
+        const context = makeContext();
+        const handler = new TaskHandlers(context as any);
+        const exploreResponse = {
+            success: true,
+            status: "ok",
+            data: { docs: [], code: [{ kind: "file_preview", filePath: "src/app.ts" }] },
+            pack: { packId: "pack_2", hit: false, createdAt: Date.now() },
+            sessionId: "s3"
+        };
+        context.orchestrationEngine.executePillar.mockResolvedValue(exploreResponse);
+
+        const response = await handler.handle("task", { request: "update app", mode: "plan_change" });
+        const payload = JSON.parse(response.content[0].text);
+
+        expect(context.orchestrationEngine.executePillar).toHaveBeenCalledWith(
+            "explore",
+            expect.objectContaining({ query: "update app", view: "preview" })
+        );
+        expect(payload.status).toBe("partial_success");
+        expect(payload.changePrep?.recommendedTargets).toContain("src/app.ts");
+        expect(payload.packId).toBe("pack_2");
+    });
+
+    it("routes plan_change with edits to change plan", async () => {
+        const context = makeContext();
+        const handler = new TaskHandlers(context as any);
+        const changeResponse = {
+            success: true,
+            status: "ok",
+            draftPack: { id: "draft_1", intent: "update", status: "pending", createdAt: Date.now() },
+            sessionId: "s4"
+        };
+        context.orchestrationEngine.executePillar.mockResolvedValue(changeResponse);
+
+        const response = await handler.handle("task", {
+            request: "update app",
+            mode: "plan_change",
+            edits: [{ targetString: "old", replacementString: "new" }],
+            targetFiles: ["src/app.ts"]
+        });
+        const payload = JSON.parse(response.content[0].text);
+
+        expect(context.orchestrationEngine.executePillar).toHaveBeenCalledWith(
+            "change",
+            expect.objectContaining({ intent: "update app", safety: "plan" })
+        );
+        expect(payload.draftId).toBe("draft_1");
+        expect(payload.status).toBe("success");
+    });
 });

@@ -55,12 +55,18 @@ export class TaskHandlers extends BaseHandler {
         if (category === "explore" || category === "navigate" || category === "read") {
             return { mode: "ask" as TaskMode, category };
         }
+        if (category === "change") return { mode: "plan_change" as TaskMode, category };
         return { mode: "ask" as TaskMode, category };
     }
 
     private extractPaths(value: any): string[] {
         if (!Array.isArray(value)) return [];
         return value.filter((item) => typeof item === "string" && item.length > 0);
+    }
+
+    private extractEdits(value: any): any[] {
+        if (!Array.isArray(value)) return [];
+        return value.filter((item) => item !== null && item !== undefined);
     }
 
     private extractMaxTokens(value: any): number | undefined {
@@ -185,6 +191,81 @@ export class TaskHandlers extends BaseHandler {
         return "success";
     }
 
+    private async buildFileVersionsSnapshot(paths: string[]): Promise<Record<string, { expectedVersion?: number; expectedHash?: string }> | undefined> {
+        const fileVersionManager = this.context.fileVersionManager;
+        const pathNormalizer = this.context.pathNormalizer;
+        if (!fileVersionManager || !pathNormalizer) return undefined;
+        const snapshot: Record<string, { expectedVersion?: number; expectedHash?: string }> = {};
+        const uniquePaths = Array.from(new Set(paths.filter(Boolean)));
+        for (const filePath of uniquePaths) {
+            const relPath = pathNormalizer.normalize(filePath);
+            try {
+                const absPath = pathNormalizer.toAbsolute(relPath);
+                const versionInfo = await fileVersionManager.getVersion(absPath);
+                snapshot[relPath] = {
+                    expectedVersion: versionInfo.version,
+                    expectedHash: versionInfo.contentHash
+                };
+            } catch {
+                // skip missing files
+            }
+        }
+        return Object.keys(snapshot).length > 0 ? snapshot : undefined;
+    }
+
+    private buildPlanPrepSummary(args: {
+        request: string;
+        recommendedTargets: string[];
+        packId?: string;
+    }): { title: string; bullets: string[]; next: string[] } {
+        const recommended = args.recommendedTargets.length > 0
+            ? args.recommendedTargets.slice(0, 5).join(", ")
+            : "none";
+        const bullets = [
+            `Recommended targets: ${recommended}.`,
+            "Provide explicit edits to generate a change plan."
+        ];
+        const next: string[] = [];
+        if (args.packId) {
+            next.push("Use manage artifact/export to inspect the explore pack.");
+        }
+        next.push("Call task with mode=plan_change and edits to generate a DraftPack.");
+        return {
+            title: `Change prep for "${args.request}".`,
+            bullets,
+            next
+        };
+    }
+
+    private buildPlanSummary(args: {
+        response: any;
+        request: string;
+    }): { title: string; bullets: string[]; next: string[] } {
+        const response = args.response ?? {};
+        const draftId = response?.draftPack?.id ?? "none";
+        const reviewId = response?.review?.id ?? "none";
+        const impact = response?.impactReport ? "present" : "none";
+        const diffBytes = typeof response?.diff === "string" ? response.diff.length : 0;
+        const bullets = [
+            `Draft pack: ${draftId}.`,
+            `Review: ${reviewId}.`,
+            `Impact: ${impact}.`,
+            `Diff bytes: ${diffBytes}.`
+        ];
+        const next: string[] = [];
+        if (draftId !== "none") {
+            next.push("Use manage artifact to review the draft pack.");
+        }
+        if (reviewId !== "none") {
+            next.push("Use manage artifact to review the pre-apply review.");
+        }
+        return {
+            title: `Change plan for "${args.request}".`,
+            bullets,
+            next
+        };
+    }
+
     private async executeTask(args: any) {
         const startedAt = Date.now();
         const request = typeof args?.request === "string" ? args.request.trim() : "";
@@ -196,6 +277,7 @@ export class TaskHandlers extends BaseHandler {
         const sessionId = typeof args?.sessionId === "string" ? args.sessionId : undefined;
         const paths = this.extractPaths(args?.paths);
         const targetFiles = this.extractPaths(args?.targetFiles);
+        const edits = this.extractEdits(args?.edits);
         const traceEnabled = args?.trace === true;
         const surface = resolvePublicSurface();
 
@@ -235,6 +317,124 @@ export class TaskHandlers extends BaseHandler {
                 ...(response?.degraded !== undefined ? { degraded: response.degraded } : {}),
                 ...(response?.degradedReasons ? { degradedReasons: response.degradedReasons } : {}),
                 ...(guidance ? { guidance } : {}),
+                stats: {
+                    latencyMs: Date.now() - startedAt
+                }
+            };
+        }
+
+        if (routing.mode === "plan_change") {
+            const planTargets = targetFiles.length > 0 ? targetFiles : (paths.length > 0 ? paths : []);
+            const planLimits = maxTokens ? { maxTokens } : undefined;
+            if (edits.length === 0) {
+                const response = await this.context.orchestrationEngine.executePillar("explore", {
+                    query: request,
+                    paths: paths.length > 0 ? paths : undefined,
+                    targetFiles: planTargets.length > 0 ? planTargets : undefined,
+                    sessionId,
+                    profile,
+                    view: "preview",
+                    trace: traceEnabled,
+                    limits: planLimits
+                });
+                const packId = response?.pack?.packId ?? response?.researchPack?.id;
+                const codeTargets = response?.data?.code
+                    ?.map((item: any) => item?.filePath)
+                    .filter((filePath: any) => typeof filePath === "string") ?? [];
+                const recommendedTargets = Array.from(new Set([...planTargets, ...codeTargets])).slice(0, 10);
+                const fileVersions = await this.buildFileVersionsSnapshot(recommendedTargets);
+                const editsTemplate = {
+                    edits: [
+                        {
+                            filePath: recommendedTargets[0] ?? "<path>",
+                            targetString: "<exact text>",
+                            replacementString: "<replacement>"
+                        }
+                    ]
+                };
+                const summary = this.buildPlanPrepSummary({ request, recommendedTargets, packId });
+                const guidance = this.buildGuidance(response?.guidance, nextCalls);
+                return {
+                    ok: true,
+                    sessionId: response?.sessionId ?? sessionId,
+                    status: "partial_success",
+                    mode: routing.mode,
+                    budget,
+                    surface,
+                    summary: outputFormat === "summary" ? summary : summary,
+                    ...(packId ? { packId } : {}),
+                    changePrep: {
+                        recommendedTargets,
+                        ...(fileVersions ? { fileVersions } : {}),
+                        editsTemplate
+                    },
+                    ...(response?.degraded !== undefined ? { degraded: response.degraded } : {}),
+                    ...(response?.degradedReasons ? { degradedReasons: response.degradedReasons } : {}),
+                    ...(guidance ? { guidance } : {}),
+                    stats: {
+                        latencyMs: Date.now() - startedAt
+                    }
+                };
+            }
+
+            const response = await this.context.orchestrationEngine.executePillar("change", {
+                intent: request,
+                targetFiles: planTargets.length > 0 ? planTargets : undefined,
+                edits,
+                sessionId,
+                profile,
+                safety: "plan",
+                trace: traceEnabled,
+                ...(typeof args?.refinement === "string" ? { refinement: args.refinement } : {}),
+                ...(typeof args?.draftId === "string" ? { draftId: args.draftId } : {}),
+                ...(planLimits ? { limits: planLimits } : {})
+            });
+            const summary = this.buildPlanSummary({ response, request });
+            const guidance = this.buildGuidance(response?.guidance, nextCalls);
+            const draftId = response?.draftPack?.id;
+            const artifacts: Array<{ id: string; kind: string; detail: "summary" | "full" }> = [];
+            if (draftId) {
+                artifacts.push({ id: draftId, kind: "draft", detail: "summary" });
+            }
+            if (response?.review?.id) {
+                artifacts.push({ id: response.review.id, kind: "review", detail: "summary" });
+            }
+            if (response?.postReview?.id) {
+                artifacts.push({ id: response.postReview.id, kind: "review", detail: "summary" });
+            }
+            return {
+                ok: true,
+                sessionId: response?.sessionId ?? sessionId,
+                status: this.mapStatus(response),
+                mode: routing.mode,
+                budget,
+                surface,
+                summary: outputFormat === "summary" ? summary : summary,
+                ...(draftId ? { draftId } : {}),
+                ...(artifacts.length > 0 ? { artifacts } : {}),
+                ...(response?.degraded !== undefined ? { degraded: response.degraded } : {}),
+                ...(response?.degradedReasons ? { degradedReasons: response.degradedReasons } : {}),
+                ...(guidance ? { guidance } : {}),
+                stats: {
+                    latencyMs: Date.now() - startedAt
+                }
+            };
+        }
+
+        if (routing.mode === "apply_change" || routing.mode === "write" || routing.mode === "verify") {
+            return {
+                ok: true,
+                sessionId: sessionId ?? "unknown",
+                status: "blocked",
+                mode: routing.mode,
+                budget,
+                surface,
+                summary: {
+                    title: `Mode "${routing.mode}" is not available in this phase.`,
+                    bullets: ["Use plan_change to generate a draft before applying or writing."],
+                    next: ["Call task with mode=plan_change and edits."]
+                },
+                guidance: nextCalls ? { nextCalls } : undefined,
                 stats: {
                     latencyMs: Date.now() - startedAt
                 }
