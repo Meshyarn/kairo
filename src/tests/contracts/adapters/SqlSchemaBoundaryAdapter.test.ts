@@ -32,7 +32,7 @@ describe("SqlSchemaBoundaryAdapter", () => {
     );
 
     fs.writeFileSync(
-      path.join(root, ".kairo", "config", "mcp-config.json"),
+      path.join(root, ".kairo", "config", ".mcp-config.json"),
       JSON.stringify({
         version: "1.0",
         defaultRepo: "main",

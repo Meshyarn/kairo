@@ -44,7 +44,7 @@ for (const entry of LANGUAGE_PARITY_MATRIX.languages) {
 export const DEFAULT_LANGUAGE_SUPPORT_LEVELS: Record<string, LanguageSupportSpec> = Object.fromEntries(supportLevels);
 
 export function getSupportForLanguageId(languageId: string): LanguageSupportSpec | undefined {
-    const normalized = languageId.toLowerCase();
+    const normalized = (languageId ?? "").toLowerCase();
     return DEFAULT_LANGUAGE_SUPPORT_LEVELS[normalized];
 }
 

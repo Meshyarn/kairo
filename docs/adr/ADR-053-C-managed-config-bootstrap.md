@@ -6,7 +6,7 @@
 
 ## Summary
 
-ADR-053-C adds `manage init` and `manage doctor` to generate a workable config skeleton and diagnose gaps without forcing users to hand-author `.mcp-config.json` and related files. The flow is scan → plan → optional apply, with host config changes presented as patch suggestions by default.
+ADR-053-C adds `manage init` and `manage doctor` to generate a workable config skeleton and diagnose gaps without forcing users to hand-author `.kairo/config/.mcp-config.json` and related files. The flow is scan → plan → optional apply, with host config changes presented as patch suggestions by default.
 
 ## Decision
 
@@ -18,7 +18,7 @@ ADR-053-C adds `manage init` and `manage doctor` to generate a workable config s
 ## Implemented Architecture
 
 - **ConfigBootstrapper** builds plan/apply output for:
-  - `.kairo/config/mcp-config.json`
+  - `.kairo/config/.mcp-config.json`
   - `.kairo/config/languages.json`
   - `.vscode/mcp.json` (plan-only by default)
   - optional legacy `.mcp-config.json` guidance

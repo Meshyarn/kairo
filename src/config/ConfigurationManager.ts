@@ -3,6 +3,7 @@ import { EventEmitter } from "events";
 import * as fs from "fs";
 import * as path from "path";
 import type { ValidationConfig, ValidationMode } from "../types/validation.js";
+import { PathManager } from "../utils/PathManager.js";
 
 export type ConfigurationEvent =
     | "ignoreChanged"
@@ -343,7 +344,7 @@ export class ConfigurationManager extends EventEmitter {
     }
 
     private static loadValidationConfig(): Partial<ValidationConfig> {
-        const configPath = path.join(process.cwd(), ".mcp-config.json");
+        const configPath = ConfigurationManager.resolveMcpConfigPath();
         if (!fs.existsSync(configPath)) {
             return {};
         }
@@ -474,7 +475,7 @@ export class ConfigurationManager extends EventEmitter {
         blockPolicy?: string;
         maxDepth?: number;
     } {
-        const configPath = path.join(process.cwd(), ".mcp-config.json");
+        const configPath = ConfigurationManager.resolveMcpConfigPath();
         if (!fs.existsSync(configPath)) {
             return {};
         }
@@ -518,7 +519,7 @@ export class ConfigurationManager extends EventEmitter {
             pageRankCacheTTL?: number;
         };
     } {
-        const configPath = path.join(process.cwd(), ".mcp-config.json");
+        const configPath = ConfigurationManager.resolveMcpConfigPath();
         if (!fs.existsSync(configPath)) {
             return {};
         }
@@ -533,7 +534,7 @@ export class ConfigurationManager extends EventEmitter {
     }
 
     private static loadOverridesConfig(): OverridePolicyConfig {
-        const configPath = path.join(process.cwd(), ".mcp-config.json");
+        const configPath = ConfigurationManager.resolveMcpConfigPath();
         if (!fs.existsSync(configPath)) {
             return {};
         }
@@ -552,6 +553,20 @@ export class ConfigurationManager extends EventEmitter {
             return value;
         }
         return fallback;
+    }
+
+    private static resolveMcpConfigPath(): string {
+        const configDir = PathManager.getConfigDir();
+        const primary = path.join(configDir, ".mcp-config.json");
+        if (fs.existsSync(primary)) return primary;
+
+        const legacyConfigDir = path.join(configDir, "mcp-config.json");
+        if (fs.existsSync(legacyConfigDir)) return legacyConfigDir;
+
+        const legacyRoot = path.join(process.cwd(), ".mcp-config.json");
+        if (fs.existsSync(legacyRoot)) return legacyRoot;
+
+        return primary;
     }
 
     private static parseValidationTimeout(value: string | undefined, fallback: number): number {

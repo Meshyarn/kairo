@@ -19,7 +19,7 @@ describe("Multi-repo E2E", () => {
         PathManager.setRoot(root);
         const configDir = path.join(root, ".kairo", "config");
         fs.mkdirSync(configDir, { recursive: true });
-        fs.writeFileSync(path.join(configDir, "mcp-config.json"), JSON.stringify({
+        fs.writeFileSync(path.join(configDir, ".mcp-config.json"), JSON.stringify({
             version: "1.0",
             repositories: {
                 a: { path: "repo-a", name: "Repo A", type: "primary", languages: ["typescript"] },

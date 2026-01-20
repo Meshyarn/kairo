@@ -1278,5 +1278,5 @@ export class SmartContextServer {
             });
         }
     }
-    // Final Verification: Configuration via .mcp-config.json successful!
+    // Final Verification: Configuration via .kairo/config/.mcp-config.json successful!
 }

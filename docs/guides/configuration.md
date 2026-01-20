@@ -62,7 +62,7 @@ These files live under `.kairo/` in the **target project root**.
 
 ### Multi-repo config (optional)
 
-Create `.kairo/config/mcp-config.json`:
+Create `.kairo/config/.mcp-config.json`:
 
 ```json
 {
@@ -80,7 +80,7 @@ Create `.kairo/config/mcp-config.json`:
 }
 ```
 
-- Legacy location (if you already have it): `.mcp-config.json` in the project root.
+- Legacy locations (if you already have them): `.kairo/config/mcp-config.json` or `.mcp-config.json` in the project root.
 - Migration helper: `npm run migrate:mcp-config`
 - `allowCrossRepoEdits` must be explicitly set to `true` per repo to allow cross-repo edits (tool input must also set `allowCrossRepoEdits: true`).
 
@@ -164,7 +164,7 @@ Create `.kairo/config/symbolic-guards.json` to enable portable semantic checks (
 You can generate a starter config skeleton with the `manage` tool:
 
 - `manage({ command: "init", mode: "plan" })` → returns a plan (no files written)
-- `manage({ command: "init", mode: "apply" })` → writes `.kairo/config/*` (and minimal `.mcp-config.json`)
+- `manage({ command: "init", mode: "apply" })` → writes `.kairo/config/*` (including `.kairo/config/.mcp-config.json`)
 - `manage({ command: "doctor" })` → diagnoses missing/misplaced settings and suggests fixes
 
 Common `doctor` scopes:

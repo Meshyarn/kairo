@@ -424,7 +424,7 @@ export class ChangePillar {
         const reason = guard.blockedReason ?? "cross_repo_edit_blocked";
         const degradedReasons = buildDegradedReasons([reason]);
         const guidanceMessage = reason === "cross_repo_edit_blocked"
-          ? "Set allowCrossRepoEdits=true in .kairo/config/mcp-config.json for involved repos, then rerun with allowCrossRepoEdits:true."
+          ? "Set allowCrossRepoEdits=true in .kairo/config/.mcp-config.json for involved repos, then rerun with allowCrossRepoEdits:true."
           : "Adjust repoScope to include the target repository or use the default repo.";
         if (traceBuilder) {
           traceBuilder.recordSkip("repo_scope", "policy_disabled", reason);

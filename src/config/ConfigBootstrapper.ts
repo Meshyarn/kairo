@@ -132,8 +132,9 @@ export class ConfigBootstrapper {
         const rootPath = this.resolveRootPath((args as ManageInitArgs).root);
         const baseDir = resolveBaseDir();
         const configDir = path.join(rootPath, baseDir, "config");
-        const legacyMcpPath = path.join(rootPath, ".mcp-config.json");
-        const repoConfigPath = path.join(configDir, "mcp-config.json");
+        const mcpConfigPath = path.join(configDir, ".mcp-config.json");
+        const legacyConfigDirMcpPath = path.join(configDir, "mcp-config.json");
+        const legacyRootMcpPath = path.join(rootPath, ".mcp-config.json");
         const languagesConfigPath = path.join(configDir, "languages.json");
         const graphragConfigPath = path.join(configDir, "graphrag.json");
         const vscodeConfigPath = path.join(rootPath, ".vscode", "mcp.json");
@@ -180,14 +181,36 @@ export class ConfigBootstrapper {
             hints.push(`Unknown extensions detected: ${globalScan.unknownExtensions.join(", ")}. Consider adding mappings in ${languagesConfigPath}.`);
         }
 
-        const legacyConfig = this.readJsonFile(legacyMcpPath);
-        if (legacyConfig.error) {
+        const mcpConfig = this.readJsonFile(mcpConfigPath);
+        if (mcpConfig.error) {
             findings.push({
                 code: "CONFIG_PARSE_ERROR",
                 severity: "error",
-                message: `Failed to parse ${path.basename(legacyMcpPath)}.`,
+                message: `Failed to parse ${path.basename(mcpConfigPath)}.`,
                 action: "fix_json",
-                evidence: { path: legacyMcpPath }
+                evidence: { path: mcpConfigPath }
+            });
+        }
+
+        const legacyConfigDir = this.readJsonFile(legacyConfigDirMcpPath);
+        if (legacyConfigDir.error) {
+            findings.push({
+                code: "CONFIG_PARSE_ERROR",
+                severity: "error",
+                message: `Failed to parse ${path.basename(legacyConfigDirMcpPath)}.`,
+                action: "fix_json",
+                evidence: { path: legacyConfigDirMcpPath }
+            });
+        }
+
+        const legacyRootConfig = this.readJsonFile(legacyRootMcpPath);
+        if (legacyRootConfig.error) {
+            findings.push({
+                code: "CONFIG_PARSE_ERROR",
+                severity: "error",
+                message: `Failed to parse ${path.basename(legacyRootMcpPath)}.`,
+                action: "fix_json",
+                evidence: { path: legacyRootMcpPath }
             });
         }
 
@@ -202,15 +225,30 @@ export class ConfigBootstrapper {
             });
         }
 
-        const legacyMultiRepo = legacyConfig.value?.multiRepo;
-        const legacyLanguages = legacyConfig.value?.languages;
+        const legacyMultiRepo = legacyRootConfig.value?.multiRepo;
+        const legacyLanguages = legacyRootConfig.value?.languages;
+        const legacyPolicyConfig = this.buildMcpPolicyConfig(legacyRootConfig.value);
+        const repoSeedConfig = mcpConfig.value
+            ? undefined
+            : ((legacyConfigDir.value && typeof legacyConfigDir.value === "object" && !Array.isArray(legacyConfigDir.value))
+                ? legacyConfigDir.value
+                : (legacyMultiRepo ? this.normalizeLegacyMultiRepo(legacyMultiRepo) : undefined));
+        if (legacyConfigDir.value) {
+            findings.push({
+                code: "MIGRATION_NEEDED",
+                severity: "warn",
+                message: "Found legacy config at <KAIRO_DIR>/config/mcp-config.json; canonical config should live in <KAIRO_DIR>/config/.mcp-config.json.",
+                action: "migrate_config",
+                evidence: { path: legacyConfigDirMcpPath }
+            });
+        }
         if (legacyMultiRepo) {
             findings.push({
                 code: "MIGRATION_NEEDED",
                 severity: "warn",
-                message: "Found multiRepo in .mcp-config.json; canonical config should live in <KAIRO_DIR>/config/mcp-config.json.",
+                message: "Found multiRepo in legacy .mcp-config.json; canonical config should live in <KAIRO_DIR>/config/.mcp-config.json.",
                 action: "migrate_config",
-                evidence: { path: legacyMcpPath, key: "multiRepo" }
+                evidence: { path: legacyRootMcpPath, key: "multiRepo" }
             });
         }
         if (legacyLanguages) {
@@ -219,7 +257,7 @@ export class ConfigBootstrapper {
                 severity: "warn",
                 message: "Found languages in .mcp-config.json; canonical config should live in <KAIRO_DIR>/config/languages.json.",
                 action: "migrate_config",
-                evidence: { path: legacyMcpPath, key: "languages" }
+                evidence: { path: legacyRootMcpPath, key: "languages" }
             });
         }
 
@@ -243,10 +281,11 @@ export class ConfigBootstrapper {
 
         const plan: ConfigWriteOp[] = [];
         if (targets.includes("kairo")) {
-            const repoPlan = this.buildRepoConfigPlan(
-                repoConfigPath,
+            const repoPlan = this.buildMcpConfigPlan(
+                mcpConfigPath,
                 repos,
-                legacyMultiRepo,
+                repoSeedConfig,
+                legacyPolicyConfig,
                 findings
             );
             plan.push(repoPlan);
@@ -264,13 +303,8 @@ export class ConfigBootstrapper {
                 plan.push(graphragPlan);
             }
 
-            const mcpPlan = this.buildLegacyMcpPlan(legacyMcpPath);
-            if (mcpPlan) {
-                plan.push(mcpPlan);
-            }
-
             const applyOptions = (args as ManageInitArgs).applyOptions ?? {};
-            if (applyOptions.legacyMcpConfig && legacyConfig.value && (legacyMultiRepo || legacyLanguages)) {
+            if (applyOptions.legacyMcpConfig && legacyRootConfig.value && (legacyMultiRepo || legacyLanguages)) {
                 const removeKeys = [
                     legacyMultiRepo ? "multiRepo" : undefined,
                     legacyLanguages ? "languages" : undefined
@@ -278,9 +312,9 @@ export class ConfigBootstrapper {
                 if (removeKeys.length > 0) {
                     plan.push({
                         op: "update",
-                        path: legacyMcpPath,
+                        path: legacyRootMcpPath,
                         patch: {
-                            beforeHash: legacyConfig.hash,
+                            beforeHash: legacyRootConfig.hash,
                             removeKeys
                         },
                         reason: "Remove legacy multiRepo/languages after migration."
@@ -760,7 +794,7 @@ export class ConfigBootstrapper {
     }
 
     private resolveQueryCandidates(languageId: string): string[] {
-        const normalized = languageId.toLowerCase();
+        const normalized = (languageId ?? "").toLowerCase();
         const aliases: Record<string, string[]> = {
             ts: ["typescript"],
             tsx: ["typescript"],
@@ -880,40 +914,45 @@ export class ConfigBootstrapper {
         return { findings, hints };
     }
 
-    private buildRepoConfigPlan(
+    private buildMcpConfigPlan(
         configPath: string,
         repos: RepoSummary[],
-        legacyMultiRepo: any,
+        repoSeedConfig: any,
+        policyConfig: Record<string, unknown>,
         findings: ConfigFinding[]
     ): ConfigWriteOp {
-        const baseConfig = legacyMultiRepo
-            ? this.normalizeLegacyMultiRepo(legacyMultiRepo)
-            : this.buildRepoConfig(repos);
         const existing = this.readJsonFile(configPath);
+        const baseConfig = existing.value
+            ? this.buildRepoConfig(repos)
+            : (repoSeedConfig ?? this.buildRepoConfig(repos));
         if (existing.value) {
             const conflict = this.detectRepoConflicts(existing.value, baseConfig);
             if (conflict) {
                 findings.push(conflict);
                 return { op: "noop", path: configPath, reason: "Repository config conflict detected." };
             }
-            const patch = this.buildMissingPatch(existing.value, baseConfig);
-            if (!patch) {
-                return { op: "noop", path: configPath, reason: "Repository config already present." };
+            const repoPatch = this.buildMissingPatch(existing.value, baseConfig);
+            const policyPatch = this.buildMissingPatch(existing.value, policyConfig);
+            const mergedPatch = this.deepMerge(repoPatch ?? {}, policyPatch ?? {});
+            if (!mergedPatch || Object.keys(mergedPatch).length === 0) {
+                return { op: "noop", path: configPath, reason: "MCP config already present." };
             }
             return {
                 op: "update",
                 path: configPath,
                 patch: {
                     beforeHash: existing.hash,
-                    jsonMerge: patch
+                    jsonMerge: mergedPatch
                 },
-                reason: "Merge detected repositories into existing config."
+                reason: "Merge detected repositories and policy defaults into config."
             };
         }
+        const policyPatch = this.buildMissingPatch(baseConfig, policyConfig);
+        const combined = policyPatch ? this.deepMerge(baseConfig, policyPatch) : baseConfig;
         return {
             op: "create",
             path: configPath,
-            content: JSON.stringify(baseConfig, null, 2)
+            content: JSON.stringify(combined, null, 2)
         };
     }
 
@@ -1017,33 +1056,29 @@ export class ConfigBootstrapper {
         };
     }
 
-    private buildLegacyMcpPlan(configPath: string): ConfigWriteOp | null {
-        const existing = this.readJsonFile(configPath);
+    private buildMcpPolicyConfig(legacyConfig?: any): Record<string, unknown> {
         const baseConfig = {
             validation: { syntax: "warn", semantic: "off", lspDiagnostics: "off", timeoutMs: 2000 },
             integrityGuardrails: { enabled: true },
             architecturalSafety: { enabled: true }
         };
-        if (existing.value) {
-            const patch = this.buildMissingPatch(existing.value, baseConfig);
-            if (!patch) {
-                return null;
-            }
-            return {
-                op: "update",
-                path: configPath,
-                patch: {
-                    beforeHash: existing.hash,
-                    jsonMerge: patch
-                },
-                reason: "Backfill minimal validation/guardrails defaults."
-            };
+        if (!legacyConfig || typeof legacyConfig !== "object") {
+            return baseConfig;
         }
-        return {
-            op: "create",
-            path: configPath,
-            content: JSON.stringify(baseConfig, null, 2)
-        };
+        const config = { ...baseConfig } as Record<string, unknown>;
+        if (legacyConfig.validation) {
+            config.validation = legacyConfig.validation;
+        }
+        if (legacyConfig.integrityGuardrails) {
+            config.integrityGuardrails = legacyConfig.integrityGuardrails;
+        }
+        if (legacyConfig.architecturalSafety) {
+            config.architecturalSafety = legacyConfig.architecturalSafety;
+        }
+        if (legacyConfig.overrides) {
+            config.overrides = legacyConfig.overrides;
+        }
+        return config;
     }
 
     private buildVscodePlan(configPath: string, preset: HostPreset, rootPath: string): ConfigWriteOp | null {

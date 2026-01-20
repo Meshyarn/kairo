@@ -38,7 +38,7 @@ describe('Multi-repo tool surface', () => {
 
     const configDir = path.join(testRoot, '.kairo', 'config');
     fs.mkdirSync(configDir, { recursive: true });
-    fs.writeFileSync(path.join(configDir, 'mcp-config.json'), JSON.stringify({
+    fs.writeFileSync(path.join(configDir, '.mcp-config.json'), JSON.stringify({
       version: "1.0",
       repositories: {
         a: { path: "repo-a", name: "Repo A", type: "primary", languages: ["typescript"] },

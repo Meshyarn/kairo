@@ -29,7 +29,7 @@ GraphRAG는 “좋은 seed를 잡고(lexical/semantic), 그래프 신호(call/ty
 - 호출(예):
   - `explore({ query: "auth flow", include: { clusters: true } })`
   - `understand({ goal: "src/auth", include: { clusters: true } })`
-  - (cross-repo 확장까지) `allowCrossRepoEdits: true` + `.kairo/config/mcp-config.json`에서 관련 repo들의 `allowCrossRepoEdits: true`
+  - (cross-repo 확장까지) `allowCrossRepoEdits: true` + `.kairo/config/.mcp-config.json`에서 관련 repo들의 `allowCrossRepoEdits: true`
 - scale tier 임계값(환경변수):
   - `KAIRO_SCALE_TIER_S_MAX_FILES` (default: 5000), `KAIRO_SCALE_TIER_M_MAX_FILES` (default: 50000)
 

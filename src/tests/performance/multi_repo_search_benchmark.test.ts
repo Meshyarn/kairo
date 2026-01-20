@@ -26,7 +26,7 @@ describe("Performance - multi-repo symbol search", () => {
             },
             defaultRepo: "a"
         };
-        fs.writeFileSync(path.join(configDir, "mcp-config.json"), JSON.stringify(config, null, 2));
+        fs.writeFileSync(path.join(configDir, ".mcp-config.json"), JSON.stringify(config, null, 2));
 
         const registry = new RepoRegistry(root);
         const coordinator = new MultiRepoIndexCoordinator(registry);

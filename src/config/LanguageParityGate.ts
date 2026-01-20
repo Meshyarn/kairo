@@ -26,7 +26,7 @@ export type ParityGateResult = {
 };
 
 export function resolveParityRequirement(languageId: string): ParityRequirement | undefined {
-  const normalized = languageId.toLowerCase();
+  const normalized = (languageId ?? "").toLowerCase();
   for (const entry of LANGUAGE_PARITY_MATRIX.languages) {
     if (entry.languageId === normalized) return entry;
     if (entry.aliases?.includes(normalized)) return entry;

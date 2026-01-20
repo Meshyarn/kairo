@@ -21,7 +21,7 @@ const makeContext = (rootPath: string) => ({
 const readJson = (filePath: string) => JSON.parse(fs.readFileSync(filePath, "utf-8"));
 
 describe("ManageHandlers config bootstrap", () => {
-    it("plans repo config and minimal .mcp-config.json for init", async () => {
+    it("plans MCP config for init", async () => {
         const root = makeTempDir();
         fs.mkdirSync(path.join(root, "src"), { recursive: true });
         fs.writeFileSync(path.join(root, "src", "main.ts"), "export const value = 1;", "utf-8");
@@ -33,8 +33,9 @@ describe("ManageHandlers config bootstrap", () => {
         expect(result.success).toBe(true);
         const plan = result.plan as Array<{ op: string; path: string }>;
         const paths = plan.map((entry) => entry.path);
-        expect(paths).toContain(path.join(root, ".kairo", "config", "mcp-config.json"));
-        expect(paths).toContain(path.join(root, ".mcp-config.json"));
+        expect(paths).toContain(path.join(root, ".kairo", "config", ".mcp-config.json"));
+        expect(paths).not.toContain(path.join(root, ".kairo", "config", "mcp-config.json"));
+        expect(paths).not.toContain(path.join(root, ".mcp-config.json"));
         expect(result.detected.languages.some((lang: any) => lang.languageId === "typescript")).toBe(true);
     });
 
@@ -42,16 +43,18 @@ describe("ManageHandlers config bootstrap", () => {
         const root = makeTempDir();
         fs.mkdirSync(path.join(root, "src"), { recursive: true });
         fs.writeFileSync(path.join(root, "src", "main.ts"), "export const value = 1;", "utf-8");
-        fs.writeFileSync(path.join(root, ".mcp-config.json"), "{}", "utf-8");
+        const mcpConfigPath = path.join(root, ".kairo", "config", ".mcp-config.json");
+        fs.mkdirSync(path.dirname(mcpConfigPath), { recursive: true });
+        fs.writeFileSync(mcpConfigPath, "{}", "utf-8");
 
         const handler = new ManageHandlers(makeContext(root) as any);
         const raw = (handler as any).manageProjectRaw.bind(handler);
         const result = await raw({ command: "init", mode: "apply" });
 
         expect(result.success).toBe(true);
-        expect(fs.existsSync(path.join(root, ".kairo", "config", "mcp-config.json"))).toBe(true);
-        expect(fs.existsSync(path.join(root, ".mcp-config.json"))).toBe(true);
-        const backups = fs.readdirSync(root).filter((name) => name.startsWith(".mcp-config.json.bak."));
+        expect(fs.existsSync(path.join(root, ".kairo", "config", ".mcp-config.json"))).toBe(true);
+        const backups = fs.readdirSync(path.join(root, ".kairo", "config"))
+            .filter((name) => name.startsWith(".mcp-config.json.bak."));
         expect(backups.length).toBeGreaterThan(0);
     });
 
@@ -80,7 +83,8 @@ describe("ManageHandlers config bootstrap", () => {
         expect(codes).toContain("MIGRATION_NEEDED");
         expect(result.rollout).toBeDefined();
         const planPaths = result.plan.map((entry: any) => entry.path);
-        expect(planPaths).toContain(path.join(root, ".kairo", "config", "mcp-config.json"));
+        expect(planPaths).toContain(path.join(root, ".kairo", "config", ".mcp-config.json"));
+        expect(planPaths).not.toContain(path.join(root, ".kairo", "config", "mcp-config.json"));
         expect(planPaths).toContain(path.join(root, ".kairo", "config", "languages.json"));
     });
 
@@ -101,7 +105,7 @@ describe("ManageHandlers config bootstrap", () => {
         const root = makeTempDir();
         const configDir = path.join(root, ".kairo", "config");
         fs.mkdirSync(configDir, { recursive: true });
-        fs.writeFileSync(path.join(configDir, "mcp-config.json"), JSON.stringify({
+        fs.writeFileSync(path.join(configDir, ".mcp-config.json"), JSON.stringify({
             version: "1.0",
             defaultRepo: "main",
             repositories: {
@@ -115,7 +119,7 @@ describe("ManageHandlers config bootstrap", () => {
 
         const codes = result.findings.map((finding: any) => finding.code);
         expect(codes).toContain("CONFIG_CONFLICT");
-        const repoPlan = result.plan.find((entry: any) => entry.path.endsWith(path.join(".kairo", "config", "mcp-config.json")));
+        const repoPlan = result.plan.find((entry: any) => entry.path.endsWith(path.join(".kairo", "config", ".mcp-config.json")));
         expect(repoPlan?.op).toBe("noop");
     });
 
@@ -134,7 +138,7 @@ describe("ManageHandlers config bootstrap", () => {
             },
             defaultRepo: "main"
         };
-        fs.writeFileSync(path.join(configDir, "mcp-config.json"), JSON.stringify(config, null, 2));
+        fs.writeFileSync(path.join(configDir, ".mcp-config.json"), JSON.stringify(config, null, 2));
         const coreRoot = path.join(root, "crates", "core-rs");
         fs.mkdirSync(coreRoot, { recursive: true });
         fs.writeFileSync(path.join(coreRoot, "Cargo.toml"), "[package]\nname = \"core-rs\"\nversion = \"0.1.0\"\n");
@@ -160,7 +164,7 @@ describe("ManageHandlers config bootstrap", () => {
             },
             defaultRepo: "main"
         };
-        fs.writeFileSync(path.join(configDir, "mcp-config.json"), JSON.stringify(config, null, 2));
+        fs.writeFileSync(path.join(configDir, ".mcp-config.json"), JSON.stringify(config, null, 2));
 
         const coreRoot = path.join(root, "crates", "core-rs");
         fs.mkdirSync(coreRoot, { recursive: true });

@@ -28,7 +28,7 @@ describe("DependencyGraph cross-repo alias", () => {
             },
             defaultRepo: "main"
         };
-        fs.writeFileSync(path.join(configDir, "mcp-config.json"), JSON.stringify(config, null, 2));
+        fs.writeFileSync(path.join(configDir, ".mcp-config.json"), JSON.stringify(config, null, 2));
 
         const coreRepo = path.join(root, "crates", "core-rs");
         fs.mkdirSync(coreRepo, { recursive: true });

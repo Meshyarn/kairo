@@ -36,7 +36,7 @@ export class QueryProvider {
     }
 
     public async getQuery(lang: Language, languageId: string, queryName: string): Promise<Query | null> {
-        const normalized = languageId.toLowerCase();
+        const normalized = (languageId ?? "").toLowerCase();
         const candidates = [normalized, ...(this.languageAliases[normalized] ?? [])];
 
         for (const candidate of candidates) {

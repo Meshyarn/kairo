@@ -31,11 +31,15 @@ export class RepoRegistry {
     }
 
     private resolveConfigPath(): string {
-        const primary = path.join(PathManager.getConfigDir(), "mcp-config.json");
+        const configDir = PathManager.getConfigDir();
+        const primary = path.join(configDir, ".mcp-config.json");
         if (fs.existsSync(primary)) return primary;
 
-        const legacy = path.join(this.rootPath, ".mcp-config.json");
-        if (fs.existsSync(legacy)) return legacy;
+        const legacyConfigDir = path.join(configDir, "mcp-config.json");
+        if (fs.existsSync(legacyConfigDir)) return legacyConfigDir;
+
+        const legacyRoot = path.join(this.rootPath, ".mcp-config.json");
+        if (fs.existsSync(legacyRoot)) return legacyRoot;
 
         return primary;
     }
@@ -45,7 +49,11 @@ export class RepoRegistry {
 
         if (fs.existsSync(this.configPath)) {
             try {
-                config = JSON.parse(fs.readFileSync(this.configPath, "utf-8"));
+                const parsed = JSON.parse(fs.readFileSync(this.configPath, "utf-8"));
+                const candidate = (parsed && typeof parsed === "object" && !Array.isArray(parsed) && (parsed as any).multiRepo && typeof (parsed as any).multiRepo === "object")
+                    ? (parsed as any).multiRepo
+                    : parsed;
+                config = candidate as MultiRepoConfig;
             } catch (error) {
                 console.warn(`[RepoRegistry] Failed to parse ${this.configPath}:`, error);
             }

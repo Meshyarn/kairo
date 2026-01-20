@@ -15,8 +15,8 @@ Multi-repo support adds explicit repository boundaries and configuration so `kai
 
 1) Multi-repo config file:
 
-- Primary: `.kairo/config/mcp-config.json`
-- Legacy (supported): `.mcp-config.json` at workspace root
+- Primary: `.kairo/config/.mcp-config.json`
+- Legacy (supported): `.kairo/config/mcp-config.json` or `.mcp-config.json` at workspace root
 - Migration helper: `npm run migrate:mcp-config`
 
 2) Repo registry chooses a default repo and resolves “which repo a path belongs to”.
@@ -36,6 +36,5 @@ Multi-repo support adds explicit repository boundaries and configuration so `kai
 
 ## Practical guidance
 
-- Start in single-repo mode; add `.kairo/config/mcp-config.json` only when you need explicit multi-root behavior.
+- Start in single-repo mode; add `.kairo/config/.mcp-config.json` only when you need explicit multi-root behavior.
 - Keep cross-repo edits opt-in; treat them as a deliberate escalation.
-

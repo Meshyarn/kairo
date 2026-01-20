@@ -362,7 +362,7 @@ Project/session state utilities.
 | `languageScan.sampleBytesPerFile` | `number` |  | Sample size per file for `init`. |
 | `languageScan.includeDocs` | `boolean` |  | Include docs in scan for `init`. |
 | `applyOptions.backup` | `boolean` |  | Keep backup when writing config. |
-| `applyOptions.legacyMcpConfig` | `boolean` |  | Write legacy `.mcp-config.json`. |
+| `applyOptions.legacyMcpConfig` | `boolean` |  | Update legacy root `.mcp-config.json` after migration. |
 | `pruneOptions` | `object` |  | Storage prune options (see below). |
 
 ---
