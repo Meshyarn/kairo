@@ -412,9 +412,9 @@ export class ManageHandlers extends BaseHandler {
         };
     }
 
-    private buildCostSummary(fileCount?: number) {
-        const snapshot = metrics.snapshot();
-        const getHist = (name: string) => snapshot.histograms[name];
+    private buildCostSummary(fileCount?: number, snapshot?: ReturnType<typeof metrics.snapshot>) {
+        const metricsSnapshot = snapshot ?? metrics.snapshot();
+        const getHist = (name: string) => metricsSnapshot.histograms[name];
         const scaleTier = this.resolveScaleTier(fileCount);
         return {
             histograms: {
@@ -424,6 +424,68 @@ export class ManageHandlers extends BaseHandler {
                 write: getHist("write.total_ms")
             },
             ...(scaleTier ? { scaleTier } : {})
+        };
+    }
+
+    private buildTelemetrySummary(snapshot: ReturnType<typeof metrics.snapshot>) {
+        const counters = snapshot.counters ?? {};
+        const histograms = snapshot.histograms ?? {};
+        const roundRatio = (value: number) => Math.round(value * 1000) / 1000;
+        const collectEntries = (prefix: string, label: string) => Object.entries(counters)
+            .filter(([key]) => key.startsWith(prefix))
+            .map(([key, count]) => ({
+                [label]: key.slice(prefix.length),
+                count
+            }));
+        const buildTop = (entries: Array<Record<string, any>>, limit: number) => entries
+            .sort((a, b) => (b.count as number) - (a.count as number))
+            .slice(0, limit);
+
+        const toolPrefix = "tool.calls.";
+        const toolEntries = Object.entries(counters)
+            .filter(([key]) => key.startsWith(toolPrefix) && key !== "tool.calls_total")
+            .map(([key, count]) => ({ tool: key.slice(toolPrefix.length), count }))
+            .sort((a, b) => b.count - a.count);
+        const toolTotal = counters["tool.calls_total"] ?? toolEntries.reduce((sum, entry) => sum + entry.count, 0);
+        const toolTop = toolEntries.slice(0, 5).map((entry) => ({
+            tool: entry.tool,
+            count: entry.count,
+            ...(toolTotal > 0 ? { ratio: roundRatio(entry.count / toolTotal) } : {})
+        }));
+
+        const timeoutEntriesAll = collectEntries("timeout.", "location");
+        const timeoutTotal = timeoutEntriesAll.reduce((sum, entry) => sum + (entry.count as number), 0);
+        const timeoutEntries = buildTop(timeoutEntriesAll, 5);
+
+        const degradedEntriesAll = collectEntries("degraded.reason.", "type");
+        const degradedTotal = degradedEntriesAll.reduce((sum, entry) => sum + (entry.count as number), 0);
+        const degradedEntries = buildTop(degradedEntriesAll, 5);
+
+        const planTotal = counters["change.plan_total"] ?? 0;
+        const applyTotal = counters["change.apply_total"] ?? 0;
+
+        return {
+            tools: {
+                total: toolTotal,
+                top: toolTop
+            },
+            timeouts: {
+                total: timeoutTotal,
+                top: timeoutEntries
+            },
+            degradedReasons: {
+                total: degradedTotal,
+                top: degradedEntries
+            },
+            responseEnvelope: {
+                tokens: histograms["response.envelope.tokens"],
+                chars: histograms["response.envelope.chars"]
+            },
+            changeConversion: {
+                plan: planTotal,
+                apply: applyTotal,
+                ...(planTotal > 0 ? { rate: roundRatio(applyTotal / planTotal) } : {})
+            }
         };
     }
 
@@ -858,7 +920,9 @@ export class ManageHandlers extends BaseHandler {
                         const rolloutStatus = this.buildRolloutStatus(status?.global?.totalFiles);
                         const symbolIndexStatus = this.buildSymbolIndexStatus();
                         const driftStatus = await this.buildWorkspaceDrift();
-                        const costSummary = this.buildCostSummary(status?.global?.totalFiles);
+                        const metricsSnapshot = metrics.snapshot();
+                        const costSummary = this.buildCostSummary(status?.global?.totalFiles, metricsSnapshot);
+                        const telemetrySummary = this.buildTelemetrySummary(metricsSnapshot);
                         const workflowSummary = this.buildWorkflowSummary();
 
                         if (includePerFile) {
@@ -874,6 +938,7 @@ export class ManageHandlers extends BaseHandler {
                                 symbolIndex: symbolIndexStatus,
                                 drift: driftStatus,
                                 cost: costSummary,
+                                telemetry: telemetrySummary,
                                 ...workflowSummary,
                                 rollout: rolloutStatus,
                                 activity: {
@@ -906,6 +971,7 @@ export class ManageHandlers extends BaseHandler {
                             symbolIndex: symbolIndexStatus,
                             drift: driftStatus,
                             cost: costSummary,
+                            telemetry: telemetrySummary,
                             ...workflowSummary,
                             rollout: rolloutStatus,
                             activity: {

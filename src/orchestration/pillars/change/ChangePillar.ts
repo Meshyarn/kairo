@@ -190,6 +190,11 @@ export class ChangePillar {
         draftId
       } = input;
       let { includeImpact, includeSymbolImpact, reviewOptions, diffMode, refinedIntent } = input;
+      if (dryRun) {
+        metrics.inc("change.plan_total");
+      } else {
+        metrics.inc("change.apply_total");
+      }
       const sessionProfile = sessionPolicy?.change?.profile ?? sessionPolicy?.profile;
       const sessionSafety = sessionPolicy?.change?.safety ?? sessionPolicy?.safety;
       const traceBuilder = traceEnabled
@@ -2027,6 +2032,12 @@ export class ChangePillar {
 
     const startTime = Date.now();
     const deadline = startTime + config.timeboxMs;
+    let timeboxExceeded = false;
+    const recordTimeboxExceeded = () => {
+      if (timeboxExceeded) return;
+      timeboxExceeded = true;
+      metrics.inc("timeout.change.strategy_search");
+    };
     const dependencyGraph = this.registry.getMetadata<DependencyGraph>("dependencyGraph");
     const indexStateManager = this.registry.getMetadata<IndexStateManager>("indexStateManager");
     const symbolicGuardConfig = resolveSymbolicGuardConfig();
@@ -2248,6 +2259,7 @@ export class ChangePillar {
             return;
           }
           if (Date.now() > deadline || Date.now() > impactDeadline) {
+            recordTimeboxExceeded();
             appendCandidateDegraded("reasoning_budget_exceeded");
             return;
           }
@@ -2318,6 +2330,7 @@ export class ChangePillar {
             const fileSystem = this.resolveFileSystem();
             for (const [filePath, editsForFile] of mapped.fileEdits.entries()) {
               if (Date.now() > deadline || Date.now() > impactDeadline) {
+                recordTimeboxExceeded();
                 appendCandidateDegraded("reasoning_budget_exceeded");
                 break;
               }
@@ -2535,6 +2548,7 @@ export class ChangePillar {
         let rollouts = 0;
         while (rollouts < mctsConfig.maxRollouts) {
           if (Date.now() > deadline) {
+            recordTimeboxExceeded();
             recordDegraded("reasoning_budget_exceeded", { evaluatedCount: evaluated.length });
             if (args.traceBuilder) {
               args.traceBuilder.recordEvent({
@@ -2589,6 +2603,7 @@ export class ChangePillar {
     } else {
       for (const entry of normalizedCandidates) {
         if (Date.now() > deadline) {
+          recordTimeboxExceeded();
           summary.degradedReasons.push("reasoning_budget_exceeded");
           if (args.traceBuilder) {
             args.traceBuilder.recordEvent({

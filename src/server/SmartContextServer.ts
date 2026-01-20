@@ -92,6 +92,7 @@ import { WorkflowPlanner } from "../orchestration/WorkflowPlanner.js";
 import { InternalToolRegistry } from "../orchestration/InternalToolRegistry.js";
 import { CachingStrategy } from "../orchestration/CachingStrategy.js";
 import { FlowArtifactManager } from "../orchestration/flow-artifact-manager.js";
+import { estimateTokens } from "../orchestration/TokenBudget.js";
 
 // Handler Imports
 import { SearchHandlers } from "../handlers/SearchHandlers.js";
@@ -936,6 +937,12 @@ export class SmartContextServer {
     private async handleCallTool(name: string, args: any): Promise<any> {
         const rolloutContext = this.buildRolloutContext(args);
         return FeatureFlags.withContext(rolloutContext, async () => {
+            this.recordToolCallTelemetry(name);
+            const finalizeResponse = (response: any) => {
+                this.ensureResponseHasIsError(response);
+                this.recordResponseTelemetry(name, response);
+                return response;
+            };
             try {
                 const toolSpec = this.toolSpecRegistry.get(name);
                 const mode = getToolSchemaMode();
@@ -943,10 +950,10 @@ export class SmartContextServer {
                 if (toolSpec) {
                     const validation = validateArgs(toolSpec, normalized.args, mode);
                     if (validation.missing.length > 0) {
-                        return this.errorResponse("MissingParameter", `Missing required parameter(s): ${validation.missing.join(", ")}`);
+                        return finalizeResponse(this.errorResponse("MissingParameter", `Missing required parameter(s): ${validation.missing.join(", ")}`));
                     }
                     if (validation.invalid.length > 0) {
-                        return this.errorResponse("InvalidArguments", "Invalid arguments.", { invalid: validation.invalid });
+                        return finalizeResponse(this.errorResponse("InvalidArguments", "Invalid arguments.", { invalid: validation.invalid }));
                     }
                 }
                 const useModularHandlers = FeatureFlags.isEnabled(FeatureFlags.MODULAR_HANDLERS_ENABLED, rolloutContext);
@@ -963,15 +970,14 @@ export class SmartContextServer {
                     }
                 }
                 if (result !== null) {
-                    this.ensureResponseHasIsError(result);
-                    return result;
+                    return finalizeResponse(result);
                 }
                 throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
             } catch (error: any) {
                 if (error instanceof McpError) {
                     throw error;
                 }
-                return this.errorResponse(error?.code ?? "InternalError", error?.message ?? "Unknown error", error?.details);
+                return finalizeResponse(this.errorResponse(error?.code ?? "InternalError", error?.message ?? "Unknown error", error?.details));
             }
         });
     }
@@ -1090,6 +1096,108 @@ export class SmartContextServer {
         } catch {
             // ignore parsing errors
         }
+    }
+
+    private recordToolCallTelemetry(name: string): void {
+        const toolName = typeof name === "string" && name.trim().length > 0 ? name.trim() : "unknown";
+        metrics.inc("tool.calls_total");
+        metrics.inc(`tool.calls.${toolName}`);
+    }
+
+    private recordResponseTelemetry(name: string, response: any): void {
+        try {
+            const text = this.extractResponseText(response);
+            if (!text) return;
+            const toolName = typeof name === "string" && name.trim().length > 0 ? name.trim() : "unknown";
+            const usedChars = text.length;
+            metrics.observe("response.envelope.chars", usedChars);
+            metrics.observe(`response.envelope.chars.${toolName}`, usedChars);
+            const estimatedTokens = estimateTokens(text, { languageId: "json" });
+            metrics.observe("response.envelope.tokens", estimatedTokens);
+            metrics.observe(`response.envelope.tokens.${toolName}`, estimatedTokens);
+            const degradedReasons = this.extractDegradedReasonTypes(text);
+            for (const reason of degradedReasons) {
+                metrics.inc(`degraded.reason.${reason}`);
+            }
+        } catch {
+            // ignore telemetry failures
+        }
+    }
+
+    private extractResponseText(response: any): string | undefined {
+        if (!response || typeof response !== "object") return undefined;
+        const content = (response as any).content;
+        if (!Array.isArray(content)) return undefined;
+        const parts: string[] = [];
+        for (const item of content) {
+            if (item?.type === "text" && typeof item.text === "string") {
+                parts.push(item.text);
+            }
+        }
+        return parts.length > 0 ? parts.join("\n") : undefined;
+    }
+
+    private extractDegradedReasonTypes(text: string): string[] {
+        const trimmed = text.trim();
+        if (!trimmed || (trimmed[0] !== "{" && trimmed[0] !== "[")) {
+            return [];
+        }
+        let payload: any;
+        try {
+            payload = JSON.parse(trimmed);
+        } catch {
+            return [];
+        }
+        return this.collectDegradedReasonTypes(payload);
+    }
+
+    private collectDegradedReasonTypes(payload: any): string[] {
+        const seen = new Set<string>();
+        const stack: any[] = [payload];
+        let guard = 0;
+        while (stack.length > 0 && guard < 500) {
+            const current = stack.pop();
+            guard += 1;
+            if (!current || typeof current !== "object") continue;
+            if (Array.isArray(current)) {
+                const limit = Math.min(current.length, 50);
+                for (let i = 0; i < limit; i += 1) {
+                    const entry = current[i];
+                    if (entry && typeof entry === "object") {
+                        stack.push(entry);
+                    }
+                }
+                continue;
+            }
+            const degradedSets = [
+                (current as any).degradedReasons,
+                (current as any).degradedReasonDetails
+            ];
+            for (const reasons of degradedSets) {
+                if (!Array.isArray(reasons)) continue;
+                for (const entry of reasons) {
+                    if (typeof entry === "string" && entry.trim().length > 0) {
+                        seen.add(entry.trim());
+                        continue;
+                    }
+                    if (entry && typeof entry === "object") {
+                        const type = (entry as any).type ?? (entry as any).code ?? (entry as any).reason;
+                        if (typeof type === "string" && type.trim().length > 0) {
+                            seen.add(type.trim());
+                        }
+                    }
+                }
+            }
+            const values = Object.values(current);
+            const limit = Math.min(values.length, 50);
+            for (let i = 0; i < limit; i += 1) {
+                const value = values[i];
+                if (value && typeof value === "object") {
+                    stack.push(value);
+                }
+            }
+        }
+        return Array.from(seen);
     }
 
     private isPillarTool(name: string): boolean {

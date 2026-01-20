@@ -2,6 +2,7 @@ import path from 'path';
 import { TrigramIndex } from '../TrigramIndex.js';
 import { SymbolIndex } from '../../types.js';
 import { IFileSystem } from '../../platform/FileSystem.js';
+import { metrics } from '../../utils/MetricsCollector.js';
 
 const MAX_CANDIDATE_FILES = 400;
 
@@ -79,6 +80,7 @@ export class CandidateCollector {
         const maxCandidates = options?.maxCandidates ?? MAX_CANDIDATE_FILES;
         const timeoutMs = options?.timeoutMs ?? 0;
         const startedAt = Date.now();
+        let timedOut = false;
         
         // If fileSystem is provided, use it. Otherwise, assume fs/promises (not ideal for tests)
         // But for consistency with SearchEngine, we should rely on IFileSystem.
@@ -92,6 +94,7 @@ export class CandidateCollector {
 
         while (stack.length > 0) {
             if (timeoutMs > 0 && Date.now() - startedAt >= timeoutMs) {
+                timedOut = true;
                 break;
             }
             const current = stack.pop()!;
@@ -132,6 +135,9 @@ export class CandidateCollector {
             }
         }
 
+        if (timedOut) {
+            metrics.inc("timeout.candidate_collector");
+        }
         return candidates;
     }
 

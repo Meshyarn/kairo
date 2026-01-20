@@ -7,6 +7,7 @@ import { ConfigurationManager } from "../config/ConfigurationManager.js";
 import { IntentToSymbolMapper } from "./IntentToSymbolMapper.js";
 import type { SymbolEmbeddingIndex } from "../indexing/SymbolEmbeddingIndex.js";
 import * as path from "path";
+import { metrics } from "../utils/MetricsCollector.js";
 
 export class EditResolver {
     private readonly fileSystem: IFileSystem;
@@ -43,6 +44,7 @@ export class EditResolver {
         const startTime = Date.now();
         const timeoutMs = options?.timeoutMs ?? ConfigurationManager.getResolveTimeoutMs();
         const allowAmbiguousAutoPick = options?.allowAmbiguousAutoPick ?? ConfigurationManager.getAllowAmbiguousAutoPick();
+        let timeoutRecorded = false;
 
         try {
             // 1. Check file exists
@@ -73,6 +75,10 @@ export class EditResolver {
             for (let i = 0; i < edits.length; i++) {
                 // Check timeout
                 if (Date.now() - startTime > timeoutMs) {
+                    if (!timeoutRecorded) {
+                        metrics.inc("timeout.edit_resolver");
+                        timeoutRecorded = true;
+                    }
                     errors.push({
                         filePath: absPath,
                         editIndex: i,
