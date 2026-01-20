@@ -369,6 +369,7 @@ export interface VibeAlignmentValidation {
 export type SuggestedAction = SuggestedActionV1;
 
 export type ReviewReportId = string;
+export type SchemaArtifactId = string;
 
 export interface ReviewReport {
     id: ReviewReportId;
@@ -382,8 +383,15 @@ export interface ReviewReport {
     reviewedFiles: string[];
 }
 
-export type ArtifactType = "research" | "analysis" | "style" | "draft" | "review" | "graph";
-export type ArtifactId = ResearchPackId | AnalysisPackId | StylePackId | DraftPackId | ReviewReportId | GraphPackId;
+export type ArtifactType = "research" | "analysis" | "style" | "draft" | "review" | "graph" | "schema";
+export type ArtifactId =
+    | ResearchPackId
+    | AnalysisPackId
+    | StylePackId
+    | DraftPackId
+    | ReviewReportId
+    | GraphPackId
+    | SchemaArtifactId;
 
 export interface FlowArtifactBase {
     id: ArtifactId;
@@ -426,13 +434,28 @@ export interface GraphArtifact extends FlowArtifactBase {
     pack: GraphPack;
 }
 
+export type SchemaExport = {
+    tool: string;
+    schemaVersion: string;
+    description?: string;
+    inputSchema: Record<string, unknown>;
+    compat?: Record<string, unknown>;
+    exportedAt: number;
+};
+
+export interface SchemaArtifact extends FlowArtifactBase {
+    type: "schema";
+    schema: SchemaExport;
+}
+
 export type FlowArtifact =
     | ResearchArtifact
     | AnalysisArtifact
     | StyleArtifact
     | DraftArtifact
     | ReviewArtifact
-    | GraphArtifact;
+    | GraphArtifact
+    | SchemaArtifact;
 
 export interface ArtifactManagerStatus {
     totalCount: number;

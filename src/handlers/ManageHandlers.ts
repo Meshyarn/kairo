@@ -18,6 +18,7 @@ import { computeAdaptiveFlowGate, resolveRolloutPresetFromEnv } from "../orchest
 import { buildDegradedReasons } from "../orchestration/DegradedReasonMapper.js";
 import type { TransactionLogEntry } from "../engine/TransactionLog.js";
 import type { ArtifactManagerStatus, FlowArtifact, FlowSession, GraphPack } from "../types/flow-artifacts.js";
+import type { ToolSpec } from "../server/tools/ToolSpecRegistry.js";
 import { hashContent } from "../utils/hash.js";
 import { detectServiceRoots } from "../utils/ServiceRootDetector.js";
 import { PatchStore } from "../engine/PatchStore.js";
@@ -27,6 +28,7 @@ import { resolveEnvelopeMaxTokens } from "../orchestration/policy/McpModePresetR
 export class ManageHandlers extends BaseHandler {
     private reindexInProgress = false;
     private reindexLastResult?: { success: boolean; output: string; startedAt: string; finishedAt?: string };
+    private readonly schemaArtifactTtlMs = 30 * 60 * 1000;
 
     constructor(private context: HandlerContext) {
         super(context.toolSpecRegistry);
@@ -674,6 +676,54 @@ export class ManageHandlers extends BaseHandler {
         return "manage";
     }
 
+    private resolveToolSpec(toolName: string): ToolSpec | undefined {
+        return this.context.toolSpecRegistry?.get(toolName) ?? this.toolSpecRegistry?.get(toolName);
+    }
+
+    private buildSchemaSummary(toolSpec: ToolSpec): {
+        tool: string;
+        schemaVersion: string;
+        description?: string;
+        required: string[];
+        properties: Array<{ name: string; type?: string; enum?: unknown[]; description?: string }>;
+        propertyCount: number;
+        additionalProperties?: boolean;
+        truncated: boolean;
+    } {
+        const schema = toolSpec.inputSchema ?? { type: "object", properties: {} };
+        const properties = schema.properties ?? {};
+        const entries = Object.entries(properties).map(([name, value]) => {
+            const detail = value && typeof value === "object" ? value as Record<string, unknown> : {};
+            const type = typeof detail.type === "string"
+                ? detail.type
+                : (Array.isArray(detail.enum) ? "enum" : (Array.isArray(detail.anyOf) ? "anyOf" : "object"));
+            const entry: { name: string; type?: string; enum?: unknown[]; description?: string } = { name, type };
+            if (Array.isArray(detail.enum)) {
+                entry.enum = detail.enum.slice(0, 12);
+            }
+            if (typeof detail.description === "string") {
+                entry.description = detail.description;
+            }
+            return entry;
+        });
+        const limited = entries.slice(0, 50);
+        return {
+            tool: toolSpec.name,
+            schemaVersion: toolSpec.schemaVersion,
+            description: toolSpec.description,
+            required: Array.isArray(schema.required) ? schema.required : [],
+            properties: limited,
+            propertyCount: entries.length,
+            additionalProperties: schema.additionalProperties === true,
+            truncated: entries.length > limited.length
+        };
+    }
+
+    private generateSchemaArtifactId(nowMs: number): string {
+        const suffix = Math.random().toString(36).slice(2, 8);
+        return `schema_${nowMs.toString(36)}_${suffix}`;
+    }
+
     private mapSessionState(status: FlowSession["status"]): "active" | "idle" | "completed" | "degraded" {
         if (status === "completed") return "completed";
         if (status === "abandoned") return "idle";
@@ -1130,6 +1180,50 @@ export class ManageHandlers extends BaseHandler {
                         cost: costSummary,
                         ...workflowSummary,
                         rollout: rolloutStatus
+                    };
+                }
+            case 'schema':
+                {
+                    const toolName = typeof args?.tool === "string"
+                        ? args.tool
+                        : (typeof args?.target === "string" ? args.target : "");
+                    if (!toolName) {
+                        return { success: false, output: "Missing tool name for schema export." };
+                    }
+                    const toolSpec = this.resolveToolSpec(toolName);
+                    if (!toolSpec) {
+                        return { success: false, output: `Unknown tool: ${toolName}` };
+                    }
+                    const detail = args?.detail === "full" ? "full" : "summary";
+                    if (detail === "summary") {
+                        return {
+                            success: true,
+                            output: "Schema summary ready.",
+                            schema: this.buildSchemaSummary(toolSpec)
+                        };
+                    }
+                    const exportedAt = Date.now();
+                    const artifactId = this.generateSchemaArtifactId(exportedAt);
+                    const schemaExport = {
+                        tool: toolSpec.name,
+                        schemaVersion: toolSpec.schemaVersion,
+                        description: toolSpec.description,
+                        inputSchema: toolSpec.inputSchema,
+                        compat: toolSpec.compat,
+                        exportedAt
+                    };
+                    this.context.flowArtifactManager.store({
+                        id: artifactId,
+                        type: "schema",
+                        createdAt: exportedAt,
+                        expiresAt: exportedAt + this.schemaArtifactTtlMs,
+                        schema: schemaExport
+                    });
+                    return {
+                        success: true,
+                        output: "Schema export ready.",
+                        artifactId,
+                        schemaVersion: toolSpec.schemaVersion
                     };
                 }
             case 'symbol_index_status':

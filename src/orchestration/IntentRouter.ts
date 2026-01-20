@@ -53,6 +53,7 @@ export interface IntentConstraints {
   goal?: string;
   depth?: 'shallow' | 'standard' | 'deep';
   scope?: 'symbol' | 'file' | 'module' | 'project';
+  tool?: string;
   includeImpact?: boolean;
   includeSymbolImpact?: boolean;
   dryRun?: boolean;

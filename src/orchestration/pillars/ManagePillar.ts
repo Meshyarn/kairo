@@ -38,6 +38,7 @@ export class ManagePillar {
     const policy = (constraints as any).policy;
     const policyMode = (constraints as any).policyMode;
     const paths = (constraints as any).paths;
+    const tool = (constraints as any).tool;
     const checkpointLimit = (constraints as any).checkpointLimit;
     const mode = (constraints as any).mode;
     const targetType = (constraints as any).targetType;
@@ -62,6 +63,7 @@ export class ManagePillar {
           paths,
           scope,
           detail,
+          tool,
           checkpointLimit,
           artifactOptions,
           limit,
@@ -90,6 +92,7 @@ export class ManagePillar {
           paths,
           scope,
           detail,
+          tool,
           checkpointLimit,
           artifactOptions,
           limit,
@@ -146,6 +149,8 @@ export class ManagePillar {
         return wrap('init', await execute('init'));
       case 'doctor':
         return wrap('doctor', await execute('doctor'));
+      case 'schema':
+        return wrap('schema', await execute('schema'));
       case 'history':
         return wrap('history', await execute('history'));
       case 'test':

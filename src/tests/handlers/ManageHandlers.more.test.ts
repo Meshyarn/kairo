@@ -191,4 +191,23 @@ describe("ManageHandlers additional paths", () => {
         expect(detail.view?.graph?.nodes?.length).toBeLessThanOrEqual(5);
         expect(detail.view?.meta?.truncated).toBe(true);
     });
+
+    it("exports schema summaries and full artifacts", async () => {
+        const context = makeArtifactContext();
+        const handler = new ManageHandlers(context as any);
+        const raw = (handler as any).manageProjectRaw.bind(handler);
+
+        const summary = await raw({ command: "schema", tool: "change" });
+        expect(summary.success).toBe(true);
+        expect(summary.schema?.tool).toBe("change");
+        expect(summary.schema?.propertyCount).toBeGreaterThan(0);
+
+        const full = await raw({ command: "schema", tool: "change", detail: "full" });
+        expect(full.success).toBe(true);
+        expect(full.artifactId).toBeDefined();
+
+        const artifact = context.flowArtifactManager.get(full.artifactId);
+        expect(artifact?.type).toBe("schema");
+        expect((artifact as any)?.schema?.inputSchema).toBeDefined();
+    });
 });

@@ -393,6 +393,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
               "reindex",
               "history",
               "test",
+              "schema",
               "metrics",
               "metrics_reset",
               "config",
@@ -414,6 +415,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
             ]
           },
           detail: { type: "string", enum: ["summary", "full"] },
+          tool: { type: "string" },
           target: { type: "string" },
           targetType: { type: "string", enum: ["artifact", "transaction", "patchRef"] },
           format: { type: "string", enum: ["unified_diff", "structured_edits", "both"] },
@@ -1381,6 +1383,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
               "test",
               "init",
               "doctor",
+              "schema",
               "sessions",
               "session",
               "session_complete",
@@ -1394,6 +1397,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
             ]
           },
           scope: { type: "string", enum: ["file", "transaction", "project", "config", "languages", "wasm", "host", "contracts", "parity", "capabilities"] },
+          tool: { type: "string" },
           target: { type: "string" },
           targetType: { type: "string", enum: ["artifact", "transaction", "patchRef"] },
           format: { type: "string", enum: ["unified_diff", "structured_edits", "both"] },

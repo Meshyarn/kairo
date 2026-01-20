@@ -137,7 +137,8 @@ export class FlowArtifactManager {
             style: rawCounts.style ?? 0,
             draft: rawCounts.draft ?? 0,
             review: rawCounts.review ?? 0,
-            graph: rawCounts.graph ?? 0
+            graph: rawCounts.graph ?? 0,
+            schema: rawCounts.schema ?? 0
         };
         const lastUpdatedAt = Math.max(
             session.updatedAt ?? session.startedAt,
@@ -149,7 +150,8 @@ export class FlowArtifactManager {
             style: session.artifacts.style,
             draft: session.artifacts.drafts.slice(-1)[0],
             review: session.artifacts.reviews.slice(-1)[0],
-            graph: session.artifacts.graphs?.slice(-1)[0]
+            graph: session.artifacts.graphs?.slice(-1)[0],
+            schema: undefined
         };
         return { session, summary: { counts, lastUpdatedAt, latestIds } };
     }
