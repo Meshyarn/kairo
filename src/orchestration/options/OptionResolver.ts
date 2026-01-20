@@ -3,6 +3,7 @@ import type { CapabilityTier } from "../capabilities/EngineManager.js";
 import type { IntentConstraints } from "../IntentRouter.js";
 import type { SessionPolicy } from "../../types/flow-artifacts.js";
 import type { DiffMode } from "../../types.js";
+import { resolveDefaultProfile, resolveEnvelopeMaxTokens, resolveMcpMode } from "../policy/McpModePresetRegistry.js";
 
 export type ToolProfile = "lean" | "fast" | "balanced" | "deep";
 export type ToolSources = "code" | "docs" | "both";
@@ -86,6 +87,8 @@ export class OptionResolver {
   ): { effective: ExploreEffective; meta: ExploreMeta } {
     const enableProfiles = true;
     const enableSessionPolicy = true;
+    const defaultProfile = resolveDefaultProfile("explore");
+    const presetMaxTokens = resolveMcpMode() === "mcp" ? resolveEnvelopeMaxTokens("explore") : undefined;
     const include = (isRecord(args.include)
       ? { ...(args.include as Record<string, unknown>) }
       : {}) as ExploreEffective["include"];
@@ -106,7 +109,9 @@ export class OptionResolver {
     const sessionSources = enableSessionPolicy
       ? (sessionPolicy?.explore?.sources ?? sessionPolicy?.sources)
       : undefined;
-    const profile = isToolProfile(profileFromArgs ?? sessionProfile) ? (profileFromArgs ?? sessionProfile) : undefined;
+    const profile = isToolProfile(profileFromArgs ?? sessionProfile ?? defaultProfile)
+      ? (profileFromArgs ?? sessionProfile ?? defaultProfile)
+      : undefined;
     const sources = isToolSources(sourcesFromArgs ?? sessionSources) ? (sourcesFromArgs ?? sessionSources) : undefined;
 
     const profileAppliedFromSession = !profileExplicit && Boolean(sessionProfile);
@@ -134,7 +139,8 @@ export class OptionResolver {
       if (setIfUnset(limits, "maxFiles", 400)) profileAffectsPack = true;
       setIfUnset(limits, "maxItemChars", 2400);
       setIfUnset(limits, "maxChars", 20000);
-      setIfUnset(limits, "maxTokens", 1500);
+      const leanTokens = Number.isFinite(presetMaxTokens) ? presetMaxTokens : 1500;
+      setIfUnset(limits, "maxTokens", leanTokens);
       setIfUnset(limits, "maxBytes", 400000);
       profileApplied = true;
     }
@@ -151,6 +157,10 @@ export class OptionResolver {
       if (setIfUnset(limits, "maxFiles", 300)) profileAffectsPack = true;
       setIfUnset(limits, "maxChars", 12000);
       profileApplied = true;
+    }
+
+    if (Number.isFinite(presetMaxTokens)) {
+      setIfUnset(limits, "maxTokens", presetMaxTokens);
     }
 
     const effectiveView = viewExplicit ? view : (profile === "lean" || profile === "fast" ? "preview" : "auto");
@@ -187,6 +197,7 @@ export class OptionResolver {
   ): { effective: UnderstandEffective } {
     const enableProfiles = true;
     const enableSessionPolicy = true;
+    const defaultProfile = resolveDefaultProfile("understand");
     const include = (isRecord(args.include)
       ? { ...(args.include as Record<string, unknown>) }
       : {}) as UnderstandEffective["include"];
@@ -201,7 +212,9 @@ export class OptionResolver {
     const sessionSources = enableSessionPolicy
       ? (sessionPolicy?.understand?.sources ?? sessionPolicy?.sources)
       : undefined;
-    const profile = isToolProfile(profileFromArgs ?? sessionProfile) ? (profileFromArgs ?? sessionProfile) : undefined;
+    const profile = isToolProfile(profileFromArgs ?? sessionProfile ?? defaultProfile)
+      ? (profileFromArgs ?? sessionProfile ?? defaultProfile)
+      : undefined;
     const sources = isToolSources(sourcesFromArgs ?? sessionSources) ? (sourcesFromArgs ?? sessionSources) : undefined;
     const depthExplicit = typeof args.depth === "string";
     const profileAppliedFromSession = !profileExplicit && Boolean(sessionProfile);
@@ -238,6 +251,7 @@ export class OptionResolver {
     sessionPolicy?: SessionPolicy
   ): { effective: WriteLikeEffective } {
     const enableSessionPolicy = true;
+    const defaultProfile = resolveDefaultProfile("write");
     const profileExplicit = isToolProfile(args.profile);
     const safetyExplicit = isToolSafety(args.safety);
     const profileFromArgs = profileExplicit ? args.profile : undefined;
@@ -248,7 +262,9 @@ export class OptionResolver {
     const sessionSafety = enableSessionPolicy
       ? (sessionPolicy?.write?.safety ?? sessionPolicy?.safety)
       : undefined;
-    const profile = isToolProfile(profileFromArgs ?? sessionProfile) ? (profileFromArgs ?? sessionProfile) : undefined;
+    const profile = isToolProfile(profileFromArgs ?? sessionProfile ?? defaultProfile)
+      ? (profileFromArgs ?? sessionProfile ?? defaultProfile)
+      : undefined;
     const safety = isToolSafety(safetyFromArgs ?? sessionSafety) ? (safetyFromArgs ?? sessionSafety) : undefined;
     const traceEnabled = args.trace === true;
     let dryRun = this.resolveDryRun(args, sessionId, safety);

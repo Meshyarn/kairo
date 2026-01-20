@@ -84,6 +84,7 @@ import { MetricsExportService } from "../utils/metrics/MetricsExportService.js";
 import { CacheInvalidationHub } from "./CacheInvalidationHub.js";
 import { BoundaryAdapterRegistry } from "../contracts/BoundaryAdapterRegistry.js";
 import { ContractRegistry } from "../contracts/ContractRegistry.js";
+import { resolveLogToFileEnabled } from "../orchestration/policy/McpModePresetRegistry.js";
 
 // Orchestration Imports
 import { OrchestrationEngine } from "../orchestration/OrchestrationEngine.js";
@@ -533,7 +534,7 @@ export class SmartContextServer {
 
     private initFileLogger(): void {
         if (this.logStream) return;
-        const enabled = process.env.KAIRO_LOG_TO_FILE === "true" || !!process.env.KAIRO_LOG_FILE;
+        const enabled = resolveLogToFileEnabled() || !!process.env.KAIRO_LOG_FILE;
         if (!enabled) return;
         const singleFilePath = process.env.KAIRO_LOG_FILE;
         const logDir = process.env.KAIRO_LOG_DIR

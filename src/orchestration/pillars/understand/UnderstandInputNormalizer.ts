@@ -1,6 +1,7 @@
 import type { ParsedIntent } from "../../IntentRouter.js";
 import { IntegrityEngine } from "../../../integrity/IntegrityEngine.js";
 import { OptionResolver } from "../../options/OptionResolver.js";
+import { resolveEnvelopeMaxTokens, resolveMcpMode } from "../../policy/McpModePresetRegistry.js";
 
 export type UnderstandInput = {
     constraints: any;
@@ -60,11 +61,13 @@ export function normalizeUnderstandInput(
     const explicitPath = helpers.extractPath(subject) ?? (typeof originalIntent === "string" ? helpers.extractPath(originalIntent) : null);
     const symbolHint = helpers.extractSymbol(subject) ?? (typeof originalIntent === "string" ? helpers.extractSymbol(originalIntent) : null);
     const integrityOptions = IntegrityEngine.resolveOptions(constraints.integrity, "understand");
-    const envMaxTokens = Number.parseInt(process.env.KAIRO_UNDERSTAND_MAX_TOKENS ?? process.env.KAIRO_DEFAULT_MAX_TOKENS ?? "", 10);
+    const policyMaxTokens = resolveEnvelopeMaxTokens("understand");
+    const applyPolicyDefaults = resolveMcpMode() === "mcp";
     const limits = constraints.limits ?? {};
     if (resolvedOptions.effective.profile === "lean") {
         if (typeof limits.maxTokens !== "number") {
-            limits.maxTokens = 1600;
+            const leanTokens = applyPolicyDefaults && Number.isFinite(policyMaxTokens) ? policyMaxTokens : 1600;
+            limits.maxTokens = leanTokens;
         }
         if (typeof limits.timeoutMs !== "number") {
             limits.timeoutMs = 4000;
@@ -72,7 +75,7 @@ export function normalizeUnderstandInput(
     }
     const maxTokens = typeof limits.maxTokens === "number" && Number.isFinite(limits.maxTokens) && limits.maxTokens > 0
         ? limits.maxTokens
-        : (Number.isFinite(envMaxTokens) && envMaxTokens > 0 ? envMaxTokens : undefined);
+        : (Number.isFinite(policyMaxTokens) ? policyMaxTokens : undefined);
 
     return {
         constraints,

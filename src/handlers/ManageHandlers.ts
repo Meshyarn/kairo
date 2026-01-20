@@ -22,6 +22,7 @@ import { hashContent } from "../utils/hash.js";
 import { detectServiceRoots } from "../utils/ServiceRootDetector.js";
 import { PatchStore } from "../engine/PatchStore.js";
 import { estimateTokens } from "../orchestration/TokenBudget.js";
+import { resolveEnvelopeMaxTokens } from "../orchestration/policy/McpModePresetRegistry.js";
 
 export class ManageHandlers extends BaseHandler {
     private reindexInProgress = false;
@@ -690,17 +691,15 @@ export class ManageHandlers extends BaseHandler {
 
     private resolveManageEnvelopeBudget(args: any): { maxTokens?: number; maxChars?: number } {
         const limits = args?.limits ?? {};
+        const policyMaxTokens = resolveEnvelopeMaxTokens("manage");
         const maxTokens = Number.isFinite(limits.maxTokens) && limits.maxTokens > 0
             ? limits.maxTokens
-            : this.parseNumberEnv(process.env.KAIRO_MANAGE_MAX_TOKENS, NaN);
-        const fallbackTokens = Number.isFinite(maxTokens)
-            ? maxTokens
-            : this.parseNumberEnv(process.env.KAIRO_DEFAULT_MAX_TOKENS, NaN);
+            : policyMaxTokens;
         const maxChars = Number.isFinite(limits.maxChars) && limits.maxChars > 0
             ? limits.maxChars
             : this.parseNumberEnv(process.env.KAIRO_MANAGE_MAX_CHARS, NaN);
         return {
-            maxTokens: Number.isFinite(fallbackTokens) ? fallbackTokens : undefined,
+            maxTokens: Number.isFinite(maxTokens) ? maxTokens : undefined,
             maxChars: Number.isFinite(maxChars) ? maxChars : undefined
         };
     }
