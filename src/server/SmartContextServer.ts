@@ -84,7 +84,7 @@ import { MetricsExportService } from "../utils/metrics/MetricsExportService.js";
 import { CacheInvalidationHub } from "./CacheInvalidationHub.js";
 import { BoundaryAdapterRegistry } from "../contracts/BoundaryAdapterRegistry.js";
 import { ContractRegistry } from "../contracts/ContractRegistry.js";
-import { resolveLogToFileEnabled } from "../orchestration/policy/McpModePresetRegistry.js";
+import { resolveLogToFileEnabled, resolvePublicSurface } from "../orchestration/policy/McpModePresetRegistry.js";
 
 // Orchestration Imports
 import { OrchestrationEngine } from "../orchestration/OrchestrationEngine.js";
@@ -928,7 +928,12 @@ export class SmartContextServer {
             exposeInternal: exposeInternalTools,
             exposeCompat: exposeFileTools
         });
-        return tools.map((tool: ToolSpec) => ({
+        const surface = resolvePublicSurface();
+        const compactToolNames = new Set(["task", "manage"]);
+        const filtered = surface === "compact"
+            ? tools.filter((tool) => compactToolNames.has(tool.name))
+            : tools;
+        return filtered.map((tool: ToolSpec) => ({
             name: tool.name,
             description: tool.description,
             inputSchema: tool.inputSchema

@@ -51,6 +51,7 @@ describe("McpModePresetRegistry", () => {
     process.env.KAIRO_MODE = "mcp";
     const policy = resolveMcpPolicy();
     expect(policy.preset).toBe("mcp-lean");
+    expect(policy.publicSurface).toBe("compact");
   });
 
   it("uses config budget ahead of env", () => {
@@ -64,5 +65,14 @@ describe("McpModePresetRegistry", () => {
     });
     const maxTokens = resolveEnvelopeMaxTokens("explore");
     expect(maxTokens).toBe(4200);
+  });
+
+  it("honors KAIRO_PUBLIC_SURFACE override", () => {
+    const root = makeTempRoot();
+    PathManager.setRoot(root);
+    process.env.KAIRO_MODE = "mcp";
+    process.env.KAIRO_PUBLIC_SURFACE = "pillars";
+    const policy = resolveMcpPolicy();
+    expect(policy.publicSurface).toBe("pillars");
   });
 });

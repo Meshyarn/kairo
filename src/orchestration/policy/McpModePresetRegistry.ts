@@ -325,6 +325,10 @@ export const resolveMcpMode = (): McpMode => {
   return resolveMcpPolicy().mode;
 };
 
+export const resolvePublicSurface = (): McpPublicSurface => {
+  return resolveMcpPolicy().publicSurface;
+};
+
 export const resolveDefaultProfile = (_tool?: string): PolicyProfile | undefined => {
   const policy = resolveMcpPolicy();
   return policy.mode === "mcp" ? policy.profile : undefined;
