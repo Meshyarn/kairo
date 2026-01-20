@@ -3,7 +3,7 @@ import type { CapabilityTier } from "../capabilities/EngineManager.js";
 import type { IntentConstraints } from "../IntentRouter.js";
 import type { SessionPolicy } from "../../types/flow-artifacts.js";
 import type { DiffMode } from "../../types.js";
-import { resolveDefaultProfile, resolveEnvelopeMaxTokens, resolveMcpMode } from "../policy/McpModePresetRegistry.js";
+import { resolveDefaultProfile, resolveEnvelopeMaxTokens, resolveMcpMode, resolveTimeboxPolicy } from "../policy/McpModePresetRegistry.js";
 
 export type ToolProfile = "lean" | "fast" | "balanced" | "deep";
 export type ToolSources = "code" | "docs" | "both";
@@ -88,7 +88,10 @@ export class OptionResolver {
     const enableProfiles = true;
     const enableSessionPolicy = true;
     const defaultProfile = resolveDefaultProfile("explore");
-    const presetMaxTokens = resolveMcpMode() === "mcp" ? resolveEnvelopeMaxTokens("explore") : undefined;
+    const mode = resolveMcpMode();
+    const presetMaxTokens = mode === "mcp" ? resolveEnvelopeMaxTokens("explore") : undefined;
+    const timeboxPolicy = resolveTimeboxPolicy();
+    const timeboxMs = mode === "mcp" && Number.isFinite(timeboxPolicy.perStep) ? timeboxPolicy.perStep : undefined;
     const include = (isRecord(args.include)
       ? { ...(args.include as Record<string, unknown>) }
       : {}) as ExploreEffective["include"];
@@ -161,6 +164,9 @@ export class OptionResolver {
 
     if (Number.isFinite(presetMaxTokens)) {
       setIfUnset(limits, "maxTokens", presetMaxTokens);
+    }
+    if (Number.isFinite(timeboxMs)) {
+      setIfUnset(limits, "timeoutMs", timeboxMs);
     }
 
     const effectiveView = viewExplicit ? view : (profile === "lean" || profile === "fast" ? "preview" : "auto");

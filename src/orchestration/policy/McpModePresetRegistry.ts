@@ -85,6 +85,11 @@ export type McpResolvedPolicy = {
   };
 };
 
+export type McpTimeboxPolicy = {
+  total?: number;
+  perStep?: number;
+};
+
 export type McpPolicyOverrides = {
   mode?: McpMode;
   preset?: McpPresetId;
@@ -394,6 +399,10 @@ export const resolveAutopilotPolicy = (): AutopilotPolicy => {
 
 export const resolvePublicSurface = (): McpPublicSurface => {
   return resolveMcpPolicy().publicSurface;
+};
+
+export const resolveTimeboxPolicy = (): McpTimeboxPolicy => {
+  return resolveMcpPolicy().timeboxMs ?? {};
 };
 
 export const resolveDefaultProfile = (_tool?: string): PolicyProfile | undefined => {

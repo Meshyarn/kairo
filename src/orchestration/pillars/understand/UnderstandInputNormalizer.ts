@@ -1,7 +1,7 @@
 import type { ParsedIntent } from "../../IntentRouter.js";
 import { IntegrityEngine } from "../../../integrity/IntegrityEngine.js";
 import { OptionResolver } from "../../options/OptionResolver.js";
-import { resolveEnvelopeMaxTokens, resolveMcpMode } from "../../policy/McpModePresetRegistry.js";
+import { resolveEnvelopeMaxTokens, resolveMcpMode, resolveTimeboxPolicy } from "../../policy/McpModePresetRegistry.js";
 
 export type UnderstandInput = {
     constraints: any;
@@ -63,7 +63,12 @@ export function normalizeUnderstandInput(
     const integrityOptions = IntegrityEngine.resolveOptions(constraints.integrity, "understand");
     const policyMaxTokens = resolveEnvelopeMaxTokens("understand");
     const applyPolicyDefaults = resolveMcpMode() === "mcp";
+    const timeboxPolicy = resolveTimeboxPolicy();
+    const policyTimeoutMs = applyPolicyDefaults && Number.isFinite(timeboxPolicy.perStep) ? timeboxPolicy.perStep : undefined;
     const limits = constraints.limits ?? {};
+    if (typeof limits.timeoutMs !== "number" && Number.isFinite(policyTimeoutMs)) {
+        limits.timeoutMs = policyTimeoutMs;
+    }
     if (resolvedOptions.effective.profile === "lean") {
         if (typeof limits.maxTokens !== "number") {
             const leanTokens = applyPolicyDefaults && Number.isFinite(policyMaxTokens) ? policyMaxTokens : 1600;

@@ -729,11 +729,14 @@ export class UnderstandPillar {
         profile,
         sources: resolvedOptions.effective.sources,
         depth,
-        include
+        include,
+        limits
       };
       if (traceBuilder) {
         traceBuilder.setBudget({
           maxTokens,
+          maxChars: limits.maxChars,
+          timeoutMs: limits.timeoutMs,
           compressionApplied: compressionDecision.compression?.applied,
           compressionMode: compressionDecision.compression?.mode
         });
