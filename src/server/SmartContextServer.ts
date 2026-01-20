@@ -105,6 +105,7 @@ import { NavigateHandlers } from "../handlers/NavigateHandlers.js";
 import { IntegrityHandlers } from "../handlers/IntegrityHandlers.js";
 import { HandlerRegistry } from "../handlers/HandlerRegistry.js";
 import { createHandlerContext, type HandlerContext } from "../handlers/HandlerContext.js";
+import { TaskHandlers } from "../handlers/TaskHandlers.js";
 
 export class SmartContextServer {
     private server: Server;
@@ -181,6 +182,7 @@ export class SmartContextServer {
     private manageHandlers!: ManageHandlers;
     private navigateHandlers!: NavigateHandlers;
     private integrityHandlers!: IntegrityHandlers;
+    private taskHandlers!: TaskHandlers;
     private handlerRegistry!: HandlerRegistry;
 
 
@@ -480,6 +482,7 @@ export class SmartContextServer {
         this.manageHandlers = new ManageHandlers(handlerContext);
         this.navigateHandlers = new NavigateHandlers(handlerContext);
         this.integrityHandlers = new IntegrityHandlers(handlerContext);
+        this.taskHandlers = new TaskHandlers(handlerContext);
 
         this.handlerRegistry.register(this.searchHandlers);
         this.handlerRegistry.register(this.codeHandlers);
@@ -488,6 +491,7 @@ export class SmartContextServer {
         this.handlerRegistry.register(this.manageHandlers);
         this.handlerRegistry.register(this.navigateHandlers);
         this.handlerRegistry.register(this.integrityHandlers);
+        this.handlerRegistry.register(this.taskHandlers);
     }
 
     private isTestEnv(): boolean {

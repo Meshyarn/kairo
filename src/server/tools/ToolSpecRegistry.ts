@@ -832,6 +832,38 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
 
   const pillarTools: ToolSpec[] = [
     {
+      name: "task",
+      description: "High-level router for ask/analyze/plan workflows.",
+      schemaVersion: SCHEMA_VERSION,
+      visibility: "public",
+      inputSchema: {
+        type: "object",
+        properties: {
+          request: { type: "string" },
+          mode: { type: "string", enum: ["auto", "ask", "analyze", "plan_change", "apply_change", "write", "verify"] },
+          budget: { type: "string", enum: ["lean", "balanced", "deep"] },
+          sessionId: { type: "string" },
+          draftId: { type: "string" },
+          applyToken: { type: "string" },
+          refinement: { type: "string" },
+          edits: { type: "array", items: { type: "object" } },
+          paths: { type: "array", items: { type: "string" } },
+          targetFiles: { type: "array", items: { type: "string" } },
+          safety: { type: "string", enum: ["plan", "apply"] },
+          output: {
+            type: "object",
+            properties: {
+              format: { type: "string", enum: ["summary", "standard"] },
+              maxTokens: { type: "number" }
+            }
+          },
+          trace: { type: "boolean" }
+        },
+        required: ["request"],
+        additionalProperties: DEFAULT_ADDITIONAL_PROPERTIES
+      }
+    },
+    {
       name: "understand",
       description: "Deeply analyzes code structure and architecture.",
       schemaVersion: SCHEMA_VERSION,
