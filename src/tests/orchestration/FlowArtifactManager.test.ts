@@ -95,4 +95,50 @@ describe("FlowArtifactManager", () => {
             await fs.rm(tempDir, { recursive: true, force: true });
         }
     });
+
+    it("issues and validates apply tokens", () => {
+        const manager = new FlowArtifactManager();
+        const sessionId = manager.resolveSessionId("new", "Apply token session") as string;
+        const issued = manager.issueApplyToken({
+            sessionId,
+            draftId: "draft_1",
+            ttlMs: 1000,
+            now: 1000
+        });
+        expect(issued?.token).toBeDefined();
+
+        const valid = manager.validateApplyToken({
+            sessionId,
+            draftId: "draft_1",
+            token: issued?.token,
+            now: 1000,
+            oneTime: true,
+            consume: true
+        });
+        expect(valid.valid).toBe(true);
+
+        const used = manager.validateApplyToken({
+            sessionId,
+            draftId: "draft_1",
+            token: issued?.token,
+            now: 1100,
+            oneTime: true
+        });
+        expect(used.reason).toBe("used");
+
+        const second = manager.issueApplyToken({
+            sessionId,
+            draftId: "draft_2",
+            ttlMs: 10,
+            now: 2000
+        });
+        const expired = manager.validateApplyToken({
+            sessionId,
+            draftId: "draft_2",
+            token: second?.token,
+            now: 2100,
+            oneTime: true
+        });
+        expect(expired.reason).toBe("expired");
+    });
 });

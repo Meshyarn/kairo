@@ -7,6 +7,13 @@ export type McpPresetId = "mcp-lean" | "mcp-balanced" | "mcp-deep";
 export type McpPublicSurface = "compact" | "pillars";
 export type PolicyProfile = "lean" | "fast" | "balanced" | "deep";
 
+export type ApplyHandshakePolicy = {
+  required: boolean;
+  tokenTtlMs: number;
+  oneTime: boolean;
+  invalidateOnDrift: boolean;
+};
+
 export type EnvelopeMaxTokens = {
   explore?: number;
   understand?: number;
@@ -60,6 +67,7 @@ export type McpResolvedPolicy = {
   preset?: McpPresetId;
   publicSurface: McpPublicSurface;
   profile?: PolicyProfile;
+  applyHandshake: ApplyHandshakePolicy;
   budgets: {
     envelopeMaxTokens: EnvelopeMaxTokens;
   };
@@ -287,6 +295,25 @@ export const resolveMcpPolicy = (overrides?: McpPolicyOverrides): McpResolvedPol
   const mode = overrides?.mode ?? config?.mode ?? envMode ?? "dev";
   const presetId = resolvePresetId(mode, overrides, config);
   const preset = presetId ? MCP_PRESETS[presetId] : undefined;
+  const applyHandshakeDefaults: ApplyHandshakePolicy = {
+    required: mode === "mcp",
+    tokenTtlMs: 30 * 60 * 1000,
+    oneTime: true,
+    invalidateOnDrift: true
+  };
+  const applyHandshakeConfig = mode === "mcp" ? config?.applyHandshake : undefined;
+  const applyHandshake: ApplyHandshakePolicy = {
+    required: typeof applyHandshakeConfig?.required === "boolean"
+      ? applyHandshakeConfig.required
+      : applyHandshakeDefaults.required,
+    tokenTtlMs: parseNumber(applyHandshakeConfig?.tokenTtlMs) ?? applyHandshakeDefaults.tokenTtlMs,
+    oneTime: typeof applyHandshakeConfig?.oneTime === "boolean"
+      ? applyHandshakeConfig.oneTime
+      : applyHandshakeDefaults.oneTime,
+    invalidateOnDrift: typeof applyHandshakeConfig?.invalidateOnDrift === "boolean"
+      ? applyHandshakeConfig.invalidateOnDrift
+      : applyHandshakeDefaults.invalidateOnDrift
+  };
   const publicSurface = overrides?.publicSurface
     ?? (mode === "mcp" ? config?.publicSurface : undefined)
     ?? parseSurface(process.env.KAIRO_PUBLIC_SURFACE)
@@ -301,6 +328,7 @@ export const resolveMcpPolicy = (overrides?: McpPolicyOverrides): McpResolvedPol
     preset: presetId,
     publicSurface,
     profile,
+    applyHandshake,
     budgets: {
       envelopeMaxTokens: {
         explore: resolveEnvelopeBudget(mode, "explore", preset, overrides, config),
@@ -328,6 +356,10 @@ export const resolveEnvelopeMaxTokens = (pillar: keyof EnvelopeMaxTokens): numbe
 
 export const resolveMcpMode = (): McpMode => {
   return resolveMcpPolicy().mode;
+};
+
+export const resolveApplyHandshakePolicy = (): ApplyHandshakePolicy => {
+  return resolveMcpPolicy().applyHandshake;
 };
 
 export const resolvePublicSurface = (): McpPublicSurface => {

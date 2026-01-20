@@ -464,6 +464,14 @@ export interface FlowSessionOutcome {
     finalReviewId?: ReviewReportId;
 }
 
+export interface ApplyTokenRecord {
+    draftId: string;
+    tokenHash: string;
+    issuedAt: number;
+    expiresAt: number;
+    usedAt?: number;
+}
+
 export interface FlowSession {
     id: string;
     startedAt: number;
@@ -480,4 +488,5 @@ export interface FlowSession {
     updatedAt?: number;
     outcome?: FlowSessionOutcome;
     policy?: SessionPolicy;
+    applyTokens?: Record<string, ApplyTokenRecord>;
 }

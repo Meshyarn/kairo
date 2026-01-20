@@ -21,6 +21,7 @@ export type WriteInput = {
     draftOptions?: { skeletonOnly?: boolean };
     reviewOptions: any;
     draftId?: string;
+    applyToken?: string;
     refinement?: string;
 };
 
@@ -54,6 +55,7 @@ export function normalizeWriteInput(
     const draftOptions = (constraints as any).draftOptions as { skeletonOnly?: boolean } | undefined;
     const reviewOptions = resolvedOptions.effective.reviewOptions;
     const draftId = typeof (constraints as any).draftId === "string" ? (constraints as any).draftId : undefined;
+    const applyToken = typeof (constraints as any).applyToken === "string" ? (constraints as any).applyToken : undefined;
     const refinement = typeof (constraints as any).refinement === "string" ? (constraints as any).refinement : undefined;
 
     return {
@@ -76,6 +78,7 @@ export function normalizeWriteInput(
         draftOptions,
         reviewOptions,
         draftId,
+        applyToken,
         refinement
     };
 }

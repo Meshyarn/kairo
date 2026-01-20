@@ -26,7 +26,7 @@ import { ReviewReportBuilder } from "../../generation/review-report-builder.js";
 import type { FlowArtifactManager } from "../flow-artifact-manager.js";
 import { buildDegradedReasons } from "../DegradedReasonMapper.js";
 import { enforceWriteResponseBudget } from "../budget/ResponseEnvelopeBudgeter.js";
-import { resolveEnvelopeMaxTokens } from "../policy/McpModePresetRegistry.js";
+import { resolveApplyHandshakePolicy, resolveEnvelopeMaxTokens } from "../policy/McpModePresetRegistry.js";
 import type { FileVersionManager } from "../../engine/FileVersionManager.js";
 import {
   evaluateLanguageParityGate,
@@ -160,6 +160,11 @@ export class WritePillar {
     const stopTotal = metrics.startTimer("write.total_ms");
     try {
       const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
+      const applyPolicy = resolveApplyHandshakePolicy();
+      const input = normalizeWriteInput(intent, {
+        resolveSessionId: (rawSessionId, fallback) => artifactManager?.resolveSessionId(rawSessionId, fallback),
+        getSessionPolicy: (sessionId) => (sessionId ? artifactManager?.getSession(sessionId)?.policy : undefined)
+      });
       const {
         constraints,
         targets,
@@ -172,7 +177,6 @@ export class WritePillar {
         quickGenerate,
         smartWrite,
         styleReference,
-        resolvedSessionId,
         sessionPolicy,
         resolvedOptions,
         dryRun,
@@ -180,11 +184,13 @@ export class WritePillar {
         draftOptions,
         reviewOptions,
         draftId,
+        applyToken,
         refinement
-      } = normalizeWriteInput(intent, {
-        resolveSessionId: (rawSessionId, fallback) => artifactManager?.resolveSessionId(rawSessionId, fallback),
-        getSessionPolicy: (sessionId) => (sessionId ? artifactManager?.getSession(sessionId)?.policy : undefined)
-      });
+      } = input;
+      let resolvedSessionId = input.resolvedSessionId;
+      if (applyPolicy.required && dryRun && !resolvedSessionId && artifactManager) {
+        resolvedSessionId = artifactManager.resolveSessionId("new", originalIntent);
+      }
       const sessionProfile = sessionPolicy?.write?.profile ?? sessionPolicy?.profile;
       const sessionSafety = sessionPolicy?.write?.safety ?? sessionPolicy?.safety;
       const traceBuilder = traceEnabled
@@ -307,6 +313,11 @@ export class WritePillar {
         }
         return resolvedSessionId ? { ...next, sessionId: resolvedSessionId } : next;
       };
+      const requireApplyToken = applyPolicy.required && !dryRun;
+      const invalidateApplyTokenOnDrift = () => {
+        if (!applyPolicy.invalidateOnDrift || dryRun || !resolvedSessionId || !draftId) return;
+        artifactManager?.invalidateApplyToken(resolvedSessionId, draftId);
+      };
 
       if (!targetPath) {
         return attachSession({
@@ -319,6 +330,58 @@ export class WritePillar {
             suggestedActions: []
           }
         });
+      }
+
+      if (requireApplyToken) {
+        const validation = (resolvedSessionId && draftId && applyToken && artifactManager)
+          ? artifactManager.validateApplyToken({
+              sessionId: resolvedSessionId,
+              draftId,
+              token: applyToken,
+              oneTime: applyPolicy.oneTime,
+              consume: applyPolicy.oneTime
+            })
+          : { valid: false, reason: "missing" as const };
+        if (!validation.valid) {
+          const reasonCode = validation.reason === "expired"
+            ? "apply_token_expired"
+            : (validation.reason === "used" ? "apply_token_used" : "apply_token_missing");
+          const message = reasonCode === "apply_token_expired"
+            ? "Apply token expired. Re-run the plan to get a new token."
+            : (reasonCode === "apply_token_used"
+              ? "Apply token already used. Re-run the plan to get a new token."
+              : "Apply token required to apply changes. Re-run the plan to get a token.");
+          const nextArgs: Record<string, unknown> = {
+            intent: originalIntent,
+            targetPath,
+            safety: "plan"
+          };
+          if (hasExplicitContent) nextArgs.content = initialContent;
+          if (refinement) nextArgs.refinement = refinement;
+          if (resolvedSessionId) nextArgs.sessionId = resolvedSessionId;
+          return attachSession({
+            success: false,
+            status: "blocked",
+            message,
+            errorCode: reasonCode === "apply_token_expired"
+              ? "APPLY_TOKEN_EXPIRED"
+              : (reasonCode === "apply_token_used" ? "APPLY_TOKEN_USED" : "APPLY_TOKEN_MISSING"),
+            blockedReason: reasonCode,
+            degradedReasons: buildDegradedReasons([reasonCode]),
+            guidance: {
+              message,
+              suggestedActions: [
+                {
+                  id: "write.plan",
+                  priority: 1,
+                  description: "Re-plan the write to generate a fresh apply token.",
+                  rationale: "Apply requires a valid token generated during planning.",
+                  toolCall: { tool: "write", args: nextArgs }
+                }
+              ]
+            }
+          });
+        }
       }
 
       const resolvedPath = await this.resolveTargetPath(targetPath);
@@ -573,6 +636,13 @@ export class WritePillar {
           draftPack.fileVersions = fileVersionsSnapshot;
         }
         draftPack.workflowMeta = workflowMeta;
+        const applyTokenRecord = (applyPolicy.required && artifactManager && resolvedSessionId)
+          ? artifactManager.issueApplyToken({
+              sessionId: resolvedSessionId,
+              draftId: draftPack.id,
+              ttlMs: applyPolicy.tokenTtlMs
+            })
+          : undefined;
 
         const preApplyReview = (reviewOptions?.preApply ?? true)
           ? await new ReviewReportBuilder(
@@ -630,6 +700,9 @@ export class WritePillar {
           status: 'draft',
           draftPack,
           review: preApplyReview,
+          ...(applyTokenRecord
+            ? { applyToken: applyTokenRecord.token, applyTokenExpiresAt: applyTokenRecord.expiresAt }
+            : {}),
           guidance: {
             message: 'DraftPack generated. Review skeleton and phantom diff before applying.',
             suggestedActions: [
@@ -645,7 +718,8 @@ export class WritePillar {
                     targetPath: resolvedPath,
                     dryRun: false,
                     draftId: draftPack.id,
-                    ...(draftPack.fileVersions ? { fileVersions: draftPack.fileVersions } : {})
+                    ...(draftPack.fileVersions ? { fileVersions: draftPack.fileVersions } : {}),
+                    ...(applyTokenRecord?.token ? { applyToken: applyTokenRecord.token } : {})
                   }
                 }
               }
@@ -685,7 +759,8 @@ export class WritePillar {
               sessionStylePack,
               fileVersions,
               { integrityGuardrails: bypassIntegrityGuardrails, reviewPolicy: bypassReviewBlock },
-              traceBuilder
+              traceBuilder,
+              invalidateApplyTokenOnDrift
             );
             return attachResponse(result);
           }
@@ -715,7 +790,8 @@ export class WritePillar {
               sessionStylePack,
               fileVersions,
               { integrityGuardrails: bypassIntegrityGuardrails, reviewPolicy: bypassReviewBlock },
-              traceBuilder
+              traceBuilder,
+              invalidateApplyTokenOnDrift
             );
             return attachResponse(result);
           }
@@ -834,6 +910,7 @@ export class WritePillar {
             const mismatch = await this.detectFileVersionMismatch(fileVersions, fileVersionManager, pathNormalizer);
             if (mismatch) {
               stopSafePatch();
+              invalidateApplyTokenOnDrift();
               return attachResponse(this.buildFileVersionMismatchResponse({
                 filePath: mismatch.filePath,
                 intent: originalIntent,
@@ -853,6 +930,7 @@ export class WritePillar {
           stopSafePatch();
 
           if (result?.errorCode === "FILE_VERSION_MISMATCH") {
+            invalidateApplyTokenOnDrift();
             return attachResponse(this.buildFileVersionMismatchResponse({
               filePath: resolvedPath,
               intent: originalIntent,
@@ -1015,6 +1093,7 @@ export class WritePillar {
             fileVersions
           });
           if (fallback?.errorCode === "FILE_VERSION_MISMATCH") {
+            invalidateApplyTokenOnDrift();
             return attachResponse(this.buildFileVersionMismatchResponse({
               filePath: resolvedPath,
               intent: originalIntent,
@@ -1087,6 +1166,7 @@ export class WritePillar {
             fileVersions
           });
           if (fallback?.errorCode === "FILE_VERSION_MISMATCH") {
+            invalidateApplyTokenOnDrift();
             return attachResponse(this.buildFileVersionMismatchResponse({
               filePath: resolvedPath,
               intent: originalIntent,
@@ -1194,6 +1274,7 @@ export class WritePillar {
       if (fileVersions && fileVersionManager && pathNormalizer) {
         const mismatch = await this.detectFileVersionMismatch(fileVersions, fileVersionManager, pathNormalizer);
         if (mismatch) {
+          invalidateApplyTokenOnDrift();
           return attachResponse(this.buildFileVersionMismatchResponse({
             filePath: mismatch.filePath,
             intent: originalIntent,
@@ -1211,6 +1292,7 @@ export class WritePillar {
       });
 
       if (editResult?.errorCode === "FILE_VERSION_MISMATCH") {
+        invalidateApplyTokenOnDrift();
         return attachResponse(this.buildFileVersionMismatchResponse({
           filePath: resolvedPath,
           intent: originalIntent,
@@ -1675,7 +1757,8 @@ export class WritePillar {
     stylePack?: StylePack,
     fileVersions?: Record<string, { expectedVersion?: number; expectedHash?: string }>,
     overrideBypass?: { integrityGuardrails?: boolean; reviewPolicy?: boolean },
-    traceBuilder?: TraceBuilder
+    traceBuilder?: TraceBuilder,
+    invalidateApplyToken?: () => void
   ): Promise<any> {
     try {
       let finalContent = content;
@@ -1768,6 +1851,7 @@ export class WritePillar {
       if (fileVersions && fileVersionManager && pathNormalizer) {
         const mismatch = await this.detectFileVersionMismatch(fileVersions, fileVersionManager, pathNormalizer);
         if (mismatch) {
+          invalidateApplyToken?.();
           return this.buildFileVersionMismatchResponse({
             filePath: mismatch.filePath,
             intent,
@@ -1778,6 +1862,7 @@ export class WritePillar {
       }
       const result = await this.runTool(context, 'edit_transaction', { filePath, edits: [edit], dryRun: false, fileVersions });
       if (result?.errorCode === "FILE_VERSION_MISMATCH") {
+        invalidateApplyToken?.();
         return this.buildFileVersionMismatchResponse({
           filePath,
           intent,

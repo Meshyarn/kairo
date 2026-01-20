@@ -131,6 +131,21 @@ const PARITY_REASON_MAP: Record<string, {
     message: "Cross-repo edits are blocked by policy.",
     severity: "critical"
   },
+  apply_token_missing: {
+    type: "apply_token_missing",
+    message: "Apply token is missing or invalid; re-plan before applying.",
+    severity: "critical"
+  },
+  apply_token_expired: {
+    type: "apply_token_expired",
+    message: "Apply token has expired; re-plan to get a new token.",
+    severity: "critical"
+  },
+  apply_token_used: {
+    type: "apply_token_used",
+    message: "Apply token has already been used; re-plan to get a new token.",
+    severity: "critical"
+  },
   language_parser_unavailable: {
     type: "missing_wasm_grammar",
     message: "Language parser is unavailable.",

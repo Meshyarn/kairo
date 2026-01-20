@@ -14,6 +14,9 @@ export type DegradedReasonType =
   | "symbol_index_unavailable"
   | "cross_repo_scope_mismatch"
   | "cross_repo_edit_blocked"
+  | "apply_token_missing"
+  | "apply_token_expired"
+  | "apply_token_used"
   | "degraded";
 
 export type DegradedReason = {

@@ -137,6 +137,7 @@ export interface IntentConstraints {
   styleReference?: string[];    // Phase 3: Explicit reference files for pattern extraction
   stylePack?: any;
   draftId?: string;
+  applyToken?: string;
   refinement?: string;
   draftOptions?: {
     skeletonOnly?: boolean;

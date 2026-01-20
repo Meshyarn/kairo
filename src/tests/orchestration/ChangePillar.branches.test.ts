@@ -159,4 +159,33 @@ describe("ChangePillar Branches", () => {
       await fs.rm(tempDir, { recursive: true, force: true });
     }
   });
+
+  it("blocks apply when apply token is missing in mcp mode", async () => {
+    const originalMode = process.env.KAIRO_MODE;
+    process.env.KAIRO_MODE = "mcp";
+    try {
+      const manager = new FlowArtifactManager();
+      registry.setMetadata("flowArtifactManager", manager);
+
+      const result = await pillar.execute({
+        targets: ["src/app.ts"],
+        constraints: {
+          safety: "apply",
+          draftId: "draft_missing_token",
+          edits: [{ targetString: "a", replacementString: "b" }]
+        },
+        originalIntent: "apply change"
+      } as any, context);
+
+      expect(result.success).toBe(false);
+      expect(result.status).toBe("blocked");
+      expect(result.degradedReasons?.[0]?.type ?? result.degradedReasons?.[0]).toBe("apply_token_missing");
+    } finally {
+      if (originalMode === undefined) {
+        delete process.env.KAIRO_MODE;
+      } else {
+        process.env.KAIRO_MODE = originalMode;
+      }
+    }
+  });
 });

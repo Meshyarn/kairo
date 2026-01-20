@@ -266,6 +266,37 @@ export class TaskHandlers extends BaseHandler {
         };
     }
 
+    private buildApplySummary(args: {
+        response: any;
+        request: string;
+    }): { title: string; bullets: string[]; next: string[] } {
+        const response = args.response ?? {};
+        const targetFile = typeof response?.targetFile === "string"
+            ? response.targetFile
+            : (typeof response?.targetPath === "string" ? response.targetPath : "unknown");
+        const status = response?.status ?? "ok";
+        const rollback = response?.rollbackAvailable ? "yes" : "no";
+        const reviewId = response?.postReview?.id ?? response?.review?.id ?? "none";
+        const bullets = [
+            `Target: ${targetFile}.`,
+            `Status: ${status}.`,
+            `Rollback available: ${rollback}.`,
+            `Review: ${reviewId}.`
+        ];
+        const next: string[] = [];
+        if (reviewId !== "none") {
+            next.push("Use manage artifact to review the apply review.");
+        }
+        if (rollback === "yes") {
+            next.push("Use manage history to inspect or rollback.");
+        }
+        return {
+            title: `Change apply result for "${args.request}".`,
+            bullets,
+            next
+        };
+    }
+
     private async executeTask(args: any) {
         const startedAt = Date.now();
         const request = typeof args?.request === "string" ? args.request.trim() : "";
@@ -275,6 +306,8 @@ export class TaskHandlers extends BaseHandler {
         const outputFormat = args?.output?.format === "standard" ? "standard" : "summary";
         const maxTokens = this.extractMaxTokens(args?.output);
         const sessionId = typeof args?.sessionId === "string" ? args.sessionId : undefined;
+        const draftId = typeof args?.draftId === "string" ? args.draftId : undefined;
+        const applyToken = typeof args?.applyToken === "string" ? args.applyToken : undefined;
         const paths = this.extractPaths(args?.paths);
         const targetFiles = this.extractPaths(args?.targetFiles);
         const edits = this.extractEdits(args?.edits);
@@ -386,16 +419,64 @@ export class TaskHandlers extends BaseHandler {
                 safety: "plan",
                 trace: traceEnabled,
                 ...(typeof args?.refinement === "string" ? { refinement: args.refinement } : {}),
-                ...(typeof args?.draftId === "string" ? { draftId: args.draftId } : {}),
+                ...(draftId ? { draftId } : {}),
                 ...(planLimits ? { limits: planLimits } : {})
             });
             const summary = this.buildPlanSummary({ response, request });
             const guidance = this.buildGuidance(response?.guidance, nextCalls);
-            const draftId = response?.draftPack?.id;
+            const draftPackId = response?.draftPack?.id;
+            const planApplyToken = typeof response?.applyToken === "string" ? response.applyToken : undefined;
+            const applyTokenExpiresAt = typeof response?.applyTokenExpiresAt === "number" ? response.applyTokenExpiresAt : undefined;
             const artifacts: Array<{ id: string; kind: string; detail: "summary" | "full" }> = [];
-            if (draftId) {
-                artifacts.push({ id: draftId, kind: "draft", detail: "summary" });
+            if (draftPackId) {
+                artifacts.push({ id: draftPackId, kind: "draft", detail: "summary" });
             }
+            if (response?.review?.id) {
+                artifacts.push({ id: response.review.id, kind: "review", detail: "summary" });
+            }
+            if (response?.postReview?.id) {
+                artifacts.push({ id: response.postReview.id, kind: "review", detail: "summary" });
+            }
+            return {
+                ok: true,
+                sessionId: response?.sessionId ?? sessionId,
+                status: this.mapStatus(response),
+                mode: routing.mode,
+                budget,
+                surface,
+                summary: outputFormat === "summary" ? summary : summary,
+                ...(draftPackId ? { draftId: draftPackId } : {}),
+                ...(planApplyToken ? { applyToken: planApplyToken } : {}),
+                ...(applyTokenExpiresAt ? { applyTokenExpiresAt } : {}),
+                ...(artifacts.length > 0 ? { artifacts } : {}),
+                ...(response?.degraded !== undefined ? { degraded: response.degraded } : {}),
+                ...(response?.degradedReasons ? { degradedReasons: response.degradedReasons } : {}),
+                ...(guidance ? { guidance } : {}),
+                stats: {
+                    latencyMs: Date.now() - startedAt
+                }
+            };
+        }
+
+        if (routing.mode === "apply_change") {
+            const applyTargets = targetFiles.length > 0 ? targetFiles : (paths.length > 0 ? paths : []);
+            const applyLimits = maxTokens ? { maxTokens } : undefined;
+            const response = await this.context.orchestrationEngine.executePillar("change", {
+                intent: request,
+                targetFiles: applyTargets.length > 0 ? applyTargets : undefined,
+                ...(edits.length > 0 ? { edits } : {}),
+                sessionId,
+                profile,
+                safety: "apply",
+                trace: traceEnabled,
+                ...(typeof args?.refinement === "string" ? { refinement: args.refinement } : {}),
+                ...(draftId ? { draftId } : {}),
+                ...(applyToken ? { applyToken } : {}),
+                ...(applyLimits ? { limits: applyLimits } : {})
+            });
+            const summary = this.buildApplySummary({ response, request });
+            const guidance = this.buildGuidance(response?.guidance, nextCalls);
+            const artifacts: Array<{ id: string; kind: string; detail: "summary" | "full" }> = [];
             if (response?.review?.id) {
                 artifacts.push({ id: response.review.id, kind: "review", detail: "summary" });
             }
@@ -421,7 +502,7 @@ export class TaskHandlers extends BaseHandler {
             };
         }
 
-        if (routing.mode === "apply_change" || routing.mode === "write" || routing.mode === "verify") {
+        if (routing.mode === "write" || routing.mode === "verify") {
             return {
                 ok: true,
                 sessionId: sessionId ?? "unknown",

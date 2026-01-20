@@ -1086,6 +1086,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
             }
           },
           draftId: { type: "string" },
+          applyToken: { type: "string" },
           refinement: { type: "string" },
           repoScope: {
             type: "object",
@@ -1268,6 +1269,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
             }
           },
           draftId: { type: "string" },
+          applyToken: { type: "string" },
           refinement: { type: "string" },
           repoScope: {
             type: "object",

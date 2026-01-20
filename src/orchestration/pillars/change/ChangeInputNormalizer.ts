@@ -17,6 +17,7 @@ export type ChangeInput = {
     traceEnabled: boolean;
     diffMode: any;
     draftId?: string;
+    applyToken?: string;
     refinement?: string;
     refinedIntent: string;
 };
@@ -41,6 +42,7 @@ export function normalizeChangeInput(
     const traceEnabled = resolvedOptions.effective.traceEnabled;
     const diffMode = resolvedOptions.effective.diffMode;
     const draftId = typeof (constraints as any).draftId === "string" ? (constraints as any).draftId : undefined;
+    const applyToken = typeof (constraints as any).applyToken === "string" ? (constraints as any).applyToken : undefined;
     const refinement = typeof (constraints as any).refinement === "string" ? (constraints as any).refinement : undefined;
     const refinedIntent = refinement ? `${baseIntent}\nRefinement: ${refinement}` : baseIntent;
 
@@ -59,6 +61,7 @@ export function normalizeChangeInput(
         traceEnabled,
         diffMode,
         draftId,
+        applyToken,
         refinement,
         refinedIntent
     };

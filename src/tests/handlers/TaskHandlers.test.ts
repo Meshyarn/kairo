@@ -93,6 +93,7 @@ describe("TaskHandlers", () => {
             success: true,
             status: "ok",
             draftPack: { id: "draft_1", intent: "update", status: "pending", createdAt: Date.now() },
+            applyToken: "token_1",
             sessionId: "s4"
         };
         context.orchestrationEngine.executePillar.mockResolvedValue(changeResponse);
@@ -110,6 +111,33 @@ describe("TaskHandlers", () => {
             expect.objectContaining({ intent: "update app", safety: "plan" })
         );
         expect(payload.draftId).toBe("draft_1");
+        expect(payload.applyToken).toBe("token_1");
+        expect(payload.status).toBe("success");
+    });
+
+    it("routes apply_change to change apply with token", async () => {
+        const context = makeContext();
+        const handler = new TaskHandlers(context as any);
+        const changeResponse = {
+            success: true,
+            status: "ok",
+            review: { id: "review_1" },
+            sessionId: "s5"
+        };
+        context.orchestrationEngine.executePillar.mockResolvedValue(changeResponse);
+
+        const response = await handler.handle("task", {
+            request: "apply plan",
+            mode: "apply_change",
+            draftId: "draft_1",
+            applyToken: "token_1"
+        });
+        const payload = JSON.parse(response.content[0].text);
+
+        expect(context.orchestrationEngine.executePillar).toHaveBeenCalledWith(
+            "change",
+            expect.objectContaining({ intent: "apply plan", safety: "apply", draftId: "draft_1", applyToken: "token_1" })
+        );
         expect(payload.status).toBe("success");
     });
 });
