@@ -10,6 +10,7 @@ import { FeatureFlags } from '../config/FeatureFlags.js';
 import { metrics } from "../utils/MetricsCollector.js";
 import { PathManager } from "../utils/PathManager.js";
 import { NodeFileSystem, type IFileSystem } from '../platform/FileSystem.js';
+import { NativeSearchIndexer } from "../engine/search/native/NativeSearchIndexer.js";
 
 import { ProjectIndexManager } from './ProjectIndexManager.js';
 import type { ProjectIndex, FileIndexEntry } from './ProjectIndex.js';
@@ -29,6 +30,8 @@ export interface IncrementalIndexerOptions {
     onFileRemoved?: (filePath: string) => void;
     onDirectoryRemoved?: (dirPath: string) => void;
     onActivity?: (activity?: IndexingActivity) => void;
+    nativeSearchIndexer?: NativeSearchIndexer;
+    repoId?: string;
 }
 
 const DEFAULT_BATCH_PAUSE_MS = 50;
@@ -87,6 +90,8 @@ export class IncrementalIndexer {
     private baselineStartedAt = 0;
     private baselineScanStartedAt = 0;
     private readonly fileSystem: IFileSystem;
+    private readonly nativeSearchIndexer?: NativeSearchIndexer;
+    private readonly repoId: string;
 
     constructor(
         private readonly rootPath: string,
@@ -99,6 +104,8 @@ export class IncrementalIndexer {
         documentIndexer?: DocumentIndexer
     ) {
         this.fileSystem = options.fileSystem ?? new NodeFileSystem(rootPath);
+        this.nativeSearchIndexer = options.nativeSearchIndexer;
+        this.repoId = options.repoId ?? "default";
         this.indexManager = new ProjectIndexManager(rootPath, this.fileSystem);
         this.astManager = AstManager.getInstance();
         this.extractorResolver = moduleResolver ?? new ModuleResolver(rootPath);
@@ -213,6 +220,37 @@ export class IncrementalIndexer {
         if (this.initialScanPromise) {
             await this.initialScanPromise;
         }
+    }
+
+    public async reindexAll(): Promise<void> {
+        if (this.initialScanPromise) {
+            await this.initialScanPromise;
+        }
+        if (this.processingPromise) {
+            await this.processingPromise;
+        }
+        this.clearQueues();
+        this.currentIndex = this.indexManager.createEmptyIndex();
+        await this.persistNow(true);
+        this.initialScanPromise = this.enqueueInitialScan();
+        await this.initialScanPromise;
+        await this.waitForIdle();
+        this.nativeSearchIndexer?.flush();
+    }
+
+    public async waitForIdle(timeoutMs?: number): Promise<boolean> {
+        const start = Date.now();
+        const timeout = typeof timeoutMs === "number" && timeoutMs > 0 ? timeoutMs : undefined;
+        while (!this.stopped) {
+            if (!this.processing && this.getTotalQueueSize() === 0) {
+                return true;
+            }
+            if (timeout && Date.now() - start > timeout) {
+                return false;
+            }
+            await this.sleep(50);
+        }
+        return false;
     }
 
     public getQueueStats(): { currentDepth: number; maxDepthSeen: number; currentPauseMs: number } {
@@ -344,9 +382,35 @@ export class IncrementalIndexer {
                     if (!(await this.fileExists(filePath))) {
                         return;
                     }
+                    const isDocFile = this.isDocumentFile(filePath);
 
                     const stopBaselineIndex = this.baselineActive ? metrics.startTimer("baseline.index_ms") : null;
                     try {
+                        if (isDocFile && this.documentIndexer) {
+                            await this.documentIndexer.indexFile(filePath, { force: true });
+                            if (this.currentIndex && !this.stopped) {
+                                const stat = await this.fileSystem.stat(filePath).catch(() => undefined);
+                                if (stat) {
+                                    const entry: FileIndexEntry = {
+                                        mtime: stat.mtime,
+                                        symbols: [],
+                                        imports: [],
+                                        exports: [],
+                                        trigrams: {
+                                            wordCount: 0,
+                                            uniqueTrigramCount: 0
+                                        }
+                                    };
+                                    this.indexManager.updateFileEntry(this.currentIndex, filePath, entry);
+                                }
+                            }
+                            this.options.onFileIndexed?.(filePath);
+                            if (this.baselineActive) {
+                                this.baselineProcessedFiles += 1;
+                                this.updateBaselineActivity("indexing");
+                            }
+                            return;
+                        }
                         const symbols = await this.symbolIndex.getSymbolsForFile(filePath);
                         const content = await this.fileSystem.readFile(filePath);
                         const languageId = this.astManager.getLanguageId(filePath);
@@ -369,6 +433,8 @@ export class IncrementalIndexer {
                             if (this.currentIndex && !this.stopped) {
                                 const stat = await this.fileSystem.stat(filePath).catch(() => undefined);
                                 if (stat) {
+                                    const contentHash = hashContent(content);
+                                    const callgraphRank = await this.resolveCallgraphRank(filePath);
                                     const entry: FileIndexEntry = {
                                         mtime: stat.mtime,
                                         symbols,
@@ -384,8 +450,20 @@ export class IncrementalIndexer {
                                         const relPath = path.relative(this.rootPath, filePath);
                                         this.indexDatabase.updateFileMeta(relPath, {
                                             lastModified: stat.mtime,
-                                            contentHash: hashContent(content),
+                                            contentHash,
                                             sizeBytes: stat.size
+                                        });
+                                    }
+                                    if (this.nativeSearchIndexer) {
+                                        const relPath = path.relative(this.rootPath, filePath).replace(/\\/g, "/");
+                                        this.nativeSearchIndexer.upsertCodeFile({
+                                            repoId: this.repoId,
+                                            filePath: relPath,
+                                            content,
+                                            contentHash,
+                                            mtimeMs: stat.mtime,
+                                            symbols,
+                                            callgraphRank
                                         });
                                     }
                                 }
@@ -696,6 +774,10 @@ export class IncrementalIndexer {
             if (this.isDocumentFile(filePath)) {
                 this.documentIndexer?.deleteFile(filePath);
             }
+            if (this.symbolIndex.isSupported(filePath)) {
+                const relativePath = path.relative(this.rootPath, absolutePath).replace(/\\\\/g, "/");
+                this.nativeSearchIndexer?.deleteCodeFile(this.repoId, relativePath);
+            }
 
             // Tier 3: Ghost Archeology - Register symbols from deleted file as ghosts
             if (this.indexDatabase) {
@@ -791,6 +873,12 @@ export class IncrementalIndexer {
         return entries;
     }
 
+    private clearQueues(): void {
+        this.queues.high.clear();
+        this.queues.medium.clear();
+        this.queues.low.clear();
+    }
+
     private getTotalQueueSize(): number {
         return this.queues.high.size + this.queues.medium.size + this.queues.low.size;
     }
@@ -862,6 +950,18 @@ export class IncrementalIndexer {
         const raw = Number.parseInt(process.env.KAIRO_BASELINE_MAX_FILES_PER_TICK ?? "50", 10);
         if (Number.isFinite(raw) && raw > 0) return raw;
         return 50;
+    }
+
+    private async resolveCallgraphRank(filePath: string): Promise<number> {
+        try {
+            const incoming = await this.dependencyGraph.getDependencies(filePath, "upstream");
+            const outgoing = await this.dependencyGraph.getDependencies(filePath, "downstream");
+            const total = incoming.length + outgoing.length;
+            if (total <= 0) return 0;
+            return Math.min(1, Math.log1p(total) / 4);
+        } catch {
+            return 0;
+        }
     }
 
     private async batchShouldReindex(files: string[]): Promise<string[]> {

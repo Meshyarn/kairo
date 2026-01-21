@@ -1366,6 +1366,11 @@ export class ManageHandlers extends BaseHandler {
                         void (async () => {
                             try {
                                 await this.context.searchEngine.rebuild({ logEvery: 500 });
+                                if (this.context.incrementalIndexer) {
+                                    await this.context.incrementalIndexer.reindexAll();
+                                } else {
+                                    throw new Error("Incremental indexer unavailable for reindex.");
+                                }
                                 await this.context.dependencyGraph.build({ logEvery: 200 });
                                 if (this.context.documentIndexer) {
                                     await this.context.documentIndexer.rebuildAll();

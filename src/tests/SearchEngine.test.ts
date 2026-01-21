@@ -3,11 +3,36 @@ import { performance } from "perf_hooks";
 import { MemoryFileSystem } from "../platform/FileSystem.js";
 import { SearchEngine } from "../engine/Search.js";
 import { ResourceBudget, ResourceUsage } from "../types.js";
-import { SymbolInfo, SymbolIndex } from "../types.js";
 import { AstManager } from "../ast/AstManager.js";
+import { NativeSearchCoreStub } from "./utils/NativeSearchCoreStub.js";
 
 const joinLines = (lines: string[]): string => lines.join("\n");
 const isCoverageRun = typeof (globalThis as any).__coverage__ !== "undefined";
+const repoId = "default";
+
+const toRelative = (rootPath: string, absPath: string): string =>
+    path.relative(rootPath, absPath).replace(/\\/g, "/");
+
+const computePathDepth = (relativePath: string): number =>
+    Math.max(0, relativePath.split("/").filter(Boolean).length - 1);
+
+const indexFile = async (
+    core: NativeSearchCoreStub,
+    rootPath: string,
+    fileSystem: MemoryFileSystem,
+    absPath: string
+) => {
+    const content = await fileSystem.readFile(absPath);
+    const relative = toRelative(rootPath, absPath);
+    core.upsert({
+        kind: "code_file",
+        repoId,
+        path: relative,
+        content,
+        pathDepth: computePathDepth(relative),
+        callgraphRank: 0
+    });
+};
 
 describe("SearchEngine trigram index integration", () => {
     const rootPath = path.join(process.cwd(), "__search_workspace__");
@@ -17,9 +42,11 @@ describe("SearchEngine trigram index integration", () => {
 
     let fileSystem: MemoryFileSystem;
     let searchEngine: SearchEngine;
+    let nativeCore: NativeSearchCoreStub;
 
     beforeEach(async () => {
         fileSystem = new MemoryFileSystem(rootPath);
+        nativeCore = new NativeSearchCoreStub();
         await fileSystem.createDir(path.dirname(alphaPath));
         await fileSystem.createDir(path.dirname(camelPath));
         await fileSystem.writeFile(alphaPath, joinLines([
@@ -42,8 +69,10 @@ describe("SearchEngine trigram index integration", () => {
             "}",
         ]));
 
-        searchEngine = new SearchEngine(rootPath, fileSystem, []);
-        await searchEngine.warmup();
+        searchEngine = new SearchEngine(rootPath, fileSystem, [], { nativeSearchCore: nativeCore, repoId });
+        await indexFile(nativeCore, rootPath, fileSystem, alphaPath);
+        await indexFile(nativeCore, rootPath, fileSystem, betaPath);
+        await indexFile(nativeCore, rootPath, fileSystem, camelPath);
     });
 
     afterEach(async () => {
@@ -68,7 +97,7 @@ describe("SearchEngine trigram index integration", () => {
             "  return gammaRay;",
             "};",
         ]));
-        await searchEngine.invalidateFile(betaPath);
+        await indexFile(nativeCore, rootPath, fileSystem, betaPath);
 
         results = await searchEngine.scout({ keywords: ["gamma"], basePath: rootPath });
         expect(results.length).toBeGreaterThan(0);
@@ -117,8 +146,9 @@ describe("SearchEngine trigram index integration", () => {
             "}",
         ]));
 
-        const denseEngine = new SearchEngine(rootPath, fileSystem, []);
-        await denseEngine.warmup();
+        const denseCore = new NativeSearchCoreStub();
+        const denseEngine = new SearchEngine(rootPath, fileSystem, [], { nativeSearchCore: denseCore, repoId });
+        await indexFile(denseCore, rootPath, fileSystem, targetPath);
 
         const start = performance.now();
         const results = await denseEngine.scout({ keywords: ["UniqueNeedleToken"], basePath: rootPath });
@@ -152,46 +182,18 @@ describe("SearchEngine trigram index integration", () => {
     });
 
     it("prioritizes exported definitions via field weights", async () => {
-        const stubProvider: SymbolIndex = {
-            async getSymbolsForFile(filePath: string): Promise<SymbolInfo[]> {
-                if (path.normalize(filePath) !== path.normalize(alphaPath)) {
-                    return [];
-                }
-                return [{
-                    name: "alphaMark",
-                    type: "function",
-                    range: { startLine: 0, endLine: 4, startByte: 0, endByte: 80 },
-                    modifiers: ["export"],
-                    content: "export function alphaMark() {}"
-                } as SymbolInfo];
-            },
-            async getAllSymbols(): Promise<Map<string, SymbolInfo[]>> {
-                return new Map();
-            },
-            async findFilesBySymbolName(keywords: string[]): Promise<string[]> {
-                if (keywords.includes("alphaMark")) {
-                    return ["src/utils/alpha.ts"];
-                }
-                return [];
-            }
-        };
-
         await fileSystem.writeFile(alphaPath, joinLines([
             "export function alphaMark() {",
             "  return alphaMark;",
             "}",
             "// alphaMark documentation"
         ]));
-
-        searchEngine = new SearchEngine(rootPath, fileSystem, [], { symbolIndex: stubProvider });
-        await searchEngine.warmup();
+        await indexFile(nativeCore, rootPath, fileSystem, alphaPath);
 
         const results = await searchEngine.scout({ keywords: ["alphaMark"], basePath: rootPath });
         expect(results.length).toBeGreaterThan(0);
-        // New hybrid search returns file-level matches
         expect(results[0].filePath).toBe("src/utils/alpha.ts");
-        // Check if symbol signal is present
-        expect(results[0].scoreDetails?.type).toContain("symbol");
+        expect(results[0].preview).toContain("alphaMark");
     });
 
     it("applies file type filters and per-file match limits", async () => {
@@ -200,7 +202,7 @@ describe("SearchEngine trigram index integration", () => {
             "# Notes",
             "alpha appears here too"
         ]));
-        await searchEngine.invalidateFile(notesPath);
+        await indexFile(nativeCore, rootPath, fileSystem, notesPath);
         const results = await searchEngine.scout({
             keywords: ["alpha"],
             basePath: rootPath,
@@ -236,7 +238,7 @@ describe("SearchEngine trigram index integration", () => {
             "  return message;",
             "}",
         ]));
-        await searchEngine.invalidateFile(dupPath);
+        await indexFile(nativeCore, rootPath, fileSystem, dupPath);
         const results = await searchEngine.scout({
             keywords: ["alpha"],
             basePath: rootPath,

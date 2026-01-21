@@ -6,6 +6,7 @@ import { SymbolInfo } from '../types.js';
 import { IndexDatabase } from '../indexing/IndexDatabase.js';
 import { CommentIndexer } from '../indexing/CommentIndexer.js';
 import { NodeFileSystem, type IFileSystem, type FileStats } from '../platform/FileSystem.js';
+import { NativeSearchIndexer } from "../engine/search/native/NativeSearchIndexer.js";
 
 const SUPPORTED_EXTENSIONS = new Set<string>(['.ts', '.tsx', '.js', '.jsx', '.py']);
 const HOT_CACHE_SIZE = 50;
@@ -45,7 +46,8 @@ export class SymbolIndex {
         skeletonGenerator: SkeletonGenerator,
         ignorePatterns: string[],
         db?: IndexDatabase,
-        fileSystem?: IFileSystem
+        fileSystem?: IFileSystem,
+        options?: { nativeSearchIndexer?: NativeSearchIndexer; repoId?: string }
     ) {
         this.rootPath = rootPath;
         this.skeletonGenerator = skeletonGenerator;
@@ -53,7 +55,10 @@ export class SymbolIndex {
         this.userIgnorePatterns = [...ignorePatterns];
         this.ignoreFilter = this.createIgnoreFilter(this.userIgnorePatterns);
         this.db = db ?? new IndexDatabase(this.rootPath);
-        this.commentIndexer = new CommentIndexer(this.db);
+        this.commentIndexer = new CommentIndexer(this.db, {
+            nativeSearchIndexer: options?.nativeSearchIndexer,
+            repoId: options?.repoId
+        });
         this.cache = new LRUCache({ max: HOT_CACHE_SIZE });
         this.waitForBaselineByDefault = this.resolveBaselineWaitMode();
     }

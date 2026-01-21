@@ -19,6 +19,8 @@ import * as os from "os";
 // Engine Imports
 import { SearchEngine } from "../engine/Search.js";
 import { ContextEngine } from "../engine/Context.js";
+import { NativeSearchCore } from "../engine/search/native/NativeSearchCore.js";
+import { NativeSearchIndexer } from "../engine/search/native/NativeSearchIndexer.js";
 import { EditorEngine } from "../engine/Editor.js";
 import { HistoryEngine } from "../engine/History.js";
 import { EditCoordinator } from "../engine/EditCoordinator.js";
@@ -118,6 +120,8 @@ export class SmartContextServer {
     private internalRegistry: InternalToolRegistry;
     private incrementalIndexer?: IncrementalIndexer;
     private searchEngine: SearchEngine;
+    private nativeSearchCore?: NativeSearchCore;
+    private nativeSearchIndexer?: NativeSearchIndexer;
     private editCoordinator: EditCoordinator;
     private historyEngine: HistoryEngine;
     private configurationManager: ConfigurationManager;
@@ -237,6 +241,17 @@ export class SmartContextServer {
         this.skeletonGenerator = new SkeletonGenerator();
         this.skeletonCache = new SkeletonCache(this.rootPath);
         this.indexDatabase = new IndexDatabase(this.rootPath);
+        const defaultRepoId = this.repoRegistry.getDefaultRepo()?.id ?? "default";
+        try {
+            this.nativeSearchCore = new NativeSearchCore(this.rootPath, { repoId: defaultRepoId });
+            this.nativeSearchIndexer = new NativeSearchIndexer(this.nativeSearchCore);
+        } catch (error) {
+            if (!this.isTestEnv()) {
+                console.warn("[SmartContextServer] Native search init failed:", error);
+            }
+            this.nativeSearchCore = undefined;
+            this.nativeSearchIndexer = undefined;
+        }
         this.embeddingRepository = new EmbeddingRepository(this.indexDatabase);
         this.embeddingProviderFactory = new EmbeddingProviderFactory(resolveEmbeddingConfigFromEnv());
         this.vectorIndexManager = new VectorIndexManager(this.rootPath, this.embeddingRepository);
@@ -251,9 +266,18 @@ export class SmartContextServer {
         this.documentIndexer = new DocumentIndexer(this.rootPath, this.fileSystem, this.indexDatabase, {
             embeddingRepository: this.embeddingRepository,
             embeddingProviderFactory: this.embeddingProviderFactory,
-            vectorIndexManager: this.vectorIndexManager
+            vectorIndexManager: this.vectorIndexManager,
+            nativeSearchIndexer: this.nativeSearchIndexer,
+            repoId: defaultRepoId
         });
-        this.symbolIndex = new SymbolIndex(this.rootPath, this.skeletonGenerator, initialIgnorePatterns, this.indexDatabase);
+        this.symbolIndex = new SymbolIndex(
+            this.rootPath,
+            this.skeletonGenerator,
+            initialIgnorePatterns,
+            this.indexDatabase,
+            undefined,
+            { nativeSearchIndexer: this.nativeSearchIndexer, repoId: defaultRepoId }
+        );
         this.moduleResolver = new ModuleResolver({ rootPath: this.rootPath, packageAliasMap });
         this.dependencyGraph = new DependencyGraph(this.rootPath, this.symbolIndex, this.moduleResolver, this.indexDatabase);
         this.callGraphBuilder = new CallGraphBuilder(this.rootPath, this.symbolIndex, this.moduleResolver);
@@ -322,18 +346,18 @@ export class SmartContextServer {
                 },
                 onActivity: (activity) => {
                     this.indexStateManager.setActivity(activity);
-                }
+                },
+                nativeSearchIndexer: this.nativeSearchIndexer,
+                repoId: defaultRepoId
             },
             this.documentIndexer
         );
 
         this.searchEngine = new SearchEngine(this.rootPath, this.fileSystem, [], {
-            symbolIndex: this.symbolIndex,
-            callGraphBuilder: this.callGraphBuilder,
-            dependencyGraph: this.dependencyGraph
+            nativeSearchCore: this.nativeSearchCore,
+            repoId: defaultRepoId
         });
         this.documentSearchEngine = new DocumentSearchEngine(
-            this.searchEngine,
             this.documentIndexer,
             new DocumentChunkRepository(this.indexDatabase),
             this.embeddingRepository,
@@ -342,7 +366,8 @@ export class SmartContextServer {
             this.symbolIndex,
             new EvidencePackRepository(this.indexDatabase),
             this.vectorIndexManager,
-            this.indexDatabase
+            this.indexDatabase,
+            this.nativeSearchCore
         );
         this.clusterSearchEngine = new ClusterSearchEngine({
             rootPath: this.rootPath,
@@ -1460,6 +1485,7 @@ export class SmartContextServer {
             await this.vectorIndexInitPromise;
         }
         await this.searchEngine.dispose();
+        this.nativeSearchCore?.close();
         await this.symbolIndex.dispose();
         await this.skeletonCache.close();
         await this.astManager.dispose();

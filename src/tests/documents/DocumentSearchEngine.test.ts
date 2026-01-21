@@ -3,7 +3,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { NodeFileSystem } from "../../platform/FileSystem.js";
-import { SearchEngine } from "../../engine/Search.js";
+import { NativeSearchIndexer } from "../../engine/search/native/NativeSearchIndexer.js";
 import { IndexDatabase } from "../../indexing/IndexDatabase.js";
 import { DocumentIndexer } from "../../indexing/DocumentIndexer.js";
 import { DocumentChunkRepository } from "../../indexing/DocumentChunkRepository.js";
@@ -14,6 +14,7 @@ import { PathManager } from "../../utils/PathManager.js";
 import { SymbolIndex } from "../../ast/SymbolIndex.js";
 import { SkeletonGenerator } from "../../ast/SkeletonGenerator.js";
 import { EvidencePackRepository } from "../../indexing/EvidencePackRepository.js";
+import { NativeSearchCoreStub } from "../utils/NativeSearchCoreStub.js";
 
 jest.setTimeout(60000);
 
@@ -159,15 +160,16 @@ describe("DocumentSearchEngine", () => {
         const fileSystem = new NodeFileSystem(rootDir);
         const indexDatabase = new IndexDatabase(rootDir);
         const embeddingRepository = new EmbeddingRepository(indexDatabase);
+        const nativeCore = new NativeSearchCoreStub();
+        const nativeIndexer = new NativeSearchIndexer(nativeCore);
         const documentIndexer = new DocumentIndexer(rootDir, fileSystem, indexDatabase, {
-            embeddingRepository
+            embeddingRepository,
+            nativeSearchIndexer: nativeIndexer
         });
         await documentIndexer.indexFile("docs/guide.md");
         await documentIndexer.indexFile("docs/faq.md");
 
-        const searchEngine = new SearchEngine(rootDir, fileSystem);
         const documentSearchEngine = new DocumentSearchEngine(
-            searchEngine,
             documentIndexer,
             new DocumentChunkRepository(indexDatabase),
             embeddingRepository,
@@ -176,7 +178,12 @@ describe("DocumentSearchEngine", () => {
                 normalize: true,
                 local: { model: "hash-test", dims: 64 }
             }),
-            rootDir
+            rootDir,
+            undefined,
+            undefined,
+            undefined,
+            indexDatabase,
+            nativeCore
         );
 
         const response = await documentSearchEngine.search("install", {
@@ -192,7 +199,6 @@ describe("DocumentSearchEngine", () => {
         expect(response.stats.vectorEnabled).toBe(true);
 
         indexDatabase.close();
-        await searchEngine.dispose();
         fs.rmSync(rootDir, { recursive: true, force: true });
     });
 
@@ -201,15 +207,16 @@ describe("DocumentSearchEngine", () => {
         const fileSystem = new NodeFileSystem(rootDir);
         const indexDatabase = new IndexDatabase(rootDir);
         const embeddingRepository = new EmbeddingRepository(indexDatabase);
+        const nativeCore = new NativeSearchCoreStub();
+        const nativeIndexer = new NativeSearchIndexer(nativeCore);
         const documentIndexer = new DocumentIndexer(rootDir, fileSystem, indexDatabase, {
-            embeddingRepository
+            embeddingRepository,
+            nativeSearchIndexer: nativeIndexer
         });
         await documentIndexer.indexFile("docs/guide.md");
         await documentIndexer.indexFile("docs/faq.md");
 
-        const searchEngine = new SearchEngine(rootDir, fileSystem);
         const documentSearchEngine = new DocumentSearchEngine(
-            searchEngine,
             documentIndexer,
             new DocumentChunkRepository(indexDatabase),
             embeddingRepository,
@@ -218,7 +225,12 @@ describe("DocumentSearchEngine", () => {
                 normalize: true,
                 local: { model: "hash-test", dims: 64 }
             }),
-            rootDir
+            rootDir,
+            undefined,
+            undefined,
+            undefined,
+            indexDatabase,
+            nativeCore
         );
 
         const originalMax = process.env.KAIRO_DOC_MAX_CANDIDATES;
@@ -240,7 +252,6 @@ describe("DocumentSearchEngine", () => {
         expect(response.stats.candidateFiles).toBeLessThanOrEqual(1);
 
         indexDatabase.close();
-        await searchEngine.dispose();
         fs.rmSync(rootDir, { recursive: true, force: true });
     });
 
@@ -249,14 +260,15 @@ describe("DocumentSearchEngine", () => {
         const fileSystem = new NodeFileSystem(rootDir);
         const indexDatabase = new IndexDatabase(rootDir);
         const embeddingRepository = new EmbeddingRepository(indexDatabase);
+        const nativeCore = new NativeSearchCoreStub();
+        const nativeIndexer = new NativeSearchIndexer(nativeCore);
         const documentIndexer = new DocumentIndexer(rootDir, fileSystem, indexDatabase, {
-            embeddingRepository
+            embeddingRepository,
+            nativeSearchIndexer: nativeIndexer
         });
         await documentIndexer.indexFile("docs/guide.md");
 
-        const searchEngine = new SearchEngine(rootDir, fileSystem);
         const documentSearchEngine = new DocumentSearchEngine(
-            searchEngine,
             documentIndexer,
             new DocumentChunkRepository(indexDatabase),
             embeddingRepository,
@@ -265,7 +277,12 @@ describe("DocumentSearchEngine", () => {
                 normalize: true,
                 local: { model: "hash-test", dims: 32 }
             }),
-            rootDir
+            rootDir,
+            undefined,
+            undefined,
+            undefined,
+            indexDatabase,
+            nativeCore
         );
 
         const response = await documentSearchEngine.search("install", {
@@ -279,7 +296,6 @@ describe("DocumentSearchEngine", () => {
         expect(response.provider).toBeNull();
 
         indexDatabase.close();
-        await searchEngine.dispose();
         fs.rmSync(rootDir, { recursive: true, force: true });
     });
 
@@ -288,8 +304,11 @@ describe("DocumentSearchEngine", () => {
         const fileSystem = new NodeFileSystem(rootDir);
         const indexDatabase = new IndexDatabase(rootDir);
         const embeddingRepository = new EmbeddingRepository(indexDatabase);
+        const nativeCore = new NativeSearchCoreStub();
+        const nativeIndexer = new NativeSearchIndexer(nativeCore);
         const documentIndexer = new DocumentIndexer(rootDir, fileSystem, indexDatabase, {
-            embeddingRepository
+            embeddingRepository,
+            nativeSearchIndexer: nativeIndexer
         });
         await documentIndexer.indexFile("docs/guide.md");
 
@@ -298,9 +317,7 @@ describe("DocumentSearchEngine", () => {
             .find(chunk => chunk.text.toLowerCase().includes("npm install"));
         expect(targetChunk).toBeTruthy();
 
-        const searchEngine = new SearchEngine(rootDir, fileSystem);
         const documentSearchEngine = new DocumentSearchEngine(
-            searchEngine,
             documentIndexer,
             chunkRepo,
             embeddingRepository,
@@ -309,7 +326,12 @@ describe("DocumentSearchEngine", () => {
                 normalize: true,
                 local: { model: "hash-test", dims: 32 }
             }),
-            rootDir
+            rootDir,
+            undefined,
+            undefined,
+            undefined,
+            indexDatabase,
+            nativeCore
         );
 
         await documentSearchEngine.search("npm install", {
@@ -329,7 +351,6 @@ describe("DocumentSearchEngine", () => {
         expect(stored?.dims).toBe(16);
 
         indexDatabase.close();
-        await searchEngine.dispose();
         fs.rmSync(rootDir, { recursive: true, force: true });
     });
 
@@ -338,17 +359,23 @@ describe("DocumentSearchEngine", () => {
         const fileSystem = new NodeFileSystem(rootDir);
         const indexDatabase = new IndexDatabase(rootDir);
         const embeddingRepository = new EmbeddingRepository(indexDatabase);
-        const documentIndexer = new DocumentIndexer(rootDir, fileSystem, indexDatabase, { embeddingRepository });
+        const nativeCore = new NativeSearchCoreStub();
+        const nativeIndexer = new NativeSearchIndexer(nativeCore);
+        const documentIndexer = new DocumentIndexer(rootDir, fileSystem, indexDatabase, {
+            embeddingRepository,
+            nativeSearchIndexer: nativeIndexer
+        });
 
         // index markdown docs only; code comments are generated on-demand via SymbolIndex.
         await documentIndexer.indexFile("docs/guide.md");
 
         const skeletonGenerator = new SkeletonGenerator();
-        const symbolIndex = new SymbolIndex(rootDir, skeletonGenerator, [], indexDatabase);
+        const symbolIndex = new SymbolIndex(rootDir, skeletonGenerator, [], indexDatabase, fileSystem, {
+            nativeSearchIndexer: nativeIndexer
+        });
+        await symbolIndex.getSymbolsForFile("src/widget.ts");
 
-        const searchEngine = new SearchEngine(rootDir, fileSystem);
         const documentSearchEngine = new DocumentSearchEngine(
-            searchEngine,
             documentIndexer,
             new DocumentChunkRepository(indexDatabase),
             embeddingRepository,
@@ -358,7 +385,11 @@ describe("DocumentSearchEngine", () => {
                 local: { model: "hash-test", dims: 32 }
             }),
             rootDir,
-            symbolIndex
+            symbolIndex,
+            undefined,
+            undefined,
+            indexDatabase,
+            nativeCore
         );
 
         const response = await documentSearchEngine.search("offline install", {
@@ -372,7 +403,6 @@ describe("DocumentSearchEngine", () => {
         expect(response.results.some(r => r.filePath === "src/widget.ts")).toBe(true);
 
         indexDatabase.close();
-        await searchEngine.dispose();
         fs.rmSync(rootDir, { recursive: true, force: true });
     });
 
@@ -381,15 +411,16 @@ describe("DocumentSearchEngine", () => {
         const fileSystem = new NodeFileSystem(rootDir);
         const indexDatabase = new IndexDatabase(rootDir);
         const embeddingRepository = new EmbeddingRepository(indexDatabase);
+        const nativeCore = new NativeSearchCoreStub();
+        const nativeIndexer = new NativeSearchIndexer(nativeCore);
         const documentIndexer = new DocumentIndexer(rootDir, fileSystem, indexDatabase, {
-            embeddingRepository
+            embeddingRepository,
+            nativeSearchIndexer: nativeIndexer
         });
         await documentIndexer.indexFile("docs/guide.md");
         await documentIndexer.indexFile("docs/faq.md");
 
-        const searchEngine = new SearchEngine(rootDir, fileSystem);
         const documentSearchEngine = new DocumentSearchEngine(
-            searchEngine,
             documentIndexer,
             new DocumentChunkRepository(indexDatabase),
             embeddingRepository,
@@ -398,7 +429,12 @@ describe("DocumentSearchEngine", () => {
                 normalize: true,
                 local: { model: "hash-test", dims: 64 }
             }),
-            rootDir
+            rootDir,
+            undefined,
+            undefined,
+            undefined,
+            indexDatabase,
+            nativeCore
         );
 
         const response = await documentSearchEngine.search("install", {
@@ -417,7 +453,6 @@ describe("DocumentSearchEngine", () => {
         expect((response.evidence ?? []).length).toBeLessThanOrEqual(1);
 
         indexDatabase.close();
-        await searchEngine.dispose();
         fs.rmSync(rootDir, { recursive: true, force: true });
     });
 
@@ -426,15 +461,16 @@ describe("DocumentSearchEngine", () => {
         const fileSystem = new NodeFileSystem(rootDir);
         const indexDatabase = new IndexDatabase(rootDir);
         const embeddingRepository = new EmbeddingRepository(indexDatabase);
+        const nativeCore = new NativeSearchCoreStub();
+        const nativeIndexer = new NativeSearchIndexer(nativeCore);
         const documentIndexer = new DocumentIndexer(rootDir, fileSystem, indexDatabase, {
-            embeddingRepository
+            embeddingRepository,
+            nativeSearchIndexer: nativeIndexer
         });
         await documentIndexer.indexFile("docs/guide.md");
         await documentIndexer.indexFile("docs/faq.md");
 
-        const searchEngine = new SearchEngine(rootDir, fileSystem);
         const documentSearchEngine = new DocumentSearchEngine(
-            searchEngine,
             documentIndexer,
             new DocumentChunkRepository(indexDatabase),
             embeddingRepository,
@@ -443,7 +479,12 @@ describe("DocumentSearchEngine", () => {
                 normalize: true,
                 local: { model: "hash-test", dims: 64 }
             }),
-            rootDir
+            rootDir,
+            undefined,
+            undefined,
+            undefined,
+            indexDatabase,
+            nativeCore
         );
 
         const response = await documentSearchEngine.search("install", {
@@ -458,7 +499,6 @@ describe("DocumentSearchEngine", () => {
         expect([response.reason, ...(response.reasons ?? [])]).toContain("embedding_partial");
 
         indexDatabase.close();
-        await searchEngine.dispose();
         fs.rmSync(rootDir, { recursive: true, force: true });
     });
 
@@ -467,15 +507,16 @@ describe("DocumentSearchEngine", () => {
         const fileSystem = new NodeFileSystem(rootDir);
         const indexDatabase = new IndexDatabase(rootDir);
         const embeddingRepository = new EmbeddingRepository(indexDatabase);
+        const nativeCore = new NativeSearchCoreStub();
+        const nativeIndexer = new NativeSearchIndexer(nativeCore);
         const documentIndexer = new DocumentIndexer(rootDir, fileSystem, indexDatabase, {
-            embeddingRepository
+            embeddingRepository,
+            nativeSearchIndexer: nativeIndexer
         });
         await documentIndexer.indexFile("docs/guide.md");
         await documentIndexer.indexFile("docs/faq.md");
 
-        const searchEngine = new SearchEngine(rootDir, fileSystem);
         const documentSearchEngine = new DocumentSearchEngine(
-            searchEngine,
             documentIndexer,
             new DocumentChunkRepository(indexDatabase),
             embeddingRepository,
@@ -484,7 +525,12 @@ describe("DocumentSearchEngine", () => {
                 normalize: true,
                 local: { model: "hash-test", dims: 64 }
             }),
-            rootDir
+            rootDir,
+            undefined,
+            undefined,
+            undefined,
+            indexDatabase,
+            nativeCore
         );
 
         const first = await documentSearchEngine.search("install", {
@@ -503,7 +549,6 @@ describe("DocumentSearchEngine", () => {
         expect(second.results).toEqual(first.results);
 
         indexDatabase.close();
-        await searchEngine.dispose();
         fs.rmSync(rootDir, { recursive: true, force: true });
     });
 
@@ -512,17 +557,18 @@ describe("DocumentSearchEngine", () => {
         const fileSystem = new NodeFileSystem(rootDir);
         const indexDatabase = new IndexDatabase(rootDir);
         const embeddingRepository = new EmbeddingRepository(indexDatabase);
+        const nativeCore = new NativeSearchCoreStub();
+        const nativeIndexer = new NativeSearchIndexer(nativeCore);
         const documentIndexer = new DocumentIndexer(rootDir, fileSystem, indexDatabase, {
-            embeddingRepository
+            embeddingRepository,
+            nativeSearchIndexer: nativeIndexer
         });
         await documentIndexer.indexFile("docs/guide.md");
         await documentIndexer.indexFile("docs/faq.md");
 
         const packs = new EvidencePackRepository(indexDatabase);
-        const searchEngine = new SearchEngine(rootDir, fileSystem);
 
         const engineA = new DocumentSearchEngine(
-            searchEngine,
             documentIndexer,
             new DocumentChunkRepository(indexDatabase),
             embeddingRepository,
@@ -533,7 +579,10 @@ describe("DocumentSearchEngine", () => {
             }),
             rootDir,
             undefined,
-            packs
+            packs,
+            undefined,
+            indexDatabase,
+            nativeCore
         );
 
         const first = await engineA.search("install", {
@@ -545,7 +594,6 @@ describe("DocumentSearchEngine", () => {
 
         // New engine instance (empty in-memory cache), same DB.
         const engineB = new DocumentSearchEngine(
-            searchEngine,
             documentIndexer,
             new DocumentChunkRepository(indexDatabase),
             embeddingRepository,
@@ -556,7 +604,10 @@ describe("DocumentSearchEngine", () => {
             }),
             rootDir,
             undefined,
-            packs
+            packs,
+            undefined,
+            indexDatabase,
+            nativeCore
         );
 
         const second = await engineB.search("install", {
@@ -569,7 +620,6 @@ describe("DocumentSearchEngine", () => {
         expect(second.results).toEqual(first.results);
 
         indexDatabase.close();
-        await searchEngine.dispose();
         fs.rmSync(rootDir, { recursive: true, force: true });
     });
 
@@ -578,14 +628,17 @@ describe("DocumentSearchEngine", () => {
         const fileSystem = new NodeFileSystem(rootDir);
         const indexDatabase = new IndexDatabase(rootDir);
         const embeddingRepository = new EmbeddingRepository(indexDatabase);
-        const documentIndexer = new DocumentIndexer(rootDir, fileSystem, indexDatabase, { embeddingRepository });
+        const nativeCore = new NativeSearchCoreStub();
+        const nativeIndexer = new NativeSearchIndexer(nativeCore);
+        const documentIndexer = new DocumentIndexer(rootDir, fileSystem, indexDatabase, {
+            embeddingRepository,
+            nativeSearchIndexer: nativeIndexer
+        });
         await documentIndexer.indexFile("docs/guide.md");
 
         const packs = new EvidencePackRepository(indexDatabase);
-        const searchEngine = new SearchEngine(rootDir, fileSystem);
         const chunkRepo = new DocumentChunkRepository(indexDatabase);
         const engine = new DocumentSearchEngine(
-            searchEngine,
             documentIndexer,
             chunkRepo,
             embeddingRepository,
@@ -596,7 +649,10 @@ describe("DocumentSearchEngine", () => {
             }),
             rootDir,
             undefined,
-            packs
+            packs,
+            undefined,
+            indexDatabase,
+            nativeCore
         );
 
         const first = await engine.search("install", { output: "compact", includeEvidence: false });
@@ -633,7 +689,6 @@ describe("DocumentSearchEngine", () => {
         expect(refreshed).toBeTruthy();
 
         indexDatabase.close();
-        await searchEngine.dispose();
         fs.rmSync(rootDir, { recursive: true, force: true });
     });
 
@@ -642,7 +697,12 @@ describe("DocumentSearchEngine", () => {
         const fileSystem = new NodeFileSystem(rootDir);
         const indexDatabase = new IndexDatabase(rootDir);
         const embeddingRepository = new EmbeddingRepository(indexDatabase);
-        const documentIndexer = new DocumentIndexer(rootDir, fileSystem, indexDatabase, { embeddingRepository });
+        const nativeCore = new NativeSearchCoreStub();
+        const nativeIndexer = new NativeSearchIndexer(nativeCore);
+        const documentIndexer = new DocumentIndexer(rootDir, fileSystem, indexDatabase, {
+            embeddingRepository,
+            nativeSearchIndexer: nativeIndexer
+        });
         await documentIndexer.indexFile("docs/guide.md");
 
         const originalTtl = process.env.KAIRO_EVIDENCE_PACK_TTL_MS;
@@ -652,9 +712,7 @@ describe("DocumentSearchEngine", () => {
         nowSpy.mockImplementation(() => now);
 
         const packs = new EvidencePackRepository(indexDatabase);
-        const searchEngine = new SearchEngine(rootDir, fileSystem);
         const engine = new DocumentSearchEngine(
-            searchEngine,
             documentIndexer,
             new DocumentChunkRepository(indexDatabase),
             embeddingRepository,
@@ -665,7 +723,10 @@ describe("DocumentSearchEngine", () => {
             }),
             rootDir,
             undefined,
-            packs
+            packs,
+            undefined,
+            indexDatabase,
+            nativeCore
         );
 
         const first = await engine.search("install", { output: "compact", includeEvidence: false });
@@ -681,7 +742,6 @@ describe("DocumentSearchEngine", () => {
         else process.env.KAIRO_EVIDENCE_PACK_TTL_MS = originalTtl;
 
         indexDatabase.close();
-        await searchEngine.dispose();
         fs.rmSync(rootDir, { recursive: true, force: true });
     });
 
@@ -690,14 +750,17 @@ describe("DocumentSearchEngine", () => {
         const fileSystem = new NodeFileSystem(rootDir);
         const indexDatabase = new IndexDatabase(rootDir);
         const embeddingRepository = new EmbeddingRepository(indexDatabase);
-        const documentIndexer = new DocumentIndexer(rootDir, fileSystem, indexDatabase, { embeddingRepository });
+        const nativeCore = new NativeSearchCoreStub();
+        const nativeIndexer = new NativeSearchIndexer(nativeCore);
+        const documentIndexer = new DocumentIndexer(rootDir, fileSystem, indexDatabase, {
+            embeddingRepository,
+            nativeSearchIndexer: nativeIndexer
+        });
         await documentIndexer.indexFile("docs/guide.md");
 
         const packs = new EvidencePackRepository(indexDatabase);
-        const searchEngine = new SearchEngine(rootDir, fileSystem);
 
         const engineA = new DocumentSearchEngine(
-            searchEngine,
             documentIndexer,
             new DocumentChunkRepository(indexDatabase),
             embeddingRepository,
@@ -708,7 +771,10 @@ describe("DocumentSearchEngine", () => {
             }),
             rootDir,
             undefined,
-            packs
+            packs,
+            undefined,
+            indexDatabase,
+            nativeCore
         );
 
         const first = await engineA.search("install", { output: "compact", includeEvidence: false });
@@ -723,7 +789,6 @@ describe("DocumentSearchEngine", () => {
 
         // New engine instance => no in-memory cache. Should detect staleness via snapshot mismatch and recompute.
         const engineB = new DocumentSearchEngine(
-            searchEngine,
             documentIndexer,
             new DocumentChunkRepository(indexDatabase),
             embeddingRepository,
@@ -734,14 +799,16 @@ describe("DocumentSearchEngine", () => {
             }),
             rootDir,
             undefined,
-            packs
+            packs,
+            undefined,
+            indexDatabase,
+            nativeCore
         );
 
         const second = await engineB.search("install", { output: "compact", includeEvidence: false, packId });
         expect(second.pack?.hit).toBe(false);
 
         indexDatabase.close();
-        await searchEngine.dispose();
         fs.rmSync(rootDir, { recursive: true, force: true });
     });
 
@@ -750,12 +817,15 @@ describe("DocumentSearchEngine", () => {
         const fileSystem = new NodeFileSystem(rootDir);
         const indexDatabase = new IndexDatabase(rootDir);
         const embeddingRepository = new EmbeddingRepository(indexDatabase);
-        const documentIndexer = new DocumentIndexer(rootDir, fileSystem, indexDatabase, { embeddingRepository });
+        const nativeCore = new NativeSearchCoreStub();
+        const nativeIndexer = new NativeSearchIndexer(nativeCore);
+        const documentIndexer = new DocumentIndexer(rootDir, fileSystem, indexDatabase, {
+            embeddingRepository,
+            nativeSearchIndexer: nativeIndexer
+        });
         await documentIndexer.indexFile("docs/guide.md");
 
-        const searchEngine = new SearchEngine(rootDir, fileSystem);
         const engine = new DocumentSearchEngine(
-            searchEngine,
             documentIndexer,
             new DocumentChunkRepository(indexDatabase),
             embeddingRepository,
@@ -764,7 +834,12 @@ describe("DocumentSearchEngine", () => {
                 normalize: true,
                 local: { model: "hash-test", dims: 64 }
             }),
-            rootDir
+            rootDir,
+            undefined,
+            undefined,
+            undefined,
+            indexDatabase,
+            nativeCore
         );
 
         const response = await engine.search("install", { output: "pack_only", includeEvidence: true });
@@ -775,7 +850,6 @@ describe("DocumentSearchEngine", () => {
         }
 
         indexDatabase.close();
-        await searchEngine.dispose();
         fs.rmSync(rootDir, { recursive: true, force: true });
     });
 
@@ -784,16 +858,19 @@ describe("DocumentSearchEngine", () => {
         const fileSystem = new NodeFileSystem(rootDir);
         const indexDatabase = new IndexDatabase(rootDir);
         const embeddingRepository = new EmbeddingRepository(indexDatabase);
-        const documentIndexer = new DocumentIndexer(rootDir, fileSystem, indexDatabase, { embeddingRepository });
+        const nativeCore = new NativeSearchCoreStub();
+        const nativeIndexer = new NativeSearchIndexer(nativeCore);
+        const documentIndexer = new DocumentIndexer(rootDir, fileSystem, indexDatabase, {
+            embeddingRepository,
+            nativeSearchIndexer: nativeIndexer
+        });
         await documentIndexer.indexFile("logs/app.log");
         const chunkRepo = new DocumentChunkRepository(indexDatabase);
         const logChunks = chunkRepo.listChunksForFile("logs/app.log");
         expect(logChunks.length).toBeGreaterThan(1);
         expect(logChunks.some(chunk => chunk.text.includes("install failed"))).toBe(true);
 
-        const searchEngine = new SearchEngine(rootDir, fileSystem);
         const engine = new DocumentSearchEngine(
-            searchEngine,
             documentIndexer,
             chunkRepo,
             embeddingRepository,
@@ -802,15 +879,19 @@ describe("DocumentSearchEngine", () => {
                 normalize: true,
                 local: { model: "hash-test", dims: 64 }
             }),
-            rootDir
+            rootDir,
+            undefined,
+            undefined,
+            undefined,
+            indexDatabase,
+            nativeCore
         );
 
-        const response = await engine.search("install failed", { output: "compact", includeEvidence: false });
+        const response = await engine.search("install failed", { output: "compact", includeEvidence: false, includeLogs: true });
         const match = response.results.find(r => r.filePath === "logs/app.log");
         expect(match).toBeTruthy();
 
         indexDatabase.close();
-        await searchEngine.dispose();
         fs.rmSync(rootDir, { recursive: true, force: true });
     });
 
@@ -819,13 +900,16 @@ describe("DocumentSearchEngine", () => {
         const fileSystem = new NodeFileSystem(rootDir);
         const indexDatabase = new IndexDatabase(rootDir);
         const embeddingRepository = new EmbeddingRepository(indexDatabase);
-        const documentIndexer = new DocumentIndexer(rootDir, fileSystem, indexDatabase, { embeddingRepository });
+        const nativeCore = new NativeSearchCoreStub();
+        const nativeIndexer = new NativeSearchIndexer(nativeCore);
+        const documentIndexer = new DocumentIndexer(rootDir, fileSystem, indexDatabase, {
+            embeddingRepository,
+            nativeSearchIndexer: nativeIndexer
+        });
         await documentIndexer.indexFile("metrics/latency.csv");
         await documentIndexer.indexFile("docs/latency.md");
 
-        const searchEngine = new SearchEngine(rootDir, fileSystem);
         const engine = new DocumentSearchEngine(
-            searchEngine,
             documentIndexer,
             new DocumentChunkRepository(indexDatabase),
             embeddingRepository,
@@ -834,7 +918,12 @@ describe("DocumentSearchEngine", () => {
                 normalize: true,
                 local: { model: "hash-test", dims: 64 }
             }),
-            rootDir
+            rootDir,
+            undefined,
+            undefined,
+            undefined,
+            indexDatabase,
+            nativeCore
         );
 
         const originalBoost = process.env.KAIRO_METRICS_SCORE_BOOST;
@@ -857,7 +946,6 @@ describe("DocumentSearchEngine", () => {
         }
 
         indexDatabase.close();
-        await searchEngine.dispose();
         fs.rmSync(rootDir, { recursive: true, force: true });
     });
 
@@ -869,16 +957,19 @@ describe("DocumentSearchEngine", () => {
         const fileSystem = new NodeFileSystem(rootDir);
         const indexDatabase = new IndexDatabase(rootDir);
         const embeddingRepository = new EmbeddingRepository(indexDatabase);
-        const documentIndexer = new DocumentIndexer(rootDir, fileSystem, indexDatabase, { embeddingRepository });
+        const nativeCore = new NativeSearchCoreStub();
+        const nativeIndexer = new NativeSearchIndexer(nativeCore);
+        const documentIndexer = new DocumentIndexer(rootDir, fileSystem, indexDatabase, {
+            embeddingRepository,
+            nativeSearchIndexer: nativeIndexer
+        });
 
         const docxPath = path.join(rootDir, "docs", "sample.docx");
         fs.writeFileSync(docxPath, Buffer.from(SAMPLE_DOCX_BASE64, "base64"));
 
         await documentIndexer.indexFile("docs/sample.docx");
 
-        const searchEngine = new SearchEngine(rootDir, fileSystem);
         const engine = new DocumentSearchEngine(
-            searchEngine,
             documentIndexer,
             new DocumentChunkRepository(indexDatabase),
             embeddingRepository,
@@ -887,7 +978,12 @@ describe("DocumentSearchEngine", () => {
                 normalize: true,
                 local: { model: "hash-test", dims: 64 }
             }),
-            rootDir
+            rootDir,
+            undefined,
+            undefined,
+            undefined,
+            indexDatabase,
+            nativeCore
         );
 
         const response = await engine.search("Install Guide", { output: "compact", includeEvidence: false });
@@ -895,7 +991,6 @@ describe("DocumentSearchEngine", () => {
         expect(match).toBeTruthy();
 
         indexDatabase.close();
-        await searchEngine.dispose();
         fs.rmSync(rootDir, { recursive: true, force: true });
     });
 
@@ -907,7 +1002,12 @@ describe("DocumentSearchEngine", () => {
         const fileSystem = new NodeFileSystem(rootDir);
         const indexDatabase = new IndexDatabase(rootDir);
         const embeddingRepository = new EmbeddingRepository(indexDatabase);
-        const documentIndexer = new DocumentIndexer(rootDir, fileSystem, indexDatabase, { embeddingRepository });
+        const nativeCore = new NativeSearchCoreStub();
+        const nativeIndexer = new NativeSearchIndexer(nativeCore);
+        const documentIndexer = new DocumentIndexer(rootDir, fileSystem, indexDatabase, {
+            embeddingRepository,
+            nativeSearchIndexer: nativeIndexer
+        });
 
         const xlsxPath = path.join(rootDir, "docs", "errors.xlsx");
         const xlsxBuffer = await buildSampleXlsxBuffer();
@@ -915,9 +1015,7 @@ describe("DocumentSearchEngine", () => {
 
         await documentIndexer.indexFile("docs/errors.xlsx");
 
-        const searchEngine = new SearchEngine(rootDir, fileSystem);
         const engine = new DocumentSearchEngine(
-            searchEngine,
             documentIndexer,
             new DocumentChunkRepository(indexDatabase),
             embeddingRepository,
@@ -926,7 +1024,12 @@ describe("DocumentSearchEngine", () => {
                 normalize: true,
                 local: { model: "hash-test", dims: 64 }
             }),
-            rootDir
+            rootDir,
+            undefined,
+            undefined,
+            undefined,
+            indexDatabase,
+            nativeCore
         );
 
         const response = await engine.search("Install failed", { output: "compact", includeEvidence: false });
@@ -934,7 +1037,6 @@ describe("DocumentSearchEngine", () => {
         expect(match).toBeTruthy();
 
         indexDatabase.close();
-        await searchEngine.dispose();
         fs.rmSync(rootDir, { recursive: true, force: true });
     });
 
@@ -946,7 +1048,12 @@ describe("DocumentSearchEngine", () => {
         const fileSystem = new NodeFileSystem(rootDir);
         const indexDatabase = new IndexDatabase(rootDir);
         const embeddingRepository = new EmbeddingRepository(indexDatabase);
-        const documentIndexer = new DocumentIndexer(rootDir, fileSystem, indexDatabase, { embeddingRepository });
+        const nativeCore = new NativeSearchCoreStub();
+        const nativeIndexer = new NativeSearchIndexer(nativeCore);
+        const documentIndexer = new DocumentIndexer(rootDir, fileSystem, indexDatabase, {
+            embeddingRepository,
+            nativeSearchIndexer: nativeIndexer
+        });
 
         const pdfPath = path.join(rootDir, "docs", "manual.pdf");
         const pdfBuffer = buildSamplePdfBuffer("Install failed: missing dependency");
@@ -954,9 +1061,7 @@ describe("DocumentSearchEngine", () => {
 
         await documentIndexer.indexFile("docs/manual.pdf");
 
-        const searchEngine = new SearchEngine(rootDir, fileSystem);
         const engine = new DocumentSearchEngine(
-            searchEngine,
             documentIndexer,
             new DocumentChunkRepository(indexDatabase),
             embeddingRepository,
@@ -965,7 +1070,12 @@ describe("DocumentSearchEngine", () => {
                 normalize: true,
                 local: { model: "hash-test", dims: 64 }
             }),
-            rootDir
+            rootDir,
+            undefined,
+            undefined,
+            undefined,
+            indexDatabase,
+            nativeCore
         );
 
         const response = await engine.search("Install failed", { output: "compact", includeEvidence: false });
@@ -973,7 +1083,6 @@ describe("DocumentSearchEngine", () => {
         expect(match).toBeTruthy();
 
         indexDatabase.close();
-        await searchEngine.dispose();
         fs.rmSync(rootDir, { recursive: true, force: true });
     });
 });

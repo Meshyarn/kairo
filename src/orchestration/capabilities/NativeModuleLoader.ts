@@ -15,6 +15,16 @@ export type RustCoreModule = {
     validateSyntax: (language: string, content: string) => Array<{ line: number; column: number; message: string }>;
     cosineScores: (query: Float32Array, vectors: Float32Array[]) => number[];
     symbolicSolve?: (input: unknown) => unknown;
+    NativeSearchCore?: new (indexDir: string, options?: { writerMemoryMb?: number; kairoVersion?: string; repoId?: string }) => {
+        upsert: (doc: unknown) => void;
+        upsertMany: (docs: unknown[]) => void;
+        deleteDoc: (target: unknown) => void;
+        commit: () => void;
+        search: (query: unknown) => unknown[];
+        close: () => void;
+        stats: () => { docCount: number; segmentCount: number; indexVersion: number; schemaVersion: number };
+        reset?: () => void;
+    };
 };
 
 export type RustCoreLoader = () => RustCoreModule;
