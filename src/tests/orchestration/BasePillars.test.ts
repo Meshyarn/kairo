@@ -108,6 +108,10 @@ describe("BasePillars Read", () => {
 
 describe("BasePillars Write", () => {
   it("creates empty file when target missing and content empty", async () => {
+    const originalMode = process.env.KAIRO_MODE;
+    const originalSkip = process.env.KAIRO_SKIP_PARITY_CHECK;
+    process.env.KAIRO_MODE = "dev";
+    process.env.KAIRO_SKIP_PARITY_CHECK = "true";
     const registry = new InternalToolRegistry();
     const calls: Array<{ tool: string }> = [];
 
@@ -126,5 +130,10 @@ describe("BasePillars Write", () => {
 
     expect(result.success).toBe(true);
     expect(calls).toEqual([{ tool: "file_write" }]);
+
+    if (originalMode === undefined) delete process.env.KAIRO_MODE;
+    else process.env.KAIRO_MODE = originalMode;
+    if (originalSkip === undefined) delete process.env.KAIRO_SKIP_PARITY_CHECK;
+    else process.env.KAIRO_SKIP_PARITY_CHECK = originalSkip;
   });
 });

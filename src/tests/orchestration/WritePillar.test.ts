@@ -1,4 +1,4 @@
-import { describe, it, expect, jest } from "@jest/globals";
+import { describe, it, expect, jest, beforeEach, afterEach } from "@jest/globals";
 import { InternalToolRegistry } from "../../orchestration/InternalToolRegistry.js";
 import { OrchestrationContext } from "../../orchestration/OrchestrationContext.js";
 import { WritePillar } from "../../orchestration/pillars/WritePillar.js";
@@ -16,6 +16,20 @@ const makeIntent = (constraints: Record<string, any>) => ({
 jest.setTimeout(30000);
 
 describe("WritePillar", () => {
+  const originalMode = process.env.KAIRO_MODE;
+
+  beforeEach(() => {
+    process.env.KAIRO_MODE = "dev";
+  });
+
+  afterEach(() => {
+    if (originalMode === undefined) {
+      delete process.env.KAIRO_MODE;
+    } else {
+      process.env.KAIRO_MODE = originalMode;
+    }
+  });
+
   it("fails when targetPath is missing", async () => {
     const registry = new InternalToolRegistry();
     const pillar = new WritePillar(registry);

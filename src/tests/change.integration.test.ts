@@ -16,8 +16,10 @@ jest.setTimeout(30000);
 describe('SmartContextServer - change integration', () => {
   let server: SmartContextServer;
   let testRoot: string;
+  const originalMode = process.env.KAIRO_MODE;
 
   beforeEach(async () => {
+    process.env.KAIRO_MODE = "dev";
     testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'change-test-'));
     fs.mkdirSync(path.join(testRoot, 'src'), { recursive: true });
     server = new SmartContextServer(testRoot);
@@ -26,6 +28,11 @@ describe('SmartContextServer - change integration', () => {
   afterEach(async () => {
     await server.shutdown();
     fs.rmSync(testRoot, { recursive: true, force: true });
+    if (originalMode === undefined) {
+      delete process.env.KAIRO_MODE;
+    } else {
+      process.env.KAIRO_MODE = originalMode;
+    }
   });
 
   it('applies legacy target/replacement edits via change tool', async () => {

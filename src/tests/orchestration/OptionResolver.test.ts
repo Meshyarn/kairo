@@ -61,7 +61,7 @@ describe("OptionResolver", () => {
     expect(OptionResolver.resolveChangeOptions({ profile: "fast" } as any).effective.diffMode).toBe("myers");
     expect(OptionResolver.resolveChangeOptions({ profile: "balanced" } as any).effective.diffMode).toBe("semantic");
     expect(OptionResolver.resolveChangeOptions({ profile: "deep" } as any).effective.diffMode).toBe("semantic");
-    expect(OptionResolver.resolveChangeOptions({} as any).effective.diffMode).toBeUndefined();
+    expect(OptionResolver.resolveChangeOptions({} as any).effective.diffMode).toBe("myers");
   });
 
   it("applies session policy when no explicit overrides", () => {

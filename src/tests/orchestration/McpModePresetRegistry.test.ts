@@ -59,12 +59,15 @@ describe("McpModePresetRegistry", () => {
     PathManager.setRoot(root);
     process.env.KAIRO_MODE = "mcp";
     process.env.KAIRO_EXPLORE_MAX_TOKENS = "5000";
+    process.env.KAIRO_WRITE_MAX_TOKENS = "5000";
     writeMcpConfig(root, {
       preset: "mcp-lean",
-      budgets: { envelopeMaxTokens: { explore: 4200 } }
+      budgets: { envelopeMaxTokens: { explore: 4200, write: 4100 } }
     });
     const maxTokens = resolveEnvelopeMaxTokens("explore");
     expect(maxTokens).toBe(4200);
+    const writeMaxTokens = resolveEnvelopeMaxTokens("write");
+    expect(writeMaxTokens).toBe(4100);
   });
 
   it("honors KAIRO_PUBLIC_SURFACE override", () => {

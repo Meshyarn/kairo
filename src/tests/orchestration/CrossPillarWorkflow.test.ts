@@ -1,10 +1,24 @@
-import { describe, it, expect } from "@jest/globals";
+import { describe, it, expect, beforeEach, afterEach } from "@jest/globals";
 import { OrchestrationEngine } from "../../orchestration/OrchestrationEngine.js";
 import { InternalToolRegistry } from "../../orchestration/InternalToolRegistry.js";
 import { IntentRouter } from "../../orchestration/IntentRouter.js";
 import { WorkflowPlanner } from "../../orchestration/WorkflowPlanner.js";
 
 describe("Cross-Pillar Workflows", () => {
+  const originalMode = process.env.KAIRO_MODE;
+
+  beforeEach(() => {
+    process.env.KAIRO_MODE = "dev";
+  });
+
+  afterEach(() => {
+    if (originalMode === undefined) {
+      delete process.env.KAIRO_MODE;
+    } else {
+      process.env.KAIRO_MODE = originalMode;
+    }
+  });
+
   it("passes explore evidence pack into change doc suggestions", async () => {
     const registry = new InternalToolRegistry();
     const docSearchCalls: any[] = [];

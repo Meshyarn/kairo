@@ -21,11 +21,14 @@ describe('ChangePillar Integration', () => {
   beforeEach(async () => {
     testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'change-int-test-'));
     fs.mkdirSync(path.join(testRoot, 'src'), { recursive: true });
+    fs.mkdirSync(path.join(testRoot, 'docs'), { recursive: true });
     
     fs.writeFileSync(path.join(testRoot, 'src', 'service.ts'), 'export class Service { execute() { return 1; } }');
     fs.writeFileSync(path.join(testRoot, 'src', 'user.ts'), 'import { Service } from \"./service.js\"; const s = new Service(); s.execute();');
+    fs.writeFileSync(path.join(testRoot, 'docs', 'api.md'), '# API\nService.execute() returns 1.');
     
     server = new SmartContextServer(testRoot);
+    await server.waitForInitialScan();
   });
 
   afterEach(async () => {
@@ -56,6 +59,21 @@ describe('ChangePillar Integration', () => {
     process.env.KAIRO_EDITOR_V2 = 'true';
     
     const relPath = path.join('src', 'service.ts');
+    const plan = await runTool(server, 'change', {
+      intent: 'Update return value',
+      targetFiles: [relPath],
+      edits: [{
+        targetString: 'return 1;',
+        replacementString: 'return 2;'
+      }],
+      sessionId: "new",
+      options: { dryRun: true }
+    });
+
+    expect(plan.success).toBe(true);
+    expect(plan.draftPack?.id).toBeDefined();
+    expect(plan.applyToken).toBeDefined();
+
     const result = await runTool(server, 'change', {
       intent: 'Update return value',
       targetFiles: [relPath],
@@ -63,6 +81,9 @@ describe('ChangePillar Integration', () => {
         targetString: 'return 1;',
         replacementString: 'return 2;'
       }],
+      sessionId: plan.sessionId ?? "new",
+      draftId: plan.draftPack.id,
+      applyToken: plan.applyToken,
       options: { dryRun: false }
     });
 
@@ -74,9 +95,6 @@ describe('ChangePillar Integration', () => {
   });
 
   it('suggests related documentation updates', async () => {
-    fs.mkdirSync(path.join(testRoot, 'docs'), { recursive: true });
-    fs.writeFileSync(path.join(testRoot, 'docs', 'api.md'), '# API\nService.execute() returns 1.');
-    
     const result = await runTool(server, 'change', {
       intent: 'Change return value',
       targetFiles: [path.join('src', 'service.ts')],
@@ -84,12 +102,30 @@ describe('ChangePillar Integration', () => {
         targetString: 'return 1;',
         replacementString: 'return 2;'
       }],
-      options: { dryRun: false, suggestDocs: true }
+      sessionId: "new",
+      options: { dryRun: true }
     });
 
     expect(result.success).toBe(true);
-    expect(result.relatedDocs).toBeDefined();
-    expect(result.relatedDocs.length).toBeGreaterThan(0);
-    expect(result.relatedDocs[0].filePath).toContain('api.md');
+    expect(result.draftPack?.id).toBeDefined();
+    expect(result.applyToken).toBeDefined();
+
+    const applied = await runTool(server, 'change', {
+      intent: 'Change return value',
+      targetFiles: [path.join('src', 'service.ts')],
+      edits: [{
+        targetString: 'return 1;',
+        replacementString: 'return 2;'
+      }],
+      sessionId: result.sessionId ?? "new",
+      draftId: result.draftPack.id,
+      applyToken: result.applyToken,
+      options: { dryRun: false, suggestDocs: true }
+    });
+
+    expect(applied.success).toBe(true);
+    expect(applied.relatedDocs).toBeDefined();
+    expect(applied.relatedDocs.length).toBeGreaterThan(0);
+    expect(applied.relatedDocs[0].filePath).toContain('api.md');
   });
 });
