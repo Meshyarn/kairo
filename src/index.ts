@@ -3,6 +3,7 @@ import * as path from "path";
 import * as os from "os";
 import * as url from "url";
 import { SmartContextServer } from "./server/SmartContextServer.js";
+import { emitEnvDeprecationWarnings } from "./utils/DeprecationNotice.js";
 
 export { SmartContextServer };
 const isDirectRun = (() => {
@@ -87,6 +88,7 @@ function isDangerouslyBroadRoot(rootPath: string): boolean {
 }
 
 if (isDirectRun) {
+    emitEnvDeprecationWarnings();
     const resolved = resolveRootPath();
     try {
         const cwd = process.cwd();

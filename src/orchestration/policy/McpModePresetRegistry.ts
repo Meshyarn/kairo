@@ -305,7 +305,7 @@ const resolveEnvelopeBudget = (
 export const resolveMcpPolicy = (overrides?: McpPolicyOverrides): McpResolvedPolicy => {
   const config = loadConfig();
   const envMode = parseMode(process.env.KAIRO_MODE);
-  const mode = overrides?.mode ?? config?.mode ?? envMode ?? "dev";
+  const mode = overrides?.mode ?? config?.mode ?? envMode ?? "mcp";
   const presetId = resolvePresetId(mode, overrides, config);
   const preset = presetId ? MCP_PRESETS[presetId] : undefined;
   const applyHandshakeDefaults: ApplyHandshakePolicy = {

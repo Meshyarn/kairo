@@ -85,6 +85,7 @@ import { CacheInvalidationHub } from "./CacheInvalidationHub.js";
 import { BoundaryAdapterRegistry } from "../contracts/BoundaryAdapterRegistry.js";
 import { ContractRegistry } from "../contracts/ContractRegistry.js";
 import { resolveLogToFileEnabled, resolvePublicSurface } from "../orchestration/policy/McpModePresetRegistry.js";
+import { BetaTelemetryLogger, type BetaTelemetryEvent } from "../utils/BetaTelemetryLogger.js";
 
 // Orchestration Imports
 import { OrchestrationEngine } from "../orchestration/OrchestrationEngine.js";
@@ -94,6 +95,7 @@ import { InternalToolRegistry } from "../orchestration/InternalToolRegistry.js";
 import { CachingStrategy } from "../orchestration/CachingStrategy.js";
 import { FlowArtifactManager } from "../orchestration/flow-artifact-manager.js";
 import { estimateTokens } from "../orchestration/TokenBudget.js";
+import { hashContent } from "../utils/hash.js";
 
 // Handler Imports
 import { SearchHandlers } from "../handlers/SearchHandlers.js";
@@ -174,6 +176,7 @@ export class SmartContextServer {
     private toolSpecRegistry = createDefaultToolSpecRegistry();
     private handlerContext?: HandlerContext;
     private vectorIndexInitPromise?: Promise<void>;
+    private betaTelemetry?: BetaTelemetryLogger;
 
     private searchHandlers!: SearchHandlers;
     private codeHandlers!: CodeHandlers;
@@ -198,6 +201,7 @@ export class SmartContextServer {
         RolloutController.applyFromEnv();
         ModularRolloutController.applyFromEnv();
         PathManager.setRoot(this.rootPath);
+        this.betaTelemetry = BetaTelemetryLogger.fromEnv(this.rootPath);
         this.fileSystem = new NodeFileSystem(this.rootPath);
         this.alertDispatcher = new AlertDispatcher({
             rootPath: this.rootPath,
@@ -948,9 +952,11 @@ export class SmartContextServer {
         const rolloutContext = this.buildRolloutContext(args);
         return FeatureFlags.withContext(rolloutContext, async () => {
             this.recordToolCallTelemetry(name);
+            const startedAt = Date.now();
             const finalizeResponse = (response: any) => {
                 this.ensureResponseHasIsError(response);
                 this.recordResponseTelemetry(name, response);
+                this.recordBetaTelemetry(name, args, response, startedAt);
                 return response;
             };
             try {
@@ -1132,6 +1138,97 @@ export class SmartContextServer {
         } catch {
             // ignore telemetry failures
         }
+    }
+
+    private recordBetaTelemetry(name: string, args: any, response: any, startedAt: number): void {
+        if (!this.betaTelemetry) return;
+        try {
+            const toolName = typeof name === "string" && name.trim().length > 0 ? name.trim() : "unknown";
+            const text = this.extractResponseText(response);
+            const responseChars = text?.length ?? 0;
+            const responseTokens = text ? estimateTokens(text, { languageId: "json" }) : undefined;
+            const payload = this.safeParsePayload(text);
+            const event: BetaTelemetryEvent = {
+                tool: toolName,
+                surface: resolvePublicSurface(),
+                latencyMs: Math.max(0, Date.now() - startedAt),
+                responseChars: responseChars > 0 ? responseChars : undefined,
+                responseTokens,
+                status: this.resolvePayloadStatus(payload, response),
+                errorCode: this.resolvePayloadErrorCode(payload, response),
+                degraded: typeof payload?.degraded === "boolean" ? payload.degraded : undefined,
+                degradedReasons: Array.isArray(payload?.degradedReasons) ? payload.degradedReasons : undefined,
+                contractFindingCodes: this.extractContractFindingCodes(payload),
+                ...this.buildBetaInputSummary(toolName, args)
+            };
+            this.betaTelemetry.record(event);
+        } catch {
+            // ignore beta telemetry failures
+        }
+    }
+
+    private safeParsePayload(text?: string): any | undefined {
+        if (!text) return undefined;
+        const trimmed = text.trim();
+        if (!trimmed || (trimmed[0] !== "{" && trimmed[0] !== "[")) {
+            return undefined;
+        }
+        if (trimmed.length > 200_000) {
+            return undefined;
+        }
+        try {
+            return JSON.parse(trimmed);
+        } catch {
+            return undefined;
+        }
+    }
+
+    private resolvePayloadStatus(payload: any, response: any): "ok" | "error" | undefined {
+        if (payload?.ok === true || payload?.success === true) return "ok";
+        if (payload?.ok === false || payload?.success === false) return "error";
+        if (response?.isError === true) return "error";
+        return undefined;
+    }
+
+    private resolvePayloadErrorCode(payload: any, response: any): string | undefined {
+        if (typeof payload?.errorCode === "string") return payload.errorCode;
+        if (typeof payload?.result?.errorCode === "string") return payload.result.errorCode;
+        const text = response?.content?.[0]?.text;
+        if (typeof text === "string" && text.includes("MissingParameter")) return "MissingParameter";
+        return undefined;
+    }
+
+    private extractContractFindingCodes(payload: any): string[] | undefined {
+        const findings = payload?.contract?.findings;
+        if (!Array.isArray(findings)) return undefined;
+        const codes = findings
+            .map((entry: any) => entry?.code)
+            .filter((code: any) => typeof code === "string") as string[];
+        return codes.length > 0 ? codes.slice(0, 8) : undefined;
+    }
+
+    private buildBetaInputSummary(toolName: string, args: any): Partial<BetaTelemetryEvent> {
+        if (!args || typeof args !== "object") return {};
+        const summary: Partial<BetaTelemetryEvent> = {};
+        if (toolName === "task") {
+            summary.mode = typeof args.mode === "string" ? args.mode : undefined;
+            summary.budget = typeof args.budget === "string" ? args.budget : undefined;
+            summary.outputFormat = typeof args.output?.format === "string" ? args.output.format : undefined;
+            if (typeof args.request === "string" && args.request.trim().length > 0) {
+                summary.requestHash = hashContent(args.request.trim());
+            }
+        } else if (typeof args.goal === "string" && args.goal.trim().length > 0) {
+            summary.requestHash = hashContent(args.goal.trim());
+        } else if (typeof args.intent === "string" && args.intent.trim().length > 0) {
+            summary.requestHash = hashContent(args.intent.trim());
+        } else if (typeof args.query === "string" && args.query.trim().length > 0) {
+            summary.requestHash = hashContent(args.query.trim());
+        }
+
+        summary.editsCount = Array.isArray(args.edits) ? args.edits.length : undefined;
+        summary.pathsCount = Array.isArray(args.paths) ? args.paths.length : undefined;
+        summary.targetFilesCount = Array.isArray(args.targetFiles) ? args.targetFiles.length : undefined;
+        return summary;
     }
 
     private extractResponseText(response: any): string | undefined {

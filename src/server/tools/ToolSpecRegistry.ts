@@ -1426,6 +1426,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
               includeExpired: { type: "boolean" }
             }
           },
+          allowExternal: { type: "boolean" },
           mode: { type: "string", enum: ["plan", "apply"] },
           targets: { type: "array", items: { type: "string", enum: ["kairo", "vscode"] } },
           root: { type: "string" },

@@ -65,6 +65,14 @@ export class ManageHandlers extends BaseHandler {
         return this.context.pathNormalizer.toAbsolute(this.resolveRelativePath(inputPath));
     }
 
+    private isWithinKairoDir(targetPath: string): boolean {
+        const baseDir = path.resolve(PathManager.resolve());
+        const resolvedTarget = path.resolve(targetPath);
+        const relative = path.relative(baseDir, resolvedTarget);
+        if (!relative || relative === ".") return true;
+        return !relative.startsWith("..") && !path.isAbsolute(relative);
+    }
+
     private buildRolloutStatus(fileCount?: number) {
         const preset = resolveRolloutPresetFromEnv() ?? "full";
         const userId = FeatureFlags.getContext()?.userId;
@@ -1663,7 +1671,26 @@ export class ManageHandlers extends BaseHandler {
                     if (!target) {
                         return { success: false, output: "Missing artifact file path." };
                     }
-                    const artifact = await this.context.flowArtifactManager.importFromPath(target);
+                    const allowExternal = args?.allowExternal === true
+                        || process.env.KAIRO_MANAGE_IMPORT_ALLOW_EXTERNAL === "true";
+                    let resolvedPath: string;
+                    try {
+                        resolvedPath = allowExternal
+                            ? (path.isAbsolute(target) ? target : path.resolve(this.context.rootPath, target))
+                            : this.resolveAbsolutePath(target);
+                    } catch (error) {
+                        return {
+                            success: false,
+                            output: `Invalid artifact path: ${error instanceof Error ? error.message : String(error)}`
+                        };
+                    }
+                    if (!allowExternal && !this.isWithinKairoDir(resolvedPath)) {
+                        return {
+                            success: false,
+                            output: "Import is restricted to the Kairo data directory. Set KAIRO_MANAGE_IMPORT_ALLOW_EXTERNAL=true to override."
+                        };
+                    }
+                    const artifact = await this.context.flowArtifactManager.importFromPath(resolvedPath);
                     return {
                         success: Boolean(artifact),
                         output: artifact ? "Artifact imported." : "Artifact import failed.",

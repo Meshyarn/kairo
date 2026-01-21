@@ -51,6 +51,7 @@ export class ManagePillar {
     const applyOptions = (constraints as any).applyOptions;
     const pruneOptions = (constraints as any).pruneOptions;
     const apply = (constraints as any).apply;
+    const allowExternal = (constraints as any).allowExternal;
     const adaptiveLod = this.registry.getMetadata<AdaptiveLodController>("adaptiveLodController");
     const responseEnvelope = this.resolveEnvelopeBudget(constraints);
     const execute = async (command: string) => {
@@ -64,6 +65,7 @@ export class ManagePillar {
           scope,
           detail,
           tool,
+          allowExternal,
           checkpointLimit,
           artifactOptions,
           limit,
@@ -93,6 +95,7 @@ export class ManagePillar {
           scope,
           detail,
           tool,
+          allowExternal,
           checkpointLimit,
           artifactOptions,
           limit,

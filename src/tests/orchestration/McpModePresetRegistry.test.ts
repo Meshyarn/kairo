@@ -26,12 +26,12 @@ describe("McpModePresetRegistry", () => {
     PathManager.setRoot(originalRoot);
   });
 
-  it("defaults to dev mode when unset", () => {
+  it("defaults to mcp mode when unset", () => {
     const root = makeTempRoot();
     PathManager.setRoot(root);
     const policy = resolveMcpPolicy();
-    expect(policy.mode).toBe("dev");
-    expect(policy.preset).toBeUndefined();
+    expect(policy.mode).toBe("mcp");
+    expect(policy.preset).toBe("mcp-lean");
   });
 
   it("prefers config preset over env", () => {
