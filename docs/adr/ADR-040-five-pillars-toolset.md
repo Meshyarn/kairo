@@ -13,12 +13,14 @@ Kairo exposes a small public tool surface (“Five Pillars”):
 - `write` — create/scaffold files (optionally generation-assisted)
 - `manage` — state/undo/redo/reindex/history/test
 
+In MCP mode, Kairo may expose a **compact surface** (`task` + `manage`) to reduce `list_tools` prompt footprint; `task` routes into these pillars internally (see `docs/adr/ADR-084-mcp-autopilot-and-preset-layer.md`).
+
 The key change is **`explore` replaces separate “navigate/read” concepts** so agents can perform the natural loop:
 search → preview → expand sections → full read (only when necessary), without repeated round trips.
 
 ## Decision
 
-1) Public MCP tools are limited to the Five Pillars above.  
+1) The canonical tool model is the Five Pillars above.  
 2) `explore` is the default entry point for discovery and reading:
    - Token-safe by default (`preview` / `section`)
    - Full reads require explicit intent (`view=full` or `fullPaths`)

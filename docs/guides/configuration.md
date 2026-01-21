@@ -10,7 +10,7 @@ Kairo is configured via environment variables. Most users only need a few.
 | `KAIRO_ROOT` | Project root to analyze. | Alias for `KAIRO_ROOT_PATH`. |
 | `KAIRO_MODE` | Policy mode. | `mcp` (default), `dev`, or `ci`. Set `dev` to opt out of MCP defaults. |
 | `KAIRO_PRESET` | MCP preset. | `mcp-lean` (default), `mcp-balanced`, `mcp-deep`. |
-| `KAIRO_PUBLIC_SURFACE` | Public tool surface. | `compact` (default in mcp) or `pillars`. |
+| `KAIRO_PUBLIC_SURFACE` | Public tool surface. | `compact` (default in mcp; `task`+`manage` only) or `pillars` (Five Pillars). |
 | `KAIRO_DIR` | Data directory. | Defaults to `.kairo` (contains index/cache/history). |
 | `KAIRO_ALLOW_LEGACY_MCP_DIR` | Allow legacy `.mcp` paths for `KAIRO_DIR`. | Set to `true` to permit `.mcp`/`.mcp/kairo`; otherwise Kairo uses `.kairo`. |
 | `KAIRO_MAX_RESULTS` | Search result cap. | Lower for token-efficiency; raise for recall. |
@@ -76,6 +76,41 @@ Timeouts are primarily controlled by your MCP host (per-request timeout). Some o
 ## Project config files (OSS essentials)
 
 These files live under `.kairo/` in the **target project root**.
+
+### MCP mode config (optional)
+
+Create `.kairo/config/mcp.json` to avoid host env sprawl and keep MCP defaults project-local:
+
+```json
+{
+  "version": 1,
+  "mode": "mcp",
+  "preset": "mcp-lean",
+  "publicSurface": "compact",
+  "applyHandshake": {
+    "required": true,
+    "tokenTtlMs": 1800000,
+    "oneTime": true,
+    "invalidateOnDrift": true
+  },
+  "autopilot": {
+    "autoModeNeverApplies": true,
+    "defaultOutputFormat": "summary",
+    "maxAutoRepairAttempts": 1,
+    "allowAutoReindex": false
+  },
+  "budgets": {
+    "profile": "lean",
+    "envelopeMaxTokens": { "explore": 4000, "understand": 5000, "change": 4000, "write": 4000, "manage": 6000 }
+  },
+  "timeboxMs": { "total": 15000, "perStep": 3000 }
+}
+```
+
+- This file controls **mode/preset/surface** and router/autopilot defaults (see `docs/adr/ADR-084-mcp-autopilot-and-preset-layer.md`).
+- `budgets`/`timeboxMs` are best-effort server-side caps to keep responses small and avoid host timeouts.
+- It is distinct from `.kairo/config/.mcp-config.json` (multi-repo registry; see below).
+- In precedence order: tool call overrides → `.kairo/config/mcp.json` → env vars → built-in preset defaults.
 
 ### Multi-repo config (optional)
 
@@ -181,7 +216,7 @@ Create `.kairo/config/symbolic-guards.json` to enable portable semantic checks (
 You can generate a starter config skeleton with the `manage` tool:
 
 - `manage({ command: "init", mode: "plan" })` → returns a plan (no files written)
-- `manage({ command: "init", mode: "apply" })` → writes `.kairo/config/*` (including `.kairo/config/.mcp-config.json`)
+- `manage({ command: "init", mode: "apply" })` → writes `.kairo/config/*` (including `.kairo/config/mcp.json` and `.kairo/config/.mcp-config.json`)
 - `manage({ command: "doctor" })` → diagnoses missing/misplaced settings and suggests fixes
 
 Common `doctor` scopes:

@@ -26,6 +26,13 @@ node dist/index.js --root /absolute/path/to/your/project
 
 By default, runtime data is stored under `.kairo/` in the target project root.
 
+## MCP defaults (promptless-friendly)
+
+By default (`KAIRO_MODE=mcp`), Kairo exposes a **compact** tool surface: `task` + `manage`.
+If you want direct control, set `KAIRO_PUBLIC_SURFACE=pillars` to expose the Five Pillars (`explore`/`understand`/`change`/`write`/`manage`).
+
+For host config templates and troubleshooting, see `docs/guides/promptless-integration.md`.
+
 ## Docs
 
 - `docs/README.md`
@@ -41,8 +48,12 @@ In your CLI’s MCP configuration, add a server that runs `kairo` over stdio:
 - **Command:** `node`
 - **Args:** `/absolute/path/to/kairo/dist/index.js --root /absolute/path/to/your/project`
 - **Env (optional):**
-  - `KAIRO_DIR=.kairo`
-  - `KAIRO_LOG_LEVEL=info`
+  - `KAIRO_MODE=mcp`
+  - `KAIRO_PUBLIC_SURFACE=compact`
+  - `KAIRO_TOOL_SCHEMA_MODE=compat`
+  - `KAIRO_LOG_TO_FILE=true`
+  - `KAIRO_ALLOW_STDOUT_LOGS=false`
+  - `KAIRO_LOG_LEVEL=info` (optional)
 
 If your CLI supports per-server permissions, prefer read-only by default and grant write only when you intend to apply changes.
 

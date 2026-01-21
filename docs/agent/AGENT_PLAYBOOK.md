@@ -1,10 +1,40 @@
 # Agent Playbook
 
-> **Five Pillars** — intent-based codebase interaction
+> **Public surface** — compact (`task`/`manage`) or Five Pillars
 
 ---
 
-## The Five Pillars
+## Promptless default (compact surface)
+
+When `KAIRO_MODE=mcp` (default), most hosts will see only `task` + `manage` (`KAIRO_PUBLIC_SURFACE=compact`).
+
+Recommended flow:
+
+```typescript
+// Ask / read-only
+task({ request: "Summarize the auth flow." })
+
+// Analyze (structure/relationships)
+task({ request: "Explain the architecture and key modules.", mode: "analyze", budget: "balanced" })
+
+// Plan change (prep-only if edits are omitted)
+const prep = await task({ request: "Tighten JWT validation.", mode: "plan_change", targetFiles: ["src/auth/jwt.ts"] })
+
+// Plan change (real plan when edits are provided) → returns draftId + applyToken (MCP mode)
+const plan = await task({ request: "Tighten JWT validation.", mode: "plan_change", edits: prep.changePrep?.editsTemplate?.edits })
+
+// Apply requires draftId + applyToken
+await task({ request: "Apply the plan.", mode: "apply_change", draftId: plan.draftId, applyToken: plan.applyToken })
+```
+
+Notes:
+- `mode="auto"` never applies changes (server-gated).
+- `mode="write"` / `mode="verify"` may be blocked depending on rollout; use pillar tools when `KAIRO_PUBLIC_SURFACE=pillars`.
+- Use `manage({ command: "schema", tool: "task", detail: "full" })` when you need the full schema.
+
+---
+
+## The Five Pillars (pillars surface)
 
 | Pillar | Intent | Example |
 |--------|--------|----------|
@@ -25,13 +55,13 @@
 // Step 1: Understand
 understand({ goal: "Understand auth logic in UserService" })
 
-// Step 2: Plan (dry-run)
-change({ intent: "Add domain whitelist", options: { dryRun: true } })
+// Step 2: Plan (server-gated; returns draftId/applyToken in MCP mode)
+const plan = await change({ intent: "Add domain whitelist", safety: "plan" })
 
 // Step 3: Verify diff + impact
 
-// Step 4: Apply
-change({ intent: "Add domain whitelist" })
+// Step 4: Apply (MCP mode requires the returned applyToken)
+await change({ ...plan, safety: "apply" })
 ```
 
 ### 1.2 StrategySearch (Best-of-N / MCTS)
@@ -42,7 +72,8 @@ change({ intent: "Add domain whitelist" })
 const plan = await change({
   intent: "Tighten JWT validation",
   targetFiles: ["src/auth/jwt.ts"],
-  options: { dryRun: true, includeImpact: true },
+  safety: "plan",
+  options: { includeImpact: true },
   strategySearch: {
     mode: "force",
     stage: "r1",
@@ -71,11 +102,11 @@ await understand({
   analysis: { clusters: true }
 })
 
-// Step 2: Plan first (dry-run)
-const plan = await change({ intent: "Tighten JWT validation", targetFiles: ["src/auth/jwt.ts"], options: { dryRun: true }, sessionId })
+// Step 2: Plan first
+const plan = await change({ intent: "Tighten JWT validation", targetFiles: ["src/auth/jwt.ts"], safety: "plan", sessionId })
 
 // Step 3: Apply
-await change({ ...plan, options: { dryRun: false }, sessionId })
+await change({ ...plan, safety: "apply", sessionId })
 ```
 
 Tip: `workflowMeta` + `workflowWarnings` make missing session artifacts visible without breaking legacy calls.

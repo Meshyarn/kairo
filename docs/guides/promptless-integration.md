@@ -2,6 +2,8 @@
 
 This guide shows how to connect Kairo to an MCP host without adding any special system prompt. The goal is to keep the tool surface compact, keep stdout clean, and rely on the `task` tool for most workflows.
 
+> Tool name note: Some MCP hosts display tools with a server prefix (e.g. `kairo_task`). The canonical tool names are `task` and `manage`.
+
 ## Recommended defaults
 
 Use these values in your host environment:
@@ -18,6 +20,8 @@ Why:
 - `compact` surface keeps `list_tools` small and stable (only `task` + `manage`).
 - `compat` schema mode prevents hard failures when hosts add extra fields.
 - log-to-file avoids breaking MCP frames on stdout.
+
+Rationale: `docs/adr/ADR-084-mcp-autopilot-and-preset-layer.md`.
 
 ## Optional policy file (recommended)
 
@@ -126,6 +130,8 @@ Treat `task` as the only entrypoint for the model:
 }
 ```
 
+Note: some `task` modes may be staged (e.g. `write` / `verify`). If a mode returns `blocked`, use the corresponding pillar tools by switching to `KAIRO_PUBLIC_SURFACE=pillars`.
+
 When you need deeper options, fetch a schema on demand:
 
 ```json
@@ -137,8 +143,10 @@ When you need deeper options, fetch a schema on demand:
 ```
 
 Safe change flow:
-1. `task` with `mode="plan_change"` (returns `draftId` + `applyToken`)
-2. `task` with `mode="apply_change"` + `applyToken`
+1. `task` with `mode="plan_change"`
+   - if `edits` is omitted: returns prep (`editsTemplate` + target hints + fileVersions)
+   - if `edits` is provided: returns `draftId` + `applyToken` (in MCP mode)
+2. `task` with `mode="apply_change"` + `draftId` + `applyToken`
 
 ## Troubleshooting (no prompts)
 

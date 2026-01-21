@@ -1,20 +1,63 @@
-# Tool Reference Guide (Five Pillars)
+# Tool Reference Guide (Public Tool Surface)
 
-The agent-facing interface is the **Five Pillars**:
+Kairo exposes **two public tool surfaces** (ADR-084):
 
-- `explore` — unified discovery (search + preview/section + optional full reads)
-- `understand` — synthesize structure/relationships
-- `change` — plan/apply safe edits (dry-run first)
-- `write` — create/scaffold files
-- `manage` — status/undo/redo/reindex/history
+- **Compact (recommended; default in `KAIRO_MODE=mcp`)**: `task`, `manage`
+- **Pillars (advanced; opt-in)**: `explore`, `understand`, `change`, `write`, `manage` (and `task` remains available)
 
-`kairo` is designed to be used via these pillars; any other internal/legacy tool names (if present) are not considered stable API.
+Switch surfaces with `KAIRO_PUBLIC_SURFACE=compact|pillars`.
+
+> Tool name note: Some MCP hosts display tools with a server prefix (e.g. `kairo_task`). The canonical tool names are `task`, `manage`, `explore`, `understand`, `change`, `write`.
 
 ---
 
-## Five Pillars (Recommended)
+## Compact Surface (Recommended)
 
-The following reflects the **current inputs** as exposed by `src/index.ts`.
+### `task`
+
+High-level router for promptless workflows (ask/analyze/plan/apply).
+
+**Parameters**
+
+| Field | Type | Required | Notes |
+|---|---|---:|---|
+| `request` | `string` | ✓ | Natural-language request. |
+| `mode` | `"auto" \| "ask" \| "analyze" \| "plan_change" \| "apply_change" \| "write" \| "verify"` |  | Default `auto`. `auto` never routes to apply. |
+| `budget` | `"lean" \| "balanced" \| "deep"` |  | Default `lean`. Controls preset budgets/timeboxes. |
+| `sessionId` | `string` |  | Flow session id (`"new"` to start). |
+| `paths` | `string[]` |  | Hint paths for reading/searching. |
+| `targetFiles` | `string[]` |  | Hint blast-radius for change planning/apply. |
+| `edits` | `object[]` |  | Optional pass-through edits. `plan_change` returns **prep** when omitted; returns a real DraftPack when provided. |
+| `draftId` | `string` |  | Required for `apply_change` when applying a prior draft. |
+| `applyToken` | `string` |  | Required for apply in `KAIRO_MODE=mcp` (minted during plan). |
+| `refinement` | `string` |  | Extra guidance when refining a prior draft. |
+| `safety` | `"plan" \| "apply"` |  | Hint only (used when `mode="auto"`). |
+| `output.format` | `"summary" \| "standard"` |  | Default is policy-driven (typically `summary` in MCP mode). |
+| `output.maxTokens` | `number` |  | Response envelope token cap for this call. |
+| `trace` | `boolean` |  | Include `decisionTrace`/`effectiveOptions` when available. |
+
+**Notes**
+
+- `mode="plan_change"` behaves in two stages:
+  - Without `edits`: returns target hints + `fileVersions` + `editsTemplate` (prep-only).
+  - With `edits`: runs a real plan and returns `draftId` + (in MCP mode) `applyToken`.
+- `mode="apply_change"` requires `draftId` and (in MCP mode) a valid `applyToken`.
+- `mode="write"` / `mode="verify"` may be blocked depending on rollout; use the pillar tools when `KAIRO_PUBLIC_SURFACE=pillars`.
+- Full schema on-demand: `manage({ command: "schema", tool: "task", detail: "full" })` (returns an artifact id).
+
+**Usage**
+
+- `task({ request: "Summarize the entrypoint." })`
+- `task({ request: "Explain the architecture.", mode: "analyze", budget: "balanced" })`
+- `task({ request: "Plan: tighten JWT validation.", mode: "plan_change", targetFiles: ["src/auth/jwt.ts"] })` (prep)
+- `task({ request: "Plan: tighten JWT validation.", mode: "plan_change", edits: [{ filePath: "src/auth/jwt.ts", targetString: "OLD", replacementString: "NEW" }] })` (draft)
+- `task({ request: "Apply the plan.", mode: "apply_change", draftId, applyToken })`
+
+---
+
+## Five Pillars (Advanced; `KAIRO_PUBLIC_SURFACE=pillars`)
+
+The following reflects the **current inputs** as exposed by `src/server/tools/ToolSpecRegistry.ts`.
 
 > Note: When `trace: true` is provided, tools return `effectiveOptions` and `decisionTrace` using the v1 schema:
 > - `effectiveOptions.version = 1` (and `pillar`)
@@ -133,6 +176,7 @@ Plan/apply safe edits with impact analysis.
 | `safety` | `"plan" \| "apply"` |  | Maps to dry-run behavior (plan=true by default). |
 | `options.dryRun` | `boolean` |  | Default behavior is dry-run planning. |
 | `draftId` | `string` |  | Continue a refinement loop from a prior DraftPack. |
+| `applyToken` | `string` |  | Required for `safety:"apply"` in `KAIRO_MODE=mcp` (minted during plan). |
 | `refinement` | `string` |  | Extra guidance when refining a prior draft. |
 | `draftOptions.skeletonOnly` | `boolean` |  | Skeleton-only DraftPack output. |
 | `draftOptions.includeImpact` | `boolean` |  | Include impact signals in DraftPack. |
@@ -165,6 +209,7 @@ Plan/apply safe edits with impact analysis.
 **Notes**
 
 - `profile` may be automatically downshifted for cost stability unless explicitly provided; set `trace: true` to inspect the final decision (`decisionTrace`).
+- In `KAIRO_MODE=mcp`, apply is server-gated by default: plan returns `applyToken`, and apply requires `draftId + applyToken`.
 - StrategySearch is opt-in: if `strategySearch` is omitted, no candidate evaluation runs (R0 baseline).
 - If `strategySearch.mode` is `auto` or `force` but no candidates are supplied, the engine falls back to R0 and returns a degraded reason.
 
@@ -275,6 +320,7 @@ Create or scaffold files.
 | `safety` | `"plan" \| "apply"` |  | Maps to dry-run behavior (plan=true by default). |
 | `dryRun` | `boolean` |  | Generate DraftPack only. |
 | `draftId` | `string` |  | Continue a refinement loop from a prior DraftPack. |
+| `applyToken` | `string` |  | Required for `safety:"apply"` in `KAIRO_MODE=mcp` (minted during plan). |
 | `refinement` | `string` |  | Extra guidance when refining a prior draft. |
 | `draftOptions.skeletonOnly` | `boolean` |  | Skeleton-only DraftPack output. |
 | `draftOptions.includeImpact` | `boolean` |  | Include impact signals in DraftPack. |
@@ -323,6 +369,7 @@ Project/session state utilities.
 - `manage({ command: "status" })`는 `drift` 필드로 workspace 드리프트 상태 요약을 함께 반환한다.
 - `manage({ command: "status" })`는 `styleDrift` 필드로 StylePack 근거/신뢰도 요약을 함께 반환한다.
 - `manage({ command: "doctor" })`도 `rollout` 필드로 동일한 운영 진단 정보를 반환한다.
+- `manage({ command: "schema", tool: "task", detail: "summary" })`는 tool input schema 요약을 반환한다. `detail:"full"`은 schema를 artifact로 저장하고 `artifactId`를 반환한다(필요 시 `manage artifact/export`로 조회).
 - `manage({ command: "history" })`는 최근 커밋된 트랜잭션 체크포인트 요약(`checkpoints`)을 함께 반환한다.
 - `manage({ command: "reindex", paths: [...] })`는 지정한 파일들의 국소 재인덱싱을 시도한다(가능한 런타임에서만).
 - `manage({ command: "export", targetType: "transaction", target: "<txId>" })`는 patch export를 반환한다.
@@ -334,8 +381,9 @@ Project/session state utilities.
 
 | Field | Type | Required | Notes |
 |---|---|---:|---|
-| `command` | `"status" \| "undo" \| "redo" \| "reindex" \| "rebuild" \| "history" \| "test" \| "init" \| "doctor" \| "sessions" \| "session" \| "session_complete" \| "session_update" \| "artifacts" \| "artifact" \| "discard" \| "prune" \| "export" \| "import"` | ✓ | `rebuild` maps to `reindex`. |
+| `command` | `"status" \| "undo" \| "redo" \| "reindex" \| "rebuild" \| "history" \| "test" \| "init" \| "doctor" \| "schema" \| "sessions" \| "session" \| "session_complete" \| "session_update" \| "artifacts" \| "artifact" \| "discard" \| "prune" \| "export" \| "import"` | ✓ | `rebuild` maps to `reindex`. |
 | `scope` | `"file" \| "transaction" \| "project" \| "config" \| "languages" \| "wasm" \| "host" \| "contracts" \| "parity" \| "capabilities"` |  | Used by `test`/`doctor`. |
+| `tool` | `string` |  | Tool name (used by `schema`). |
 | `target` | `string` |  | Mainly used by `test`. |
 | `paths` | `string[]` |  | Used by `reindex` for incremental/path-scoped refresh (when supported). |
 | `targetType` | `"artifact" \| "transaction" \| "patchRef"` |  | `export` 대상 유형. |
@@ -343,7 +391,7 @@ Project/session state utilities.
 | `format` | `"unified_diff" \| "structured_edits" \| "both"` |  | `export` 결과 형식. |
 | `limit` | `number` |  | Max items for list commands (sessions); graph artifact view caps node count. |
 | `checkpointLimit` | `number` |  | Max checkpoints returned by `history` (default 10). |
-| `detail` | `"summary" \| "full"` |  | Detail level for `status`/`doctor`. |
+| `detail` | `"summary" \| "full"` |  | Detail level for `status`/`doctor`/`schema`. |
 | `limits.maxTokens` | `number` |  | Response envelope token budget for `artifact` retrieval. |
 | `limits.maxChars` | `number` |  | Response envelope char budget for `artifact` retrieval. |
 | `trace` | `boolean` |  | Return v1 `effectiveOptions` + v1 `decisionTrace`. |
@@ -390,11 +438,12 @@ Project/session state utilities.
 
 ```
 What do you need?
-├─ Find or read content?   → explore
-├─ Explain structure?      → understand
-├─ Change code safely?     → change
-├─ Create files?           → write
-└─ Undo/redo/reindex?      → manage
+├─ Promptless/default UX?  → task
+├─ Find or read content?   → task (ask/analyze) or explore
+├─ Explain structure?      → task (analyze) or understand
+├─ Change code safely?     → task (plan_change/apply_change) or change
+├─ Create files?           → write (pillars surface)
+└─ Undo/redo/reindex/etc?  → manage
 ```
 
 ---
@@ -406,9 +455,9 @@ What do you need?
 - `understand({ goal: "Explain the main payment flow" })`
 
 ### Plan → Apply (with constraints)
-- `change(options.dryRun=true)` with a clear intent + `targetFiles`
-- Review output
-- `change(options.dryRun=false)` to apply
+- Plan first, then apply:
+  - `change({ ..., safety: "plan" })` → returns `draftId` (+ `applyToken` in MCP mode)
+  - `change({ ..., safety: "apply", draftId, applyToken })`
 
 ### Multi-repo safety (default deny)
 - `project_search`/`document_search` accept `repoScope` to narrow results.
@@ -431,4 +480,4 @@ What do you need?
 
 ## Internal Tools (Opt-in)
 
-`kairo` is intended to be called via the Five Pillars. If you find other tool names exposed by a host, treat them as unstable and prefer the pillars.
+`kairo` is intended to be called via the public surface (`task` + `manage` on compact, or the Five Pillars on pillars). If you find other tool names exposed by a host, treat them as unstable.
