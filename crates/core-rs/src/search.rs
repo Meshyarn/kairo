@@ -8,6 +8,7 @@ use fs2::FileExt;
 use napi::bindgen_prelude::Result;
 use napi_derive::napi;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tantivy::collector::TopDocs;
 use tantivy::merge_policy::LogMergePolicy;
 use tantivy::query::{BooleanQuery, Occur, Query, QueryParser, TermQuery};
@@ -23,6 +24,8 @@ use tantivy::{Document, Index, IndexReader, IndexWriter, ReloadPolicy, Term};
 const SCHEMA_VERSION: u32 = 1;
 const INDEX_VERSION: u32 = 1;
 const DEFAULT_WRITER_MEMORY_MB: usize = 256;
+const KAIRO_META_FILENAME: &str = "kairo_meta.json";
+const TANTIVY_META_FILENAME: &str = "meta.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct IndexMeta {
@@ -332,11 +335,15 @@ impl NativeSearchCore {
         let mut write_enabled = true;
         if let Err(error) = lock_file.try_lock_exclusive() {
             write_enabled = false;
-            if !index_dir.join("meta.json").exists() {
+            if !index_dir.join(TANTIVY_META_FILENAME).exists() {
                 return Err(napi::Error::from_reason(format!(
                     "INDEX_WRITE_LOCKED: {error}"
                 )));
             }
+        }
+
+        if write_enabled {
+            let _ = migrate_legacy_meta(&index_dir);
         }
 
         let schema = SearchSchema::new();
@@ -1028,12 +1035,45 @@ fn register_tokenizers(index: &Index) {
     );
 }
 
+fn is_tantivy_meta(value: &Value) -> bool {
+    value.get("segments").is_some()
+}
+
+fn migrate_legacy_meta(index_dir: &Path) -> std::io::Result<()> {
+    let legacy_path = index_dir.join(TANTIVY_META_FILENAME);
+    let new_path = index_dir.join(KAIRO_META_FILENAME);
+    if !legacy_path.exists() || new_path.exists() {
+        return Ok(());
+    }
+    let raw = fs::read_to_string(&legacy_path)?;
+    let value: Value = match serde_json::from_str(&raw) {
+        Ok(value) => value,
+        Err(_) => {
+            let _ = fs::rename(&legacy_path, index_dir.join("meta.json.legacy"));
+            return Ok(());
+        }
+    };
+    if is_tantivy_meta(&value) {
+        return Ok(());
+    }
+    if let Ok(meta) = serde_json::from_value::<IndexMeta>(value.clone()) {
+        write_meta(index_dir, &meta)?;
+        let _ = fs::remove_file(&legacy_path);
+        return Ok(());
+    }
+    let backup_path = index_dir.join("meta.json.legacy");
+    if fs::rename(&legacy_path, &backup_path).is_err() {
+        let _ = fs::remove_file(&legacy_path);
+    }
+    Ok(())
+}
+
 fn load_or_init_meta(
     index_dir: &Path,
     repo_id: Option<String>,
     kairo_version: Option<String>,
 ) -> std::io::Result<IndexMeta> {
-    let meta_path = index_dir.join("meta.json");
+    let meta_path = index_dir.join(KAIRO_META_FILENAME);
     if meta_path.exists() {
         let raw = fs::read_to_string(&meta_path)?;
         let meta: IndexMeta = serde_json::from_str(&raw).map_err(|error| {
@@ -1066,7 +1106,7 @@ fn init_meta(
 }
 
 fn write_meta(index_dir: &Path, meta: &IndexMeta) -> std::io::Result<()> {
-    let meta_path = index_dir.join("meta.json");
+    let meta_path = index_dir.join(KAIRO_META_FILENAME);
     let mut file = fs::File::create(meta_path)?;
     let encoded = serde_json::to_string_pretty(meta).map_err(|error| {
         std::io::Error::new(std::io::ErrorKind::InvalidData, error)

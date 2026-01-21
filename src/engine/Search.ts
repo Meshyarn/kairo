@@ -265,11 +265,15 @@ export class SearchEngine {
                 }
             }
 
-            const regexes = buildSearchRegexes(effectiveQuery, patterns, {
-                caseSensitive: keywordConstraints.some(constraint => constraint.requiresCaseSensitive),
+            const keywordRegexes = buildKeywordRegexes(keywordConstraints, {
                 wordBoundary,
                 escape: (value) => this.escapeRegExp(value, { wordBoundary })
             });
+            const patternRegexes = buildPatternRegexes(patterns, {
+                caseSensitive,
+                escape: (value) => this.escapeRegExp(value)
+            });
+            const regexes = [...keywordRegexes, ...patternRegexes];
 
             if (nativeSearchFailed || hits.length === 0) {
                 let stats: NativeSearchStats | undefined;
@@ -288,6 +292,9 @@ export class SearchEngine {
                         includeRegexes,
                         excludeRegexes,
                         regexes,
+                        keywordRegexes,
+                        patternRegexes,
+                        keywords: keywordLabels,
                         previewLength,
                         matchesPerFileLimit,
                         maxResults,
@@ -344,6 +351,7 @@ export class SearchEngine {
                 if (matches.length === 0) {
                     continue;
                 }
+                const matchStats = computeMatchStats(content, path.basename(relativeToBase), keywordLabels, keywordRegexes, patternRegexes);
 
                 for (const match of matches) {
                     fileSearchResults.push({
@@ -351,7 +359,15 @@ export class SearchEngine {
                         lineNumber: match.line,
                         preview: match.preview,
                         score: hit.score,
-                        scoreDetails: { type: "native", totalScore: hit.score }
+                        scoreDetails: {
+                            type: "native",
+                            totalScore: hit.score,
+                            contentScore: matchStats.totalMatches,
+                            filenameMatchType: matchStats.filenameMatchType,
+                            filenameMultiplier: matchStats.filenameMultiplier,
+                            depthMultiplier: 1,
+                            fieldWeight: 1
+                        }
                     });
                 }
             }
@@ -378,6 +394,9 @@ export class SearchEngine {
         includeRegexes?: RegExp[];
         excludeRegexes: RegExp[];
         regexes: RegExp[];
+        keywordRegexes: RegExp[];
+        patternRegexes: RegExp[];
+        keywords: string[];
         previewLength: number;
         matchesPerFileLimit: number;
         maxResults: number;
@@ -445,14 +464,25 @@ export class SearchEngine {
             if (matches.length === 0) {
                 continue;
             }
-            const score = countRegexMatches(content, args.regexes);
+            const matchStats = computeMatchStats(content, path.basename(relativePath), args.keywords, args.keywordRegexes, args.patternRegexes);
+            const score = matchStats.totalMatches * 10
+                + matchStats.filenameMultiplier
+                + (args.patternRegexes.length > 0 ? matchStats.patternMatches * 2 : 0);
             for (const match of matches) {
                 results.push({
                     filePath: relativePath,
                     lineNumber: match.line,
                     preview: match.preview,
                     score,
-                    scoreDetails: { type: "scan", totalScore: score }
+                    scoreDetails: {
+                        type: "scan",
+                        totalScore: score,
+                        contentScore: matchStats.totalMatches,
+                        filenameMatchType: matchStats.filenameMatchType,
+                        filenameMultiplier: matchStats.filenameMultiplier,
+                        depthMultiplier: 1,
+                        fieldWeight: 1
+                    }
                 });
                 if (results.length >= args.maxResults) {
                     break;
@@ -609,6 +639,34 @@ function buildSearchRegexes(
     });
 }
 
+function buildKeywordRegexes(
+    constraints: KeywordConstraint[],
+    options: { wordBoundary: boolean; escape: (value: string) => string }
+): RegExp[] {
+    const regexes: RegExp[] = [];
+    for (const constraint of constraints) {
+        const escaped = options.escape(constraint.raw);
+        const flags = constraint.requiresCaseSensitive ? "g" : "gi";
+        regexes.push(new RegExp(escaped, flags));
+    }
+    return regexes;
+}
+
+function buildPatternRegexes(
+    patterns: string[] | undefined,
+    options: { caseSensitive: boolean; escape: (value: string) => string }
+): RegExp[] {
+    if (!Array.isArray(patterns) || patterns.length === 0) return [];
+    const flags = options.caseSensitive ? "g" : "gi";
+    return patterns.map((pattern) => {
+        try {
+            return new RegExp(pattern, flags);
+        } catch {
+            return new RegExp(options.escape(pattern), flags);
+        }
+    });
+}
+
 function findLineMatches(
     content: string,
     regexes: RegExp[],
@@ -633,14 +691,51 @@ function findLineMatches(
     return matches;
 }
 
-function countRegexMatches(content: string, regexes: RegExp[]): number {
-    let total = 0;
-    for (const regex of regexes) {
-        regex.lastIndex = 0;
-        while (regex.exec(content)) {
-            total += 1;
+function computeMatchStats(
+    content: string,
+    fileName: string,
+    keywords: string[],
+    keywordRegexes: RegExp[],
+    patternRegexes: RegExp[]
+): { totalMatches: number; patternMatches: number; filenameMatchType: "exact" | "partial" | "none"; filenameMultiplier: number } {
+    const normalizedFileName = fileName.toLowerCase();
+    const fileBaseName = normalizedFileName.replace(/\.[^/.]+$/, "");
+    let filenameMatchType: "exact" | "partial" | "none" = "none";
+    let filenameMultiplier = 1;
+
+    for (const keyword of keywords) {
+        const normalizedKeyword = keyword.toLowerCase();
+        if (!normalizedKeyword) continue;
+        if (fileBaseName === normalizedKeyword) {
+            filenameMatchType = "exact";
+            break;
         }
-        regex.lastIndex = 0;
+        if (normalizedFileName.includes(normalizedKeyword)) {
+            filenameMatchType = "partial";
+        }
     }
-    return total;
+    if (filenameMatchType === "exact") {
+        filenameMultiplier = 10;
+    } else if (filenameMatchType === "partial") {
+        filenameMultiplier = 5;
+    }
+
+    const keywordMatches = countRegexOccurrences(content, keywordRegexes);
+    const patternMatches = countRegexOccurrences(content, patternRegexes);
+    return {
+        totalMatches: keywordMatches + patternMatches,
+        patternMatches,
+        filenameMatchType,
+        filenameMultiplier
+    };
+}
+
+function countRegexOccurrences(content: string, regexes: RegExp[]): number {
+    let count = 0;
+    for (const regex of regexes) {
+        const flags = regex.flags.includes("g") ? regex.flags : `${regex.flags}g`;
+        const globalRegex = new RegExp(regex.source, flags);
+        count += content.match(globalRegex)?.length ?? 0;
+    }
+    return count;
 }

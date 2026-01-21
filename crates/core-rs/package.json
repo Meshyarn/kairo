@@ -6,7 +6,8 @@
   "files": [
     "index.js",
     "index.d.ts",
-    "core_rs.node"
+    "core_rs.node",
+    "index.node"
   ],
   "scripts": {
     "build": "napi build --release",

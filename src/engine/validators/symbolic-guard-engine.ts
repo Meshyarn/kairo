@@ -116,6 +116,24 @@ const extractNodeText = (node: any, content: string): string => {
     return content.slice(node.startIndex, node.endIndex);
 };
 
+const resolveIndexNode = (node: any): any => {
+    if (!node) return null;
+    const direct = node.childForFieldName?.("index");
+    if (direct) return direct;
+    if (typeof node.namedChildCount === "number" && typeof node.namedChild === "function" && node.namedChildCount > 0) {
+        return node.namedChild(node.namedChildCount - 1);
+    }
+    if (Array.isArray(node.namedChildren) && node.namedChildren.length > 0) {
+        return node.namedChildren[node.namedChildren.length - 1];
+    }
+    return null;
+};
+
+const extractIndexFromSubscript = (text: string): string => {
+    const match = text.match(/\[([^\]]+)\]/);
+    return match ? match[1].trim() : "";
+};
+
 export class SymbolicGuardEngine {
     public async evaluate(args: { filePath: string; content: string }): Promise<SymbolicGuardResult> {
         const start = Date.now();
@@ -259,8 +277,14 @@ export class SymbolicGuardEngine {
                         degradedReasons.push("symbolic_budget_exceeded");
                         break;
                     }
-                    const indexNode = access.node.childForFieldName?.("index");
-                    const indexText = extractNodeText(indexNode ?? access.node, args.content).trim();
+                    const indexNode = resolveIndexNode(access.node);
+                    let indexText = extractNodeText(indexNode ?? access.node, args.content).trim();
+                    if (!indexText || !isSimpleIdentifier(indexText)) {
+                        const fallback = extractIndexFromSubscript(extractNodeText(access.node, args.content));
+                        if (fallback) {
+                            indexText = fallback;
+                        }
+                    }
                     if (!indexText) continue;
                     const guardTexts = guardTextsByScope.get(access.scopeKey) ?? [];
                     const guarded = hasIndexGuard(indexText, guardTexts);
