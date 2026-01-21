@@ -132,6 +132,7 @@ export class ConfigBootstrapper {
         const rootPath = this.resolveRootPath((args as ManageInitArgs).root);
         const baseDir = resolveBaseDir();
         const configDir = path.join(rootPath, baseDir, "config");
+        const mcpPolicyPath = path.join(configDir, "mcp.json");
         const mcpConfigPath = path.join(configDir, ".mcp-config.json");
         const legacyConfigDirMcpPath = path.join(configDir, "mcp-config.json");
         const legacyRootMcpPath = path.join(rootPath, ".mcp-config.json");
@@ -179,6 +180,17 @@ export class ConfigBootstrapper {
                 evidence: { extensions: globalScan.unknownExtensions }
             });
             hints.push(`Unknown extensions detected: ${globalScan.unknownExtensions.join(", ")}. Consider adding mappings in ${languagesConfigPath}.`);
+        }
+
+        const mcpPolicyConfig = this.readJsonFile(mcpPolicyPath);
+        if (mcpPolicyConfig.error) {
+            findings.push({
+                code: "CONFIG_PARSE_ERROR",
+                severity: "error",
+                message: `Failed to parse ${path.basename(mcpPolicyPath)}.`,
+                action: "fix_json",
+                evidence: { path: mcpPolicyPath }
+            });
         }
 
         const mcpConfig = this.readJsonFile(mcpConfigPath);
@@ -281,6 +293,62 @@ export class ConfigBootstrapper {
 
         const plan: ConfigWriteOp[] = [];
         if (targets.includes("kairo")) {
+            const hostPreset = this.resolvePreset(args);
+            const mcpPolicyBaseConfig = hostPreset === "minimal"
+                ? {
+                    version: 1,
+                    mode: "mcp",
+                    preset: "mcp-lean"
+                }
+                : {
+                    version: 1,
+                    mode: "mcp",
+                    preset: "mcp-lean",
+                    publicSurface: "compact",
+                    applyHandshake: {
+                        required: true,
+                        tokenTtlMs: 30 * 60 * 1000,
+                        oneTime: true,
+                        invalidateOnDrift: true
+                    },
+                    autopilot: {
+                        autoModeNeverApplies: true,
+                        defaultOutputFormat: "summary",
+                        maxAutoRepairAttempts: 1,
+                        allowAutoReindex: false
+                    }
+                };
+            let mcpPolicyPlan: ConfigWriteOp;
+            if (mcpPolicyConfig.error) {
+                mcpPolicyPlan = {
+                    op: "noop",
+                    path: mcpPolicyPath,
+                    reason: "Fix JSON parse error before bootstrapping MCP mode config."
+                };
+            } else if (mcpPolicyConfig.value) {
+                const patch = this.buildMissingPatch(mcpPolicyConfig.value, mcpPolicyBaseConfig);
+                if (!patch) {
+                    mcpPolicyPlan = { op: "noop", path: mcpPolicyPath, reason: "MCP mode config already present." };
+                } else {
+                    mcpPolicyPlan = {
+                        op: "update",
+                        path: mcpPolicyPath,
+                        patch: {
+                            beforeHash: mcpPolicyConfig.hash,
+                            jsonMerge: patch
+                        },
+                        reason: "Backfill MCP mode config defaults."
+                    };
+                }
+            } else {
+                mcpPolicyPlan = {
+                    op: "create",
+                    path: mcpPolicyPath,
+                    content: JSON.stringify(mcpPolicyBaseConfig, null, 2)
+                };
+            }
+            plan.push(mcpPolicyPlan);
+
             const repoPlan = this.buildMcpConfigPlan(
                 mcpConfigPath,
                 repos,
@@ -1267,6 +1335,7 @@ export class ConfigBootstrapper {
             const normalized = filePath.replace(/\\\\/g, "/");
             return normalized.endsWith("/.mcp-config.json")
                 || normalized.endsWith("/.kairo/config/mcp-config.json")
+                || normalized.endsWith("/.kairo/config/mcp.json")
                 || normalized.endsWith("/.kairo/config/languages.json")
                 || normalized.endsWith("/.kairo/config/graphrag.json");
         }

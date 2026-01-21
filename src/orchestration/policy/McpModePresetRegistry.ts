@@ -229,6 +229,7 @@ const sanitizeConfig = (raw: any): McpConfigFile => {
         explore: parseNumber(budgets.envelopeMaxTokens?.explore),
         understand: parseNumber(budgets.envelopeMaxTokens?.understand),
         change: parseNumber(budgets.envelopeMaxTokens?.change),
+        write: parseNumber(budgets.envelopeMaxTokens?.write),
         manage: parseNumber(budgets.envelopeMaxTokens?.manage)
       }
     };

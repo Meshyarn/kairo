@@ -401,7 +401,10 @@ export class SmartContextServer {
 
         // Orchestration Layer
         this.internalRegistry = new InternalToolRegistry();
-        this.flowArtifactManager = new FlowArtifactManager();
+        this.flowArtifactManager = new FlowArtifactManager({
+            persistPath: PathManager.resolve("flow-artifacts"),
+            fileSystem: this.fileSystem
+        });
         this.orchestrationEngine = new OrchestrationEngine(
             new IntentRouter(),
             new WorkflowPlanner(),
@@ -938,7 +941,7 @@ export class SmartContextServer {
         });
         const surface = resolvePublicSurface();
         const compactToolNames = new Set(["task", "manage"]);
-        const filtered = surface === "compact"
+        const filtered = surface === "compact" && !exposeInternalTools && !exposeFileTools
             ? tools.filter((tool) => compactToolNames.has(tool.name))
             : tools;
         return filtered.map((tool: ToolSpec) => ({

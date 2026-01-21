@@ -439,7 +439,11 @@ export class TaskHandlers extends BaseHandler {
         const mode = this.normalizeMode(args?.mode);
         const budget = this.normalizeBudget(args?.budget);
         const profile = this.resolveProfile(budget);
-        const outputFormat = args?.output?.format === "standard" ? "standard" : "summary";
+        const autopilotPolicy = resolveAutopilotPolicy();
+        const requestedFormat = args?.output?.format;
+        const outputFormat = requestedFormat === "summary" || requestedFormat === "standard"
+            ? requestedFormat
+            : autopilotPolicy.defaultOutputFormat;
         const maxTokens = this.extractMaxTokens(args?.output);
         const sessionId = typeof args?.sessionId === "string" ? args.sessionId : undefined;
         const draftId = typeof args?.draftId === "string" ? args.draftId : undefined;
@@ -474,6 +478,7 @@ export class TaskHandlers extends BaseHandler {
             const artifacts = response?.callGraphArtifactId
                 ? [{ id: response.callGraphArtifactId, kind: "call_graph", detail: "summary" }]
                 : undefined;
+            const details = outputFormat === "standard" ? { pillar: "understand", response } : undefined;
             return {
                 ok: true,
                 sessionId: response?.sessionId ?? sessionId,
@@ -481,7 +486,8 @@ export class TaskHandlers extends BaseHandler {
                 mode: routing.mode,
                 budget,
                 surface,
-                summary: outputFormat === "summary" ? summary : summary,
+                summary,
+                ...(details ? { details } : {}),
                 ...(artifacts ? { artifacts } : {}),
                 ...(response?.degraded !== undefined ? { degraded: response.degraded } : {}),
                 ...(response?.degradedReasons ? { degradedReasons: response.degradedReasons } : {}),
@@ -523,6 +529,7 @@ export class TaskHandlers extends BaseHandler {
                 };
                 const summary = this.buildPlanPrepSummary({ request, recommendedTargets, packId });
                 const guidance = this.buildGuidance(response?.guidance, nextCalls);
+                const details = outputFormat === "standard" ? { pillar: "explore", response } : undefined;
                 return {
                     ok: true,
                     sessionId: response?.sessionId ?? sessionId,
@@ -530,7 +537,8 @@ export class TaskHandlers extends BaseHandler {
                     mode: routing.mode,
                     budget,
                     surface,
-                    summary: outputFormat === "summary" ? summary : summary,
+                    summary,
+                    ...(details ? { details } : {}),
                     ...(packId ? { packId } : {}),
                     changePrep: {
                         recommendedTargets,
@@ -573,6 +581,7 @@ export class TaskHandlers extends BaseHandler {
             if (response?.postReview?.id) {
                 artifacts.push({ id: response.postReview.id, kind: "review", detail: "summary" });
             }
+            const details = outputFormat === "standard" ? { pillar: "change", response } : undefined;
             return {
                 ok: true,
                 sessionId: response?.sessionId ?? sessionId,
@@ -580,7 +589,8 @@ export class TaskHandlers extends BaseHandler {
                 mode: routing.mode,
                 budget,
                 surface,
-                summary: outputFormat === "summary" ? summary : summary,
+                summary,
+                ...(details ? { details } : {}),
                 ...(draftPackId ? { draftId: draftPackId } : {}),
                 ...(planApplyToken ? { applyToken: planApplyToken } : {}),
                 ...(applyTokenExpiresAt ? { applyTokenExpiresAt } : {}),
@@ -628,6 +638,7 @@ export class TaskHandlers extends BaseHandler {
             if (response?.postReview?.id) {
                 artifacts.push({ id: response.postReview.id, kind: "review", detail: "summary" });
             }
+            const details = outputFormat === "standard" ? { pillar: "change", response } : undefined;
             return {
                 ok: true,
                 sessionId: response?.sessionId ?? sessionId,
@@ -635,7 +646,8 @@ export class TaskHandlers extends BaseHandler {
                 mode: routing.mode,
                 budget,
                 surface,
-                summary: outputFormat === "summary" ? summary : summary,
+                summary,
+                ...(details ? { details } : {}),
                 ...(draftId ? { draftId } : {}),
                 ...(artifacts.length > 0 ? { artifacts } : {}),
                 ...(response?.degraded !== undefined ? { degraded: response.degraded } : {}),
@@ -681,6 +693,7 @@ export class TaskHandlers extends BaseHandler {
         const summary = this.buildExploreSummary({ response, request, routingNote });
         const guidance = this.buildGuidance(response?.guidance, nextCalls);
         const packId = response?.pack?.packId ?? response?.researchPack?.id;
+        const details = outputFormat === "standard" ? { pillar: "explore", response } : undefined;
         return {
             ok: true,
             sessionId: response?.sessionId ?? sessionId,
@@ -688,7 +701,8 @@ export class TaskHandlers extends BaseHandler {
             mode: routing.mode,
             budget,
             surface,
-            summary: outputFormat === "summary" ? summary : summary,
+            summary,
+            ...(details ? { details } : {}),
             ...(packId ? { packId } : {}),
             ...(response?.degraded !== undefined ? { degraded: response.degraded } : {}),
             ...(response?.degradedReasons ? { degradedReasons: response.degradedReasons } : {}),
