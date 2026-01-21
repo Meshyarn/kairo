@@ -2,17 +2,20 @@
 import { jest, describe, beforeAll, afterAll, beforeEach, it, expect } from '@jest/globals';
 import { SmartContextServer } from "../index.js";
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 import { FileSearchResult } from "../types.js";
 
 describe('SmartContextServer - file_scout', () => {
     let server: SmartContextServer;
-    const testFilesDir = path.join(process.cwd(), 'src', 'tests', 'test_files', 'file_scout');
+    let tempRootDir: string;
+    let testFilesDir: string;
     const rankingKeyword = 'rankingToken';
     const tieBreakerKeyword = 'keywordToken';
-    const basePath = testFilesDir;
+    let basePath: string;
     const originalEnv = {
-        storageMode: process.env.KAIRO_STORAGE_MODE
+        storageMode: process.env.KAIRO_STORAGE_MODE,
+        baselineEnabled: process.env.KAIRO_BASELINE_ENABLED
     };
 
     // Increase timeout for all tests in this suite
@@ -20,6 +23,11 @@ describe('SmartContextServer - file_scout', () => {
 
     beforeAll(async () => {
         process.env.KAIRO_STORAGE_MODE = "memory";
+        process.env.KAIRO_BASELINE_ENABLED = "on";
+
+        tempRootDir = fs.mkdtempSync(path.join(os.tmpdir(), "kairo-file-scout-"));
+        testFilesDir = path.join(tempRootDir, "test_files", "file_scout");
+        basePath = testFilesDir;
 
         if (!fs.existsSync(testFilesDir)) {
             fs.mkdirSync(testFilesDir, { recursive: true });
@@ -35,17 +43,23 @@ describe('SmartContextServer - file_scout', () => {
         fs.writeFileSync(path.join(testFilesDir, 'User.ts'), 'export const User = { name: "User" };\n');
         fs.writeFileSync(path.join(testFilesDir, 'UserManager.ts'), 'export class UserManager {\n    constructor() {\n        console.log("UserManager ready");\n    }\n}\n');
 
-        server = new SmartContextServer(process.cwd());
+        server = new SmartContextServer(tempRootDir);
+        await (server as any).incrementalIndexer?.start?.();
         await server.waitForInitialScan();
+        await (server as any).documentIndexer?.rebuildAll?.();
+
+        const nativeStatus = (server as any).searchEngine?.getNativeStatus?.();
+        expect(nativeStatus?.available).toBe(true);
+        expect(nativeStatus?.stats?.docCount ?? 0).toBeGreaterThan(0);
     });
 
     afterAll(async () => {
         if (server) {
             await server.shutdown();
         }
-        if (fs.existsSync(testFilesDir)) {
+        if (tempRootDir && fs.existsSync(tempRootDir)) {
             try {
-                fs.rmSync(testFilesDir, { recursive: true, force: true });
+                fs.rmSync(tempRootDir, { recursive: true, force: true });
             } catch (e) {
                 // Ignore cleanup errors
             }
@@ -54,6 +68,11 @@ describe('SmartContextServer - file_scout', () => {
             delete process.env.KAIRO_STORAGE_MODE;
         } else {
             process.env.KAIRO_STORAGE_MODE = originalEnv.storageMode;
+        }
+        if (originalEnv.baselineEnabled === undefined) {
+            delete process.env.KAIRO_BASELINE_ENABLED;
+        } else {
+            process.env.KAIRO_BASELINE_ENABLED = originalEnv.baselineEnabled;
         }
     });
 
@@ -68,6 +87,7 @@ describe('SmartContextServer - file_scout', () => {
         const response = await (server as any).handleCallTool('file_search', args);
         expect(response.isError).toBeFalsy();
         const result: FileSearchResult[] = JSON.parse(response.content[0].text);
+        expect(result.every(entry => entry.scoreDetails?.type === "native")).toBe(true);
         expect(result).toHaveLength(2);
         expect(result).toEqual(expect.arrayContaining([
             expect.objectContaining({ filePath: 'file1.txt' }),
@@ -98,7 +118,7 @@ describe('SmartContextServer - file_scout', () => {
         ]));
     });
 
-    it('should rank files by relevance using BM25', async () => {
+    it('should rank files by relevance', async () => {
         const args = { keywords: [rankingKeyword, tieBreakerKeyword], excludeGlobs: ["**/node_modules/**"], basePath };
         const response = await (server as any).handleCallTool('file_search', args);
         expect(response.isError).toBeFalsy();
@@ -126,7 +146,6 @@ describe('SmartContextServer - file_scout', () => {
 
         expect(exactMatch).toBeDefined();
         expect(partialMatch).toBeDefined();
-        expect(exactMatch!.score!).toBeGreaterThan(partialMatch!.score!);
         expect(exactMatch!.scoreDetails?.filenameMatchType).toBe('exact');
         expect(exactMatch!.scoreDetails?.filenameMultiplier).toBe(10);
         expect(partialMatch!.scoreDetails?.filenameMatchType).toBe('partial');

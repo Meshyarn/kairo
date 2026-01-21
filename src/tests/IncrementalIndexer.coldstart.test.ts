@@ -105,8 +105,7 @@ describe("IncrementalIndexer cold start optimizations", () => {
                     mtime: 100,
                     symbols: [],
                     imports: [],
-                    exports: [],
-                    trigrams: { wordCount: 0, uniqueTrigramCount: 0 }
+                    exports: []
                 }
             },
             symbolIndex: {},
@@ -151,8 +150,7 @@ describe("IncrementalIndexer cold start optimizations", () => {
                             importType: "named"
                         }
                     ],
-                    exports: [],
-                    trigrams: { wordCount: 0, uniqueTrigramCount: 0 }
+                    exports: []
                 },
                 [fileB]: {
                     mtime: 2,
@@ -166,8 +164,7 @@ describe("IncrementalIndexer cold start optimizations", () => {
                             importType: "named"
                         }
                     ],
-                    exports: [],
-                    trigrams: { wordCount: 0, uniqueTrigramCount: 0 }
+                    exports: []
                 }
             },
             symbolIndex: {},

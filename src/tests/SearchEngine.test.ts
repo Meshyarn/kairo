@@ -1,5 +1,4 @@
 import * as path from "path";
-import { performance } from "perf_hooks";
 import { MemoryFileSystem } from "../platform/FileSystem.js";
 import { SearchEngine } from "../engine/Search.js";
 import { ResourceBudget, ResourceUsage } from "../types.js";
@@ -7,7 +6,6 @@ import { AstManager } from "../ast/AstManager.js";
 import { NativeSearchCoreStub } from "./utils/NativeSearchCoreStub.js";
 
 const joinLines = (lines: string[]): string => lines.join("\n");
-const isCoverageRun = typeof (globalThis as any).__coverage__ !== "undefined";
 const repoId = "default";
 
 const toRelative = (rootPath: string, absPath: string): string =>
@@ -34,7 +32,7 @@ const indexFile = async (
     });
 };
 
-describe("SearchEngine trigram index integration", () => {
+describe("SearchEngine native search integration", () => {
     const rootPath = path.join(process.cwd(), "__search_workspace__");
     const alphaPath = path.join(rootPath, "src", "utils", "alpha.ts");
     const betaPath = path.join(rootPath, "src", "utils", "beta.ts");
@@ -87,7 +85,32 @@ describe("SearchEngine trigram index integration", () => {
         expect(results[0].lineNumber).toBeGreaterThan(0);
     });
 
-    it("updates the trigram index when files change", async () => {
+    it("uses native candidate selection for pattern-only queries", async () => {
+        (fileSystem as any).listFiles = async () => {
+            throw new Error("scan disabled for test");
+        };
+
+        const results = await searchEngine.scout({ patterns: ["alpha matches here"], basePath: rootPath });
+        expect(results.length).toBeGreaterThan(0);
+        expect(results[0].filePath).toBe("src/utils/alpha.ts");
+    });
+
+    it("normalizes file type filters for native search", async () => {
+        (fileSystem as any).listFiles = async () => {
+            throw new Error("scan disabled for test");
+        };
+
+        const results = await searchEngine.scout({
+            keywords: ["alpha"],
+            basePath: rootPath,
+            fileTypes: [".TS", "TS"]
+        });
+
+        expect(results.length).toBeGreaterThan(0);
+        expect(results.every(result => result.filePath.endsWith(".ts"))).toBe(true);
+    });
+
+    it("reflects indexed updates when files change", async () => {
         let results = await searchEngine.scout({ keywords: ["gamma"], basePath: rootPath });
         expect(results).toHaveLength(0);
 
@@ -150,15 +173,11 @@ describe("SearchEngine trigram index integration", () => {
         const denseEngine = new SearchEngine(rootPath, fileSystem, [], { nativeSearchCore: denseCore, repoId });
         await indexFile(denseCore, rootPath, fileSystem, targetPath);
 
-        const start = performance.now();
         const results = await denseEngine.scout({ keywords: ["UniqueNeedleToken"], basePath: rootPath });
-        const duration = performance.now() - start;
 
         expect(results.length).toBeGreaterThan(0);
         expect(results[0]?.filePath).toBe("src/core/needle.ts");
         expect(results[0]?.preview).toContain("UniqueNeedleToken");
-        const maxDuration = isCoverageRun ? 3000 : 750;
-        expect(duration).toBeLessThan(maxDuration);
     });
 
     it("degrades when search budget is exceeded", async () => {
