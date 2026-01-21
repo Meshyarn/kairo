@@ -194,3 +194,5 @@ See `README.md` for the public overview.
 ## Next
 
 - Configuration: `docs/guides/configuration.md`
+- Promptless MCP setup: `docs/guides/promptless-integration.md`
+- Ops runbook: `docs/guides/ops-runbook.md`

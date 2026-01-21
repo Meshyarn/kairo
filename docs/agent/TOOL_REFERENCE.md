@@ -326,6 +326,7 @@ Project/session state utilities.
 - `manage({ command: "history" })`는 최근 커밋된 트랜잭션 체크포인트 요약(`checkpoints`)을 함께 반환한다.
 - `manage({ command: "reindex", paths: [...] })`는 지정한 파일들의 국소 재인덱싱을 시도한다(가능한 런타임에서만).
 - `manage({ command: "export", targetType: "transaction", target: "<txId>" })`는 patch export를 반환한다.
+- `manage({ command: "import", target: "<path>" })`는 기본적으로 `.kairo` 내부만 허용된다. 외부 경로는 `allowExternal: true` 또는 `KAIRO_MANAGE_IMPORT_ALLOW_EXTERNAL=true`가 필요하다.
 - `manage({ command: "artifact", detail: "summary" | "full" })`는 graph artifact일 때 요약/전체 view를 반환한다.
 - graph 원문 전체가 필요하면 `manage({ command: "export", targetType: "artifact", target: "<artifactId>" })`를 사용한다.
 
@@ -338,6 +339,7 @@ Project/session state utilities.
 | `target` | `string` |  | Mainly used by `test`. |
 | `paths` | `string[]` |  | Used by `reindex` for incremental/path-scoped refresh (when supported). |
 | `targetType` | `"artifact" \| "transaction" \| "patchRef"` |  | `export` 대상 유형. |
+| `allowExternal` | `boolean` |  | `import`에서 `.kairo` 외부 경로를 허용한다. |
 | `format` | `"unified_diff" \| "structured_edits" \| "both"` |  | `export` 결과 형식. |
 | `limit` | `number` |  | Max items for list commands (sessions); graph artifact view caps node count. |
 | `checkpointLimit` | `number` |  | Max checkpoints returned by `history` (default 10). |

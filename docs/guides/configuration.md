@@ -8,6 +8,9 @@ Kairo is configured via environment variables. Most users only need a few.
 |---|---|---|
 | `KAIRO_ROOT_PATH` | Project root to analyze. | Preferred over cwd; equivalent to `--root` CLI arg. |
 | `KAIRO_ROOT` | Project root to analyze. | Alias for `KAIRO_ROOT_PATH`. |
+| `KAIRO_MODE` | Policy mode. | `mcp` (default), `dev`, or `ci`. Set `dev` to opt out of MCP defaults. |
+| `KAIRO_PRESET` | MCP preset. | `mcp-lean` (default), `mcp-balanced`, `mcp-deep`. |
+| `KAIRO_PUBLIC_SURFACE` | Public tool surface. | `compact` (default in mcp) or `pillars`. |
 | `KAIRO_DIR` | Data directory. | Defaults to `.kairo` (contains index/cache/history). |
 | `KAIRO_ALLOW_LEGACY_MCP_DIR` | Allow legacy `.mcp` paths for `KAIRO_DIR`. | Set to `true` to permit `.mcp`/`.mcp/kairo`; otherwise Kairo uses `.kairo`. |
 | `KAIRO_MAX_RESULTS` | Search result cap. | Lower for token-efficiency; raise for recall. |
@@ -20,6 +23,20 @@ Kairo is configured via environment variables. Most users only need a few.
 | `KAIRO_EXPOSE_FILE_TOOLS` | Show compat file tools in MCP `list_tools`. | Default `false`; prefer the Five Pillars. |
 
 Timeouts are primarily controlled by your MCP host (per-request timeout). Some operations also accept per-call timeouts via `limits.timeoutMs` (see `docs/agent/TOOL_REFERENCE.md`).
+
+## Beta telemetry (opt-in)
+
+| Variable | Purpose | Notes |
+|---|---|---|
+| `KAIRO_BETA_LOG_ENABLED` | Enable beta telemetry log. | Writes sanitized NDJSON under `.kairo/logs/beta.ndjson`. |
+| `KAIRO_BETA_LOG_PATH` | Override beta log path. | Defaults to `${KAIRO_LOG_DIR}/beta.ndjson`. |
+| `KAIRO_HOST_NAME` | Tag beta log entries. | Optional host identifier for multi-host testing. |
+
+## Manage import safety
+
+| Variable | Purpose | Notes |
+|---|---|---|
+| `KAIRO_MANAGE_IMPORT_ALLOW_EXTERNAL` | Allow `manage import` outside `.kairo`. | Default `false`; opt in only when needed. |
 
 ## Drift checks (ADR-077)
 
@@ -209,6 +226,15 @@ Kairo can cap responses using `limits.maxTokens` (token-first) in addition to `l
 | `KAIRO_MANAGE_MAX_TOKENS` | Default token budget for `manage` responses. | Used for `manage command=artifact` envelope caps. |
 | `KAIRO_MANAGE_MAX_CHARS` | Default JSON char cap for `manage` responses. | Used for `manage command=artifact` envelope caps. |
 | `KAIRO_TOKEN_ESTIMATOR` | Token estimator mode. | `whitespace` (default) or `chars`. |
+
+## Deprecated env vars
+
+These env vars still work but will be removed in a future release:
+
+- `KAIRO_ROOT` → use `KAIRO_ROOT_PATH` or `--root`
+- `KAIRO_EXPOSE_LEGACY_TOOLS` → use `KAIRO_EXPOSE_INTERNAL_TOOLS`
+- `KAIRO_EXPOSE_COMPAT_TOOLS` → use `KAIRO_EXPOSE_FILE_TOOLS`
+- `KAIRO_ALLOW_LEGACY_MCP_DIR` → legacy `.mcp` paths are deprecated
 
 ## Native engine toggles (ADR-053-H)
 
