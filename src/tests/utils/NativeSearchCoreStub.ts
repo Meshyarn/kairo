@@ -48,7 +48,7 @@ export class NativeSearchCoreStub implements NativeSearchCoreClient {
         }
         const repoIds = Array.isArray(query.repoIds) && query.repoIds.length > 0 ? new Set(query.repoIds) : null;
         const fileTypes = Array.isArray(query.fileTypes) && query.fileTypes.length > 0
-            ? new Set(query.fileTypes.map((ext) => ext.toLowerCase()))
+            ? new Set(query.fileTypes.map((ext) => String(ext)).filter(Boolean))
             : null;
         const scopes = Array.isArray(query.scopes) && query.scopes.length > 0 ? new Set(query.scopes) : null;
         const kinds = query.kind === "any" ? new Set(["code_file", "doc_chunk"]) : new Set([query.kind]);

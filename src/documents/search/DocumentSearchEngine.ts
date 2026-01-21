@@ -1,4 +1,4 @@
-import type { NativeSearchCoreClient } from "../../engine/search/native/NativeSearchCore.js";
+import { NativeSearchError, type NativeSearchCoreClient } from "../../engine/search/native/NativeSearchCore.js";
 import { DocumentChunkRepository, StoredDocumentChunk } from "../../indexing/DocumentChunkRepository.js";
 import { EmbeddingRepository } from "../../indexing/EmbeddingRepository.js";
 import { DocumentIndexer } from "../../indexing/DocumentIndexer.js";
@@ -183,13 +183,19 @@ export class DocumentSearchEngine {
         }
 
         metrics.inc("cache.docs_pack.miss_total");
-        const native = await this.collectNativeChunks(normalizedQuery, {
+        let native: { chunks: StoredDocumentChunk[]; scoreMap: Map<string, number>; rankMap: Map<string, number>; rankedIds: string[] };
+        try {
+            native = await this.collectNativeChunks(normalizedQuery, {
             maxCandidates: maxChunkCandidates,
             scope,
             includeComments: options.includeComments === true,
             includeLogs,
             includeMetrics
-        });
+            });
+        } catch (error) {
+            degradationReasons.push(error instanceof NativeSearchError ? error.code : "native_search_failed");
+            native = { chunks: [], scoreMap: new Map(), rankMap: new Map(), rankedIds: [] };
+        }
         let chunks: StoredDocumentChunk[] = native.chunks;
         let candidateChunkCount = chunks.length;
         let bm25ScoreMap = native.scoreMap;
@@ -212,13 +218,16 @@ export class DocumentSearchEngine {
         let candidateFiles = uniqueCandidateFiles(chunks);
 
         if (chunks.length === 0) {
+            const uniqueReasons = Array.from(new Set(degradationReasons.filter(Boolean)));
+            const degradedAny = uniqueReasons.length > 0;
+            const reason = degradedAny ? uniqueReasons[0] : undefined;
             const response: DocumentSearchResponse = {
                 query,
                 results: [],
                 evidence: includeEvidence ? [] : undefined,
-                degraded: false,
-                reason: undefined,
-                reasons: undefined,
+                degraded: degradedAny,
+                reason,
+                reasons: degradedAny ? uniqueReasons : undefined,
                 provider: null,
                 stats: {
                     candidateFiles: candidateFiles.length,

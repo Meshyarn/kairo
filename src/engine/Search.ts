@@ -226,6 +226,9 @@ export class SearchEngine {
             const keywordConstraints = this.buildKeywordConstraints(keywordSource, { caseSensitive, smartCase });
             const keywordLabels = keywordConstraints.map(keyword => keyword.raw);
             const effectiveQuery = query || keywordSource.join(' ');
+            const normalizedFileTypes = normalizeFileTypes(args.fileTypes);
+            const patternHints = extractPatternHintTokens(patterns);
+            const candidateQuery = buildCandidateQuery(this.queryTokenizer, effectiveQuery, patternHints);
             const intent = this.queryIntentDetector.detect(effectiveQuery);
             if (intent === "symbol" && args.wordBoundary === undefined) {
                 wordBoundary = true;
@@ -249,14 +252,17 @@ export class SearchEngine {
 
             let hits: Array<{ path: string; score: number }> = [];
             let nativeSearchFailed = false;
+            const forceScan = candidateQuery.length === 0;
             try {
-                hits = this.nativeSearchCore.search({
-                    kind: "code_file",
-                    query: effectiveQuery,
-                    limit: nativeLimit,
-                    fileTypes: args.fileTypes,
-                    repoIds: [this.repoId]
-                });
+                if (!forceScan) {
+                    hits = this.nativeSearchCore.search({
+                        kind: "code_file",
+                        query: candidateQuery,
+                        limit: nativeLimit,
+                        fileTypes: normalizedFileTypes,
+                        repoIds: [this.repoId]
+                    });
+                }
             } catch (error) {
                 nativeSearchFailed = true;
                 if (usage) {
@@ -266,7 +272,6 @@ export class SearchEngine {
             }
 
             const keywordRegexes = buildKeywordRegexes(keywordConstraints, {
-                wordBoundary,
                 escape: (value) => this.escapeRegExp(value, { wordBoundary })
             });
             const patternRegexes = buildPatternRegexes(patterns, {
@@ -277,16 +282,16 @@ export class SearchEngine {
 
             if (nativeSearchFailed || hits.length === 0) {
                 let stats: NativeSearchStats | undefined;
-                if (!nativeSearchFailed) {
+                if (!nativeSearchFailed && !forceScan) {
                     try {
                         stats = this.nativeSearchCore.stats();
                     } catch {
                         nativeSearchFailed = true;
                     }
                 }
-                const shouldFallback = nativeSearchFailed || (stats?.docCount ?? 0) === 0;
+                const shouldFallback = forceScan || nativeSearchFailed || (stats?.docCount ?? 0) === 0;
                 if (shouldFallback) {
-                    const reason = nativeSearchFailed ? "native_search_failed" : "native_search_empty";
+                    const reason = forceScan ? "scan_required" : (nativeSearchFailed ? "native_search_failed" : "native_search_empty");
                     const fallbackResults = await this.scanForMatches({
                         basePath: basePath ? path.resolve(basePath) : undefined,
                         includeRegexes,
@@ -298,7 +303,7 @@ export class SearchEngine {
                         previewLength,
                         matchesPerFileLimit,
                         maxResults,
-                        fileTypes: args.fileTypes,
+                        fileTypes: normalizedFileTypes,
                         budget,
                         usage,
                         startedAt,
@@ -308,7 +313,7 @@ export class SearchEngine {
                         usage.parseTimeMs = Date.now() - startedAt;
                     }
                     return this.resultProcessor.postProcessResults(fallbackResults, {
-                        fileTypes: args.fileTypes,
+                        fileTypes: normalizedFileTypes,
                         snippetLength: previewLength,
                         groupByFile: args.groupByFile,
                         deduplicateByContent: args.deduplicateByContent
@@ -379,7 +384,7 @@ export class SearchEngine {
             }
 
             return this.resultProcessor.postProcessResults(fileSearchResults, {
-                fileTypes: args.fileTypes,
+                fileTypes: normalizedFileTypes,
                 snippetLength: previewLength,
                 groupByFile: args.groupByFile,
                 deduplicateByContent: args.deduplicateByContent
@@ -622,26 +627,47 @@ export class SearchEngine {
     }
 }
 
-function buildSearchRegexes(
-    query: string,
-    patterns: string[] | undefined,
-    options: { caseSensitive: boolean; wordBoundary: boolean; escape: (value: string) => string }
-): RegExp[] {
-    const flags = options.caseSensitive ? "g" : "gi";
-    const rawPatterns = Array.isArray(patterns) && patterns.length > 0 ? patterns : [query];
-    return rawPatterns.map((pattern) => {
-        try {
-            return new RegExp(pattern, flags);
-        } catch {
-            const escaped = options.escape(pattern);
-            return new RegExp(escaped, flags);
+function normalizeFileTypes(fileTypes: string[] | undefined): string[] | undefined {
+    if (!Array.isArray(fileTypes) || fileTypes.length === 0) return undefined;
+    const normalized = fileTypes
+        .map((ext) => String(ext ?? "").trim())
+        .map((ext) => ext.replace(/^\./, "").toLowerCase())
+        .filter(Boolean);
+    if (normalized.length === 0) return undefined;
+    return Array.from(new Set(normalized));
+}
+
+function extractPatternHintTokens(patterns: string[] | undefined): string[] {
+    if (!Array.isArray(patterns) || patterns.length === 0) return [];
+    const tokens = new Set<string>();
+    const matcher = /[\p{L}\p{N}_]{2,}/gu;
+    for (const pattern of patterns) {
+        const text = String(pattern ?? "");
+        for (const match of text.match(matcher) ?? []) {
+            tokens.add(match);
         }
-    });
+    }
+    return Array.from(tokens);
+}
+
+function buildCandidateQuery(tokenizer: QueryTokenizer, query: string, patternHints: string[]): string {
+    const tokens = new Set<string>();
+    const normalizedQuery = tokenizer.normalize(query ?? "");
+    for (const token of normalizedQuery.split(/\s+/)) {
+        if (token) tokens.add(token);
+    }
+    for (const hint of patternHints ?? []) {
+        const normalizedHint = tokenizer.normalize(String(hint ?? ""));
+        for (const token of normalizedHint.split(/\s+/)) {
+            if (token) tokens.add(token);
+        }
+    }
+    return Array.from(tokens).slice(0, 40).join(" ");
 }
 
 function buildKeywordRegexes(
     constraints: KeywordConstraint[],
-    options: { wordBoundary: boolean; escape: (value: string) => string }
+    options: { escape: (value: string) => string }
 ): RegExp[] {
     const regexes: RegExp[] = [];
     for (const constraint of constraints) {

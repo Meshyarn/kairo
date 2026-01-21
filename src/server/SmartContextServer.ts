@@ -1497,8 +1497,11 @@ export class SmartContextServer {
     }
 
     public async waitForInitialScan() {
-        // Simple delay or bridge to incremental indexer
-        return new Promise(resolve => setTimeout(resolve, 100));
+        if (this.incrementalIndexer) {
+            await this.incrementalIndexer.waitForInitialScan();
+            return;
+        }
+        await new Promise(resolve => setTimeout(resolve, 100));
     }
 
     public async run() {
@@ -1513,8 +1516,7 @@ export class SmartContextServer {
             });
         }
         
-        // Background warmup: Start trigram index building without blocking
-        // This improves search quality for subsequent requests
+        // Background warmup: warm native search core without blocking.
         if (!this.isTestEnv() && this.shouldWarmupSearchIndex()) {
             setImmediate(() => {
                 this.searchEngine.warmup().catch((error) => {

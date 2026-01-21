@@ -300,12 +300,7 @@ export class IncrementalIndexer {
 
         if (isDoc && !isCode) {
             const normalized = path.resolve(filePath);
-            let finalPath = normalized;
-            try {
-                finalPath = this.fileSystem.realpathSync?.(normalized) ?? normalized;
-            } catch {
-                // Ignore if path doesn't exist
-            }
+            const finalPath = normalized;
             this.options.onFileQueued?.(finalPath);
             void this.documentIndexer?.indexFile(filePath).then(() => {
                 this.options.onFileIndexed?.(finalPath);
@@ -314,12 +309,7 @@ export class IncrementalIndexer {
         }
 
         const normalized = path.resolve(filePath);
-        let finalPath = normalized;
-        try {
-            finalPath = this.fileSystem.realpathSync?.(normalized) ?? normalized;
-        } catch {
-            // Ignore if path doesn't exist
-        }
+        const finalPath = normalized;
 
         this.options.onFileQueued?.(finalPath);
 
@@ -397,11 +387,7 @@ export class IncrementalIndexer {
                                         mtime: stat.mtime,
                                         symbols: [],
                                         imports: [],
-                                        exports: [],
-                                        trigrams: {
-                                            wordCount: 0,
-                                            uniqueTrigramCount: 0
-                                        }
+                                        exports: []
                                     };
                                     this.indexManager.updateFileEntry(this.currentIndex, filePath, entry);
                                 }
@@ -441,11 +427,7 @@ export class IncrementalIndexer {
                                         mtime: stat.mtime,
                                         symbols,
                                         imports,
-                                        exports,
-                                        trigrams: {
-                                            wordCount: 0,
-                                            uniqueTrigramCount: 0
-                                        }
+                                        exports
                                     };
                                     this.indexManager.updateFileEntry(this.currentIndex, filePath, entry);
                                     if (this.indexDatabase) {

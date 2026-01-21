@@ -144,7 +144,7 @@ const createTestRustCoreStub = (): RustCoreModule => {
                 ? new Set(query.repoIds.map(String))
                 : null;
             const fileTypes = Array.isArray(query?.fileTypes) && query.fileTypes.length > 0
-                ? new Set(query.fileTypes.map((ext: string) => normalizeExt(ext)))
+                ? new Set(query.fileTypes.map((ext: string) => String(ext)).filter(Boolean))
                 : null;
             const scopes = Array.isArray(query?.scopes) && query.scopes.length > 0
                 ? new Set(query.scopes.map(String))

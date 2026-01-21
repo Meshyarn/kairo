@@ -131,8 +131,8 @@ export class ProjectIndexManager {
       projectRoot: this.projectRoot,
       lastUpdate: Date.now(),
       files: {},
-      symbolIndex: {},
-      reverseImports: {}
+      symbolIndex: Object.create(null) as ProjectIndex["symbolIndex"],
+      reverseImports: Object.create(null) as ProjectIndex["reverseImports"]
     };
   }
   
@@ -149,22 +149,29 @@ export class ProjectIndexManager {
 
     // Update symbol index
     for (const symbol of entry.symbols) {
-      if (!index.symbolIndex[symbol.name]) {
-        index.symbolIndex[symbol.name] = [];
+      const name = symbol?.name;
+      if (!name) continue;
+      const existing = index.symbolIndex[name];
+      const bucket = Array.isArray(existing) ? existing : [];
+      if (bucket !== existing) {
+        index.symbolIndex[name] = bucket;
       }
-      if (!index.symbolIndex[symbol.name].includes(filePath)) {
-        index.symbolIndex[symbol.name].push(filePath);
+      if (!bucket.includes(filePath)) {
+        bucket.push(filePath);
       }
     }
 
     // Update reverse imports
     for (const imp of entry.imports) {
       if (imp.resolvedPath) {
-        if (!index.reverseImports[imp.resolvedPath]) {
-          index.reverseImports[imp.resolvedPath] = [];
+        const key = imp.resolvedPath;
+        const existing = index.reverseImports[key];
+        const bucket = Array.isArray(existing) ? existing : [];
+        if (bucket !== existing) {
+          index.reverseImports[key] = bucket;
         }
-        if (!index.reverseImports[imp.resolvedPath].includes(filePath)) {
-          index.reverseImports[imp.resolvedPath].push(filePath);
+        if (!bucket.includes(filePath)) {
+          bucket.push(filePath);
         }
       }
     }
@@ -179,24 +186,29 @@ export class ProjectIndexManager {
 
     // Remove from symbol index
     for (const symbol of entry.symbols) {
-      const paths = index.symbolIndex[symbol.name];
-      if (paths) {
-        index.symbolIndex[symbol.name] = paths.filter(p => p !== filePath);
-        if (index.symbolIndex[symbol.name].length === 0) {
-          delete index.symbolIndex[symbol.name];
-        }
+      const name = symbol?.name;
+      if (!name) continue;
+      const paths = index.symbolIndex[name];
+      if (!Array.isArray(paths)) continue;
+      const next = paths.filter(p => p !== filePath);
+      if (next.length === 0) {
+        delete index.symbolIndex[name];
+      } else {
+        index.symbolIndex[name] = next;
       }
     }
 
     // Remove from reverse imports
     for (const imp of entry.imports) {
       if (imp.resolvedPath) {
-        const paths = index.reverseImports[imp.resolvedPath];
-        if (paths) {
-          index.reverseImports[imp.resolvedPath] = paths.filter(p => p !== filePath);
-          if (index.reverseImports[imp.resolvedPath].length === 0) {
-            delete index.reverseImports[imp.resolvedPath];
-          }
+        const key = imp.resolvedPath;
+        const paths = index.reverseImports[key];
+        if (!Array.isArray(paths)) continue;
+        const next = paths.filter(p => p !== filePath);
+        if (next.length === 0) {
+          delete index.reverseImports[key];
+        } else {
+          index.reverseImports[key] = next;
         }
       }
     }

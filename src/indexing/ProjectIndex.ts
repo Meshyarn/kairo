@@ -39,12 +39,6 @@ export interface FileIndexEntry {
   
   /** Parsed exports from this file */
   exports: ExportInfo[];
-  
-  /** Trigram statistics (for search optimization) */
-  trigrams?: {
-    wordCount: number;
-    uniqueTrigramCount: number;
-  };
 }
 
 export interface ImportInfo {

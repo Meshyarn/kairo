@@ -129,7 +129,7 @@ export class DocumentIndexer {
         }
         const contentForChunking = extracted.contentForSearch;
 
-        const fileHash = hashContent(extracted.profileContent ?? extracted.contentForSearch ?? "");
+        const fileHash = hashContent(extracted.contentForSearch ?? extracted.profileContent ?? "");
         this.indexDatabase.updateFileMeta(relativePath, {
             lastModified: stats.mtime,
             language: extracted.kind,
@@ -161,6 +161,15 @@ export class DocumentIndexer {
         }
 
         this.chunkRepo.upsertChunksForFile(relativePath, stored);
+        this.nativeSearchIndexer?.upsertCodeFile({
+            repoId: this.repoId,
+            filePath: relativePath,
+            content: extracted.contentForSearch,
+            contentHash: fileHash,
+            mtimeMs: stats.mtime,
+            symbols: [],
+            callgraphRank: 0
+        });
         this.nativeSearchIndexer?.upsertDocChunks({
             repoId: this.repoId,
             filePath: relativePath,
@@ -179,6 +188,7 @@ export class DocumentIndexer {
             this.vectorIndexManager?.removeChunks(previousChunks.map(chunk => chunk.id));
             this.nativeSearchIndexer?.deleteDocChunks(this.repoId, previousChunks.map(chunk => chunk.id));
         }
+        this.nativeSearchIndexer?.deleteCodeFile(this.repoId, relativePath);
         this.chunkRepo.deleteChunksForFile(relativePath);
         this.indexDatabase.deleteFile(relativePath);
     }
