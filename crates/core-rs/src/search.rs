@@ -347,7 +347,7 @@ impl NativeSearchCore {
         }
 
         let schema = SearchSchema::new();
-        let meta = load_or_init_meta(
+        let mut meta = load_or_init_meta(
             &index_dir,
             options.as_ref().and_then(|opt| opt.repo_id.clone()),
             options.as_ref().and_then(|opt| opt.kairo_version.clone()),
@@ -358,13 +358,44 @@ impl NativeSearchCore {
             let directory = tantivy::directory::MmapDirectory::open(&index_dir).map_err(|error| {
                 napi::Error::from_reason(format!("INDEX_DIR_OPEN_FAILED: {error}"))
             })?;
-            Index::open_or_create(directory, schema.schema.clone()).map_err(|error| {
-                napi::Error::from_reason(format!("INDEX_OPEN_FAILED: {error}"))
-            })?
+            match Index::open_or_create(directory, schema.schema.clone()) {
+                Ok(index) => index,
+                Err(error) => {
+                    let message = error.to_string();
+                    if message.contains("Data corrupted") || message.contains("Data corruption") {
+                        purge_index_dir(&index_dir).map_err(|purge_error| {
+                            napi::Error::from_reason(format!("INDEX_REBUILD_FAILED: {purge_error}"))
+                        })?;
+                        meta = init_meta(
+                            &index_dir,
+                            options.as_ref().and_then(|opt| opt.repo_id.clone()),
+                            options.as_ref().and_then(|opt| opt.kairo_version.clone()),
+                        )
+                        .map_err(|meta_error| {
+                            napi::Error::from_reason(format!("INDEX_META_FAILED: {meta_error}"))
+                        })?;
+                        let directory = tantivy::directory::MmapDirectory::open(&index_dir).map_err(|error| {
+                            napi::Error::from_reason(format!("INDEX_DIR_OPEN_FAILED: {error}"))
+                        })?;
+                        Index::open_or_create(directory, schema.schema.clone()).map_err(|error| {
+                            napi::Error::from_reason(format!("INDEX_CORRUPTED: {error}"))
+                        })?
+                    } else {
+                        return Err(napi::Error::from_reason(format!("INDEX_OPEN_FAILED: {error}")));
+                    }
+                }
+            }
         } else {
-            Index::open_in_dir(&index_dir).map_err(|error| {
-                napi::Error::from_reason(format!("INDEX_OPEN_FAILED: {error}"))
-            })?
+            match Index::open_in_dir(&index_dir) {
+                Ok(index) => index,
+                Err(error) => {
+                    let message = error.to_string();
+                    if message.contains("Data corrupted") || message.contains("Data corruption") {
+                        return Err(napi::Error::from_reason(format!("INDEX_CORRUPTED: {error}")));
+                    }
+                    return Err(napi::Error::from_reason(format!("INDEX_OPEN_FAILED: {error}")));
+                }
+            }
         };
 
         register_tokenizers(&index);
@@ -475,6 +506,9 @@ impl NativeSearchCore {
         writer
             .commit()
             .map_err(|error| napi::Error::from_reason(format!("INDEX_COMMIT_FAILED: {error}")))?;
+        self.reader
+            .reload()
+            .map_err(|error| napi::Error::from_reason(format!("INDEX_RELOAD_FAILED: {error}")))?;
         Ok(())
     }
 
@@ -493,6 +527,9 @@ impl NativeSearchCore {
         writer
             .commit()
             .map_err(|error| napi::Error::from_reason(format!("INDEX_COMMIT_FAILED: {error}")))?;
+        self.reader
+            .reload()
+            .map_err(|error| napi::Error::from_reason(format!("INDEX_RELOAD_FAILED: {error}")))?;
         Ok(())
     }
 
