@@ -3,6 +3,8 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { SmartContextServer } from "../../index.js";
+import { NativeModuleLoader } from "../../orchestration/capabilities/NativeModuleLoader.js";
+import { NativeSearchCoreStub } from "../utils/NativeSearchCoreStub.js";
 
 const runTool = async (server: SmartContextServer, toolName: string, args: any) => {
     const response = await (server as any).handleCallTool(toolName, args);
@@ -18,6 +20,30 @@ describe("Mixed workflow external edit", () => {
 
     beforeEach(async () => {
         process.env.KAIRO_MODE = "dev";
+        NativeModuleLoader.setTestLoader(() => ({
+            SmartChunker: class {
+                constructor(_modelPath: string) {}
+                chunk(_text: string, _maxTokens: number, _overlap: number) { return []; }
+            },
+            diffUnified: (_oldText: string, _newText: string, _contextLines: number) => ({
+                diff: "",
+                added: 0,
+                removed: 0
+            }),
+            validateSyntax: (_language: string, _content: string) => [],
+            cosineScores: (_query: Float32Array, _vectors: Float32Array[]) => [],
+            NativeSearchCore: class {
+                private readonly core = new NativeSearchCoreStub();
+                upsert(doc: any) { return this.core.upsert(doc); }
+                upsertMany(docs: any[]) { return this.core.upsertMany(docs); }
+                deleteDoc(target: any) { return this.core.deleteDoc(target); }
+                commit() { return this.core.commit(); }
+                search(query: any) { return this.core.search(query); }
+                close() { return this.core.close(); }
+                stats() { return this.core.stats(); }
+                reset() { return this.core.reset(); }
+            }
+        }));
         testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "kairo-external-edit-"));
         fs.mkdirSync(path.join(testRoot, "src"), { recursive: true });
         fs.writeFileSync(path.join(testRoot, "src", "app.ts"), "export const value = 1;\n", "utf-8");
@@ -28,6 +54,7 @@ describe("Mixed workflow external edit", () => {
     afterEach(async () => {
         await server.shutdown();
         fs.rmSync(testRoot, { recursive: true, force: true });
+        NativeModuleLoader.resetForTesting();
         if (originalMode === undefined) {
             delete process.env.KAIRO_MODE;
         } else {

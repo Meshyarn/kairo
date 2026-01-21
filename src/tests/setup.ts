@@ -1,3 +1,60 @@
+import { NativeModuleLoader } from "../orchestration/capabilities/NativeModuleLoader.js";
+import { NativeSearchCoreStub } from "./utils/NativeSearchCoreStub.js";
+
+process.env.KAIRO_RUST_CHUNKING_ENABLED = "false";
+process.env.KAIRO_RUST_DIFF_ENABLED = "false";
+process.env.KAIRO_RUST_SYNTAX_ENABLED = "false";
+process.env.KAIRO_RUST_VECTOR_ENABLED = "false";
+process.env.KAIRO_RUST_SYMBOLIC_SOLVER_ENABLED = "false";
+
+const installNativeSearchStub = () => {
+  NativeModuleLoader.setTestLoader(() => ({
+    NativeSearchCore: class {
+      private readonly core = new NativeSearchCoreStub();
+
+      constructor(_indexDir: string, _options?: { writerMemoryMb?: number; kairoVersion?: string; repoId?: string }) {}
+
+      upsert(doc: any) {
+        this.core.upsert(doc);
+      }
+
+      upsertMany(docs: any[]) {
+        this.core.upsertMany(docs);
+      }
+
+      deleteDoc(target: any) {
+        this.core.deleteDoc(target);
+      }
+
+      commit() {
+        this.core.commit();
+      }
+
+      search(query: any) {
+        return this.core.search(query);
+      }
+
+      close() {
+        this.core.close();
+      }
+
+      stats() {
+        return this.core.stats();
+      }
+
+      reset() {
+        this.core.reset();
+      }
+    }
+  }));
+};
+
+installNativeSearchStub();
+
+beforeEach(() => {
+  installNativeSearchStub();
+});
+
 const originalWarn = console.warn.bind(console);
 const originalError = console.error.bind(console);
 

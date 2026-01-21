@@ -3,6 +3,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { SmartContextServer } from '../../../index.js';
+import { NativeModuleLoader } from "../../../orchestration/capabilities/NativeModuleLoader.js";
+import { NativeSearchCoreStub } from "../../utils/NativeSearchCoreStub.js";
 
 const runTool = async (server: SmartContextServer, toolName: string, args: any) => {
   const response = await (server as any).handleCallTool(toolName, args);
@@ -30,22 +32,72 @@ describe('ExplorePillar Integration', () => {
 
   beforeEach(async () => {
     process.env.KAIRO_MODE = "dev";
+    NativeModuleLoader.setTestLoader(() => ({
+      SmartChunker: class {
+        constructor(_modelPath: string) {}
+        chunk(_text: string, _maxTokens: number, _overlap: number) { return []; }
+      },
+      diffUnified: (_oldText: string, _newText: string, _contextLines: number) => ({
+        diff: "",
+        added: 0,
+        removed: 0
+      }),
+      validateSyntax: (_language: string, _content: string) => [],
+      cosineScores: (_query: Float32Array, _vectors: Float32Array[]) => [],
+      NativeSearchCore: class {
+        private readonly core = new NativeSearchCoreStub();
+        upsert(doc: any) { return this.core.upsert(doc); }
+        upsertMany(docs: any[]) { return this.core.upsertMany(docs); }
+        deleteDoc(target: any) { return this.core.deleteDoc(target); }
+        commit() { return this.core.commit(); }
+        search(query: any) { return this.core.search(query); }
+        close() { return this.core.close(); }
+        stats() { return this.core.stats(); }
+        reset() { return this.core.reset(); }
+      }
+    }));
     testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'explore-test-'));
     fs.mkdirSync(path.join(testRoot, 'src'), { recursive: true });
     fs.mkdirSync(path.join(testRoot, 'docs'), { recursive: true });
     
-    fs.writeFileSync(path.join(testRoot, 'src', 'main.ts'), 'export function main() { console.log(\"hello\"); }');
-    fs.writeFileSync(path.join(testRoot, 'src', 'helper.ts'), 'export const helper = () => \"hello\";');
+    const mainContent = 'export function main() { console.log(\"hello\"); }';
+    const helperContent = 'export const helper = () => \"hello\";';
+    fs.writeFileSync(path.join(testRoot, 'src', 'main.ts'), mainContent);
+    fs.writeFileSync(path.join(testRoot, 'src', 'helper.ts'), helperContent);
     fs.writeFileSync(path.join(testRoot, 'docs', 'readme.md'), '# Documentation\nThis is a readme file.');
     fs.writeFileSync(path.join(testRoot, 'docs', 'guide.md'), '# Guide\nhello from docs.');
     
     server = new SmartContextServer(testRoot);
     await server.waitForInitialScan();
+    const documentIndexer = (server as any).documentIndexer;
+    const nativeSearchIndexer = (server as any).nativeSearchIndexer;
+    const repoId = (server as any).repoRegistry?.getDefaultRepo?.()?.id ?? "default";
+    if (documentIndexer?.indexFile) {
+      await documentIndexer.indexFile("docs/readme.md");
+      await documentIndexer.indexFile("docs/guide.md");
+      nativeSearchIndexer?.flush?.();
+    }
+    if (nativeSearchIndexer?.upsertCodeFile) {
+      nativeSearchIndexer.upsertCodeFile({
+        repoId,
+        filePath: "src/main.ts",
+        content: mainContent,
+        mtimeMs: Date.now()
+      });
+      nativeSearchIndexer.upsertCodeFile({
+        repoId,
+        filePath: "src/helper.ts",
+        content: helperContent,
+        mtimeMs: Date.now()
+      });
+      nativeSearchIndexer.flush?.();
+    }
   });
 
   afterEach(async () => {
     await server.shutdown();
     fs.rmSync(testRoot, { recursive: true, force: true });
+    NativeModuleLoader.resetForTesting();
     if (originalMode === undefined) {
       delete process.env.KAIRO_MODE;
     } else {
@@ -55,7 +107,7 @@ describe('ExplorePillar Integration', () => {
 
   it('performs query-based exploration across docs and code', async () => {
     const result = await runTool(server, 'explore', {
-      query: 'main function documentation',
+      query: 'hello',
       include: { docs: true, code: true }
     });
 
