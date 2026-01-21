@@ -9,6 +9,10 @@ This folder contains the minimal docs needed to run `kairo` and connect it to an
 - `docs/guides/promptless-integration.md` — minimal MCP setup without custom prompts
 - `docs/guides/ops-runbook.md` — launch checklist + post-launch iteration loop
 
+For quick validation from source, see:
+- `npm run smoke:mcp-mock-client`
+- `npm run benchmark:adr-085-search-slo`
+
 ## Agent docs (recommended)
 
 - `docs/agent/TOOL_REFERENCE.md` — public tool input reference (`task`/`manage` + pillars)

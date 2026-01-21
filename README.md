@@ -12,7 +12,7 @@
 - Captures Writer’s Flow artifacts (research/style/draft/review) with session chaining
 - Emphasizes safe changes (dry-run, validation, backups/transactions where applicable)
 - Improves change reliability via StrategySearch (Best-of-N / MCTS candidate scoring; opt-in)
-- **Hybrid Performance (v0.3.0+)**: Employs a Rust core for high-precision token chunking, 25x faster diffing, and native syntax validation.
+- **Native Core (v0.6.0+)**: Tantivy-backed native search + Rust-accelerated chunking/diff/syntax to keep latency and heap stable on large repos.
 
 ## Quickstart (from source)
 
@@ -22,6 +22,12 @@ Prereqs: Node.js (see `package.json` engines, if present)
 npm ci
 npm run build
 node dist/index.js --root /absolute/path/to/your/project
+```
+
+If you see `CAP_NATIVE_SEARCH_UNAVAILABLE`, build the native module (`@kairo/core-rs`) for your platform:
+
+```bash
+npm run build:core-rs
 ```
 
 By default, runtime data is stored under `.kairo/` in the target project root.
@@ -59,7 +65,7 @@ If your CLI supports per-server permissions, prefer read-only by default and gra
 
 ## Data directory
 
-`kairo` writes indexes/caches/logs under `.kairo/`. Add it to `.gitignore` (this repo already does).
+`kairo` writes indexes/caches/logs under `.kairo/` (including the native search index under `.kairo/data/index/.../v2-tantivy`). Add it to `.gitignore` (this repo already does).
 
 ## License
 

@@ -124,6 +124,8 @@ explore({ query: "PaymentProcessor" })
 explore({ paths: ["src/payments/Processor.ts"], view: "full" })
 ```
 
+Tip: 결과가 비거나 stale로 보이면 `manage({ command: "status" })`로 `nativeSearch`/`drift`를 확인하고, 필요 시 `manage({ command: "reindex" })`로 복구한다.
+
 ---
 
 ## Response Structure

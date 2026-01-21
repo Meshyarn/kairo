@@ -366,6 +366,7 @@ Project/session state utilities.
 
 - `manage({ command: "status" })`는 `rollout` 필드로 preset/userIdHash/flag mode + adaptive flow gate 요약을 함께 반환한다.
 - `manage({ command: "status" })`는 `symbolIndex` 필드로 심볼 시맨틱 검색 인덱스 상태(활성/빌드 시각/degraded)를 함께 반환한다.
+- `manage({ command: "status" })`는 `nativeSearch` 필드로 네이티브 검색 코어 상태(available/docCount 등)를 함께 반환한다.
 - `manage({ command: "status" })`는 `drift` 필드로 workspace 드리프트 상태 요약을 함께 반환한다.
 - `manage({ command: "status" })`는 `styleDrift` 필드로 StylePack 근거/신뢰도 요약을 함께 반환한다.
 - `manage({ command: "doctor" })`도 `rollout` 필드로 동일한 운영 진단 정보를 반환한다.
