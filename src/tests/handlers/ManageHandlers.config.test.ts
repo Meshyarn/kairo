@@ -13,6 +13,9 @@ const makeContext = (rootPath: string) => ({
     rootPath,
     toolSpecRegistry: createDefaultToolSpecRegistry(),
     isTestEnv: () => true,
+    searchEngine: {
+        getNativeStatus: () => ({ available: false })
+    },
     indexDatabase: {
         listFiles: () => []
     }

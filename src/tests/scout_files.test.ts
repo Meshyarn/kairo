@@ -12,8 +12,7 @@ describe('SmartContextServer - file_scout', () => {
     const tieBreakerKeyword = 'keywordToken';
     const basePath = testFilesDir;
     const originalEnv = {
-        storageMode: process.env.KAIRO_STORAGE_MODE,
-        trigramIndex: process.env.KAIRO_TRIGRAM_INDEX
+        storageMode: process.env.KAIRO_STORAGE_MODE
     };
 
     // Increase timeout for all tests in this suite
@@ -21,7 +20,6 @@ describe('SmartContextServer - file_scout', () => {
 
     beforeAll(async () => {
         process.env.KAIRO_STORAGE_MODE = "memory";
-        process.env.KAIRO_TRIGRAM_INDEX = "disabled";
 
         if (!fs.existsSync(testFilesDir)) {
             fs.mkdirSync(testFilesDir, { recursive: true });
@@ -56,11 +54,6 @@ describe('SmartContextServer - file_scout', () => {
             delete process.env.KAIRO_STORAGE_MODE;
         } else {
             process.env.KAIRO_STORAGE_MODE = originalEnv.storageMode;
-        }
-        if (originalEnv.trigramIndex === undefined) {
-            delete process.env.KAIRO_TRIGRAM_INDEX;
-        } else {
-            process.env.KAIRO_TRIGRAM_INDEX = originalEnv.trigramIndex;
         }
     });
 

@@ -5,16 +5,19 @@ import type { SymbolInfo } from "../../../types.js";
 import type { NativeIndexDoc, NativeSearchCoreClient } from "./NativeSearchCore.js";
 
 const MAX_SYMBOLS_PER_FILE = 500;
-const DEFAULT_COMMIT_DELAY_MS = 800;
+const MAX_CODE_FILE_BYTES = 512 * 1024;
+const MAX_PENDING_OPS = 1000;
+const COMMIT_DELAY_MS = 2000;
+const BINARY_SAMPLE_BYTES = 8 * 1024;
+const BINARY_NONPRINTABLE_RATIO = 0.1;
 
 export class NativeSearchIndexer {
     private commitTimer?: NodeJS.Timeout;
     private readonly commitDelayMs: number;
+    private pendingOps = 0;
 
     constructor(private readonly core: NativeSearchCoreClient) {
-        const rawDelay = Number(process.env.KAIRO_NATIVE_SEARCH_COMMIT_DELAY_MS ?? "");
-        const delay = Number.isFinite(rawDelay) && rawDelay >= 0 ? Math.floor(rawDelay) : DEFAULT_COMMIT_DELAY_MS;
-        this.commitDelayMs = Math.max(0, delay);
+        this.commitDelayMs = COMMIT_DELAY_MS;
     }
 
     public upsertCodeFile(args: {
@@ -26,6 +29,12 @@ export class NativeSearchIndexer {
         symbols?: SymbolInfo[];
         callgraphRank?: number;
     }): void {
+        const normalizedPath = normalizePath(args.filePath);
+        if (!shouldIndexContent(args.content)) {
+            this.core.deleteDoc({ kind: "code_file", repoId: args.repoId, path: normalizedPath });
+            this.scheduleCommit(1);
+            return;
+        }
         const symbols = Array.isArray(args.symbols)
             ? args.symbols.map((symbol) => String(symbol?.name ?? "")).filter(Boolean)
             : [];
@@ -34,7 +43,7 @@ export class NativeSearchIndexer {
         const doc: NativeIndexDoc = {
             kind: "code_file",
             repoId: args.repoId,
-            path: normalizePath(args.filePath),
+            path: normalizedPath,
             ext: normalizeExt(args.filePath),
             mtimeMs: args.mtimeMs,
             contentHash: args.contentHash,
@@ -44,7 +53,7 @@ export class NativeSearchIndexer {
             callgraphRank: Number.isFinite(args.callgraphRank as number) ? (args.callgraphRank as number) : 0
         };
         this.core.upsert(doc);
-        this.scheduleCommit();
+        this.scheduleCommit(1);
     }
 
     public upsertDocChunks(args: {
@@ -70,37 +79,40 @@ export class NativeSearchIndexer {
             });
         }
         this.core.upsertMany(docs);
-        this.scheduleCommit();
+        this.scheduleCommit(docs.length);
     }
 
     public deleteCodeFile(repoId: string, filePath: string): void {
         this.core.deleteDoc({ kind: "code_file", repoId, path: normalizePath(filePath) });
-        this.scheduleCommit();
+        this.scheduleCommit(1);
     }
 
     public deleteDocChunks(repoId: string, chunkIds: string[]): void {
         let deleted = false;
+        let deletedCount = 0;
         for (const chunkId of chunkIds ?? []) {
             if (!chunkId) continue;
             this.core.deleteDoc({ kind: "doc_chunk", repoId, chunkId });
             deleted = true;
+            deletedCount += 1;
         }
         if (deleted) {
-            this.scheduleCommit();
+            this.scheduleCommit(deletedCount);
         }
     }
 
     public commit(): void {
-        this.core.commit();
+        this.commitInternal();
     }
 
     public flush(): void {
-        this.commit();
+        this.commitInternal();
     }
 
-    private scheduleCommit(): void {
-        if (this.commitDelayMs === 0) {
-            this.commit();
+    private scheduleCommit(opCount: number): void {
+        this.pendingOps += Math.max(1, opCount);
+        if (this.pendingOps >= MAX_PENDING_OPS || this.commitDelayMs === 0) {
+            this.commitInternal();
             return;
         }
         if (this.commitTimer) {
@@ -108,13 +120,23 @@ export class NativeSearchIndexer {
         }
         this.commitTimer = setTimeout(() => {
             this.commitTimer = undefined;
-            try {
-                this.commit();
-            } catch {
-                // best-effort
-            }
+            this.commitInternal();
         }, this.commitDelayMs);
         this.commitTimer.unref?.();
+    }
+
+    private commitInternal(): void {
+        if (this.commitTimer) {
+            clearTimeout(this.commitTimer);
+            this.commitTimer = undefined;
+        }
+        if (this.pendingOps === 0) return;
+        this.pendingOps = 0;
+        try {
+            this.core.commit();
+        } catch {
+            // best-effort
+        }
     }
 }
 
@@ -130,6 +152,29 @@ function computePathDepth(filePath: string): number {
     const normalized = normalizePath(filePath);
     const segments = normalized.split("/").filter(Boolean);
     return Math.max(0, segments.length - 1);
+}
+
+function shouldIndexContent(content: string): boolean {
+    if (!content) return true;
+    const sizeBytes = Buffer.byteLength(content, "utf8");
+    if (sizeBytes > MAX_CODE_FILE_BYTES) {
+        return false;
+    }
+    return !isBinaryContent(content);
+}
+
+function isBinaryContent(content: string): boolean {
+    const sample = content.slice(0, BINARY_SAMPLE_BYTES);
+    if (!sample) return false;
+    const bytes = Buffer.from(sample, "utf8");
+    let nonPrintable = 0;
+    for (const byte of bytes) {
+        if (byte === 0) return true;
+        if (byte < 9 || (byte > 13 && byte < 32) || byte === 127) {
+            nonPrintable += 1;
+        }
+    }
+    return nonPrintable / bytes.length > BINARY_NONPRINTABLE_RATIO;
 }
 
 function resolveScope(filePath: string, kind: string): "docs" | "comments" | "logs" | "metrics" {

@@ -220,6 +220,8 @@ export class IncrementalIndexer {
         if (this.initialScanPromise) {
             await this.initialScanPromise;
         }
+        await this.waitForIdle();
+        this.nativeSearchIndexer?.flush();
     }
 
     public async reindexAll(): Promise<void> {

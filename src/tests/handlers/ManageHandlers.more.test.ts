@@ -48,7 +48,13 @@ const makeContext = () => {
             listFiles: jest.fn(() => [])
         },
         skeletonCache: { clearAll: jest.fn(async () => undefined) },
-        searchEngine: { rebuild: jest.fn(async () => undefined) },
+        searchEngine: {
+            rebuild: jest.fn(async () => undefined),
+            getNativeStatus: jest.fn(() => ({
+                available: true,
+                stats: { docCount: 0, segmentCount: 0, indexVersion: 1, schemaVersion: 1 }
+            }))
+        },
         documentIndexer: { rebuildAll: jest.fn(async () => undefined) },
         historyEngine: { getHistory: jest.fn(async () => ({ undoStack: [], redoStack: [] })) },
         impactAnalyzer: { analyzeImpact: jest.fn(async () => ({ suggestedTests: ["a.test.ts"] })) },

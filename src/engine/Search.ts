@@ -8,7 +8,7 @@ import { QueryIntentDetector } from './search/QueryIntent.js';
 import { createLogger } from "../utils/StructuredLogger.js";
 import { metrics } from "../utils/MetricsCollector.js";
 import { SymbolEmbeddingIndex } from '../indexing/SymbolEmbeddingIndex.js';
-import { NativeSearchError, type NativeSearchCoreClient } from "./search/native/NativeSearchCore.js";
+import { NativeSearchError, type NativeSearchCoreClient, type NativeSearchStats } from "./search/native/NativeSearchCore.js";
 
 const BUILTIN_EXCLUDE_GLOBS = [
     "**/node_modules/**",
@@ -140,6 +140,15 @@ export class SearchEngine {
         return false;
     }
 
+    public getNativeStatus(): { available: boolean; stats?: NativeSearchStats; error?: string } {
+        try {
+            const stats = this.nativeSearchCore.stats();
+            return { available: true, stats };
+        } catch (error: any) {
+            return { available: false, error: error?.message ?? String(error) };
+        }
+    }
+
     public async rebuild(options?: { logEvery?: number; logger?: (message: string) => void; logTotals?: boolean }): Promise<void> {
         if (typeof this.nativeSearchCore.reset === "function") {
             this.nativeSearchCore.reset();
@@ -238,7 +247,8 @@ export class SearchEngine {
                 : 50;
             const nativeLimit = Math.min(500, Math.max(maxResults, budget?.maxCandidates ?? 200));
 
-            let hits;
+            let hits: Array<{ path: string; score: number }> = [];
+            let nativeSearchFailed = false;
             try {
                 hits = this.nativeSearchCore.search({
                     kind: "code_file",
@@ -248,12 +258,11 @@ export class SearchEngine {
                     repoIds: [this.repoId]
                 });
             } catch (error) {
+                nativeSearchFailed = true;
                 if (usage) {
                     usage.degraded = true;
                     usage.reason = usage.reason ?? (error instanceof NativeSearchError ? error.code : "native_search_failed");
-                    usage.parseTimeMs = Date.now() - startedAt;
                 }
-                return [];
             }
 
             const regexes = buildSearchRegexes(effectiveQuery, patterns, {
@@ -261,6 +270,44 @@ export class SearchEngine {
                 wordBoundary,
                 escape: (value) => this.escapeRegExp(value, { wordBoundary })
             });
+
+            if (nativeSearchFailed || hits.length === 0) {
+                let stats: NativeSearchStats | undefined;
+                if (!nativeSearchFailed) {
+                    try {
+                        stats = this.nativeSearchCore.stats();
+                    } catch {
+                        nativeSearchFailed = true;
+                    }
+                }
+                const shouldFallback = nativeSearchFailed || (stats?.docCount ?? 0) === 0;
+                if (shouldFallback) {
+                    const reason = nativeSearchFailed ? "native_search_failed" : "native_search_empty";
+                    const fallbackResults = await this.scanForMatches({
+                        basePath: basePath ? path.resolve(basePath) : undefined,
+                        includeRegexes,
+                        excludeRegexes,
+                        regexes,
+                        previewLength,
+                        matchesPerFileLimit,
+                        maxResults,
+                        fileTypes: args.fileTypes,
+                        budget,
+                        usage,
+                        startedAt,
+                        reason
+                    });
+                    if (usage) {
+                        usage.parseTimeMs = Date.now() - startedAt;
+                    }
+                    return this.resultProcessor.postProcessResults(fallbackResults, {
+                        fileTypes: args.fileTypes,
+                        snippetLength: previewLength,
+                        groupByFile: args.groupByFile,
+                        deduplicateByContent: args.deduplicateByContent
+                    });
+                }
+            }
 
             const fileSearchResults: FileSearchResult[] = [];
             for (const hit of hits) {
@@ -324,6 +371,98 @@ export class SearchEngine {
         } finally {
             stopTotal();
         }
+    }
+
+    private async scanForMatches(args: {
+        basePath?: string;
+        includeRegexes?: RegExp[];
+        excludeRegexes: RegExp[];
+        regexes: RegExp[];
+        previewLength: number;
+        matchesPerFileLimit: number;
+        maxResults: number;
+        fileTypes?: string[];
+        budget?: ResourceBudget;
+        usage?: ResourceUsage;
+        startedAt: number;
+        reason: string;
+    }): Promise<FileSearchResult[]> {
+        if (args.usage) {
+            args.usage.degraded = true;
+            args.usage.reason = args.usage.reason ?? args.reason;
+        }
+        const scanRoot = args.basePath ?? this.rootPath;
+        let files: string[];
+        try {
+            files = await this.fileSystem.listFiles(scanRoot);
+        } catch {
+            return [];
+        }
+
+        const normalizedTypes = Array.isArray(args.fileTypes) && args.fileTypes.length > 0
+            ? new Set(args.fileTypes.map((ext) => ext.replace(/^\./, "").toLowerCase()).filter(Boolean))
+            : null;
+        const results: FileSearchResult[] = [];
+
+        for (const absPath of files) {
+            if (args.budget && args.usage) {
+                const elapsed = Date.now() - args.startedAt;
+                if (
+                    args.usage.filesRead >= args.budget.maxFilesRead ||
+                    args.usage.bytesRead >= args.budget.maxBytesRead ||
+                    elapsed >= args.budget.maxParseTimeMs
+                ) {
+                    args.usage.degraded = true;
+                    args.usage.reason = args.usage.reason ?? "budget_exceeded";
+                    break;
+                }
+            }
+
+            const relativePath = this.normalizeRelativePath(absPath, scanRoot);
+            if (!relativePath || !this.shouldInclude(relativePath, args.includeRegexes, args.excludeRegexes)) {
+                continue;
+            }
+
+            if (normalizedTypes) {
+                const ext = path.extname(relativePath).replace(".", "").toLowerCase();
+                if (!normalizedTypes.has(ext)) {
+                    continue;
+                }
+            }
+
+            let content = "";
+            try {
+                content = await this.fileSystem.readFile(absPath);
+                if (args.usage) {
+                    args.usage.filesRead += 1;
+                    args.usage.bytesRead += Buffer.byteLength(content, "utf8");
+                }
+            } catch {
+                continue;
+            }
+
+            const matches = findLineMatches(content, args.regexes, args.matchesPerFileLimit, args.previewLength);
+            if (matches.length === 0) {
+                continue;
+            }
+            const score = countRegexMatches(content, args.regexes);
+            for (const match of matches) {
+                results.push({
+                    filePath: relativePath,
+                    lineNumber: match.line,
+                    preview: match.preview,
+                    score,
+                    scoreDetails: { type: "scan", totalScore: score }
+                });
+                if (results.length >= args.maxResults) {
+                    break;
+                }
+            }
+            if (results.length >= args.maxResults) {
+                break;
+            }
+        }
+        return results;
     }
 
     private normalizeSnippetLength(requested?: number): number {
@@ -492,4 +631,16 @@ function findLineMatches(
         if (matches.length >= limit) break;
     }
     return matches;
+}
+
+function countRegexMatches(content: string, regexes: RegExp[]): number {
+    let total = 0;
+    for (const regex of regexes) {
+        regex.lastIndex = 0;
+        while (regex.exec(content)) {
+            total += 1;
+        }
+        regex.lastIndex = 0;
+    }
+    return total;
 }

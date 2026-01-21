@@ -21,6 +21,7 @@ import { collectAnnChunks, embedQuery, ensureEmbeddings, resolveEmbeddingProvide
 export class DocumentSearchEngine {
     private readonly packCache: LRUCache<string, { response: DocumentSearchResponse; createdAt: number; expiresAt?: number; staleCheckItems: Array<{ chunkId: string; snapshot?: { contentHash?: string } }> }>;
     private readonly nativeSearchCore: NativeSearchCoreClient;
+    private readonly repoId: string;
 
     constructor(
         private readonly documentIndexer: DocumentIndexer,
@@ -32,7 +33,8 @@ export class DocumentSearchEngine {
         private readonly evidencePacks?: EvidencePackRepository,
         private readonly vectorIndexManager?: VectorIndexManager,
         private readonly indexDatabase?: IndexDatabase,
-        nativeSearchCore?: NativeSearchCoreClient
+        nativeSearchCore?: NativeSearchCoreClient,
+        repoId?: string
     ) {
         const max = Number.parseInt(process.env.KAIRO_EVIDENCE_PACK_CACHE_SIZE ?? "100", 10);
         this.packCache = new LRUCache({ max: Number.isFinite(max) && max > 0 ? max : 100 });
@@ -40,6 +42,7 @@ export class DocumentSearchEngine {
             throw new Error("Native search core is required for document search.");
         }
         this.nativeSearchCore = nativeSearchCore;
+        this.repoId = repoId ?? "default";
     }
 
     public evictPackCache(packIds?: string[]): void {
@@ -542,7 +545,8 @@ export class DocumentSearchEngine {
             kind: "doc_chunk",
             query,
             limit: options.maxCandidates,
-            scopes: Array.from(scopes)
+            scopes: Array.from(scopes),
+            repoIds: [this.repoId]
         });
 
         const chunks: StoredDocumentChunk[] = [];

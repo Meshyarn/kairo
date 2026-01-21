@@ -367,7 +367,8 @@ export class SmartContextServer {
             new EvidencePackRepository(this.indexDatabase),
             this.vectorIndexManager,
             this.indexDatabase,
-            this.nativeSearchCore
+            this.nativeSearchCore,
+            defaultRepoId
         );
         this.clusterSearchEngine = new ClusterSearchEngine({
             rootPath: this.rootPath,
