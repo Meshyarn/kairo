@@ -248,6 +248,27 @@ describe("SearchEngine native search integration", () => {
         expect(alphaEntry?.groupedMatches?.length).toBeGreaterThan(0);
     });
 
+    it("honors maxResults while scanning native hits", async () => {
+        const extraDir = path.join(rootPath, "src", "extra");
+        await fileSystem.createDir(extraDir);
+        for (let index = 0; index < 12; index += 1) {
+            const absPath = path.join(extraDir, `alpha_${index}.ts`);
+            await fileSystem.writeFile(absPath, joinLines([
+                `export const alpha_${index} = "${index}";`,
+                "export const marker = 'alpha matches here';"
+            ]));
+            await indexFile(nativeCore, rootPath, fileSystem, absPath);
+        }
+
+        const results = await searchEngine.scout({
+            keywords: ["alpha"],
+            basePath: rootPath,
+            maxResults: 3,
+            matchesPerFile: 1
+        });
+        expect(results).toHaveLength(3);
+    });
+
     it("deduplicates identical previews across files when requested", async () => {
         const dupPath = path.join(rootPath, "src", "utils", "alphaDuplicate.ts");
         await fileSystem.createDir(path.dirname(dupPath));

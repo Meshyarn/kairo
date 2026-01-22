@@ -52,7 +52,7 @@ const makeContext = () => {
             rebuild: jest.fn(async () => undefined),
             getNativeStatus: jest.fn(() => ({
                 available: true,
-                stats: { docCount: 0, segmentCount: 0, indexVersion: 1, schemaVersion: 1 }
+                stats: { docCount: 0, segmentCount: 0, indexVersion: 1, schemaVersion: 1, writeEnabled: true }
             }))
         },
         documentIndexer: { rebuildAll: jest.fn(async () => undefined) },
@@ -106,6 +106,22 @@ describe("ManageHandlers additional paths", () => {
         const history = await raw({ command: "history" });
         expect(history.history.pendingTransactions[0]?.id).toBe("t1");
         expect(history.history.checkpoints[0]?.id).toBe("c1");
+    });
+
+    it("reports native search write-lock degradation in status", async () => {
+        const context = makeContext();
+        (context.searchEngine.getNativeStatus as any) = jest.fn(() => ({
+            available: true,
+            stats: { docCount: 1, segmentCount: 1, indexVersion: 1, schemaVersion: 1, writeEnabled: false }
+        }));
+
+        const handler = new ManageHandlers(context as any);
+        const raw = (handler as any).manageProjectRaw.bind(handler);
+        const status = await raw({ command: "status", suppressLogs: true });
+
+        const degraded = status.nativeSearch?.degradedReasons ?? [];
+        expect(degraded.length).toBeGreaterThan(0);
+        expect(degraded.some((reason: any) => String(reason?.message ?? "").includes("write-locked"))).toBe(true);
     });
 
     it("handles metrics, config, and reindex commands", async () => {

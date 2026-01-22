@@ -28,6 +28,8 @@ describe("IncrementalIndexer additional flows", () => {
         dependencyGraph?: any;
         indexDatabase?: any;
         documentIndexer?: any;
+        nativeSearchIndexer?: any;
+        repoId?: string;
     }) => {
         const symbolIndex = overrides?.symbolIndex ?? {
             isSupported: jest.fn(() => true),
@@ -60,7 +62,12 @@ describe("IncrementalIndexer additional flows", () => {
             indexDatabase,
             undefined,
             undefined,
-            { watch: false, initialScan: false },
+            {
+                watch: false,
+                initialScan: false,
+                nativeSearchIndexer: overrides?.nativeSearchIndexer,
+                repoId: overrides?.repoId ?? "default"
+            },
             overrides?.documentIndexer
         );
 
@@ -192,6 +199,62 @@ describe("IncrementalIndexer additional flows", () => {
 
         expect(dependencyGraph.removeDirectory).toHaveBeenCalledWith(dirPath);
         expect(indexer.getActivitySnapshot().queueDepth.total).toBe(0);
+    });
+
+    it("cleans persisted indices when a directory is deleted", async () => {
+        const dirPath = path.join(tempDir, "src");
+        fs.mkdirSync(dirPath, { recursive: true });
+        const docPath = path.join(dirPath, "doc.md");
+        const codePath = path.join(dirPath, "a.ts");
+        fs.writeFileSync(docPath, "# Title\n");
+        fs.writeFileSync(codePath, "export const a = 1;");
+
+        const dependencyGraph = {
+            removeFile: jest.fn(async () => undefined),
+            removeDirectory: jest.fn(async () => undefined),
+            rebuildUnresolved: jest.fn(async () => undefined),
+            updateFileDependencies: jest.fn(async () => undefined),
+            restoreEdges: jest.fn(async () => undefined)
+        };
+
+        const indexDatabase = {
+            listFiles: jest.fn(() => [
+                { path: "src/a.ts" },
+                { path: "src/doc.md" },
+                { path: "other.ts" }
+            ]),
+            deleteFile: jest.fn(),
+            getFile: jest.fn(() => undefined),
+            readSymbols: jest.fn(() => []),
+            addGhost: jest.fn()
+        };
+
+        const documentIndexer = {
+            isSupported: jest.fn((filePath: string) => filePath.endsWith(".md")),
+            deleteFile: jest.fn(),
+            indexFile: jest.fn()
+        };
+
+        const nativeSearchIndexer = {
+            deleteCodeFile: jest.fn(),
+            flush: jest.fn()
+        };
+
+        const { indexer } = createIndexer({
+            dependencyGraph,
+            indexDatabase,
+            documentIndexer,
+            nativeSearchIndexer
+        });
+        currentIndexer = indexer;
+
+        await (indexer as any).handleDirectoryDeletion(dirPath);
+
+        expect(documentIndexer.deleteFile).toHaveBeenCalledWith("src/doc.md");
+        expect(nativeSearchIndexer.deleteCodeFile).toHaveBeenCalledWith("default", "src/a.ts");
+        expect(indexDatabase.deleteFile).toHaveBeenCalledWith("src/a.ts");
+        expect(dependencyGraph.removeDirectory).toHaveBeenCalledWith(dirPath);
+        expect(nativeSearchIndexer.flush).toHaveBeenCalled();
     });
 
     it("treats hidden roots as ignored paths", () => {
