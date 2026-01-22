@@ -6,30 +6,30 @@
 
 ## Summary
 
-문서 인덱싱과 문서 도구가 동일한 추출/정규화 파이프라인을 사용하도록 정렬해 PDF/XLSX/DOCX/텍스트 포맷 간 결과 일관성을 확보한다.
+Align document indexing and document tools to use the same extraction/normalization pipeline, ensuring consistent results across PDF/XLSX/DOCX/plain-text formats.
 
 ## Decision (v1 Contract)
 
-- `DocumentContentLoader`를 단일 추출 경로로 사용한다(인덱서 + document_* tools).
-- PDF/XLSX marker를 heading 형태로 정규화해 section/toc가 동작하도록 한다.
-- 저품질/캡/추출 실패 신호를 `degradedReasons`/`warnings`로 표준화한다.
+- Use `DocumentContentLoader` as the single extraction path (indexer + `document_*` tools).
+- Normalize PDF/XLSX markers into heading-like structures so section/toc features work consistently.
+- Standardize low-quality/cap/extraction-failure signals via `degradedReasons`/`warnings`.
 
 ## Implementation Notes
 
 - Loader: `src/documents/DocumentContentLoader.ts`
-- DocumentHandlers 통합: `src/handlers/DocumentHandlers.ts`
-- DocumentIndexer 통합: `src/indexing/DocumentIndexer.ts`
-- document_search 파일 단위 경고 노출: `src/documents/search/DocumentSearchEngine.ts` (`fileMeta`)
-- PDF/XLSX/Docx extractor stats 보강: `src/documents/extractors/PdfExtractor.ts`, `src/documents/extractors/XlsxExtractor.ts`, `src/documents/extractors/DocxExtractor.ts`
+- DocumentHandlers integration: `src/handlers/DocumentHandlers.ts`
+- DocumentIndexer integration: `src/indexing/DocumentIndexer.ts`
+- File-level warnings in `document_search`: `src/documents/search/DocumentSearchEngine.ts` (`fileMeta`)
+- Extractor stats improvements (PDF/XLSX/Docx): `src/documents/extractors/PdfExtractor.ts`, `src/documents/extractors/XlsxExtractor.ts`, `src/documents/extractors/DocxExtractor.ts`
 - Degraded reason mapping: `src/orchestration/DegradedReasonMapper.ts`
 
-## Implementation Status (현 코드 기준)
+## Implementation Status (as of current code)
 
-- [x] Phase A: document_* 도구가 loader 기반으로 PDF/XLSX 추출 지원
-- [x] Phase A: marker → heading 변환 + degradedReasons/warnings 표준화
-- [x] Phase B: DocumentIndexer도 loader 사용으로 인덱싱/도구 결과 정렬
-- [x] Phase C: marker 변환 테스트 + ToolSpec/문서 업데이트
+- [x] Phase A: `document_*` tools support PDF/XLSX extraction via the loader
+- [x] Phase A: marker → heading conversion + standardized degradedReasons/warnings
+- [x] Phase B: DocumentIndexer also uses the loader to align indexing/tool outputs
+- [x] Phase C: marker-conversion tests + ToolSpec/docs updates
 
 ## Testing
 
-- Marker 변환 단위 테스트: `src/tests/documents/DocumentContentLoader.test.ts`
+- Marker-conversion unit tests: `src/tests/documents/DocumentContentLoader.test.ts`

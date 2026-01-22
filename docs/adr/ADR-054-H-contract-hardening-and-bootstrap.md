@@ -6,23 +6,23 @@
 
 ## Why
 
-ADR-054의 “cross-language contract awareness”가 **실사용에서 약하게 결합**되어 다음 문제가 반복됐다.
+ADR-054’s “cross-language contract awareness” was **weakly coupled in real-world usage**, causing the following recurring issues:
 
-- `.kairo/contracts`가 없으면 사용자가 수동으로 넣어야 했음
-- manifest가 있어도 consumer(importers) 결합이 약해 `impactReport`에서 TS consumer가 누락될 수 있었음
+- If `.kairo/contracts` was missing, users had to create it manually.
+- Even with a manifest, consumer (importers) linking was weak, so TS consumers could be missing from `impactReport`.
 
 ## What changed
 
-- **Root-fixed contracts path**: contract manifest는 항상 Kairo 실행 루트의 `.kairo/contracts/<kind>/...`에 저장
-- **Auto-generate (d.ts 기반)**: manifest missing/invalid 시 `.d.ts` entry로부터 자동 생성(빌드 불가 환경 고려)
-- **Consumer linking 규격화**
-  - 1차: `DependencyGraph.getImporters(entryPath)`
-  - 2차(fallback): `project_search` 기반 consumer 탐색 + `cross_lang_contract_degraded` 명시
-- **Report UX 정렬**: cross-lang consumer 파일은 `impactReport.crossLangImpact.consumerFiles` 뿐 아니라 `impactReport.preview.summary.impactedFiles`에도 반영(“빈 리스트처럼 보이는” 문제 방지)
-- **Producer change 감지 보강**: public surface 변경이 감지되면 contract diff가 비어도 degraded로 강제하여 consumer 탐색/가이던스 제공
+- **Root-fixed contracts path**: contract manifests are always stored under the Kairo execution root at `.kairo/contracts/<kind>/...`
+- **Auto-generate (from `.d.ts`)**: when a manifest is missing/invalid, auto-generate it from the `.d.ts` entry (supports environments where builds are not possible).
+- **Consumer linking standardization**
+  - 1st: `DependencyGraph.getImporters(entryPath)`
+  - 2nd (fallback): `project_search`-based consumer discovery + explicit `cross_lang_contract_degraded`
+- **Report UX alignment**: cross-language consumer files are reflected not only in `impactReport.crossLangImpact.consumerFiles` but also in `impactReport.preview.summary.impactedFiles` (prevents the “looks empty” problem).
+- **Producer change detection hardening**: when a public surface change is detected, force degraded mode even if the contract diff is empty, and provide consumer discovery + guidance.
 
 ## Notes
 
-- `impactReport`는 `change` 호출 시 `options.includeImpact: true`일 때 생성된다. (설정 파일이 아니라 요청 옵션)
-  - Kairo는 “impact가 켜질 만한 상황(공개 API 변경 징후)”에서 `includeImpact` 재호출을 가이드로 제안할 수 있다.
+- `impactReport` is produced when `change` is called with `options.includeImpact: true` (a request option, not a config file setting).
+  - Kairo can suggest re-calling with `includeImpact` when it detects signals that impact analysis should be enabled (e.g., potential public API changes).
 

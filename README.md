@@ -12,7 +12,7 @@
 - Captures Writer’s Flow artifacts (research/style/draft/review) with session chaining
 - Emphasizes safe changes (dry-run, validation, backups/transactions where applicable)
 - Improves change reliability via StrategySearch (Best-of-N / MCTS candidate scoring; opt-in)
-- **Native Core (v0.6.0+)**: Tantivy-backed native search + Rust-accelerated chunking/diff/syntax to keep latency and heap stable on large repos.
+- **Native Core (v0.6.0+)**: Tantivy-backed native search + Rust-accelerated chunking/diff/syntax to keep latency and heap stable on large repos (see `docs/adr/ADR-085-rust-native-search-core-tantivy.md`).
 
 ## Quickstart (from source)
 

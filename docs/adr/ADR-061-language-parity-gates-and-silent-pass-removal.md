@@ -1,4 +1,4 @@
-# ADR-061: Language Parity Gates (L2/L3) & Silent-pass 제거
+# ADR-061: Language Parity Gates (L2/L3) & Silent-pass Removal
 
 **Status:** Implemented  
 **Date:** 2026-01-13  
@@ -6,30 +6,30 @@
 
 ## Summary
 
-L2/L3 언어 parity 요구사항을 단일 게이트로 통합하고, missing query/wasm/validator를 typed degradedReasons로 표준화하여 silent-pass를 제거한다. L3 apply는 parity 실패 시 block, L2는 degraded 신호를 유지한다.
+Unify L2/L3 language parity requirements under a single gate, and standardize missing query/wasm/validator signals as typed `degradedReasons` to eliminate silent-pass behavior. L3 apply is blocked on parity failure, while L2 keeps a degraded signal.
 
 ## Decision (v1 Contract)
 
-- `LanguageParityMatrix`를 source of truth로 사용한다(L2/L3 + required assets + requiredQueries).
-- `LanguageParityGate`가 read/understand/change/write 경로에서 동일한 parity 판단을 제공한다.
-- missing query/wasm/validator는 `degradedReasons`로 노출하며 L3 apply는 block한다.
-- Explore는 L3에서 **구문 오류/쿼리팩 누락은 block**, **WASM/validator 미가용은 degraded**로 처리해 “탐색은 최대한 계속” 원칙을 지킨다.
+- Use `LanguageParityMatrix` as the source of truth (L2/L3 + required assets + requiredQueries).
+- `LanguageParityGate` provides consistent parity decisions across read/understand/change/write paths.
+- Expose missing query/wasm/validator as `degradedReasons`, and block L3 apply when parity cannot be satisfied.
+- In Explore (L3), **syntax errors/missing query packs block**, while **missing WASM/validators degrade**, to preserve the “keep exploring when possible” principle.
 
 ## Implementation Notes
 
-- Parity gate 도입: `src/config/LanguageParityGate.ts`
-- Parity matrix 확장(requiredQueries): `src/config/LanguageParityMatrix.ts`
-- Support level 파생: `src/config/LanguageSupportLevels.ts` (L2/L3 정렬)
+- Parity gate: `src/config/LanguageParityGate.ts`
+- Parity matrix extension (requiredQueries): `src/config/LanguageParityMatrix.ts`
+- Support-level derivation: `src/config/LanguageSupportLevels.ts` (L2/L3 alignment)
 - L3 apply block + L2 degraded: `src/orchestration/pillars/change/ChangePillar.ts`, `src/orchestration/pillars/WritePillar.ts`
-- Silent-pass 제거: `src/engine/validators/syntax-validator.ts`, `src/engine/editor/EditExecution.ts`, `src/ast/LanguageSupportSignals.ts`
-- Degraded reason 확장: `src/types/tool-responses.ts`, `src/orchestration/DegradedReasonMapper.ts`
-- validate-parity/doctor 정합: `scripts/validate-parity.ts`, `src/config/ConfigBootstrapper.ts`
+- Silent-pass removal: `src/engine/validators/syntax-validator.ts`, `src/engine/editor/EditExecution.ts`, `src/ast/LanguageSupportSignals.ts`
+- Degraded reason extensions: `src/types/tool-responses.ts`, `src/orchestration/DegradedReasonMapper.ts`
+- validate-parity/doctor alignment: `scripts/validate-parity.ts`, `src/config/ConfigBootstrapper.ts`
 
-## Implementation Status (현 코드 기준)
+## Implementation Status (as of current code)
 
-- [x] Phase A: missing wasm/query를 typed degradedReasons로 표준화
-- [x] Phase B: L3 apply에서 validator/parity 불가 시 block + downgrade 제거
-- [x] Phase C: 언어 온보딩 체크리스트/문서/테스트 정합(guide + parity scripts)
+- [x] Phase A: standardize missing wasm/query as typed degradedReasons
+- [x] Phase B: block L3 apply when validator/parity is unavailable + remove silent downgrades
+- [x] Phase C: align language onboarding checklist/docs/tests (guide + parity scripts)
 
 ## Testing
 

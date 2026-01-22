@@ -6,23 +6,23 @@
 
 ## Summary
 
-`edit_apply`의 기본 동작을 “요청 단위 원자성(atomic)”으로 고정하고, partial apply는 명시 opt-in으로만 허용한다. delete는 기본 차단하고 confirmation hash를 요구하도록 강화한다.
+Lock `edit_apply` default behavior to request-level atomicity, allow partial apply only via explicit opt-in, and harden deletes by default-blocking them unless a confirmation hash is provided.
 
 ## Decision
 
-- `edit_apply` 기본 `applyMode=atomic`, `deleteMode=forbid`
-- `applyMode=partial`은 명시적으로만 허용
-- delete는 `deleteMode=confirm` + confirmationHash(sha256)로만 허용
-- dry-run 결과는 파일/오퍼레이션 단위로 표준화된 결과를 반환
+- `edit_apply` defaults to `applyMode=atomic`, `deleteMode=forbid`
+- `applyMode=partial` is allowed only with explicit opt-in
+- Deletes are allowed only with `deleteMode=confirm` + `confirmationHash` (sha256)
+- Dry-run returns standardized results per file/operation
 
 ## Implementation Notes
 
-- ToolSpec 확장: `src/server/tools/ToolSpecRegistry.ts`
-- 실행 계약/결과 스키마: `src/handlers/EditHandlers.ts`
-- 타입 정리: `src/types/engine.ts`
-- delete/create undo/redo 지원: `src/engine/EditCoordinator.ts`, `src/handlers/EditHandlers.ts`
+- ToolSpec extension: `src/server/tools/ToolSpecRegistry.ts`
+- Execution contract + result schema: `src/handlers/EditHandlers.ts`
+- Type cleanup: `src/types/engine.ts`
+- delete/create undo/redo support: `src/engine/EditCoordinator.ts`, `src/handlers/EditHandlers.ts`
 
 ## Testing
 
-- delete/atomic/partial 흐름 테스트: `src/tests/handlers/EditHandlers.branches.test.ts`
-- confirmation hash perf 확인: `src/tests/performance/edit_benchmark.test.ts`
+- Delete/atomic/partial flow tests: `src/tests/handlers/EditHandlers.branches.test.ts`
+- Confirmation hash perf check: `src/tests/performance/edit_benchmark.test.ts`

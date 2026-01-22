@@ -22,5 +22,6 @@ For quick validation from source, see:
 
 - `docs/adr/README.md` — curated ADR index + summaries
 - `docs/adr/ADR-084-mcp-autopilot-and-preset-layer.md` — promptless MCP defaults (`task` + presets + handshake)
+- `docs/adr/ADR-085-rust-native-search-core-tantivy.md` — native search core (Tantivy via `@kairo/core-rs`)
 
 More detailed references beyond these curated ADRs are intentionally kept out of the OSS docs set for now.

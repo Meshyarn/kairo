@@ -14,11 +14,11 @@ The support goal aligns with `ADR-053-L`: L3 boundaries must not silently pass w
 
 - Model cross-language relationships as **boundary instances** (FFI/IDL/HTTP/Data), discovered from repo evidence.
 - Persist contract surfaces as **auto-generated manifests** under `.kairo/contracts/...` and reuse them for diff + impact.
-- When manifests are missing, return explicit **degraded** reasons and `manage doctor` guidance (silent pass 금지, 특히 L3).
+- When manifests are missing, return explicit **degraded** reasons and `manage doctor` guidance (no silent pass, especially for L3).
 
 ## Rollout (High Level)
 
 - Phase 0: Adapter/manifest baseline + `manage doctor --scope=contracts` (done)
-- Phase 1: NAPI adapter (package alias ↔ linked repo, d.ts 기반 manifest, TS consumer impact) (done)
+- Phase 1: NAPI adapter (package alias ↔ linked repo, d.ts-based manifests, TS consumer impact) (done)
 - Phase 2: Field-level linking + cross-language degraded reasons in tool responses (done)
-- Phase 3+: IDL(OpenAPI/Proto), SQL schema/migrations, 기타 FFI 경계 확장 (planned)
+- Phase 3+: IDL (OpenAPI/Proto), SQL schema/migrations, other FFI boundary expansion (planned)

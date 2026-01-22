@@ -6,13 +6,15 @@
 
 ## Summary
 
-멀티 레포 환경에서 “결과는 repo 경계를 포함”하고, “편집은 기본적으로 cross-repo를 막는다(default deny)”를 도구 표면과 런타임 모두에서 고정한다.
+In multi-repo workspaces, enforce two invariants across both the tool surface and runtime:
+1) results include repo boundary metadata, and
+2) edits are cross-repo **default deny**.
 
 ## Decision (Contract)
 
 ### Repo scope
 
-검색/탐색/편집은 `repoScope`로 대상 레포를 제어한다(compat로 `repoId`/`repoIds`도 허용).
+Search/explore/edit operations use `repoScope` to control which repos are in scope (compat also accepts `repoId`/`repoIds`).
 
 ```ts
 type RepoScope =
@@ -21,46 +23,46 @@ type RepoScope =
   | { mode: "repos"; repoIds: string[] };
 ```
 
-- 기본값: `project_search`/`document_search`/`explore`는 `all`, `change`/`write`는 `default`
+- Defaults: `project_search`/`document_search`/`explore` use `all`, while `change`/`write` use `default`.
 
 ### Search results include repo boundary
 
-`project_search` 결과는 다음 정보를 포함한다.
+`project_search` results include:
 
-- `path`: workspace-relative (절대경로 금지)
-- `repoId`: 매칭 실패 시 `"unscoped"`
-- `repoRelativePath`: repo root 기준 상대경로
+- `path`: workspace-relative (no absolute paths)
+- `repoId`: `"unscoped"` if repo matching fails
+- `repoRelativePath`: path relative to the repo root
 
-`document_search` 결과도 동일한 repo 메타데이터를 포함한다(`repoId`, `repoRelativePath`).
+`document_search` results also include the same repo metadata (`repoId`, `repoRelativePath`).
 
 ### Default deny for cross-repo edits
 
-`change`/`write`는 기본적으로 cross-repo 편집을 차단한다.
+`change`/`write` block cross-repo edits by default.
 
-- 허용 조건(모두 필요):
+- Allow only if **all** of the following are true:
   - tool args: `allowCrossRepoEdits: true`
-  - 각 repo config: `allowCrossRepoEdits: true`
-  - repo type이 `reference`면 항상 차단
+  - per-repo config: `allowCrossRepoEdits: true`
+  - repo type is not `reference` (reference repos are always blocked)
 
 ### Typed reasons
 
-repo 경계 위반은 `degradedReasons`/`blockedReason`에 typed reason으로 표기한다.
+Repo-boundary violations are surfaced via typed reasons in `degradedReasons`/`blockedReason`:
 
 - `cross_repo_scope_mismatch`
 - `cross_repo_edit_blocked`
 
 ## Implementation Notes
 
-- RepoScope/메타데이터 정규화: `src/utils/RepoScope.ts`
-- repo 편집 가드: `src/orchestration/pillars/shared/RepoGuard.ts`
-- `project_search` repo 메타데이터 + repoScope 필터: `src/handlers/SearchHandlers.ts`
-- `document_search` repoScope 필터 + repo 메타데이터: `src/handlers/DocumentHandlers.ts`, `src/documents/search/SearchTypes.ts`
-- `explore`/`navigate` 결과에 repo 메타데이터 포함: `src/orchestration/pillars/explore/ExplorePillar.ts`, `src/orchestration/pillars/NavigatePillar.ts`
-- `change`/`write` default deny 적용: `src/orchestration/pillars/change/ChangePillar.ts`, `src/orchestration/pillars/WritePillar.ts`
-- Config bootstrap safe default: `src/config/ConfigBootstrapper.ts` (`allowCrossRepoEdits` 기본 false)
-- ToolSpec 확장: `src/server/tools/ToolSpecRegistry.ts`
+- RepoScope/metadata normalization: `src/utils/RepoScope.ts`
+- Repo edit guard: `src/orchestration/pillars/shared/RepoGuard.ts`
+- `project_search` repo metadata + repoScope filtering: `src/handlers/SearchHandlers.ts`
+- `document_search` repoScope filter + repo metadata: `src/handlers/DocumentHandlers.ts`, `src/documents/search/SearchTypes.ts`
+- Repo metadata in `explore`/`navigate` results: `src/orchestration/pillars/explore/ExplorePillar.ts`, `src/orchestration/pillars/NavigatePillar.ts`
+- Default deny enforcement for `change`/`write`: `src/orchestration/pillars/change/ChangePillar.ts`, `src/orchestration/pillars/WritePillar.ts`
+- Safe-default config bootstrap: `src/config/ConfigBootstrapper.ts` (`allowCrossRepoEdits` defaults to false)
+- ToolSpec updates: `src/server/tools/ToolSpecRegistry.ts`
 
 ## Testing
 
-- Search repo 경계/필터: `src/tests/handlers/SearchHandlers.test.ts`
-- 멀티레포 E2E(검색 메타 + 차단): `src/tests/integration/MultiRepoToolSurface.e2e.test.ts`
+- Search repo boundary/filtering: `src/tests/handlers/SearchHandlers.test.ts`
+- Multi-repo E2E (search metadata + blocking): `src/tests/integration/MultiRepoToolSurface.e2e.test.ts`

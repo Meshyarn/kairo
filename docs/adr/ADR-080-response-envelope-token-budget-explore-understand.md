@@ -5,42 +5,42 @@
 **Related:** `docs/adr/ADR-056-token-aware-dynamic-context-compression.md`, `docs/adr/ADR-074-token-budget-allocator-v2-cross-pillar-summary-reuse.md`, `docs/adr/ADR-073-option-trace-standardization-decisiontrace-effectiveoptions.md`
 
 ## Why
-`explore`/`understand`는 내부적으로 토큰 예산(텍스트 truncate/distill)을 적용하고 있었지만, **최종 tool output JSON(응답 envelope)** 전체 크기는 일관되게 제한되지 않았다.  
-특히 `understand(include.callGraph=true)`는 call graph가 노드/엣지 배열로 커지면서 응답이 폭발할 수 있어 컨텍스트 오버플로/비용/UX 리스크가 컸다.
+`explore`/`understand` already applied token budgets internally (text truncate/distill), but the **final tool output JSON (response envelope)** did not have a consistent, end-to-end budget cap.  
+In particular, `understand(include.callGraph=true)` could blow up as the call graph expands into large node/edge arrays, increasing context overflow/cost/UX risk.
 
 ## What shipped
-- **`limits.maxTokens` 의미 고정:** `limits.maxTokens`는 **최종 응답 JSON의 토큰 상한**으로 해석한다.
-- **`limits.maxChars` 지원:** `limits.maxChars`는 **최종 응답 JSON의 char 하드캡**으로 적용한다(토큰/char가 함께 주어지면 둘 다 만족).
+- **Fixed meaning of `limits.maxTokens`:** interpret `limits.maxTokens` as the **token cap for the final response JSON**.
+- **`limits.maxChars` support:** apply `limits.maxChars` as a **hard char cap for the final response JSON** (if both token/char are provided, satisfy both).
 - **Two-pass budget enforcement:**
-  - (A) 섹션 계획(allocator v2)으로 생성 단계에서 downshift/omit 우선 적용
-  - (B) 생성 후 **응답 envelope 기준**으로 한 번 더 감쇠(ladder) 적용
-- **Call graph 분리(Progressive disclosure):**
-  - `understand` base response는 token-safe한 `callGraph` 요약 shape를 유지
-  - 전체/상세 graph는 **graph artifact**로 분리(`callGraphArtifactId`, `callGraphSummary`)
-  - `manage({ command: "artifact", target: callGraphArtifactId, detail: "summary" | "full" })`로 조회
-- **Explainability:** `compression` + `degradedReasons` + `decisionTrace`로 “왜 줄었는지/무엇이 줄었는지”를 추적 가능하게 함
+  - (A) Apply downshift/omit during generation via section planning (allocator v2)
+  - (B) After generation, apply a second pass using the **response envelope** as the budget basis (ladder)
+- **Call graph separation (progressive disclosure):**
+  - The base `understand` response keeps a token-safe summarized `callGraph` shape
+  - The full/detailed graph is separated into a **graph artifact** (`callGraphArtifactId`, `callGraphSummary`)
+  - Fetch via `manage({ command: "artifact", target: callGraphArtifactId, detail: "summary" | "full" })`
+- **Explainability:** enable tracing “why it shrank / what was removed” via `compression` + `degradedReasons` + `decisionTrace`.
 
 ## How to use
-- 응답 envelope 예산 지정:
+- Set response-envelope budgets:
   - `explore({ ..., limits: { maxTokens: 8000 } })`
   - `understand({ ..., limits: { maxTokens: 6000, maxChars: 60000 } })`
-- call graph 확장(요약 + artifact):
+- Call graph expansion (summary + artifact):
   - `understand({ goal: "SomeSymbol", include: { callGraph: true } })`
-  - 이후 `manage({ command: "artifact", target: callGraphArtifactId, detail: "summary" })`
-- 참고: `limits.maxTokens`는 “텍스트 일부”가 아니라 **최종 JSON 전체**가 기준이다.
-- 서버 기본값(환경변수, `limits.maxTokens` 미지정 시):
+  - Then `manage({ command: "artifact", target: callGraphArtifactId, detail: "summary" })`
+- Note: `limits.maxTokens` applies to the **entire final JSON**, not just “some text”.
+- Server defaults (env vars, when `limits.maxTokens` is not provided):
   - `KAIRO_DEFAULT_MAX_TOKENS`, `KAIRO_EXPLORE_MAX_TOKENS`, `KAIRO_UNDERSTAND_MAX_TOKENS`
-  - artifact 조회(`manage command=artifact`)는 `KAIRO_MANAGE_MAX_TOKENS`/`KAIRO_MANAGE_MAX_CHARS`
-  - 토큰 추정기: `KAIRO_TOKEN_ESTIMATOR=whitespace`(기본) 또는 `KAIRO_TOKEN_ESTIMATOR=chars`
+  - Artifact fetch (`manage command=artifact`) uses `KAIRO_MANAGE_MAX_TOKENS`/`KAIRO_MANAGE_MAX_CHARS`
+  - Token estimator: `KAIRO_TOKEN_ESTIMATOR=whitespace` (default) or `KAIRO_TOKEN_ESTIMATOR=chars`
 
 ## Output signals
-- `degraded: true` + `reasons/degradedReasons`에 `budget_exceeded` (또는 관련 감쇠 사유)
+- `degraded: true` with `budget_exceeded` in `reasons/degradedReasons` (or related budget-reduction reasons)
 - `compression`:
-  - `applied`, `mode`, `decisions`(가능한 경우)
+  - `applied`, `mode`, `decisions` (when available)
 - `stats.responseBudget`:
   - `applied`, `estimatedTokens`, `usedChars`, `maxTokens`, `maxChars`
 - `decisionTrace`:
-  - budget/omit/downshift 이벤트 및 최종 적용 여부
+  - budget/omit/downshift events and whether they were ultimately applied
 
 ## Key code paths
 - Response envelope budgeter: `src/orchestration/budget/ResponseEnvelopeBudgeter.ts`

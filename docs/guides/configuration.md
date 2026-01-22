@@ -338,8 +338,9 @@ When `KAIRO_VECTOR_INDEX_REBUILD=manual`, use the CLI `kairo-build-vector-index`
 
 Kairo’s file/doc search is powered by Tantivy via the native module (`@kairo/core-rs`). The legacy Trigram index is removed.
 
+- ADR summary: `docs/adr/ADR-085-rust-native-search-core-tantivy.md`
 - Index directory: `${KAIRO_DIR}/data/index[/repos/<repoId>]/v2-tantivy`
-- Inspect health: `manage({ command: "status" })` → `nativeSearch.available`, `nativeSearch.stats.docCount`
+- Inspect health: `manage({ command: "status" })` → `nativeSearch.available`, `nativeSearch.stats.docCount`, `nativeSearch.stats.writeEnabled` (false when the index is opened read-only due to a writer lock)
 - Rebuild: `manage({ command: "reindex" })`
 
 | Variable | Purpose | Notes |

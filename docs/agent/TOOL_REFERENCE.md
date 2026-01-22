@@ -364,19 +364,19 @@ When `options.safeWrite=true`:
 
 Project/session state utilities.
 
-- `manage({ command: "status" })`는 `rollout` 필드로 preset/userIdHash/flag mode + adaptive flow gate 요약을 함께 반환한다.
-- `manage({ command: "status" })`는 `symbolIndex` 필드로 심볼 시맨틱 검색 인덱스 상태(활성/빌드 시각/degraded)를 함께 반환한다.
-- `manage({ command: "status" })`는 `nativeSearch` 필드로 네이티브 검색 코어 상태(available/docCount 등)를 함께 반환한다.
-- `manage({ command: "status" })`는 `drift` 필드로 workspace 드리프트 상태 요약을 함께 반환한다.
-- `manage({ command: "status" })`는 `styleDrift` 필드로 StylePack 근거/신뢰도 요약을 함께 반환한다.
-- `manage({ command: "doctor" })`도 `rollout` 필드로 동일한 운영 진단 정보를 반환한다.
-- `manage({ command: "schema", tool: "task", detail: "summary" })`는 tool input schema 요약을 반환한다. `detail:"full"`은 schema를 artifact로 저장하고 `artifactId`를 반환한다(필요 시 `manage artifact/export`로 조회).
-- `manage({ command: "history" })`는 최근 커밋된 트랜잭션 체크포인트 요약(`checkpoints`)을 함께 반환한다.
-- `manage({ command: "reindex", paths: [...] })`는 지정한 파일들의 국소 재인덱싱을 시도한다(가능한 런타임에서만).
-- `manage({ command: "export", targetType: "transaction", target: "<txId>" })`는 patch export를 반환한다.
-- `manage({ command: "import", target: "<path>" })`는 기본적으로 `.kairo` 내부만 허용된다. 외부 경로는 `allowExternal: true` 또는 `KAIRO_MANAGE_IMPORT_ALLOW_EXTERNAL=true`가 필요하다.
-- `manage({ command: "artifact", detail: "summary" | "full" })`는 graph artifact일 때 요약/전체 view를 반환한다.
-- graph 원문 전체가 필요하면 `manage({ command: "export", targetType: "artifact", target: "<artifactId>" })`를 사용한다.
+- `manage({ command: "status" })` returns a `rollout` summary (preset/userIdHash/flag modes + adaptive flow gate).
+- `manage({ command: "status" })` returns `symbolIndex` (semantic symbol index status: enabled/build time/degraded).
+- `manage({ command: "status" })` returns `nativeSearch` (native search core status, including availability/docCount and write-lock signals).
+- `manage({ command: "status" })` returns `drift` (workspace drift summary).
+- `manage({ command: "status" })` returns `styleDrift` (StylePack provenance/confidence summary).
+- `manage({ command: "doctor" })` also returns a `rollout` block with the same operational diagnostics.
+- `manage({ command: "schema", tool: "task", detail: "summary" })` returns a summary of the tool input schema. With `detail:"full"`, the schema is stored as an artifact and an `artifactId` is returned (fetch via `manage({ command: "artifact" | "export", ... })`).
+- `manage({ command: "history" })` returns recent committed transaction checkpoint summaries (`checkpoints`).
+- `manage({ command: "reindex", paths: [...] })` attempts a scoped reindex of specific paths (only when supported by the runtime).
+- `manage({ command: "export", targetType: "transaction", target: "<txId>" })` returns a patch export.
+- `manage({ command: "import", target: "<path>" })` is restricted to `.kairo` by default. Importing from outside requires `allowExternal: true` or `KAIRO_MANAGE_IMPORT_ALLOW_EXTERNAL=true`.
+- `manage({ command: "artifact", detail: "summary" | "full" })` returns summary/full views for graph artifacts.
+- For raw graph payloads, use `manage({ command: "export", targetType: "artifact", target: "<artifactId>" })`.
 
 **Parameters**
 
@@ -387,9 +387,9 @@ Project/session state utilities.
 | `tool` | `string` |  | Tool name (used by `schema`). |
 | `target` | `string` |  | Mainly used by `test`. |
 | `paths` | `string[]` |  | Used by `reindex` for incremental/path-scoped refresh (when supported). |
-| `targetType` | `"artifact" \| "transaction" \| "patchRef"` |  | `export` 대상 유형. |
-| `allowExternal` | `boolean` |  | `import`에서 `.kairo` 외부 경로를 허용한다. |
-| `format` | `"unified_diff" \| "structured_edits" \| "both"` |  | `export` 결과 형식. |
+| `targetType` | `"artifact" \| "transaction" \| "patchRef"` |  | `export` target type. |
+| `allowExternal` | `boolean` |  | Allow `import` from outside `.kairo`. |
+| `format` | `"unified_diff" \| "structured_edits" \| "both"` |  | `export` output format. |
 | `limit` | `number` |  | Max items for list commands (sessions); graph artifact view caps node count. |
 | `checkpointLimit` | `number` |  | Max checkpoints returned by `history` (default 10). |
 | `detail` | `"summary" \| "full"` |  | Detail level for `status`/`doctor`/`schema`. |

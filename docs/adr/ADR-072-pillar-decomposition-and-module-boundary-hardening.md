@@ -1,41 +1,41 @@
-# ADR-072 (요약): Pillar 분해 & 모듈 경계 강화
+# ADR-072 (Summary): Pillar Decomposition & Module Boundary Hardening
 
 **Status:** Implemented (Phase A/B/C)
 
-## 의도
+## Intent
 
-- pillar 내부를 입력 정규화/계획/수집/결정/포맷/후처리로 분리해 테스트 가능한 경계를 고정한다.
-- 외부 스키마/동작은 유지하고 내부 구조만 정리한다.
+- Split each pillar into input normalization / planning / collection / decision / formatting / post-processing, and lock down testable boundaries.
+- Preserve external schemas/behavior while refactoring internal structure.
 
-## 진행 상황
+## Progress
 
-- Read: Input/Formatter 모듈 분리로 기본 파이프라인 경계 생성.
-- Explore/Understand/Change/Write: InputNormalizer 도입(초기 파싱/옵션 정규화 분리).
-- 공통 WorkflowMeta 유틸을 `pillars/shared`로 이동해 Change/Write에서 재사용.
-- Override 결정 로직을 공유 Decision 모듈로 분리하고 단위 테스트 추가.
-- Explore 예산/압축 결정 로직을 Decision 모듈로 분리하고 단위 테스트 추가.
-- Understand 결정(그래프/압축/fallback) 로직을 Decision 모듈로 분리하고 단위 테스트 추가.
-- Change/Write 가드레일 결정(Integrity guardrails) 로직을 Decision 모듈로 분리하고 단위 테스트 추가.
-- Decision 모듈 타이밍 계측 추가(override/guardrail/budget/compression).
-- Guardrails 평가 타이밍 계측 추가(`evaluateIntegrityGuardrails`).
+- Read: create a baseline pipeline boundary by splitting Input/Formatter modules.
+- Explore/Understand/Change/Write: introduce InputNormalizer (split initial parsing/option normalization).
+- Move shared WorkflowMeta utilities into `pillars/shared` and reuse them in Change/Write.
+- Extract override decision logic into a shared Decision module and add unit tests.
+- Extract Explore budget/compression decisions into a Decision module and add unit tests.
+- Extract Understand decisions (graph/compression/fallback) into a Decision module and add unit tests.
+- Extract Change/Write guardrails decisions (Integrity guardrails) into a Decision module and add unit tests.
+- Add Decision-module timing metrics (override/guardrail/budget/compression).
+- Add timing metrics for guardrail evaluation (`evaluateIntegrityGuardrails`).
 
-## 구현 상태
+## Implementation Status
 
-- [x] Phase A: 공통 유틸/빌더/포맷터 분리
-  - [x] Read Input/Formatter 분리
+- [x] Phase A: split common utilities/builders/formatters
+  - [x] Read Input/Formatter split
   - [x] Explore/Understand/Change/Write InputNormalizer
-  - [x] Composer 축소 + 공통 유틸 이동
-- [x] Phase B: 결정 로직 모듈화 + 테스트
-  - [x] Override 결정 모듈 분리 + 테스트 추가
-  - [x] Explore 예산/압축 결정 모듈 분리 + 테스트 추가
-  - [x] Understand 결정(그래프/압축/fallback) 모듈 분리 + 테스트 추가
-  - [x] Change/Write 가드레일 결정 모듈 분리 + 테스트 추가
-- [x] Phase C: 핫 경로 경계 확정 + 계측
-  - [x] Decision 모듈 타이밍 계측 추가
-  - [x] Guardrails 평가 타이밍 계측 추가
-  - [x] 모듈 단위 병목 측정/최적화 루프(벤치 스크립트 추가)
+  - [x] Composer reduction + shared utility moves
+- [x] Phase B: modularize decision logic + tests
+  - [x] Override decision module split + tests
+  - [x] Explore budget/compression decision module split + tests
+  - [x] Understand decisions (graph/compression/fallback) module split + tests
+  - [x] Change/Write guardrails decision module split + tests
+- [x] Phase C: lock hot-path boundaries + instrumentation
+  - [x] Decision module timing metrics
+  - [x] Guardrails evaluation timing metrics
+  - [x] Module-level bottleneck measurement/optimization loop (added benchmark script)
 
-## 계측 확인
+## Observability checks
 
-- `KAIRO_METRICS_MODE=detailed`로 실행 후 `manage`의 `metrics` 명령을 호출하면 `decision.*` 및 `guardrails.integrity_total_ms` 히스토그램을 확인할 수 있다.
-- 로컬 벤치: `npm run benchmark:adr-072-metrics` (스냅샷은 `benchmarks/reports/`에 저장)
+- Run with `KAIRO_METRICS_MODE=detailed`, then call `manage` → `metrics` to inspect `decision.*` and `guardrails.integrity_total_ms` histograms.
+- Local bench: `npm run benchmark:adr-072-metrics` (snapshots are stored in `benchmarks/reports/`)

@@ -5,40 +5,40 @@
 **Related:** `docs/adr/ADR-041-integrity-audit-and-guardrails.md`, `docs/adr/ADR-054-cross-language-contract-awareness.md`, `docs/adr/ADR-057-unified-degraded-reasons-and-action-guidance-v1.md`, `docs/adr/ADR-083-language-agnostic-symbolic-guards.md`
 
 ## Why
-`change`는 single-shot(한 번 만든 계획/패치) 의존도가 높아서, 첫 선택이 실패하면 fix-loop(추가 호출/재시도) 비용이 커진다.  
-ADR-082는 `change`에 **전략 탐색(strategySearch)** 단계를 넣어 “여러 후보를 안전하게(dry-run) 비교하고, 가장 좋은 후보 1개만 적용”하도록 한다.
+`change` tends to rely on a single-shot plan/patch. If the first choice fails, the fix-loop cost (extra calls/retries) grows quickly.  
+ADR-082 adds a **strategy search (strategySearch)** phase to `change` so it can safely compare multiple candidates (dry-run) and apply only the best candidate.
 
 ## What shipped
 - **StrategySearch (R0~R2): Best-of-N**
-  - 호출자가 제공한 후보(`strategySearch.candidates`)를 dry-run + 비용/리스크 신호로 평가하고 reward가 가장 큰 후보를 선택
-  - R1: 최대 2개, R2: 최대 3개 (stage별 hard cap)
+  - Evaluate caller-provided candidates (`strategySearch.candidates`) via dry-run and cost/risk signals, then select the candidate with the highest reward
+  - R1: up to 2, R2: up to 3 (hard cap per stage)
 - **R3: MCTS/UCT (optional stage)**
-  - 후보를 트리로 표현(`children`)하고, 제한된 rollouts/timebox 내 UCT로 확장 탐색
-  - seed RNG 지원(재현성)
-- **스코어링 강화 (Phase B)**
-  - cross-lang contract 영향(ADR-054) 기반 penalty
-  - symbolic guards(ADR-083) 기반 high severity penalty
-  - breaking change 신호(impact analyzer) penalty
-- **Batch candidate 지원**
-  - 후보가 여러 파일을 건드릴 때도 dry-run/contract/guards 평가가 가능하도록 batch 경로를 포함
+  - Represent candidates as a tree (`children`) and expand via UCT within limited rollouts/timebox
+  - Support seeded RNG (reproducibility)
+- **Scoring hardening (Phase B)**
+  - penalty based on cross-language contract impact (ADR-054)
+  - high-severity penalty based on symbolic guards (ADR-083)
+  - penalty for breaking-change signals (impact analyzer)
+- **Batch candidate support**
+  - include a batch path so candidates touching multiple files can still be evaluated via dry-run/contract/guards
 - **Observability / decisionTrace**
-  - `strategy_search_start/candidate/selected/degraded/budget_exceeded/skipped/mcts` 이벤트로 선택 근거와 degrade 사유를 남김
-  - 후보별 `rewardBreakdown`, 선택된 후보의 `selectedRewardBreakdown` 제공
+  - Record selection rationale and degraded reasons via `strategy_search_start/candidate/selected/degraded/budget_exceeded/skipped/mcts` events
+  - Expose per-candidate `rewardBreakdown` and the selected candidate’s `selectedRewardBreakdown`
 
 ## How to use (change input)
-`strategySearch`는 기본적으로 **opt-in**이며, `strategySearch`가 주어졌을 때만 동작한다.
+`strategySearch` is **opt-in** and runs only when provided.
 
-- 기본 동작
-  - `mode: "off"` 또는 `stage: "r0"` → strategySearch 스킵(R0)
-  - `mode: "auto" | "force"`인데 `candidates`가 없으면 → R0 폴백 + `reasoning_candidates_missing`
-- 대표 입력(요약)
+- Basics
+  - `mode: "off"` or `stage: "r0"` → skip strategySearch (R0)
+  - `mode: "auto" | "force"` but no `candidates` → fall back to R0 + `reasoning_candidates_missing`
+- Typical inputs (summary)
   - `strategySearch.mode`: `"off" | "auto" | "force"`
   - `strategySearch.stage`: `"r0" | "r1" | "r2" | "r3"`
   - `strategySearch.candidates[]`: `{ id, edits, targetFiles?, options?, children? }`
   - `strategySearch.mcts` (R3 only): `{ maxDepth, maxRollouts, exploration, seed? }`
 
 ## Reward function (current)
-기본 reward는 “작고/안전한 변경”을 선호한다.
+The base reward favors smaller/safer changes.
 
 ```txt
 reward = 100
@@ -60,7 +60,7 @@ reward = 100
 - R3 MCTS: `maxDepth=2`, `maxRollouts=5`, `exploration=1.4`, `seed?`
 
 ## Output signals
-`change` 결과에 `strategySearch`가 포함되며, 주요 필드는 다음과 같다:
+The `change` result includes `strategySearch`, with the following key fields:
 
 - `strategySearch.selectedCandidateId`
 - `strategySearch.selectedRewardBreakdown`

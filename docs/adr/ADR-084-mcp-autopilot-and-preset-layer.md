@@ -6,63 +6,62 @@
 
 ## Summary
 
-Kairo가 “강력하지만 무거운 MCP 서버”가 되는 문제(옵션 폭발/응답 폭발/host별 apply UX 불연속)를 해결하기 위해, **서버 내부에 Autopilot + Preset 레이어**를 도입한다.
+To address Kairo becoming a “powerful but heavy MCP server” (option explosion, response explosion, host-specific apply UX discontinuity), we introduce an **in-server Autopilot + Preset layer**.
 
-핵심은 “에이전트가 옵션을 똑똑하게 고르는 것”이 아니라, **프롬프트 없이도(=promptless) 성공률이 높게 동작하는 MCP 서버**로 만드는 것이다.
+The goal is not “agents picking options smartly”, but making Kairo a **promptless, high-success-rate MCP server**.
 
 ## Decision (What changed)
 
-### 1) Public surface를 2단으로 분리한다
+### 1) Split the public surface into two tiers
 
-- **Compact surface (기본 권장):** `task` + `manage`만 노출해 `list_tools` 토큰 풋프린트를 줄인다.
-- **Pillars surface (고급/직접 제어):** `explore/understand/change/write/manage`를 그대로 유지한다.
-- 전환: `KAIRO_PUBLIC_SURFACE=compact|pillars`
+- **Compact surface (recommended default):** expose only `task` + `manage` to reduce the `list_tools` token footprint.
+- **Pillars surface (advanced/direct control):** keep `explore/understand/change/write/manage`.
+- Switch: `KAIRO_PUBLIC_SURFACE=compact|pillars`
 
-### 2) Router tool `task`를 추가한다
+### 2) Add the router tool `task`
 
-`task`는 “무슨 pillar/옵션을 써야 하는지”를 서버가 결정하도록 하는 **고수준 엔트리포인트**다.
+`task` is a **high-level entrypoint** where the server decides which pillar/options to use.
 
 - `mode`: `auto|ask|analyze|plan_change|apply_change|write|verify`
 - `budget`: `lean|balanced|deep`
-- 기본 출력은 항상 **summary-first**이며, 큰 결과는 **artifact**로 분리한다.
-- 일부 모드는 단계적 롤아웃일 수 있다(예: `write`/`verify`).
+- Default output is always **summary-first**, and large results are split into **artifacts**.
+- Some modes may be gradually rolled out (e.g., `write`/`verify`).
 
-### 3) Preset/Mode로 “env 스프롤”을 줄인다
+### 3) Reduce “env sprawl” via Presets/Modes
 
-- `KAIRO_MODE=mcp|dev|ci` (현재 기본값은 `mcp`)
-- `KAIRO_PRESET=mcp-lean|mcp-balanced|mcp-deep` (mcp에서 기본값은 `mcp-lean`)
-- `.kairo/config/mcp.json`으로 env 대신 프로젝트 로컬에서 preset/표면/핸드셰이크/타임박스 등을 고정한다.
+- `KAIRO_MODE=mcp|dev|ci` (default: `mcp`)
+- `KAIRO_PRESET=mcp-lean|mcp-balanced|mcp-deep` (default for `mcp`: `mcp-lean`)
+- Use `.kairo/config/mcp.json` to pin preset/surface/handshake/timeboxes locally (instead of relying on env vars).
 
-### 4) Sloppy input을 성공으로 바꾼다 (canonicalization + compat)
+### 4) Turn sloppy input into success (canonicalization + compat)
 
-호스트/에이전트가 자주 하는 alias/타입 실수는 가능한 범위에서 **정상화**하고, 모든 변환은 `contract.findings`로 기록한다.  
-(`KAIRO_TOOL_SCHEMA_MODE=compat|strict`는 ADR-058 계약을 따른다.)
+Normalize common alias/type mistakes from hosts/agents when possible, and record all conversions in `contract.findings`.  
+(`KAIRO_TOOL_SCHEMA_MODE=compat|strict` follows the ADR-058 contract.)
 
-### 5) “짧은 응답 + artifact”를 전 pillar로 확장한다
+### 5) Extend “short response + artifact” across pillars
 
-ADR-080의 envelope budget/아티팩트 분리 패턴을 `change/write/manage`까지 확장해,
-기본 응답이 대화 컨텍스트를 터뜨리지 않도록 한다.
+Extend ADR-080’s envelope-budget + artifact-splitting pattern to `change/write/manage` so default responses do not blow up conversation context.
 
-### 6) Apply handshake(2-phase commit)를 서버가 강제한다
+### 6) Enforce the apply handshake (2-phase commit) in the server
 
-host UX가 달라도 안전모델이 깨지지 않게, **plan → apply**를 서버가 강제한다.
+To keep safety invariants consistent across host UX differences, the server enforces **plan → apply**.
 
-- plan 단계에서만 `applyToken`을 발급
-- apply는 `draftId + applyToken` 없으면 `blocked`
-- 기본 정책(권장): TTL/one-time/session-bound/drift-bound
+- Issue `applyToken` only in the plan phase
+- Block apply without `draftId + applyToken`
+- Recommended default policy: TTL/one-time/session-bound/drift-bound
 
-### 7) verify는 “실행”이 아니라 “안전한 검증 + 실행 계획”이다
+### 7) verify is not “execution”, but “safe validation + an execution plan”
 
-기본 경로에서 임의 shell command 실행을 하지 않는다.  
-대신, 내부적으로 가능한 검증(가드레일/시맨틱 등) + 사용자가 실행할 추천 검증 계획을 제공한다.
+The default path does not run arbitrary shell commands.  
+Instead, it performs internal validations where possible (guardrails/semantic checks, etc.) and provides a recommended validation plan for the user to run.
 
-### 8) schema는 on-demand로 꺼내본다
+### 8) Provide schemas on-demand
 
-compact surface에서 고급 옵션이 필요하면:
+When advanced options are needed on the compact surface:
 
 - `manage({ command: "schema", tool: "<tool>", detail: "summary" | "full" })`
 
-`detail:"full"`은 schema JSON을 artifact로 제공한다.
+`detail:"full"` returns the schema JSON as an artifact.
 
 ## Implementation notes (current repo)
 

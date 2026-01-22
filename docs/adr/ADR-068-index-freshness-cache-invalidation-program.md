@@ -6,14 +6,14 @@
 
 ## Summary
 
-파일 변경/삭제/리인덱스 이벤트를 캐시 무효화로 즉시 연결해 stale 결과를 줄였다. stale risk 지표를 메트릭/doctor에 노출하고, 인덱스 stale이 높은 상태에서는 apply를 차단(override로만 우회)한다.
+Reduce stale results by immediately wiring file change/delete/reindex events into cache invalidation. Surface stale-risk metrics in metrics/doctor, and block apply when index staleness is high (bypass only via override).
 
 ## Decision
 
-- `CacheInvalidationHub`로 invalidate 호출을 중앙 집선한다.
-- 파일/디렉토리 이벤트에 맞춰 search/cluster/orchestration 캐시를 즉시 정리한다.
-- stale risk 지표를 메트릭과 doctor에 포함한다.
-- stale risk가 high일 때 apply를 기본 차단한다(override 필요).
+- Centralize invalidation calls in `CacheInvalidationHub`.
+- Immediately clear search/cluster/orchestration caches on file/directory events.
+- Include stale-risk metrics in metrics and doctor.
+- Block apply by default when stale risk is high (override required).
 
 ## Implementation Notes
 
@@ -21,9 +21,9 @@
 - orchestration cache clear + epoch key: `src/orchestration/CachingStrategy.ts`
 - invalidate counters + index metrics: `src/utils/MetricsCatalog.ts`, `src/handlers/ManageHandlers.ts`
 - stale guard: `src/orchestration/pillars/change/ChangePillar.ts`, `src/orchestration/pillars/WritePillar.ts`
-- override bypass key: `override.allow.staleGuard.bypass` (policy allowlist 필요)
+- override bypass key: `override.allow.staleGuard.bypass` (must be allowlisted by policy)
 
 ## Testing
 
-- 파일 변경 직후 cache hit가 stale로 남지 않는지 확인한다.
-- `project_manage metrics`에서 `index.*` 지표와 `cache.invalidate.*` 카운터를 확인한다.
+- Verify cache hits do not remain stale immediately after file changes.
+- In `project_manage metrics`, verify `index.*` metrics and `cache.invalidate.*` counters.

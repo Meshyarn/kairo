@@ -5,31 +5,31 @@
 **Related:** `docs/adr/ADR-043-adaptive-context-architecture.md`, `docs/adr/ADR-055-universal-parity-and-standardization.md`
 
 ## Why
-기존 `maxChars` 기반 하드 커팅은 실제 모델 토큰 소비량과 불일치하고(언어/밀도 차이), 코드/문서가 “문장/블록 중간에서” 끊겨 에이전트 오판과 재호출을 유발했다.
+The previous `maxChars`-based hard cut did not match actual model token usage (language/density differences). It also tended to truncate code/docs in the middle of sentences/blocks, which increased agent misreads and retry loops.
 
 ## What shipped
-- **Token-first 예산:** `limits.maxTokens` 지원(Explore/Understand/Read), `maxChars`와 함께 주어지면 둘 다 만족(더 빡센 제한 적용). 0.4.27+에서는 최종 응답 JSON(envelope)도 post-pass로 추가 감쇠한다(ADR-080).
-- **Elastic truncation:** 토큰 기준 절단 시 “블록/문단/문장 경계” 근처에서 자르도록 완화(± window)
-- **Distill(LOD 하향):** 예산 초과 시 일부 full content를 preview/skeleton로 다운그레이드(Explore), skeleton은 digest로 축약(Understand)
-- **표준 degraded:** 예산으로 축약되면 `degraded: true` + `reasons: ["budget_exceeded"]` + `compression` 메타데이터 제공
+- **Token-first budgets:** Added `limits.maxTokens` support (Explore/Understand/Read). If provided together with `maxChars`, both constraints must be satisfied (the stricter limit wins). In 0.4.27+, the final response JSON envelope is also post-trimmed (ADR-080).
+- **Elastic truncation:** When truncating by token budget, cut near block/paragraph/sentence boundaries (± window).
+- **Distill (LOD downgrade):** When over budget, downgrade some full content to preview/skeleton (Explore), and compress skeletons into digests (Understand).
+- **Standard degraded signal:** When compressed due to budget, return `degraded: true` + `reasons: ["budget_exceeded"]` + `compression` metadata.
 
 ## How to use
-- 예산 지정:
+- Set budgets:
   - `explore({ ..., limits: { maxTokens: 8000 } })`
   - `understand({ ..., limits: { maxTokens: 6000 } })`
   - `read({ ..., limits: { maxTokens: 4000 } })`
-- 서버 기본값(환경변수):
+- Server defaults (env vars):
   - `KAIRO_DEFAULT_MAX_TOKENS`
   - `KAIRO_EXPLORE_MAX_TOKENS`, `KAIRO_UNDERSTAND_MAX_TOKENS`, `KAIRO_READ_MAX_TOKENS`
-- 토큰 추정기 선택:
-  - `KAIRO_TOKEN_ESTIMATOR=whitespace`(기본) 또는 `KAIRO_TOKEN_ESTIMATOR=chars`
+- Choose the token estimator:
+  - `KAIRO_TOKEN_ESTIMATOR=whitespace` (default) or `KAIRO_TOKEN_ESTIMATOR=chars`
 
 ## Output signals
-- `degraded: true` + `reasons`/`degradedReasons`에 `budget_exceeded`
+- `degraded: true` with `budget_exceeded` in `reasons`/`degradedReasons`
 - `compression`:
   - `mode: "truncate" | "distill"`
   - `maxTokens`, `estimatedTokens`, `usedChars`
-  - (가능한 경우) `decisions`로 어떤 항목이 LOD 하향되었는지 표시
+  - (when available) `decisions` describing which items were downgraded
 
 ## Key code paths
 - Token budget core: `src/orchestration/TokenBudget.ts`

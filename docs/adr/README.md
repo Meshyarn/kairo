@@ -78,7 +78,7 @@ The entries below cover all ADRs from the project history. Items marked “retou
 - ADR-070: Offline baseline policy (remote embeddings, model packaging) → `docs/adr/ADR-070-offline-baseline-policy-remote-embeddings-model-packaging.md`
 - ADR-071: IFileSystem boundary expansion & testability program → `docs/adr/ADR-071-ifilesystem-boundary-expansion-and-testability-program.md`
 - ADR-072: Pillar decomposition & module boundary hardening → `docs/adr/ADR-072-pillar-decomposition-and-module-boundary-hardening.md`
-- ADR-073: Option trace 표준화 (decisionTrace/effectiveOptions v1) → `docs/adr/ADR-073-option-trace-standardization-decisiontrace-effectiveoptions.md`
+- ADR-073: Option trace standardization (decisionTrace/effectiveOptions v1) → `docs/adr/ADR-073-option-trace-standardization-decisiontrace-effectiveoptions.md`
 - ADR-074: Token budget allocator v2 + summary reuse → `docs/adr/ADR-074-token-budget-allocator-v2-cross-pillar-summary-reuse.md`
 - ADR-075: Adaptive Flow rollout plan (profile/scale gate) → `docs/adr/ADR-075-adaptive-flow-rollout-plan-ucg-lod-profile-based-enable.md`
 - ADR-076: Symbol semantic search E2E (opt-in) → `docs/adr/ADR-076-symbol-semantic-search-e2e-integrate-or-deprecate.md`
@@ -90,6 +90,7 @@ The entries below cover all ADRs from the project history. Items marked “retou
 - ADR-082 (summary): Simulate → Reason → Execute (StrategySearch + MCTS) for Change reliability → `docs/adr/ADR-082-simulate-reason-execute-mcts.md`
 - ADR-083 (summary): Language-agnostic symbolic guards (portable semantic checks + optional solver) → `docs/adr/ADR-083-language-agnostic-symbolic-guards.md`
 - ADR-084 (retouched): MCP autopilot & preset layer (compact surface + `task` router + apply handshake) → `docs/adr/ADR-084-mcp-autopilot-and-preset-layer.md`
+- ADR-085 (summary): Rust native search core (Tantivy integration) → `docs/adr/ADR-085-rust-native-search-core-tantivy.md`
 - ADR-055-H: Adaptive trust policy (no curated summary)
 - ADR-055-L: Action guidance + Understand fallback graph (no curated summary)
 - ADR-033: “Six Pillars” precursor to ADR-040; introduced orchestration primitives and earlier public surface.
@@ -129,6 +130,7 @@ The entries below cover all ADRs from the project history. Items marked “retou
 - ADR-070: Offline baseline policy (remote embeddings, model packaging) → `docs/adr/ADR-070-offline-baseline-policy-remote-embeddings-model-packaging.md`
 - ADR-071: IFileSystem boundary expansion & testability program → `docs/adr/ADR-071-ifilesystem-boundary-expansion-and-testability-program.md`
 - ADR-072: Pillar decomposition & module boundary hardening → `docs/adr/ADR-072-pillar-decomposition-and-module-boundary-hardening.md`
+- ADR-085 (summary): Rust native search core (Tantivy integration) → `docs/adr/ADR-085-rust-native-search-core-tantivy.md`
 - ADR-022: Scalable memory architecture (on-disk/lazy/streaming baseline ideas).
 - ADR-028: Performance + accuracy enhancements (historical deep dive).
 - ADR-029: Production readiness / system maturity (historical).
@@ -138,6 +140,7 @@ The entries below cover all ADRs from the project history. Items marked “retou
 
 - ADR-043 (retouched): Adaptive Context Architecture (LOD + UCG) → `docs/adr/ADR-043-adaptive-context-architecture.md`
 - ADR-069: Search/index scalability without SQLite (baseline async, secondary index) → `docs/adr/ADR-069-search-index-scalability-without-sqlite.md`
+- ADR-085 (summary): Rust native search core (Tantivy integration) → `docs/adr/ADR-085-rust-native-search-core-tantivy.md`
 - ADR-017/017-addendum: Context-aware clustered search; token control; caching refinements.
 - ADR-018: Consolidated clustered search (refinement / merged design).
 - ADR-014: Smart File Profile (token-efficient default reads, skeleton-first).
@@ -196,7 +199,7 @@ This list captures every ADR title from the project history and where it’s cov
 - ADR-037: Universal Text + Code Comments + Retrieval Quality + Embedding Ops + Scalable Storage (Docs v2) → `docs/adr/ADR-036-039-universal-documents-and-evidence.md`
 - ADR-038: Token-Efficient Evidence Packs & Progressive Disclosure (Agent Token Budget) → `docs/adr/ADR-036-039-universal-documents-and-evidence.md`
 - ADR-040: Five Pillars Toolset Consolidation (Explore-first) → `docs/adr/ADR-040-five-pillars-toolset.md`
-- ADR-041: Integrity Audit Modes (Cross-source Consistency) — Five Pillars 강화 → `docs/adr/ADR-041-integrity-audit-and-guardrails.md`
+- ADR-041: Integrity Audit Modes (Cross-source Consistency) — Five Pillars hardening → `docs/adr/ADR-041-integrity-audit-and-guardrails.md`
 - ADR-042-001: P0 Observability + Standalone Baseline (No Network / No Native DB) → `docs/adr/ADR-042-series-production-baseline.md`
 - ADR-042-002: P1 Hybrid ANN + Search Scaling (Offline-First) → `docs/adr/ADR-042-series-production-baseline.md`
 - ADR-042-003: P2 Vector Quantization + Persistence/IO Scaling (Offline-First) → `docs/adr/ADR-042-series-production-baseline.md`
@@ -214,7 +217,7 @@ This list captures every ADR title from the project history and where it’s cov
 - ADR-048: Sync Feedback Loop & Architectural Safety Guardrails → summarized in this index (see “Safety”)
 - ADR-049: Integrity Engine Defensive Hardening → summarized in this index (see “Safety”)
 - ADR-050: Writer's Flow (Research → Analyze → Skeleton → Write → Review → Manage) → `docs/adr/ADR-050-writers-flow.md`
-- ADR-061: Language Parity Gates (L2/L3) & Silent-pass 제거 → `docs/adr/ADR-061-language-parity-gates-and-silent-pass-removal.md`
+- ADR-061: Language Parity Gates (L2/L3) & silent-pass removal → `docs/adr/ADR-061-language-parity-gates-and-silent-pass-removal.md`
 - ADR-064: FileVersion Handshake (read↔apply) → `docs/adr/ADR-064-fileversion-handshake-read-apply.md`
 - ADR-065: Change Execution Contract (atomic apply + delete policy) → `docs/adr/ADR-065-change-execution-contract-atomic-apply-partial-opt-in-delete-policy.md`
 - ADR-066: Guardrails override & audit trail → `docs/adr/ADR-066-guardrails-override-and-audit-trail.md`
