@@ -301,6 +301,7 @@ pub struct NativeSearchStats {
     pub segment_count: u32,
     pub index_version: u32,
     pub schema_version: u32,
+    pub write_enabled: bool,
 }
 
 #[napi]
@@ -581,6 +582,7 @@ impl NativeSearchCore {
             segment_count,
             index_version: self.meta.index_version,
             schema_version: self.meta.schema_version,
+            write_enabled: self.write_enabled,
         })
     }
 }

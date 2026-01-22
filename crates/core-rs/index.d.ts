@@ -68,6 +68,7 @@ export interface NativeSearchStats {
   segmentCount: number
   indexVersion: number
   schemaVersion: number
+  writeEnabled: boolean
 }
 export interface SymbolicSolverEvidence {
   snippet?: string
