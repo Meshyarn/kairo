@@ -69,6 +69,14 @@ export class WritePillar {
 
   constructor(private readonly registry: InternalToolRegistry) {}
 
+  private resolveRootPath(): string {
+    const injected =
+      typeof this.registry.getMetadata === "function"
+        ? this.registry.getMetadata<string>("rootPath")
+        : undefined;
+    return typeof injected === "string" && injected.length > 0 ? injected : process.cwd();
+  }
+
   private computeHash(content: string): { algorithm: 'xxhash' | 'sha256'; value: string } {
     const hash = crypto.createHash('sha256').update(content).digest('hex');
     return { algorithm: 'sha256', value: hash };
@@ -80,7 +88,7 @@ export class WritePillar {
       typeof this.registry.getMetadata === "function"
         ? this.registry.getMetadata<IFileSystem>("fileSystem")
         : undefined;
-    this.fileSystem = injected ?? new NodeFileSystem(process.cwd());
+    this.fileSystem = injected ?? new NodeFileSystem(this.resolveRootPath());
     return this.fileSystem;
   }
 
@@ -115,7 +123,7 @@ export class WritePillar {
     return applyFormatterBridge({
       mode,
       filePaths: [filePath],
-      rootPath: process.cwd(),
+      rootPath: this.resolveRootPath(),
       fileSystem,
       tool: "write",
       rollbackAvailable

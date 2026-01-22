@@ -3,6 +3,7 @@ import { HandlerContext } from "./HandlerContext.js";
 import { IntentRouter } from "../orchestration/IntentRouter.js";
 import type { ExploreResponse } from "../orchestration/pillars/explore/ResultFormatter.js";
 import { resolveAutopilotPolicy, resolvePublicSurface } from "../orchestration/policy/McpModePresetRegistry.js";
+import { buildDegradedReasons } from "../orchestration/DegradedReasonMapper.js";
 
 type TaskMode = "auto" | "ask" | "analyze" | "plan_change" | "apply_change" | "write" | "verify";
 type TaskBudget = "lean" | "balanced" | "deep";
@@ -17,6 +18,15 @@ type AutoRepairAttempt = {
 };
 type AutoRepairReport = {
     attempts: AutoRepairAttempt[];
+};
+type VerificationResult = {
+    targetPath?: string;
+    relPath?: string;
+    exists: boolean;
+    draftId?: string;
+    draftFound?: boolean;
+    contentMatch?: boolean;
+    fileVersionMatch?: boolean;
 };
 
 const AUTO_REPAIR_REINDEX_PATH_LIMIT = 25;
@@ -58,6 +68,13 @@ export class TaskHandlers extends BaseHandler {
         return "lean";
     }
 
+    private normalizeSafety(raw: any): "plan" | "apply" | undefined {
+        if (raw === "plan" || raw === "apply") {
+            return raw;
+        }
+        return undefined;
+    }
+
     private resolveRoutingMode(mode: TaskMode, request: string) {
         if (mode !== "auto") {
             return { mode, category: undefined as string | undefined };
@@ -69,7 +86,21 @@ export class TaskHandlers extends BaseHandler {
             return { mode: "ask" as TaskMode, category };
         }
         if (category === "change") return { mode: "plan_change" as TaskMode, category };
+        if (category === "write") return { mode: "write" as TaskMode, category };
         return { mode: "ask" as TaskMode, category };
+    }
+
+    private resolveTargetPath(targetFiles: string[], paths: string[]): string | undefined {
+        if (targetFiles.length > 0) return targetFiles[0];
+        if (paths.length > 0) return paths[0];
+        return undefined;
+    }
+
+    private extractContentFromRequest(request: string): string | undefined {
+        if (!request) return undefined;
+        const match = request.match(/```(?:\w+)?\s*\n([\s\S]*?)```/);
+        if (!match) return undefined;
+        return match[1].trimEnd();
     }
 
     private extractPaths(value: any): string[] {
@@ -111,7 +142,8 @@ export class TaskHandlers extends BaseHandler {
                 tool: "write",
                 args: {
                     intent: args.request,
-                    safety: "plan"
+                    safety: "plan",
+                    ...(args.targetFiles[0] ? { targetPath: args.targetFiles[0] } : {})
                 },
                 reason: "Write request detected; use plan mode to draft safely."
             });
@@ -134,7 +166,7 @@ export class TaskHandlers extends BaseHandler {
         const response = args.response;
         const docsCount = response?.data?.docs?.length ?? 0;
         const codeCount = response?.data?.code?.length ?? 0;
-        const status = response?.status ?? "ok";
+        const status = response?.status ?? (response?.success === false ? "blocked" : "success");
         const topCode = response?.data?.code?.slice(0, 3).map((item) => item.filePath).filter(Boolean) ?? [];
         const topDocs = response?.data?.docs?.slice(0, 3).map((item) => item.filePath).filter(Boolean) ?? [];
         const bullets = [
@@ -433,17 +465,322 @@ export class TaskHandlers extends BaseHandler {
         };
     }
 
+    private buildWriteSummary(args: {
+        response: any;
+        request: string;
+    }): { title: string; bullets: string[]; next: string[] } {
+        const response = args.response ?? {};
+        const targetFile = typeof response?.targetPath === "string"
+            ? response.targetPath
+            : (typeof response?.targetFile === "string" ? response.targetFile : (response?.createdFiles?.[0]?.path ?? "unknown"));
+        const status = response?.status ?? (response?.success === false ? "blocked" : "success");
+        const draftId = response?.draftPack?.id ?? "none";
+        const createdCount = Array.isArray(response?.createdFiles) ? response.createdFiles.length : 0;
+        const reviewId = response?.review?.id ?? response?.postReview?.id ?? "none";
+        const bullets = [
+            `Target: ${targetFile}.`,
+            `Status: ${status}.`,
+            `Draft: ${draftId}.`,
+            `Created files: ${createdCount}.`
+        ];
+        const next: string[] = [];
+        if (draftId !== "none") {
+            next.push("Use manage artifact to review the draft pack.");
+        }
+        if (reviewId !== "none") {
+            next.push("Use manage artifact to review the write review.");
+        }
+        return {
+            title: `Write result for "${args.request}".`,
+            bullets,
+            next
+        };
+    }
+
+    private buildVerifySummary(args: {
+        request: string;
+        verification: VerificationResult;
+    }): { title: string; bullets: string[]; next: string[] } {
+        const verification = args.verification;
+        const target = verification.relPath ?? verification.targetPath ?? "unknown";
+        const exists = verification.exists ? "yes" : "no";
+        const contentMatch = verification.contentMatch === undefined
+            ? "unknown"
+            : (verification.contentMatch ? "match" : "mismatch");
+        const versionMatch = verification.fileVersionMatch === undefined
+            ? "unknown"
+            : (verification.fileVersionMatch ? "match" : "mismatch");
+        const bullets = [
+            `Target: ${target}.`,
+            `Exists: ${exists}.`,
+            `Draft match: ${contentMatch}.`,
+            `File version: ${versionMatch}.`
+        ];
+        const next: string[] = [];
+        if (verification.draftId && verification.draftFound) {
+            next.push("Use manage artifact to review the draft pack.");
+        }
+        return {
+            title: `Verify result for "${args.request}".`,
+            bullets,
+            next
+        };
+    }
+
+    private applyTaskDefaults(
+        args: Record<string, unknown>,
+        defaults: { budget: TaskBudget; output?: any; traceEnabled: boolean; sessionId?: string }
+    ): Record<string, unknown> {
+        const next = { ...args };
+        if (defaults.budget !== undefined && next.budget === undefined) {
+            next.budget = defaults.budget;
+        }
+        if (defaults.output !== undefined && next.output === undefined) {
+            next.output = defaults.output;
+        }
+        if (defaults.traceEnabled && next.trace === undefined) {
+            next.trace = true;
+        }
+        if (defaults.sessionId && next.sessionId === undefined) {
+            next.sessionId = defaults.sessionId;
+        }
+        return next;
+    }
+
+    private filterTaskArgs(args: Record<string, unknown>): Record<string, unknown> {
+        const allowed = new Set([
+            "request",
+            "mode",
+            "budget",
+            "sessionId",
+            "draftId",
+            "applyToken",
+            "refinement",
+            "edits",
+            "paths",
+            "targetFiles",
+            "safety",
+            "output",
+            "trace"
+        ]);
+        const filtered: Record<string, unknown> = {};
+        for (const [key, value] of Object.entries(args)) {
+            if (!allowed.has(key) || value === undefined) continue;
+            filtered[key] = value;
+        }
+        return filtered;
+    }
+
+    private rewriteToolCallForCompact(
+        toolCall: any,
+        defaults: { request: string; budget: TaskBudget; output?: any; traceEnabled: boolean; sessionId?: string }
+    ): { tool: string; args: Record<string, unknown> } | undefined {
+        if (!toolCall || typeof toolCall.tool !== "string") return undefined;
+        const tool = toolCall.tool;
+        const toolArgs = (toolCall.args && typeof toolCall.args === "object") ? toolCall.args : {};
+        if (tool === "manage") {
+            return { tool, args: toolArgs };
+        }
+        if (tool === "task") {
+            const merged = this.applyTaskDefaults({ ...toolArgs }, defaults);
+            return { tool, args: this.filterTaskArgs(merged) };
+        }
+        if (tool === "change") {
+            const safety = toolArgs.safety === "apply" ? "apply" : "plan";
+            const mode = safety === "apply" ? "apply_change" : "plan_change";
+            const targetFiles = Array.isArray(toolArgs.targetFiles) ? toolArgs.targetFiles
+                : (typeof toolArgs.target === "string" ? [toolArgs.target]
+                    : (typeof toolArgs.targetPath === "string" ? [toolArgs.targetPath] : undefined));
+            const merged = this.applyTaskDefaults(
+                {
+                    request: typeof toolArgs.intent === "string" ? toolArgs.intent : defaults.request,
+                    mode,
+                    targetFiles,
+                    edits: toolArgs.edits,
+                    draftId: toolArgs.draftId,
+                    applyToken: toolArgs.applyToken,
+                    sessionId: toolArgs.sessionId,
+                    refinement: toolArgs.refinement,
+                    safety: toolArgs.safety,
+                    paths: toolArgs.paths
+                },
+                defaults
+            );
+            return { tool: "task", args: this.filterTaskArgs(merged) };
+        }
+        if (tool === "write") {
+            const safety = toolArgs.safety === "apply" || toolArgs.dryRun === false ? "apply" : "plan";
+            const targetFiles = typeof toolArgs.targetPath === "string"
+                ? [toolArgs.targetPath]
+                : (Array.isArray(toolArgs.targetFiles)
+                    ? toolArgs.targetFiles
+                    : (typeof toolArgs.target === "string" ? [toolArgs.target] : undefined));
+            const merged = this.applyTaskDefaults(
+                {
+                    request: typeof toolArgs.intent === "string" ? toolArgs.intent : defaults.request,
+                    mode: "write",
+                    safety,
+                    targetFiles,
+                    draftId: toolArgs.draftId,
+                    applyToken: toolArgs.applyToken,
+                    sessionId: toolArgs.sessionId,
+                    refinement: toolArgs.refinement
+                },
+                defaults
+            );
+            return { tool: "task", args: this.filterTaskArgs(merged) };
+        }
+        return undefined;
+    }
+
+    private rewriteGuidanceForCompact(args: {
+        guidance?: any;
+        request: string;
+        budget: TaskBudget;
+        output?: any;
+        traceEnabled: boolean;
+        sessionId?: string;
+        surface: string;
+    }): any | undefined {
+        if (!args.guidance || args.surface !== "compact") return args.guidance;
+        const defaults = {
+            request: args.request,
+            budget: args.budget,
+            output: args.output,
+            traceEnabled: args.traceEnabled,
+            sessionId: args.sessionId
+        };
+        const rewritten: any = { ...args.guidance };
+        if (Array.isArray(args.guidance.suggestedActions)) {
+            const updated = args.guidance.suggestedActions
+                .map((action: any) => {
+                    if (!action?.toolCall) return action;
+                    const updatedToolCall = this.rewriteToolCallForCompact(action?.toolCall, defaults);
+                    if (!updatedToolCall) return null;
+                    if (updatedToolCall === action?.toolCall) return action;
+                    return { ...action, toolCall: updatedToolCall };
+                })
+                .filter(Boolean);
+            if (updated.length > 0) {
+                rewritten.suggestedActions = updated;
+            } else {
+                delete rewritten.suggestedActions;
+            }
+        }
+        if (Array.isArray(args.guidance.nextCalls)) {
+            const updatedNext = args.guidance.nextCalls
+                .map((nextCall: any) => {
+                    const updatedToolCall = this.rewriteToolCallForCompact({ tool: nextCall.tool, args: nextCall.args }, defaults);
+                    if (!updatedToolCall) return null;
+                    return { ...nextCall, tool: updatedToolCall.tool, args: updatedToolCall.args };
+                })
+                .filter(Boolean);
+            if (updatedNext.length > 0) {
+                rewritten.nextCalls = updatedNext;
+            } else {
+                delete rewritten.nextCalls;
+            }
+        }
+        return rewritten;
+    }
+
+    private async buildVerificationResult(args: {
+        targetPath?: string;
+        draftId?: string;
+    }): Promise<{ verification: VerificationResult; reasons: string[] }> {
+        const reasons: string[] = [];
+        const verification: VerificationResult = {
+            targetPath: args.targetPath,
+            exists: false,
+            draftId: args.draftId
+        };
+        if (!args.targetPath) {
+            reasons.push("file_missing");
+            return { verification, reasons };
+        }
+        const pathNormalizer = this.context.pathNormalizer;
+        let relPath = args.targetPath;
+        if (pathNormalizer) {
+            try {
+                relPath = pathNormalizer.normalize(args.targetPath);
+            } catch {
+                reasons.push("file_missing");
+                return { verification, reasons };
+            }
+        }
+        verification.relPath = relPath;
+        const fileSystem = this.context.fileSystem;
+        let fileContent: string | undefined;
+        try {
+            fileContent = await fileSystem.readFile(relPath);
+            verification.exists = true;
+        } catch {
+            verification.exists = false;
+            reasons.push("file_missing");
+        }
+        let draftPack: any;
+        if (args.draftId) {
+            const draftArtifact = this.context.flowArtifactManager?.get(args.draftId);
+            draftPack = draftArtifact?.type === "draft" ? (draftArtifact as any).pack : undefined;
+            verification.draftFound = Boolean(draftPack);
+            if (!draftPack) {
+                reasons.push("draft_missing");
+            }
+        }
+        let draftContent: string | undefined;
+        if (draftPack?.phantomFiles?.length) {
+            const match = draftPack.phantomFiles.find((file: any) => {
+                if (!file?.path) return false;
+                if (!pathNormalizer) return file.path === relPath;
+                try {
+                    return pathNormalizer.normalize(file.path) === relPath;
+                } catch {
+                    return file.path === relPath;
+                }
+            });
+            if (match && typeof match.content === "string") {
+                draftContent = match.content;
+            }
+        }
+        if (verification.exists && draftContent !== undefined) {
+            verification.contentMatch = fileContent === draftContent;
+            if (verification.contentMatch === false) {
+                reasons.push("content_mismatch");
+            }
+        }
+        const expectedVersion = draftPack?.fileVersions?.[relPath];
+        if (verification.exists && expectedVersion && this.context.fileVersionManager && pathNormalizer) {
+            try {
+                const absPath = pathNormalizer.toAbsolute(relPath);
+                const currentVersion = await this.context.fileVersionManager.getVersion(absPath);
+                if (expectedVersion.expectedVersion !== undefined) {
+                    verification.fileVersionMatch = currentVersion.version === expectedVersion.expectedVersion;
+                } else if (expectedVersion.expectedHash) {
+                    verification.fileVersionMatch = currentVersion.contentHash === expectedVersion.expectedHash;
+                }
+                if (verification.fileVersionMatch === false) {
+                    reasons.push("file_version_mismatch");
+                }
+            } catch {
+                // ignore version read failures
+            }
+        }
+        return { verification, reasons };
+    }
+
     private async executeTask(args: any) {
         const startedAt = Date.now();
         const request = typeof args?.request === "string" ? args.request.trim() : "";
         const mode = this.normalizeMode(args?.mode);
         const budget = this.normalizeBudget(args?.budget);
+        const safety = this.normalizeSafety(args?.safety);
         const profile = this.resolveProfile(budget);
         const autopilotPolicy = resolveAutopilotPolicy();
         const requestedFormat = args?.output?.format;
         const outputFormat = requestedFormat === "summary" || requestedFormat === "standard"
             ? requestedFormat
             : autopilotPolicy.defaultOutputFormat;
+        const outputPayload = args?.output && typeof args.output === "object" ? args.output : undefined;
         const maxTokens = this.extractMaxTokens(args?.output);
         const sessionId = typeof args?.sessionId === "string" ? args.sessionId : undefined;
         const draftId = typeof args?.draftId === "string" ? args.draftId : undefined;
@@ -474,7 +811,15 @@ export class TaskHandlers extends BaseHandler {
                 limits: maxTokens ? { maxTokens } : undefined
             });
             const summary = this.buildUnderstandSummary({ response, request });
-            const guidance = this.buildGuidance(response?.guidance, nextCalls);
+            const guidance = this.rewriteGuidanceForCompact({
+                guidance: this.buildGuidance(response?.guidance, nextCalls),
+                request,
+                budget,
+                output: outputPayload,
+                traceEnabled,
+                sessionId,
+                surface
+            });
             const artifacts = response?.callGraphArtifactId
                 ? [{ id: response.callGraphArtifactId, kind: "call_graph", detail: "summary" }]
                 : undefined;
@@ -528,7 +873,15 @@ export class TaskHandlers extends BaseHandler {
                     ]
                 };
                 const summary = this.buildPlanPrepSummary({ request, recommendedTargets, packId });
-                const guidance = this.buildGuidance(response?.guidance, nextCalls);
+                const guidance = this.rewriteGuidanceForCompact({
+                    guidance: this.buildGuidance(response?.guidance, nextCalls),
+                    request,
+                    budget,
+                    output: outputPayload,
+                    traceEnabled,
+                    sessionId,
+                    surface
+                });
                 const details = outputFormat === "standard" ? { pillar: "explore", response } : undefined;
                 return {
                     ok: true,
@@ -567,7 +920,15 @@ export class TaskHandlers extends BaseHandler {
                 ...(planLimits ? { limits: planLimits } : {})
             });
             const summary = this.buildPlanSummary({ response, request });
-            const guidance = this.buildGuidance(response?.guidance, nextCalls);
+            const guidance = this.rewriteGuidanceForCompact({
+                guidance: this.buildGuidance(response?.guidance, nextCalls),
+                request,
+                budget,
+                output: outputPayload,
+                traceEnabled,
+                sessionId,
+                surface
+            });
             const draftPackId = response?.draftPack?.id;
             const planApplyToken = typeof response?.applyToken === "string" ? response.applyToken : undefined;
             const applyTokenExpiresAt = typeof response?.applyTokenExpiresAt === "number" ? response.applyTokenExpiresAt : undefined;
@@ -621,7 +982,15 @@ export class TaskHandlers extends BaseHandler {
                 ...(applyLimits ? { limits: applyLimits } : {})
             });
             const summary = this.buildApplySummary({ response, request });
-            const guidance = this.buildGuidance(response?.guidance, nextCalls);
+            const guidance = this.rewriteGuidanceForCompact({
+                guidance: this.buildGuidance(response?.guidance, nextCalls),
+                request,
+                budget,
+                output: outputPayload,
+                traceEnabled,
+                sessionId,
+                surface
+            });
             const autoRepair = await this.attemptAutoRepair({
                 response,
                 sessionId: response?.sessionId ?? sessionId,
@@ -660,20 +1029,100 @@ export class TaskHandlers extends BaseHandler {
             };
         }
 
-        if (routing.mode === "write" || routing.mode === "verify") {
+        if (routing.mode === "write") {
+            const writeSafety = safety ?? "plan";
+            const targetPath = this.resolveTargetPath(targetFiles, paths);
+            const extractedContent = writeSafety === "plan" ? this.extractContentFromRequest(request) : undefined;
+            const response = await this.context.orchestrationEngine.executePillar("write", {
+                intent: request,
+                targetPath,
+                ...(extractedContent !== undefined ? { content: extractedContent } : {}),
+                ...(extractedContent === undefined && writeSafety === "plan" ? { smartWrite: true } : {}),
+                sessionId,
+                profile,
+                trace: traceEnabled,
+                safety: writeSafety,
+                ...(draftId ? { draftId } : {}),
+                ...(applyToken ? { applyToken } : {}),
+                ...(typeof args?.refinement === "string" ? { refinement: args.refinement } : {}),
+                ...(maxTokens ? { limits: { maxTokens } } : {})
+            });
+            const summary = this.buildWriteSummary({ response, request });
+            const guidance = this.rewriteGuidanceForCompact({
+                guidance: this.buildGuidance(response?.guidance, nextCalls),
+                request,
+                budget,
+                output: outputPayload,
+                traceEnabled,
+                sessionId,
+                surface
+            });
+            const draftPackId = response?.draftPack?.id;
+            const writeApplyToken = typeof response?.applyToken === "string" ? response.applyToken : undefined;
+            const applyTokenExpiresAt = typeof response?.applyTokenExpiresAt === "number" ? response.applyTokenExpiresAt : undefined;
+            const artifacts: Array<{ id: string; kind: string; detail: "summary" | "full" }> = [];
+            if (draftPackId) {
+                artifacts.push({ id: draftPackId, kind: "draft", detail: "summary" });
+            }
+            if (response?.review?.id) {
+                artifacts.push({ id: response.review.id, kind: "review", detail: "summary" });
+            }
+            if (response?.postReview?.id) {
+                artifacts.push({ id: response.postReview.id, kind: "review", detail: "summary" });
+            }
+            const details = outputFormat === "standard" ? { pillar: "write", response } : undefined;
             return {
                 ok: true,
-                sessionId: sessionId ?? "unknown",
-                status: "blocked",
+                sessionId: response?.sessionId ?? sessionId,
+                status: this.mapStatus(response),
                 mode: routing.mode,
                 budget,
                 surface,
-                summary: {
-                    title: `Mode "${routing.mode}" is not available in this phase.`,
-                    bullets: ["Use plan_change to generate a draft before applying or writing."],
-                    next: ["Call task with mode=plan_change and edits."]
-                },
-                guidance: nextCalls ? { nextCalls } : undefined,
+                summary,
+                ...(details ? { details } : {}),
+                ...(draftPackId ? { draftId: draftPackId } : {}),
+                ...(writeApplyToken ? { applyToken: writeApplyToken } : {}),
+                ...(applyTokenExpiresAt ? { applyTokenExpiresAt } : {}),
+                ...(artifacts.length > 0 ? { artifacts } : {}),
+                ...(response?.degraded !== undefined ? { degraded: response.degraded } : {}),
+                ...(response?.degradedReasons ? { degradedReasons: response.degradedReasons } : {}),
+                ...(guidance ? { guidance } : {}),
+                stats: {
+                    latencyMs: Date.now() - startedAt
+                }
+            };
+        }
+
+        if (routing.mode === "verify") {
+            const targetPath = this.resolveTargetPath(targetFiles, paths);
+            const { verification, reasons } = await this.buildVerificationResult({ targetPath, draftId });
+            const degradedReasons = buildDegradedReasons(reasons, {
+                filePath: verification.relPath ?? verification.targetPath
+            });
+            const isBlocked = reasons.includes("file_missing") || reasons.includes("draft_missing");
+            const status = reasons.length === 0 ? "success" : (isBlocked ? "blocked" : "partial_success");
+            const summary = this.buildVerifySummary({ request, verification });
+            const guidance = this.rewriteGuidanceForCompact({
+                guidance: this.buildGuidance(undefined, nextCalls),
+                request,
+                budget,
+                output: outputPayload,
+                traceEnabled,
+                sessionId,
+                surface
+            });
+            return {
+                ok: true,
+                sessionId: sessionId ?? "unknown",
+                status,
+                mode: routing.mode,
+                budget,
+                surface,
+                summary,
+                verification,
+                ...(reasons.length > 0 ? { degraded: true } : {}),
+                ...(degradedReasons ? { degradedReasons } : {}),
+                ...(guidance ? { guidance } : {}),
                 stats: {
                     latencyMs: Date.now() - startedAt
                 }
@@ -691,7 +1140,15 @@ export class TaskHandlers extends BaseHandler {
             limits: maxTokens ? { maxTokens } : undefined
         });
         const summary = this.buildExploreSummary({ response, request, routingNote });
-        const guidance = this.buildGuidance(response?.guidance, nextCalls);
+        const guidance = this.rewriteGuidanceForCompact({
+            guidance: this.buildGuidance(response?.guidance, nextCalls),
+            request,
+            budget,
+            output: outputPayload,
+            traceEnabled,
+            sessionId,
+            surface
+        });
         const packId = response?.pack?.packId ?? response?.researchPack?.id;
         const details = outputFormat === "standard" ? { pillar: "explore", response } : undefined;
         return {

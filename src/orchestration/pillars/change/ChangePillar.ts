@@ -144,18 +144,26 @@ export class ChangePillar {
   
   constructor(private readonly registry: InternalToolRegistry) {}
 
+  private resolveRootPath(): string {
+    const injected =
+      typeof this.registry.getMetadata === "function"
+        ? this.registry.getMetadata<string>("rootPath")
+        : undefined;
+    return typeof injected === "string" && injected.length > 0 ? injected : process.cwd();
+  }
+
   private resolveFileSystem(): IFileSystem {
     if (this.fileSystem) return this.fileSystem;
     const injected =
       typeof this.registry.getMetadata === "function"
         ? this.registry.getMetadata<IFileSystem>("fileSystem")
         : undefined;
-    this.fileSystem = injected ?? new NodeFileSystem(process.cwd());
+    this.fileSystem = injected ?? new NodeFileSystem(this.resolveRootPath());
     return this.fileSystem;
   }
 
   private getEditCoordinator(): EditCoordinator {
-    const rootPath = process.cwd();
+    const rootPath = this.resolveRootPath();
     const fileSystem = this.resolveFileSystem();
     const editorEngine = new EditorEngine(rootPath, fileSystem);
     const historyEngine = new HistoryEngine(rootPath, fileSystem);
@@ -163,7 +171,7 @@ export class ChangePillar {
   }
 
   private getEditResolver(): EditResolver {
-    const rootPath = process.cwd();
+    const rootPath = this.resolveRootPath();
     const fileSystem = this.resolveFileSystem();
     const editorEngine = new EditorEngine(rootPath, fileSystem);
     return new EditResolver(fileSystem, editorEngine);
@@ -1460,7 +1468,7 @@ export class ChangePillar {
         formatterResult = await applyFormatterBridge({
           mode: formatterMode,
           filePaths: formatterTargets,
-          rootPath: process.cwd(),
+          rootPath: this.resolveRootPath(),
           fileSystem,
           tool: "change",
           rollbackAvailable: Boolean(finalResult.operation?.id)
@@ -2777,7 +2785,7 @@ export class ChangePillar {
       return undefined;
     }
 
-    const manifestLoader = new ContractManifestLoader(process.cwd());
+    const manifestLoader = new ContractManifestLoader(this.resolveRootPath());
     const guardConfig = resolveSymbolicGuardConfig();
     const contractMode = guardConfig.contractGuard.mode;
     const allowConsumerScan = contractMode === "spec_plus_consumer_scan" && guardConfig.contractGuard.consumerScan.enabled;

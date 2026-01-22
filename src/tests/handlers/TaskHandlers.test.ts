@@ -5,6 +5,9 @@ import { describe, it, expect, jest } from "@jest/globals";
 import { TaskHandlers } from "../../handlers/TaskHandlers.js";
 import { createDefaultToolSpecRegistry } from "../../server/tools/ToolSpecRegistry.js";
 import { PathManager } from "../../utils/PathManager.js";
+import { MemoryFileSystem } from "../../platform/FileSystem.js";
+import { PathNormalizer } from "../../utils/PathNormalizer.js";
+import { FileVersionManager } from "../../engine/FileVersionManager.js";
 
 const makeContext = (overrides: Record<string, unknown> = {}) => {
     const executePillar = jest.fn<(...args: any[]) => Promise<any>>();
@@ -153,6 +156,77 @@ describe("TaskHandlers", () => {
             expect.objectContaining({ intent: "apply plan", safety: "apply", draftId: "draft_1", applyToken: "token_1" })
         );
         expect(payload.status).toBe("success");
+    });
+
+    it("routes write to write pillar with extracted content", async () => {
+        const context = makeContext();
+        const handler = new TaskHandlers(context as any);
+        const writeResponse = {
+            success: true,
+            status: "draft",
+            draftPack: { id: "draft_write_1" },
+            applyToken: "token_write_1",
+            sessionId: "s5w"
+        };
+        context.orchestrationEngine.executePillar.mockResolvedValue(writeResponse);
+
+        const request = "Create file\n```ts\nexport const foo = 1;\n```";
+        const response = await handler.handle("task", {
+            request,
+            mode: "write",
+            targetFiles: ["src/foo.ts"]
+        });
+        const payload = JSON.parse(response.content[0].text);
+
+        expect(context.orchestrationEngine.executePillar).toHaveBeenCalledWith(
+            "write",
+            expect.objectContaining({
+                intent: request,
+                targetPath: "src/foo.ts",
+                content: "export const foo = 1;",
+                safety: "plan"
+            })
+        );
+        expect(payload.draftId).toBe("draft_write_1");
+        expect(payload.applyToken).toBe("token_write_1");
+        expect(payload.status).toBe("success");
+    });
+
+    it("verifies file content against draft pack", async () => {
+        const tempRoot = makeTempRoot();
+        const fileSystem = new MemoryFileSystem(tempRoot);
+        await fileSystem.writeFile("src/app.ts", "export const bar = 2;");
+        const pathNormalizer = new PathNormalizer(tempRoot);
+        const fileVersionManager = new FileVersionManager(fileSystem);
+        const absPath = pathNormalizer.toAbsolute("src/app.ts");
+        const versionInfo = await fileVersionManager.getVersion(absPath);
+        const draftPack = {
+            id: "draft_verify_1",
+            phantomFiles: [{ path: "src/app.ts", content: "export const bar = 2;" }],
+            fileVersions: {
+                "src/app.ts": {
+                    expectedVersion: versionInfo.version,
+                    expectedHash: versionInfo.contentHash
+                }
+            }
+        };
+        const flowArtifactManager = {
+            get: jest.fn(() => ({ type: "draft", pack: draftPack }))
+        };
+        const context = makeContext({ fileSystem, pathNormalizer, fileVersionManager, flowArtifactManager });
+        const handler = new TaskHandlers(context as any);
+
+        const response = await handler.handle("task", {
+            request: "verify",
+            mode: "verify",
+            targetFiles: ["src/app.ts"],
+            draftId: "draft_verify_1"
+        });
+        const payload = JSON.parse(response.content[0].text);
+
+        expect(payload.status).toBe("success");
+        expect(payload.verification?.contentMatch).toBe(true);
+        expect(payload.verification?.fileVersionMatch).toBe(true);
     });
 
     it("auto-repairs file version mismatch with preview refresh", async () => {

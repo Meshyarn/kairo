@@ -443,6 +443,7 @@ export class SmartContextServer {
         this.internalRegistry.setMetadata('searchEngine', this.searchEngine);
         this.internalRegistry.setMetadata('indexStateManager', this.indexStateManager);
         this.internalRegistry.setMetadata('dependencyGraph', this.dependencyGraph);
+        this.internalRegistry.setMetadata('fileSystem', this.fileSystem);
         this.internalRegistry.setMetadata('flowArtifactManager', this.flowArtifactManager);
         this.internalRegistry.setMetadata('rootPath', this.rootPath);
         this.internalRegistry.setMetadata('repoRegistry', this.repoRegistry);
