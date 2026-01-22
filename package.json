@@ -36,6 +36,7 @@
     "smoke:adr-084-beta-log": "npm run build && node scripts/adr-084-beta-log-smoke.mjs",
     "smoke:adr-084-hardening": "npm run build && node scripts/adr-084-hardening-smoke.mjs",
     "smoke:mcp-mock-client": "npm run build && node scripts/mock-mcp-client.mjs",
+    "smoke:mcp-inprocess": "npm run build && node scripts/mock-mcp-inprocess.mjs",
     "test:coverage": "NODE_OPTIONS=\"--experimental-vm-modules --max-old-space-size=8196\" jest dist --coverage",
     "test:coverage:orchestration": "NODE_OPTIONS=\"--experimental-vm-modules --max-old-space-size=8196\" jest dist --runInBand --coverage --collectCoverageFrom=\"dist/orchestration/**/*.js\" --coveragePathIgnorePatterns=\"/dist/tests/\"",
     "test:markdown-wasm-cli": "node scripts/test-markdown-wasm-cli.mjs",
