@@ -29,7 +29,7 @@ await task({ request: "Apply the plan.", mode: "apply_change", draftId: plan.dra
 
 Notes:
 - `mode="auto"` never applies changes (server-gated).
-- `mode="write"` / `mode="verify"` may be blocked depending on rollout; use pillar tools when `KAIRO_PUBLIC_SURFACE=pillars`.
+- `mode="write"` / `mode="verify"` are supported on the compact surface (ADR-086). Use pillar tools when you need full per-pillar options.
 - Use `manage({ command: "schema", tool: "task", detail: "full" })` when you need the full schema.
 
 ---

@@ -130,7 +130,7 @@ Treat `task` as the only entrypoint for the model:
 }
 ```
 
-Note: some `task` modes may be staged (e.g. `write` / `verify`). If a mode returns `blocked`, use the corresponding pillar tools by switching to `KAIRO_PUBLIC_SURFACE=pillars`.
+Note: As of ADR-086, `task` supports `mode="write"` and `mode="verify"` on the compact surface. These modes can still return `blocked` for safety/policy reasons (missing target path, expired apply token, review/guardrail blocks). Switch to `KAIRO_PUBLIC_SURFACE=pillars` when you need full pillar-level options.
 
 When you need deeper options, fetch a schema on demand:
 

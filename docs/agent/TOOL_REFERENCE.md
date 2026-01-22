@@ -27,6 +27,7 @@ High-level router for promptless workflows (ask/analyze/plan/apply).
 | `sessionId` | `string` |  | Flow session id (`"new"` to start). |
 | `paths` | `string[]` |  | Hint paths for reading/searching. |
 | `targetFiles` | `string[]` |  | Hint blast-radius for change planning/apply. |
+| `targetPath` | `string` |  | Alias for a single target path (compat; mapped to `targetFiles[0]`). |
 | `edits` | `object[]` |  | Optional pass-through edits. `plan_change` returns **prep** when omitted; returns a real DraftPack when provided. |
 | `draftId` | `string` |  | Required for `apply_change` when applying a prior draft. |
 | `applyToken` | `string` |  | Required for apply in `KAIRO_MODE=mcp` (minted during plan). |
@@ -42,7 +43,9 @@ High-level router for promptless workflows (ask/analyze/plan/apply).
   - Without `edits`: returns target hints + `fileVersions` + `editsTemplate` (prep-only).
   - With `edits`: runs a real plan and returns `draftId` + (in MCP mode) `applyToken`.
 - `mode="apply_change"` requires `draftId` and (in MCP mode) a valid `applyToken`.
-- `mode="write"` / `mode="verify"` may be blocked depending on rollout; use the pillar tools when `KAIRO_PUBLIC_SURFACE=pillars`.
+- `mode="write"` / `mode="verify"` are supported on the compact surface (ADR-086).
+- `mode="write"`: provide `targetPath` (or `targetFiles[0]`) and include content in a fenced code block inside `request` (e.g. ```ts ... ```). If no code block is present, plan mode will fall back to smart generation.
+- `mode="verify"`: compares the current file content against the draft pack (when `draftId` is provided). `Base version` is a drift signal against the pre-apply snapshot and is only evaluated when draft content does not match.
 - Full schema on-demand: `manage({ command: "schema", tool: "task", detail: "full" })` (returns an artifact id).
 
 **Usage**

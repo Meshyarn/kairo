@@ -25,7 +25,7 @@ The goal is not “agents picking options smartly”, but making Kairo a **promp
 - `mode`: `auto|ask|analyze|plan_change|apply_change|write|verify`
 - `budget`: `lean|balanced|deep`
 - Default output is always **summary-first**, and large results are split into **artifacts**.
-- Some modes may be gradually rolled out (e.g., `write`/`verify`).
+- `write`/`verify` are supported via `task` on the compact surface (see ADR-086).
 
 ### 3) Reduce “env sprawl” via Presets/Modes
 
