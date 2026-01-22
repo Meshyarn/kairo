@@ -257,6 +257,9 @@ export class WritePillar {
       const draftPack = draftArtifact?.type === "draft" ? (draftArtifact as any).pack : undefined;
       const draftContent = draftPack?.phantomFiles?.[0]?.content as string | undefined;
       const expectedFileVersions = (constraints as any).fileVersions ?? draftPack?.fileVersions;
+      if (!hasExplicitContent && draftContent) {
+        content = draftContent;
+      }
       const workflowMeta = buildWorkflowMeta({
         sessionId: resolvedSessionId,
         dryRun,
@@ -326,6 +329,70 @@ export class WritePillar {
         if (!applyPolicy.invalidateOnDrift || dryRun || !resolvedSessionId || !draftId) return;
         artifactManager?.invalidateApplyToken(resolvedSessionId, draftId);
       };
+      let applyTokenConsumed = false;
+
+      const validateApplyToken = (consume: boolean) => {
+        return (resolvedSessionId && draftId && applyToken && artifactManager)
+          ? artifactManager.validateApplyToken({
+              sessionId: resolvedSessionId,
+              draftId,
+              token: applyToken,
+              oneTime: applyPolicy.oneTime,
+              consume
+            })
+          : { valid: false, reason: "missing" as const };
+      };
+
+      const buildApplyTokenBlockedResponse = (validation: any) => {
+        const reasonCode = validation.reason === "expired"
+          ? "apply_token_expired"
+          : (validation.reason === "used" ? "apply_token_used" : "apply_token_missing");
+        const message = reasonCode === "apply_token_expired"
+          ? "Apply token expired. Re-run the plan to get a new token."
+          : (reasonCode === "apply_token_used"
+            ? "Apply token already used. Re-run the plan to get a new token."
+            : "Apply token required to apply changes. Re-run the plan to get a token.");
+        const nextArgs: Record<string, unknown> = {
+          intent: originalIntent,
+          targetPath,
+          safety: "plan"
+        };
+        if (hasExplicitContent) nextArgs.content = initialContent;
+        if (refinement) nextArgs.refinement = refinement;
+        if (resolvedSessionId) nextArgs.sessionId = resolvedSessionId;
+        return {
+          success: false,
+          status: "blocked",
+          message,
+          errorCode: reasonCode === "apply_token_expired"
+            ? "APPLY_TOKEN_EXPIRED"
+            : (reasonCode === "apply_token_used" ? "APPLY_TOKEN_USED" : "APPLY_TOKEN_MISSING"),
+          blockedReason: reasonCode,
+          degradedReasons: buildDegradedReasons([reasonCode]),
+          guidance: {
+            message,
+            suggestedActions: [
+              {
+                id: "write.plan",
+                priority: 1,
+                description: "Re-plan the write to generate a fresh apply token.",
+                rationale: "Apply requires a valid token generated during planning.",
+                toolCall: { tool: "write", args: nextArgs }
+              }
+            ]
+          }
+        };
+      };
+
+      const consumeApplyTokenOnce = () => {
+        if (!requireApplyToken || applyTokenConsumed) return null;
+        const validation = validateApplyToken(applyPolicy.oneTime);
+        if (!validation.valid) {
+          return buildApplyTokenBlockedResponse(validation);
+        }
+        applyTokenConsumed = true;
+        return null;
+      };
 
       if (!targetPath) {
         return attachSession({
@@ -341,55 +408,42 @@ export class WritePillar {
       }
 
       if (requireApplyToken) {
-        const validation = (resolvedSessionId && draftId && applyToken && artifactManager)
-          ? artifactManager.validateApplyToken({
-              sessionId: resolvedSessionId,
-              draftId,
-              token: applyToken,
-              oneTime: applyPolicy.oneTime,
-              consume: applyPolicy.oneTime
-            })
-          : { valid: false, reason: "missing" as const };
+        const validation = validateApplyToken(false);
         if (!validation.valid) {
-          const reasonCode = validation.reason === "expired"
-            ? "apply_token_expired"
-            : (validation.reason === "used" ? "apply_token_used" : "apply_token_missing");
-          const message = reasonCode === "apply_token_expired"
-            ? "Apply token expired. Re-run the plan to get a new token."
-            : (reasonCode === "apply_token_used"
-              ? "Apply token already used. Re-run the plan to get a new token."
-              : "Apply token required to apply changes. Re-run the plan to get a token.");
-          const nextArgs: Record<string, unknown> = {
-            intent: originalIntent,
-            targetPath,
-            safety: "plan"
-          };
-          if (hasExplicitContent) nextArgs.content = initialContent;
-          if (refinement) nextArgs.refinement = refinement;
-          if (resolvedSessionId) nextArgs.sessionId = resolvedSessionId;
-          return attachSession({
-            success: false,
-            status: "blocked",
-            message,
-            errorCode: reasonCode === "apply_token_expired"
-              ? "APPLY_TOKEN_EXPIRED"
-              : (reasonCode === "apply_token_used" ? "APPLY_TOKEN_USED" : "APPLY_TOKEN_MISSING"),
-            blockedReason: reasonCode,
-            degradedReasons: buildDegradedReasons([reasonCode]),
-            guidance: {
-              message,
-              suggestedActions: [
-                {
-                  id: "write.plan",
-                  priority: 1,
-                  description: "Re-plan the write to generate a fresh apply token.",
-                  rationale: "Apply requires a valid token generated during planning.",
-                  toolCall: { tool: "write", args: nextArgs }
-                }
-              ]
-            }
-          });
+          return attachSession(buildApplyTokenBlockedResponse(validation));
         }
+      }
+
+      if (!dryRun && draftId && !draftPack && !hasExplicitContent) {
+        const reasonCode = "draft_missing";
+        const message = "Draft pack not found for this write apply. Re-run the write in plan mode.";
+        const nextArgs: Record<string, unknown> = {
+          intent: originalIntent,
+          targetPath,
+          safety: "plan"
+        };
+        if (refinement) nextArgs.refinement = refinement;
+        if (resolvedSessionId) nextArgs.sessionId = resolvedSessionId;
+        return attachSession({
+          success: false,
+          status: "blocked",
+          message,
+          errorCode: "DRAFT_MISSING",
+          blockedReason: reasonCode,
+          degradedReasons: buildDegradedReasons([reasonCode]),
+          guidance: {
+            message,
+            suggestedActions: [
+              {
+                id: "write.plan",
+                priority: 1,
+                description: "Re-plan the write to regenerate a draft pack.",
+                rationale: "Apply requires a draft snapshot to be present.",
+                toolCall: { tool: "write", args: nextArgs }
+              }
+            ]
+          }
+        });
       }
 
       const resolvedPath = await this.resolveTargetPath(targetPath);
@@ -575,9 +629,6 @@ export class WritePillar {
 
       if (dryRun) {
         const refinedIntent = refinement ? `${originalIntent}\nRefinement: ${refinement}` : originalIntent;
-        if (!hasExplicitContent && draftContent) {
-          content = draftContent;
-        }
         if (smartWrite && !hasExplicitContent) {
           try {
             const generated = await smartWriteCode(
@@ -768,7 +819,8 @@ export class WritePillar {
               fileVersions,
               { integrityGuardrails: bypassIntegrityGuardrails, reviewPolicy: bypassReviewBlock },
               traceBuilder,
-              invalidateApplyTokenOnDrift
+              invalidateApplyTokenOnDrift,
+              consumeApplyTokenOnce
             );
             return attachResponse(result);
           }
@@ -799,7 +851,8 @@ export class WritePillar {
               fileVersions,
               { integrityGuardrails: bypassIntegrityGuardrails, reviewPolicy: bypassReviewBlock },
               traceBuilder,
-              invalidateApplyTokenOnDrift
+              invalidateApplyTokenOnDrift,
+              consumeApplyTokenOnce
             );
             return attachResponse(result);
           }
@@ -817,8 +870,18 @@ export class WritePillar {
             existingContent = await this.runTool(context, 'code_read', { filePath: resolvedPath, view: 'full' });
           } catch {
             try {
+              const tokenBlock = consumeApplyTokenOnce();
+              if (tokenBlock) {
+                stopSafePatch();
+                return attachResponse(tokenBlock);
+              }
               await this.runTool(context, 'file_write', { filePath: resolvedPath, content: '' });
             } catch {
+              const tokenBlock = consumeApplyTokenOnce();
+              if (tokenBlock) {
+                stopSafePatch();
+                return attachResponse(tokenBlock);
+              }
               await this.runTool(context, 'edit_apply', {
                 edits: [{ filePath: resolvedPath, operation: 'create', replacementString: '' }],
                 dryRun: false,
@@ -928,6 +991,11 @@ export class WritePillar {
             }
           }
 
+          const tokenBlock = consumeApplyTokenOnce();
+          if (tokenBlock) {
+            stopSafePatch();
+            return attachResponse(tokenBlock);
+          }
           const result = await this.runTool(context, 'edit_transaction', {
             filePath: resolvedPath,
             edits: [edit],
@@ -1092,8 +1160,16 @@ export class WritePillar {
         }
 
         try {
+          const tokenBlock = consumeApplyTokenOnce();
+          if (tokenBlock) {
+            return attachResponse(tokenBlock);
+          }
           await this.runTool(context, 'file_write', { filePath: resolvedPath, content });
         } catch {
+          const tokenBlock = consumeApplyTokenOnce();
+          if (tokenBlock) {
+            return attachResponse(tokenBlock);
+          }
           const fallback = await this.runTool(context, 'edit_apply', {
             edits: [{ filePath: resolvedPath, operation: 'create', replacementString: content }],
             dryRun: false,
@@ -1163,29 +1239,6 @@ export class WritePillar {
         existingContent = null;
       }
 
-      if (existingContent === null) {
-        try {
-          await this.runTool(context, 'file_write', { filePath: resolvedPath, content: '' });
-        } catch {
-          const fallback = await this.runTool(context, 'edit_apply', {
-            edits: [{ filePath: resolvedPath, operation: 'create', replacementString: '' }],
-            dryRun: false,
-            createMissingDirectories: true,
-            fileVersions
-          });
-          if (fallback?.errorCode === "FILE_VERSION_MISMATCH") {
-            invalidateApplyTokenOnDrift();
-            return attachResponse(this.buildFileVersionMismatchResponse({
-              filePath: resolvedPath,
-              intent: originalIntent,
-              writeMode: "safe",
-              sessionId: resolvedSessionId,
-              currentFileStates: fallback.updatedFileStates
-            }));
-          }
-        }
-      }
-
       if (content === '' && template) {
         const templated = await resolveTemplateContent(template, resolvedPath, originalIntent, context, (ctx, tool, args) => this.runTool(ctx, tool, args), (v) => this.toPascalCase(v), (v) => this.looksLikePath(v));
         if (typeof templated === 'string') {
@@ -1194,24 +1247,50 @@ export class WritePillar {
       }
 
       if (content === '' && existingContent === null) {
-        return attachResponse({
-          success: true,
-          status: 'success',
-          createdFiles: [{ path: resolvedPath, description: `Created from intent: ${originalIntent}` }],
-          transactionId: null,
-          guidance: {
-            message: 'Empty file created.',
-            suggestedActions: [
-              {
-                id: 'read.view_full',
-                priority: 1,
-                description: 'Review the updated file content.',
-                rationale: 'Verify the write applied as intended.',
-                toolCall: { tool: 'read', args: { action: 'view_full', target: resolvedPath } }
-              }
-            ]
-          }
+        const tokenBlock = consumeApplyTokenOnce();
+        if (tokenBlock) {
+          return attachResponse(tokenBlock);
+        }
+        const created = await this.runTool(context, 'edit_apply', {
+          edits: [{ filePath: resolvedPath, operation: 'create', replacementString: '' }],
+          dryRun: false,
+          createMissingDirectories: true,
+          fileVersions
         });
+        if (created?.errorCode === "FILE_VERSION_MISMATCH") {
+          invalidateApplyTokenOnDrift();
+          return attachResponse(this.buildFileVersionMismatchResponse({
+            filePath: resolvedPath,
+            intent: originalIntent,
+            writeMode: "safe",
+            sessionId: resolvedSessionId,
+            currentFileStates: created.updatedFileStates
+          }));
+        }
+        const formatterResult = created?.success === false
+          ? undefined
+          : await this.applyFormatterIfNeeded(formatterMode, resolvedPath, true);
+        const payload = this.applyFormatterOutcome({
+          success: created?.success ?? true,
+          status: created?.success === false ? "failure" : "success",
+          createdFiles: [{ path: resolvedPath, description: `Created from intent: ${originalIntent}` }],
+          transactionId: created?.operation?.id ?? "",
+          guidance: {
+            message: created?.success === false ? 'Empty file create failed.' : 'Empty file created.',
+            suggestedActions: created?.success === false
+              ? []
+              : [
+                  {
+                    id: 'read.view_full',
+                    priority: 1,
+                    description: 'Review the updated file content.',
+                    rationale: 'Verify the write applied as intended.',
+                    toolCall: { tool: 'read', args: { action: 'view_full', target: resolvedPath } }
+                  }
+                ]
+          }
+        }, formatterResult, resolvedPath);
+        return attachResponse(payload);
       }
 
       const edit = existingContent === null
@@ -1292,6 +1371,67 @@ export class WritePillar {
         }
       }
 
+      const tokenBlock = consumeApplyTokenOnce();
+      if (tokenBlock) {
+        return attachResponse(tokenBlock);
+      }
+
+      if (existingContent === null) {
+        const created = await this.runTool(context, 'edit_apply', {
+          edits: [{ filePath: resolvedPath, operation: 'create', replacementString: content }],
+          dryRun: false,
+          createMissingDirectories: true,
+          fileVersions
+        });
+        if (created?.errorCode === "FILE_VERSION_MISMATCH") {
+          invalidateApplyTokenOnDrift();
+          return attachResponse(this.buildFileVersionMismatchResponse({
+            filePath: resolvedPath,
+            intent: originalIntent,
+            writeMode: "safe",
+            sessionId: resolvedSessionId,
+            currentFileStates: created.updatedFileStates
+          }));
+        }
+        const reasonCodes = Array.isArray(guardrailResult?.blockingErrors)
+          ? guardrailResult.blockingErrors
+          : undefined;
+        const degradedReasons = buildDegradedReasons(reasonCodes, { filePath: resolvedPath });
+        const formatterResult = created?.success === false
+          ? undefined
+          : await this.applyFormatterIfNeeded(formatterMode, resolvedPath, true);
+        const payload = this.applyFormatterOutcome({
+          success: created?.success ?? true,
+          status: created?.success === false ? 'failure' : 'success',
+          createdFiles: [{ path: resolvedPath, description: `Created from intent: ${originalIntent}` }],
+          transactionId: created?.operation?.id ?? '',
+          architecturalRisk: guardrailResult?.architecturalRisk,
+          architecturalWarnings: guardrailResult?.architecturalWarnings,
+          safetyChecklist: guardrailResult?.safetyChecklist,
+          blockingErrors: guardrailResult?.blockingErrors,
+          errorCode: guardrailResult?.errorCode,
+          blockedReason: guardrailResult?.blockedReason,
+          violations: guardrailResult?.violations,
+          warnings: guardrailResult?.warnings,
+          degraded: Boolean(guardrailResult?.blockingErrors?.length),
+          degradedReasons,
+          guidance: {
+            message: created?.success === false ? 'File create failed.' : 'File created.',
+            suggestedActions: created?.success === false
+              ? []
+              : [
+                  {
+                    id: 'read.view_full',
+                    priority: 1,
+                    description: 'Review the updated file content.',
+                    rationale: 'Verify the write applied as intended.',
+                    toolCall: { tool: 'read', args: { action: 'view_full', target: resolvedPath } }
+                  }
+                ]
+          }
+        }, formatterResult, resolvedPath);
+        return attachResponse(payload);
+      }
       const editResult = await this.runTool(context, 'edit_transaction', {
         filePath: resolvedPath,
         edits: [edit],
@@ -1766,7 +1906,8 @@ export class WritePillar {
     fileVersions?: Record<string, { expectedVersion?: number; expectedHash?: string }>,
     overrideBypass?: { integrityGuardrails?: boolean; reviewPolicy?: boolean },
     traceBuilder?: TraceBuilder,
-    invalidateApplyToken?: () => void
+    invalidateApplyToken?: () => void,
+    consumeApplyToken?: () => any | null
   ): Promise<any> {
     try {
       let finalContent = content;
@@ -1776,8 +1917,12 @@ export class WritePillar {
         existingContent = await this.runTool(context, 'code_read', { filePath, view: 'full' });
       } catch {
         try {
+          const tokenBlock = consumeApplyToken?.();
+          if (tokenBlock) return tokenBlock;
           await this.runTool(context, 'file_write', { filePath, content: '' });
         } catch {
+          const tokenBlock = consumeApplyToken?.();
+          if (tokenBlock) return tokenBlock;
           await this.runTool(context, 'edit_apply', {
             edits: [{ filePath, operation: 'create', replacementString: '' }],
             dryRun: false,
@@ -1868,6 +2013,8 @@ export class WritePillar {
           });
         }
       }
+      const tokenBlock = consumeApplyToken?.();
+      if (tokenBlock) return tokenBlock;
       const result = await this.runTool(context, 'edit_transaction', { filePath, edits: [edit], dryRun: false, fileVersions });
       if (result?.errorCode === "FILE_VERSION_MISMATCH") {
         invalidateApplyToken?.();

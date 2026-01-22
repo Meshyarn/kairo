@@ -306,7 +306,7 @@ const resolveEnvelopeBudget = (
 export const resolveMcpPolicy = (overrides?: McpPolicyOverrides): McpResolvedPolicy => {
   const config = loadConfig();
   const envMode = parseMode(process.env.KAIRO_MODE);
-  const mode = overrides?.mode ?? config?.mode ?? envMode ?? "mcp";
+  const mode = overrides?.mode ?? envMode ?? config?.mode ?? "mcp";
   const presetId = resolvePresetId(mode, overrides, config);
   const preset = presetId ? MCP_PRESETS[presetId] : undefined;
   const applyHandshakeDefaults: ApplyHandshakePolicy = {
@@ -329,8 +329,8 @@ export const resolveMcpPolicy = (overrides?: McpPolicyOverrides): McpResolvedPol
       : applyHandshakeDefaults.invalidateOnDrift
   };
   const publicSurface = overrides?.publicSurface
-    ?? (mode === "mcp" ? config?.publicSurface : undefined)
     ?? parseSurface(process.env.KAIRO_PUBLIC_SURFACE)
+    ?? (mode === "mcp" ? config?.publicSurface : undefined)
     ?? preset?.publicSurface
     ?? (mode === "mcp" ? "compact" : "pillars");
   const profile = overrides?.budgets?.profile

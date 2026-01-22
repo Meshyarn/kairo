@@ -18,6 +18,10 @@ export class PathManager {
         this.repoId = repoId;
     }
 
+    static getRootPath() {
+        return this.rootPath;
+    }
+
     private static resolveBaseDir(): string {
         const raw = (process.env.KAIRO_DIR || '').trim();
         if (!raw) {

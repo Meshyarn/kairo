@@ -32,12 +32,13 @@ export async function executeBatchChange(
     constraints?: any;
     diffMode?: "myers" | "semantic";
     fileVersions?: Record<string, { expectedVersion?: number; expectedHash?: string }>;
+    beforeApply?: () => Promise<any> | any;
   },
   runTool: (context: OrchestrationContext, tool: string, args: any) => Promise<any>,
   extractEditFilePath: (edit: any) => string | undefined,
   buildFailureGuidance: (args: any) => any
 ): Promise<any> {
-  const { intent, context, rawEdits, targetFiles, dryRun, includeImpact, dependencyGraph, indexStateManager, constraints, diffMode, fileVersions } = args;
+  const { intent, context, rawEdits, targetFiles, dryRun, includeImpact, dependencyGraph, indexStateManager, constraints, diffMode, fileVersions, beforeApply } = args;
   const originalIntent = intent.originalIntent;
 
   if (rawEdits.length === 0) {
@@ -130,7 +131,8 @@ export async function executeBatchChange(
     dependencyGraph,
     indexStateManager,
     constraints,
-    fileVersions
+    fileVersions,
+    beforeApply
   }, runTool, normalizedByFile);
 }
 
@@ -292,11 +294,12 @@ async function executeBatchApply(
     indexStateManager?: IndexStateManager;
     constraints?: any;
     fileVersions?: Record<string, { expectedVersion?: number; expectedHash?: string }>;
+    beforeApply?: () => Promise<any> | any;
   },
   runTool: (context: OrchestrationContext, tool: string, args: any) => Promise<any>,
   normalizedByFile: Map<string, { edits: any[] }>
 ): Promise<any> {
-  const { context, originalIntent, rawEdits, targetFiles, includeImpact, batchImpactLimit, dependencyGraph, indexStateManager, constraints, fileVersions } = args;
+  const { context, originalIntent, rawEdits, targetFiles, includeImpact, batchImpactLimit, dependencyGraph, indexStateManager, constraints, fileVersions, beforeApply } = args;
   const overrideDecision = evaluateOverride({
     override: (constraints as any)?.override,
     requiredOverrides: [],
@@ -359,6 +362,13 @@ async function executeBatchApply(
           message: guardrail.violations?.[0]?.message ?? "Resolve guardrail violations before retrying."
         }
       };
+    }
+  }
+
+  if (typeof beforeApply === "function") {
+    const gate = await beforeApply();
+    if (gate) {
+      return gate;
     }
   }
 

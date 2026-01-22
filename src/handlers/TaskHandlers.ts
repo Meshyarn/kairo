@@ -515,7 +515,7 @@ export class TaskHandlers extends BaseHandler {
             `Target: ${target}.`,
             `Exists: ${exists}.`,
             `Draft match: ${contentMatch}.`,
-            `File version: ${versionMatch}.`
+            `Base version: ${versionMatch}.`
         ];
         const next: string[] = [];
         if (verification.draftId && verification.draftFound) {
@@ -751,14 +751,19 @@ export class TaskHandlers extends BaseHandler {
             }
         }
         const expectedVersion = draftPack?.fileVersions?.[relPath];
-        if (verification.exists && expectedVersion && this.context.fileVersionManager && pathNormalizer) {
+        const shouldCheckBaseVersion = verification.exists
+            && verification.contentMatch !== true
+            && expectedVersion
+            && this.context.fileVersionManager
+            && pathNormalizer;
+        if (shouldCheckBaseVersion) {
             try {
                 const absPath = pathNormalizer.toAbsolute(relPath);
-                const currentVersion = await this.context.fileVersionManager.getVersion(absPath);
-                if (expectedVersion.expectedVersion !== undefined) {
-                    verification.fileVersionMatch = currentVersion.version === expectedVersion.expectedVersion;
-                } else if (expectedVersion.expectedHash) {
+                const currentVersion = await this.context.fileVersionManager!.getVersion(absPath);
+                if (expectedVersion.expectedHash) {
                     verification.fileVersionMatch = currentVersion.contentHash === expectedVersion.expectedHash;
+                } else if (expectedVersion.expectedVersion !== undefined) {
+                    verification.fileVersionMatch = currentVersion.version === expectedVersion.expectedVersion;
                 }
                 if (verification.fileVersionMatch === false) {
                     reasons.push("file_version_mismatch");

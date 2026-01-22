@@ -251,7 +251,7 @@ describe("TaskHandlers", () => {
 
         expect(payload.status).toBe("success");
         expect(payload.verification?.contentMatch).toBe(true);
-        expect(payload.verification?.fileVersionMatch).toBe(true);
+        expect(payload.verification?.fileVersionMatch).toBeUndefined();
     });
 
     it("auto-repairs file version mismatch with preview refresh", async () => {
