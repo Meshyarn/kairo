@@ -160,11 +160,15 @@ export class SearchEngine {
     public async invalidateFile(absPath: string): Promise<void> {
         const relative = this.normalizeRelativePath(absPath, this.rootPath);
         if (!relative) return;
-        this.nativeSearchCore.deleteDoc({
-            kind: "code_file",
-            repoId: this.repoId,
-            path: relative.replace(/\\/g, "/")
-        });
+        try {
+            this.nativeSearchCore.deleteDoc({
+                kind: "code_file",
+                repoId: this.repoId,
+                path: relative.replace(/\\/g, "/")
+            });
+        } catch {
+            // best-effort (native index may be read-only / write-locked)
+        }
     }
 
     public async invalidateDirectory(absDir: string): Promise<void> {
@@ -323,6 +327,9 @@ export class SearchEngine {
 
             const fileSearchResults: FileSearchResult[] = [];
             for (const hit of hits) {
+                if (fileSearchResults.length >= maxResults) {
+                    break;
+                }
                 if (budget && usage) {
                     const elapsed = Date.now() - startedAt;
                     if (usage.filesRead >= budget.maxFilesRead || usage.bytesRead >= budget.maxBytesRead || elapsed >= budget.maxParseTimeMs) {
@@ -374,6 +381,9 @@ export class SearchEngine {
                             fieldWeight: 1
                         }
                     });
+                    if (fileSearchResults.length >= maxResults) {
+                        break;
+                    }
                 }
             }
 

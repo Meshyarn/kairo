@@ -96,7 +96,8 @@ export class NativeSearchCoreStub implements NativeSearchCoreClient {
             docCount: this.docs.size,
             segmentCount: 1,
             indexVersion: 1,
-            schemaVersion: 1
+            schemaVersion: 1,
+            writeEnabled: true
         };
     }
 

@@ -31,7 +31,11 @@ export class NativeSearchIndexer {
     }): void {
         const normalizedPath = normalizePath(args.filePath);
         if (!shouldIndexContent(args.content)) {
-            this.core.deleteDoc({ kind: "code_file", repoId: args.repoId, path: normalizedPath });
+            try {
+                this.core.deleteDoc({ kind: "code_file", repoId: args.repoId, path: normalizedPath });
+            } catch {
+                return;
+            }
             this.scheduleCommit(1);
             return;
         }
@@ -52,7 +56,11 @@ export class NativeSearchIndexer {
             pathDepth: computePathDepth(args.filePath),
             callgraphRank: Number.isFinite(args.callgraphRank as number) ? (args.callgraphRank as number) : 0
         };
-        this.core.upsert(doc);
+        try {
+            this.core.upsert(doc);
+        } catch {
+            return;
+        }
         this.scheduleCommit(1);
     }
 
@@ -78,25 +86,35 @@ export class NativeSearchIndexer {
                 contentHash: chunk.contentHash
             });
         }
-        this.core.upsertMany(docs);
+        try {
+            this.core.upsertMany(docs);
+        } catch {
+            return;
+        }
         this.scheduleCommit(docs.length);
     }
 
     public deleteCodeFile(repoId: string, filePath: string): void {
-        this.core.deleteDoc({ kind: "code_file", repoId, path: normalizePath(filePath) });
+        try {
+            this.core.deleteDoc({ kind: "code_file", repoId, path: normalizePath(filePath) });
+        } catch {
+            return;
+        }
         this.scheduleCommit(1);
     }
 
     public deleteDocChunks(repoId: string, chunkIds: string[]): void {
-        let deleted = false;
         let deletedCount = 0;
         for (const chunkId of chunkIds ?? []) {
             if (!chunkId) continue;
-            this.core.deleteDoc({ kind: "doc_chunk", repoId, chunkId });
-            deleted = true;
-            deletedCount += 1;
+            try {
+                this.core.deleteDoc({ kind: "doc_chunk", repoId, chunkId });
+                deletedCount += 1;
+            } catch {
+                // ignore
+            }
         }
-        if (deleted) {
+        if (deletedCount > 0) {
             this.scheduleCommit(deletedCount);
         }
     }
@@ -131,11 +149,18 @@ export class NativeSearchIndexer {
             this.commitTimer = undefined;
         }
         if (this.pendingOps === 0) return;
-        this.pendingOps = 0;
         try {
             this.core.commit();
+            this.pendingOps = 0;
         } catch {
-            // best-effort
+            // best-effort retry later
+            if (this.commitDelayMs > 0 && !this.commitTimer) {
+                this.commitTimer = setTimeout(() => {
+                    this.commitTimer = undefined;
+                    this.commitInternal();
+                }, this.commitDelayMs);
+                this.commitTimer.unref?.();
+            }
         }
     }
 }

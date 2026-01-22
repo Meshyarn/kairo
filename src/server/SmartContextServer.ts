@@ -245,12 +245,12 @@ export class SmartContextServer {
         try {
             this.nativeSearchCore = new NativeSearchCore(this.rootPath, { repoId: defaultRepoId });
             this.nativeSearchIndexer = new NativeSearchIndexer(this.nativeSearchCore);
-        } catch (error) {
-            if (!this.isTestEnv()) {
-                console.warn("[SmartContextServer] Native search init failed:", error);
-            }
-            this.nativeSearchCore = undefined;
-            this.nativeSearchIndexer = undefined;
+        } catch (error: any) {
+            const message = error?.message ? String(error.message) : String(error);
+            throw new Error(
+                `[SmartContextServer] Native search init failed: ${message}. ` +
+                `Build the native module with \`npm run build:core-rs\` (requires Rust).`
+            );
         }
         this.embeddingRepository = new EmbeddingRepository(this.indexDatabase);
         this.embeddingProviderFactory = new EmbeddingProviderFactory(resolveEmbeddingConfigFromEnv());
@@ -460,7 +460,6 @@ export class SmartContextServer {
         
         this.setupHandlers();
         this.initializeModularHandlers();
-        this.setupShutdownHooks();
 
         this.startHeartbeat();
         this.initMetricsReporter();
@@ -1504,18 +1503,15 @@ export class SmartContextServer {
         await new Promise(resolve => setTimeout(resolve, 100));
     }
 
-    public async run() {
-
-        const transport = new StdioServerTransport();
+    public async connect(transport: any): Promise<void> {
         await this.server.connect(transport);
-        console.error(`Kairo Server running on stdio (cwd=${process.cwd()})`);
 
         if (this.incrementalIndexer) {
             void this.incrementalIndexer.start().catch((error) => {
                 console.error('[SmartContextServer] Incremental indexer failed to start:', error);
             });
         }
-        
+
         // Background warmup: warm native search core without blocking.
         if (!this.isTestEnv() && this.shouldWarmupSearchIndex()) {
             setImmediate(() => {
@@ -1524,6 +1520,14 @@ export class SmartContextServer {
                 });
             });
         }
+    }
+
+    public async run() {
+
+        this.setupShutdownHooks();
+        const transport = new StdioServerTransport();
+        await this.connect(transport);
+        console.error(`Kairo Server running on stdio (cwd=${process.cwd()})`);
     }
     // Final Verification: Configuration via .kairo/config/.mcp-config.json successful!
 }

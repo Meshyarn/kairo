@@ -429,6 +429,9 @@ export class ManageHandlers extends BaseHandler {
         if (!status.available) {
             degraded.push("native_search_unavailable");
         }
+        if (status.available && status.stats && status.stats.writeEnabled === false) {
+            degraded.push("index_write_locked");
+        }
         return {
             ...status,
             degradedReasons: buildDegradedReasons(degraded)

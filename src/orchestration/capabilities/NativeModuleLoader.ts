@@ -24,7 +24,7 @@ export type RustCoreModule = {
         commit: () => void;
         search: (query: unknown) => unknown[];
         close: () => void;
-        stats: () => { docCount: number; segmentCount: number; indexVersion: number; schemaVersion: number };
+        stats: () => { docCount: number; segmentCount: number; indexVersion: number; schemaVersion: number; writeEnabled: boolean };
         reset?: () => void;
     };
 };
@@ -194,7 +194,8 @@ const createTestRustCoreStub = (): RustCoreModule => {
                 docCount: this.docs.size,
                 segmentCount: 1,
                 indexVersion: 1,
-                schemaVersion: 1
+                schemaVersion: 1,
+                writeEnabled: true
             };
         }
 

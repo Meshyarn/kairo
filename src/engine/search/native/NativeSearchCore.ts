@@ -64,6 +64,7 @@ export type NativeSearchStats = {
     segmentCount: number;
     indexVersion: number;
     schemaVersion: number;
+    writeEnabled: boolean;
 };
 
 export type NativeSearchCoreClient = {

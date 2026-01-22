@@ -429,15 +429,15 @@ export class IncrementalIndexer {
                                         imports,
                                         exports
                                     };
-                                    this.indexManager.updateFileEntry(this.currentIndex, filePath, entry);
-                                    if (this.indexDatabase) {
-                                        const relPath = path.relative(this.rootPath, filePath);
-                                        this.indexDatabase.updateFileMeta(relPath, {
-                                            lastModified: stat.mtime,
-                                            contentHash,
-                                            sizeBytes: stat.size
-                                        });
-                                    }
+	                                    this.indexManager.updateFileEntry(this.currentIndex, filePath, entry);
+	                                    if (this.indexDatabase) {
+	                                        const relPath = path.relative(this.rootPath, filePath).replace(/\\/g, "/");
+	                                        this.indexDatabase.updateFileMeta(relPath, {
+	                                            lastModified: stat.mtime,
+	                                            contentHash,
+	                                            sizeBytes: stat.size
+	                                        });
+	                                    }
                                     if (this.nativeSearchIndexer) {
                                         const relPath = path.relative(this.rootPath, filePath).replace(/\\/g, "/");
                                         this.nativeSearchIndexer.upsertCodeFile({
@@ -749,27 +749,27 @@ export class IncrementalIndexer {
         }
     }
 
-    private async handleDeletion(filePath: string): Promise<void> {
-        try {
-                        if (!this.isWithinRoot(filePath)) return;
-            const absolutePath = path.resolve(filePath);
-            this.removeFromQueues(absolutePath);
+	    private async handleDeletion(filePath: string): Promise<void> {
+	        try {
+	                        if (!this.isWithinRoot(filePath)) return;
+	            const absolutePath = path.resolve(filePath);
+	            this.removeFromQueues(absolutePath);
 
             if (this.isDocumentFile(filePath)) {
                 this.documentIndexer?.deleteFile(filePath);
             }
-            if (this.symbolIndex.isSupported(filePath)) {
-                const relativePath = path.relative(this.rootPath, absolutePath).replace(/\\\\/g, "/");
-                this.nativeSearchIndexer?.deleteCodeFile(this.repoId, relativePath);
-            }
+	            if (this.symbolIndex.isSupported(filePath)) {
+	                const relativePath = path.relative(this.rootPath, absolutePath).replace(/\\/g, "/");
+	                this.nativeSearchIndexer?.deleteCodeFile(this.repoId, relativePath);
+	            }
 
-            // Tier 3: Ghost Archeology - Register symbols from deleted file as ghosts
-            if (this.indexDatabase) {
-                const relativePath = path.relative(this.rootPath, absolutePath).replace(/\\\\/g, '/');
-                const symbols = this.indexDatabase.readSymbols(relativePath);
-                if (symbols && symbols.length > 0) {
-                    for (const symbol of symbols) {
-                        this.indexDatabase.addGhost({
+	            // Tier 3: Ghost Archeology - Register symbols from deleted file as ghosts
+	            if (this.indexDatabase) {
+	                const relativePath = path.relative(this.rootPath, absolutePath).replace(/\\/g, '/');
+	                const symbols = this.indexDatabase.readSymbols(relativePath);
+	                if (symbols && symbols.length > 0) {
+	                    for (const symbol of symbols) {
+	                        this.indexDatabase.addGhost({
                             name: symbol.name,
                             lastSeenPath: relativePath,
                             type: symbol.type,
@@ -793,18 +793,46 @@ export class IncrementalIndexer {
         }
     }
 
-    private async handleDirectoryDeletion(dirPath: string): Promise<void> {
-        try {
-            if (!this.isWithinRoot(dirPath)) return;
-            const normalizedDir = path.resolve(dirPath);
-            this.removeMatchingFromQueues(queued => queued.startsWith(normalizedDir));
+	    private async handleDirectoryDeletion(dirPath: string): Promise<void> {
+	        try {
+	            if (!this.isWithinRoot(dirPath)) return;
+	            const normalizedDir = path.resolve(dirPath);
+	            this.removeMatchingFromQueues(queued => queued.startsWith(normalizedDir));
 
-            await this.dependencyGraph.removeDirectory(dirPath);
-            this.options.onDirectoryRemoved?.(normalizedDir);
-        } catch (error) {
-            console.warn(`[IncrementalIndexer] failed to remove directory ${dirPath}:`, error);
-        }
-    }
+                if (this.indexDatabase) {
+                    const relativePrefixRaw = path.relative(this.rootPath, normalizedDir).replace(/\\/g, "/");
+                    const relativePrefix = relativePrefixRaw === "." ? "" : (relativePrefixRaw.endsWith("/") ? relativePrefixRaw : `${relativePrefixRaw}/`);
+                    const deletedPaths = this.indexDatabase
+                        .listFiles()
+                        .map((record) => record.path)
+                        .filter((recordPath) => recordPath === relativePrefixRaw || recordPath.startsWith(relativePrefix));
+
+                    for (const relPath of deletedPaths) {
+                        if (this.documentIndexer && this.documentIndexer.isSupported(relPath)) {
+                            this.documentIndexer.deleteFile(relPath);
+                        } else {
+                            this.nativeSearchIndexer?.deleteCodeFile(this.repoId, relPath);
+                            this.indexDatabase.deleteFile(relPath);
+                        }
+
+                        if (this.currentIndex) {
+                            const absPath = path.resolve(this.rootPath, relPath);
+                            this.indexManager.removeFileEntry(this.currentIndex, absPath);
+                        }
+                    }
+
+                    this.nativeSearchIndexer?.flush();
+                    if (this.currentIndex && deletedPaths.length > 0) {
+                        this.debouncedPersist();
+                    }
+                }
+
+	            await this.dependencyGraph.removeDirectory(dirPath);
+	            this.options.onDirectoryRemoved?.(normalizedDir);
+	        } catch (error) {
+	            console.warn(`[IncrementalIndexer] failed to remove directory ${dirPath}:`, error);
+	        }
+	    }
 
     private isDocumentFile(filePath: string): boolean {
         return this.documentIndexer?.isSupported(filePath) ?? false;
