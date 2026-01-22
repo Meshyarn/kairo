@@ -851,6 +851,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
           edits: { type: "array", items: { type: "object" } },
           paths: { type: "array", items: { type: "string" } },
           targetFiles: { type: "array", items: { type: "string" } },
+          targetPath: { type: "string" },
           safety: { type: "string", enum: ["plan", "apply"] },
           output: {
             type: "object",

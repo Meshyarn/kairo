@@ -192,6 +192,31 @@ describe("TaskHandlers", () => {
         expect(payload.status).toBe("success");
     });
 
+    it("accepts targetPath alias for write", async () => {
+        const context = makeContext();
+        const handler = new TaskHandlers(context as any);
+        const writeResponse = {
+            success: true,
+            status: "draft",
+            draftPack: { id: "draft_write_2" },
+            sessionId: "s5w2"
+        };
+        context.orchestrationEngine.executePillar.mockResolvedValue(writeResponse);
+
+        const response = await handler.handle("task", {
+            request: "Create file",
+            mode: "write",
+            targetPath: "src/alias.ts"
+        });
+        const payload = JSON.parse(response.content[0].text);
+
+        expect(context.orchestrationEngine.executePillar).toHaveBeenCalledWith(
+            "write",
+            expect.objectContaining({ targetPath: "src/alias.ts" })
+        );
+        expect(payload.draftId).toBe("draft_write_2");
+    });
+
     it("verifies file content against draft pack", async () => {
         const tempRoot = makeTempRoot();
         const fileSystem = new MemoryFileSystem(tempRoot);

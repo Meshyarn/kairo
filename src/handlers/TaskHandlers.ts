@@ -90,8 +90,9 @@ export class TaskHandlers extends BaseHandler {
         return { mode: "ask" as TaskMode, category };
     }
 
-    private resolveTargetPath(targetFiles: string[], paths: string[]): string | undefined {
+    private resolveTargetPath(targetFiles: string[], paths: string[], targetPath?: string): string | undefined {
         if (targetFiles.length > 0) return targetFiles[0];
+        if (targetPath) return targetPath;
         if (paths.length > 0) return paths[0];
         return undefined;
     }
@@ -559,6 +560,7 @@ export class TaskHandlers extends BaseHandler {
             "edits",
             "paths",
             "targetFiles",
+            "targetPath",
             "safety",
             "output",
             "trace"
@@ -787,6 +789,7 @@ export class TaskHandlers extends BaseHandler {
         const applyToken = typeof args?.applyToken === "string" ? args.applyToken : undefined;
         const paths = this.extractPaths(args?.paths);
         const targetFiles = this.extractPaths(args?.targetFiles);
+        const targetPath = typeof args?.targetPath === "string" && args.targetPath.length > 0 ? args.targetPath : undefined;
         const edits = this.extractEdits(args?.edits);
         const traceEnabled = args?.trace === true;
         const surface = resolvePublicSurface();
@@ -798,7 +801,7 @@ export class TaskHandlers extends BaseHandler {
         const nextCalls = this.buildNextCalls({
             category: routing.category,
             request,
-            targetFiles
+            targetFiles: targetFiles.length > 0 ? targetFiles : (targetPath ? [targetPath] : [])
         });
 
         if (routing.mode === "analyze") {
@@ -844,7 +847,9 @@ export class TaskHandlers extends BaseHandler {
         }
 
         if (routing.mode === "plan_change") {
-            const planTargets = targetFiles.length > 0 ? targetFiles : (paths.length > 0 ? paths : []);
+            const planTargets = targetFiles.length > 0
+                ? targetFiles
+                : (targetPath ? [targetPath] : (paths.length > 0 ? paths : []));
             const planLimits = maxTokens ? { maxTokens } : undefined;
             if (edits.length === 0) {
                 const response = await this.context.orchestrationEngine.executePillar("explore", {
@@ -966,7 +971,9 @@ export class TaskHandlers extends BaseHandler {
         }
 
         if (routing.mode === "apply_change") {
-            const applyTargets = targetFiles.length > 0 ? targetFiles : (paths.length > 0 ? paths : []);
+            const applyTargets = targetFiles.length > 0
+                ? targetFiles
+                : (targetPath ? [targetPath] : (paths.length > 0 ? paths : []));
             const applyLimits = maxTokens ? { maxTokens } : undefined;
             const response = await this.context.orchestrationEngine.executePillar("change", {
                 intent: request,
@@ -1031,11 +1038,11 @@ export class TaskHandlers extends BaseHandler {
 
         if (routing.mode === "write") {
             const writeSafety = safety ?? "plan";
-            const targetPath = this.resolveTargetPath(targetFiles, paths);
+            const writeTargetPath = this.resolveTargetPath(targetFiles, paths, targetPath);
             const extractedContent = writeSafety === "plan" ? this.extractContentFromRequest(request) : undefined;
             const response = await this.context.orchestrationEngine.executePillar("write", {
                 intent: request,
-                targetPath,
+                targetPath: writeTargetPath,
                 ...(extractedContent !== undefined ? { content: extractedContent } : {}),
                 ...(extractedContent === undefined && writeSafety === "plan" ? { smartWrite: true } : {}),
                 sessionId,
@@ -1094,8 +1101,8 @@ export class TaskHandlers extends BaseHandler {
         }
 
         if (routing.mode === "verify") {
-            const targetPath = this.resolveTargetPath(targetFiles, paths);
-            const { verification, reasons } = await this.buildVerificationResult({ targetPath, draftId });
+            const verifyTargetPath = this.resolveTargetPath(targetFiles, paths, targetPath);
+            const { verification, reasons } = await this.buildVerificationResult({ targetPath: verifyTargetPath, draftId });
             const degradedReasons = buildDegradedReasons(reasons, {
                 filePath: verification.relPath ?? verification.targetPath
             });
