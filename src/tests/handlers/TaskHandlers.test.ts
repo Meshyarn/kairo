@@ -79,6 +79,46 @@ describe("TaskHandlers", () => {
         expect(payload.status).toBe("success");
     });
 
+    it("runs composite explore→understand when evidence is insufficient", async () => {
+        const context = makeContext();
+        const handler = new TaskHandlers(context as any);
+        const exploreResponse = {
+            success: true,
+            status: "ok",
+            data: { docs: [], code: [{ kind: "file_preview", filePath: "src/app.ts", preview: "export const app = 1;" }] },
+            pack: { packId: "pack_comp", hit: false, createdAt: Date.now() },
+            sessionId: "s-comp"
+        };
+        const understandResponse = {
+            success: true,
+            status: "ok",
+            summary: "Analysis results for app.",
+            primaryFile: "src/app.ts",
+            symbols: [],
+            dependencies: [],
+            sessionId: "s-comp"
+        };
+        context.orchestrationEngine.executePillar
+            .mockResolvedValueOnce(exploreResponse)
+            .mockResolvedValueOnce(understandResponse);
+
+        const response = await handler.handle("task", { request: "app details", budget: "balanced", mode: "ask" });
+        const payload = JSON.parse(response.content[0].text);
+
+        expect(context.orchestrationEngine.executePillar).toHaveBeenNthCalledWith(
+            1,
+            "explore",
+            expect.objectContaining({ query: "app details", view: "preview" })
+        );
+        expect(context.orchestrationEngine.executePillar).toHaveBeenNthCalledWith(
+            2,
+            "understand",
+            expect.objectContaining({ goal: "app details", targetFiles: ["src/app.ts"] })
+        );
+        expect(payload.summary.bullets.some((bullet: string) => bullet.startsWith("Deep analysis:"))).toBe(true);
+        expect(payload.status).toBe("partial_success");
+    });
+
     it("adds evidence pack for deep ask responses", async () => {
         const flowArtifactManager = { store: jest.fn((artifact: any) => artifact.id) };
         const context = makeContext({ flowArtifactManager });

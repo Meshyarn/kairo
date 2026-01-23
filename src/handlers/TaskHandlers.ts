@@ -335,6 +335,60 @@ export class TaskHandlers extends BaseHandler {
         };
     }
 
+    private buildInlineEvidence(args: {
+        lod: number;
+        evidencePack?: TaskEvidencePack;
+    }): Array<{ filePath: string; reason?: string; excerpt?: string; kind?: string; source?: string; score?: number }> | undefined {
+        const pack = args.evidencePack;
+        if (!pack || args.lod <= 0) return undefined;
+        if (args.lod === 1) {
+            const ranked = Array.isArray(pack.rankedFiles) ? pack.rankedFiles : [];
+            if (ranked.length === 0) return undefined;
+            return ranked.map((item) => ({
+                filePath: item.filePath,
+                reason: item.reason,
+                score: item.score
+            }));
+        }
+        const evidence = Array.isArray(pack.evidence) ? pack.evidence : [];
+        if (evidence.length === 0) return undefined;
+        return evidence.map((item) => ({
+            filePath: item.filePath,
+            reason: item.reason,
+            excerpt: item.excerpt,
+            kind: item.kind,
+            source: item.source,
+            score: item.score
+        }));
+    }
+
+    private resolveTaskLod(args: {
+        defaultLod: number;
+        evidencePack?: TaskEvidencePack;
+        hasEvidenceArtifact: boolean;
+        decisionInsufficient?: boolean;
+    }): { lod: number; reason?: string } {
+        const rankedFiles = args.evidencePack?.rankedFiles ?? [];
+        const evidenceItems = args.evidencePack?.evidence ?? [];
+        let lod = args.defaultLod;
+        let reason: string | undefined;
+        if (rankedFiles.length === 0) {
+            lod = 0;
+            reason = "no_ranked_files";
+        } else if (lod >= 2 && evidenceItems.length === 0) {
+            lod = 1;
+            reason = "no_evidence_items";
+        } else if (lod >= 3 && !args.hasEvidenceArtifact) {
+            lod = 2;
+            reason = "no_evidence_artifact";
+        }
+        if (args.decisionInsufficient && lod === 0 && rankedFiles.length > 0) {
+            lod = 1;
+            reason = "force_min_evidence";
+        }
+        return { lod, reason };
+    }
+
     private buildGuidance(guidance: any, nextCalls?: Array<{ tool: string; args: Record<string, unknown>; reason?: string }>) {
         const suggested = Array.isArray(guidance?.suggestedActions) ? guidance.suggestedActions : undefined;
         const computedNextCalls = nextCalls ?? (Array.isArray(suggested)
@@ -1013,25 +1067,16 @@ export class TaskHandlers extends BaseHandler {
             const relatedArtifacts = response?.callGraphArtifactId
                 ? [{ id: response.callGraphArtifactId, kind: "call_graph", detail: "summary" as const }]
                 : undefined;
-            let evidencePack: TaskEvidencePack | undefined;
-            let evidenceArtifactId: string | undefined;
-            if (budget === "deep") {
-                const summaryLine = typeof response?.summary === "string"
-                    ? response.summary
-                    : `Analysis for "${request}".`;
-                evidencePack = buildEvidencePackFromUnderstand({
-                    primaryFile: typeof response?.primaryFile === "string" ? response.primaryFile : undefined,
-                    summary: summaryLine,
-                    request,
-                    budgetPolicy,
-                    relatedArtifacts
-                });
-                evidenceArtifactId = this.storeEvidencePack({
-                    pack: evidencePack,
-                    sessionId: response?.sessionId ?? sessionId,
-                    intent: request
-                });
-            }
+            const summaryLine = typeof response?.summary === "string"
+                ? response.summary
+                : `Analysis for "${request}".`;
+            const evidencePack = buildEvidencePackFromUnderstand({
+                primaryFile: typeof response?.primaryFile === "string" ? response.primaryFile : undefined,
+                summary: summaryLine,
+                request,
+                budgetPolicy,
+                relatedArtifacts
+            });
             const decisionGate = this.buildAnalyzeDecisionGate({
                 response,
                 budgetPolicy,
@@ -1041,6 +1086,20 @@ export class TaskHandlers extends BaseHandler {
                 targetFiles,
                 paths
             });
+            const lodResolution = this.resolveTaskLod({
+                defaultLod: budgetPolicy.defaultLod,
+                evidencePack,
+                hasEvidenceArtifact: budgetPolicy.defaultLod >= 3,
+                decisionInsufficient: decisionGate.insufficient
+            });
+            let evidenceArtifactId: string | undefined;
+            if (lodResolution.lod >= 3) {
+                evidenceArtifactId = this.storeEvidencePack({
+                    pack: evidencePack,
+                    sessionId: response?.sessionId ?? sessionId,
+                    intent: request
+                });
+            }
             if (traceBuilder) {
                 traceBuilder.recordEvent({
                     area: "policy",
@@ -1048,6 +1107,15 @@ export class TaskHandlers extends BaseHandler {
                     data: {
                         mode: "analyze",
                         insufficient: decisionGate.insufficient
+                    }
+                });
+                traceBuilder.recordEvent({
+                    area: "policy",
+                    code: "task.lod",
+                    data: {
+                        defaultLod: budgetPolicy.defaultLod,
+                        resolvedLod: lodResolution.lod,
+                        reason: lodResolution.reason
                     }
                 });
             }
@@ -1080,6 +1148,7 @@ export class TaskHandlers extends BaseHandler {
                 response?.degradedReasons,
                 decisionGate.reasons ? buildDegradedReasons(decisionGate.reasons) : undefined
             );
+            const inlineEvidence = this.buildInlineEvidence({ lod: lodResolution.lod, evidencePack });
             const payload = {
                 ok: true,
                 sessionId: response?.sessionId ?? sessionId,
@@ -1088,7 +1157,7 @@ export class TaskHandlers extends BaseHandler {
                 budget,
                 surface,
                 summary,
-                ...(evidencePack?.evidence?.length ? { evidence: evidencePack.evidence } : {}),
+                ...(inlineEvidence ? { evidence: inlineEvidence } : {}),
                 ...(details ? { details } : {}),
                 ...(artifacts.length > 0 ? { artifacts } : {}),
                 ...(response?.degraded !== undefined || decisionGate.insufficient ? { degraded: Boolean(response?.degraded) || decisionGate.insufficient } : {}),
@@ -1138,6 +1207,42 @@ export class TaskHandlers extends BaseHandler {
                         }
                     ]
                 };
+                const evidencePack = buildEvidencePackFromExplore({
+                    response,
+                    request,
+                    budgetPolicy,
+                    intentCategory: routing.category
+                });
+                const evidenceFileVersions = await this.buildFileVersionsSnapshot(
+                    evidencePack.rankedFiles.map((item) => item.filePath)
+                );
+                if (evidenceFileVersions) {
+                    evidencePack.fileVersions = evidenceFileVersions;
+                }
+                const lodResolution = this.resolveTaskLod({
+                    defaultLod: budgetPolicy.defaultLod,
+                    evidencePack,
+                    hasEvidenceArtifact: budgetPolicy.defaultLod >= 3
+                });
+                let evidenceArtifactId: string | undefined;
+                if (lodResolution.lod >= 3) {
+                    evidenceArtifactId = this.storeEvidencePack({
+                        pack: evidencePack,
+                        sessionId: response?.sessionId ?? sessionId,
+                        intent: request
+                    });
+                }
+                if (traceBuilder) {
+                    traceBuilder.recordEvent({
+                        area: "policy",
+                        code: "task.lod",
+                        data: {
+                            defaultLod: budgetPolicy.defaultLod,
+                            resolvedLod: lodResolution.lod,
+                            reason: lodResolution.reason
+                        }
+                    });
+                }
                 const summary = this.buildPlanPrepSummary({ request, recommendedTargets, packId });
                 const guidance = this.rewriteGuidanceForCompact({
                     guidance: this.buildGuidance(response?.guidance, nextCalls),
@@ -1149,6 +1254,11 @@ export class TaskHandlers extends BaseHandler {
                     surface
                 });
                 const details = outputFormat === "standard" ? { pillar: "explore", response } : undefined;
+                const inlineEvidence = this.buildInlineEvidence({ lod: lodResolution.lod, evidencePack });
+                const artifacts: Array<{ id: string; kind: string; detail: "summary" | "full" }> = [];
+                if (evidenceArtifactId) {
+                    artifacts.push({ id: evidenceArtifactId, kind: "evidence", detail: "summary" });
+                }
                 const payload = {
                     ok: true,
                     sessionId: response?.sessionId ?? sessionId,
@@ -1157,6 +1267,7 @@ export class TaskHandlers extends BaseHandler {
                     budget,
                     surface,
                     summary,
+                    ...(inlineEvidence ? { evidence: inlineEvidence } : {}),
                     ...(details ? { details } : {}),
                     ...(packId ? { packId } : {}),
                     changePrep: {
@@ -1164,6 +1275,7 @@ export class TaskHandlers extends BaseHandler {
                         ...(fileVersions ? { fileVersions } : {}),
                         editsTemplate
                     },
+                    ...(artifacts.length > 0 ? { artifacts } : {}),
                     ...(response?.degraded !== undefined ? { degraded: response.degraded } : {}),
                     ...(response?.degradedReasons ? { degradedReasons: response.degradedReasons } : {}),
                     ...(guidance ? { guidance } : {}),
@@ -1442,31 +1554,16 @@ export class TaskHandlers extends BaseHandler {
             trace: traceEnabled,
             limits: responseLimits
         });
+        const exploreEvidencePack = buildEvidencePackFromExplore({
+            response,
+            request,
+            budgetPolicy,
+            intentCategory: routing.category
+        });
         const relatedArtifacts = response?.researchPack?.id
             ? [{ id: response.researchPack.id, kind: "research", detail: "summary" as const }]
             : undefined;
-        let evidencePack: TaskEvidencePack | undefined;
-        let evidenceArtifactId: string | undefined;
-        if (budget === "deep") {
-            evidencePack = buildEvidencePackFromExplore({
-                response,
-                request,
-                budgetPolicy,
-                intentCategory: routing.category,
-                relatedArtifacts
-            });
-            const fileVersions = await this.buildFileVersionsSnapshot(
-                evidencePack.rankedFiles.map((item) => item.filePath)
-            );
-            if (fileVersions) {
-                evidencePack.fileVersions = fileVersions;
-            }
-            evidenceArtifactId = this.storeEvidencePack({
-                pack: evidencePack,
-                sessionId: response?.sessionId ?? sessionId,
-                intent: request
-            });
-        }
+        exploreEvidencePack.relatedArtifacts = relatedArtifacts ?? exploreEvidencePack.relatedArtifacts;
         const decisionGate = this.buildExploreDecisionGate({
             response,
             budgetPolicy,
@@ -1475,6 +1572,30 @@ export class TaskHandlers extends BaseHandler {
             sessionId,
             targetFiles
         });
+        let understandResponse: any | undefined;
+        let analyzeDecisionGate: { insufficient: boolean; reasons?: string[]; nextCalls?: Array<{ tool: string; args: Record<string, unknown>; reason?: string }> } | undefined;
+        const topTarget = targetFiles[0]
+            ?? response?.data?.code?.[0]?.filePath
+            ?? response?.data?.docs?.[0]?.filePath;
+        if (decisionGate.insufficient && budgetPolicy.maxSteps >= 2 && topTarget) {
+            understandResponse = await this.context.orchestrationEngine.executePillar("understand", {
+                goal: request,
+                targetFiles: [topTarget],
+                sessionId,
+                profile,
+                trace: traceEnabled,
+                limits: responseLimits
+            });
+            analyzeDecisionGate = this.buildAnalyzeDecisionGate({
+                response: understandResponse,
+                budgetPolicy,
+                request,
+                budget,
+                sessionId,
+                targetFiles,
+                paths
+            });
+        }
         if (traceBuilder) {
             traceBuilder.recordEvent({
                 area: "policy",
@@ -1486,16 +1607,35 @@ export class TaskHandlers extends BaseHandler {
                     docCount: response?.data?.docs?.length ?? 0
                 }
             });
+            if (understandResponse) {
+                traceBuilder.recordEvent({
+                    area: "policy",
+                    code: "task.composite_flow",
+                    data: {
+                        steps: ["explore", "understand"],
+                        reason: "decision_gate_insufficient"
+                    }
+                });
+            }
         }
         const summary = this.buildExploreSummary({ response, request, routingNote });
         if (decisionGate.insufficient) {
             summary.bullets.push("Decision gate: insufficient evidence; add explicit paths/targets or retry with follow-up guidance.");
             summary.next.push("Provide explicit paths/targetFiles to improve evidence quality.");
         }
+        if (understandResponse) {
+            const analysisLine = typeof understandResponse?.summary === "string"
+                ? understandResponse.summary
+                : (typeof understandResponse?.primaryFile === "string" ? `Primary file: ${understandResponse.primaryFile}.` : "Analysis completed.");
+            summary.bullets.push(`Deep analysis: ${analysisLine}`);
+        }
         const combinedNextCalls = [
             ...(nextCalls ?? []),
             ...(decisionGate.nextCalls ?? [])
         ];
+        if (analyzeDecisionGate?.nextCalls?.length) {
+            combinedNextCalls.push(...analyzeDecisionGate.nextCalls);
+        }
         const guidance = this.rewriteGuidanceForCompact({
             guidance: this.buildGuidance(response?.guidance, combinedNextCalls.length > 0 ? combinedNextCalls : undefined),
             request,
@@ -1506,28 +1646,91 @@ export class TaskHandlers extends BaseHandler {
             surface
         });
         const packId = response?.pack?.packId ?? response?.researchPack?.id;
+        const evidencePack = understandResponse
+            ? (() => {
+                const summaryLine = typeof understandResponse?.summary === "string"
+                    ? understandResponse.summary
+                    : `Analysis for "${request}".`;
+                const analysisPack = buildEvidencePackFromUnderstand({
+                    primaryFile: typeof understandResponse?.primaryFile === "string" ? understandResponse.primaryFile : undefined,
+                    summary: summaryLine,
+                    request,
+                    budgetPolicy,
+                    relatedArtifacts: understandResponse?.callGraphArtifactId
+                        ? [{ id: understandResponse.callGraphArtifactId, kind: "call_graph", detail: "summary" }]
+                        : undefined
+                });
+                return {
+                    ...analysisPack,
+                    rankedFiles: exploreEvidencePack.rankedFiles.length > 0 ? exploreEvidencePack.rankedFiles : analysisPack.rankedFiles,
+                    evidence: [...analysisPack.evidence, ...exploreEvidencePack.evidence].slice(0, budgetPolicy.maxEvidenceItems),
+                    relatedArtifacts: [
+                        ...(analysisPack.relatedArtifacts ?? []),
+                        ...(exploreEvidencePack.relatedArtifacts ?? [])
+                    ]
+                };
+            })()
+            : exploreEvidencePack;
+        let evidenceArtifactId: string | undefined;
+        const lodResolution = this.resolveTaskLod({
+            defaultLod: budgetPolicy.defaultLod,
+            evidencePack,
+            hasEvidenceArtifact: budgetPolicy.defaultLod >= 3,
+            decisionInsufficient: decisionGate.insufficient || analyzeDecisionGate?.insufficient
+        });
+        if (lodResolution.lod >= 3) {
+            const fileVersions = await this.buildFileVersionsSnapshot(
+                evidencePack.rankedFiles.map((item) => item.filePath)
+            );
+            if (fileVersions) {
+                evidencePack.fileVersions = fileVersions;
+            }
+            evidenceArtifactId = this.storeEvidencePack({
+                pack: evidencePack,
+                sessionId: understandResponse?.sessionId ?? response?.sessionId ?? sessionId,
+                intent: request
+            });
+        }
+        if (traceBuilder) {
+            traceBuilder.recordEvent({
+                area: "policy",
+                code: "task.lod",
+                data: {
+                    defaultLod: budgetPolicy.defaultLod,
+                    resolvedLod: lodResolution.lod,
+                    reason: lodResolution.reason
+                }
+            });
+        }
         const artifacts: Array<{ id: string; kind: string; detail: "summary" | "full" }> = [];
+        if (understandResponse?.callGraphArtifactId) {
+            artifacts.push({ id: understandResponse.callGraphArtifactId, kind: "call_graph", detail: "summary" });
+        }
         if (evidenceArtifactId) {
             artifacts.push({ id: evidenceArtifactId, kind: "evidence", detail: "summary" });
         }
-        const details = outputFormat === "standard" ? { pillar: "explore", response } : undefined;
+        const details = outputFormat === "standard"
+            ? (understandResponse ? { pillar: "explore", response, followUp: { pillar: "understand", response: understandResponse } } : { pillar: "explore", response })
+            : undefined;
         const degradedReasons = this.mergeDegradedReasons(
             response?.degradedReasons,
-            decisionGate.reasons ? buildDegradedReasons(decisionGate.reasons) : undefined
+            decisionGate.reasons ? buildDegradedReasons(decisionGate.reasons) : undefined,
+            analyzeDecisionGate?.reasons ? buildDegradedReasons(analyzeDecisionGate.reasons) : undefined
         );
+        const inlineEvidence = this.buildInlineEvidence({ lod: lodResolution.lod, evidencePack });
         const payload = {
             ok: true,
-            sessionId: response?.sessionId ?? sessionId,
-            status: decisionGate.insufficient ? "partial_success" : this.mapStatus(response),
+            sessionId: understandResponse?.sessionId ?? response?.sessionId ?? sessionId,
+            status: (decisionGate.insufficient || analyzeDecisionGate?.insufficient) ? "partial_success" : this.mapStatus(understandResponse ?? response),
             mode: routing.mode,
             budget,
             surface,
             summary,
-            ...(evidencePack?.evidence?.length ? { evidence: evidencePack.evidence } : {}),
+            ...(inlineEvidence ? { evidence: inlineEvidence } : {}),
             ...(details ? { details } : {}),
             ...(packId ? { packId } : {}),
             ...(artifacts.length > 0 ? { artifacts } : {}),
-            ...(response?.degraded !== undefined || decisionGate.insufficient ? { degraded: Boolean(response?.degraded) || decisionGate.insufficient } : {}),
+            ...(response?.degraded !== undefined || decisionGate.insufficient || analyzeDecisionGate?.insufficient ? { degraded: Boolean(response?.degraded) || decisionGate.insufficient || analyzeDecisionGate?.insufficient } : {}),
             ...(degradedReasons ? { degradedReasons } : {}),
             ...(guidance ? { guidance } : {}),
             stats: {
