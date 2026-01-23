@@ -523,4 +523,75 @@ describe("TaskHandlers", () => {
             PathManager.setRoot(originalRoot);
         }
     });
+
+    it("auto-verifies apply_change responses when possible", async () => {
+        const fileSystem = new MemoryFileSystem();
+        await fileSystem.writeFile("src/app.ts", "export const value = 2;\n");
+        const draftPack = {
+            id: "draft_apply_verify_1",
+            phantomFiles: [{ path: "src/app.ts", content: "export const value = 2;\n", isNew: false, language: "ts" }]
+        };
+        const flowArtifactManager = {
+            get: jest.fn((id: string) => (id === "draft_apply_verify_1" ? { type: "draft", pack: draftPack } : undefined))
+        };
+        const context = makeContext({ fileSystem, flowArtifactManager });
+        const handler = new TaskHandlers(context as any);
+        const changeResponse = {
+            success: true,
+            status: "ok",
+            targetFile: "src/app.ts",
+            sessionId: "s-apply-verify"
+        };
+        context.orchestrationEngine.executePillar.mockResolvedValue(changeResponse);
+
+        const response = await handler.handle("task", {
+            request: "apply plan",
+            mode: "apply_change",
+            budget: "balanced",
+            draftId: "draft_apply_verify_1",
+            applyToken: "token_1",
+            targetFiles: ["src/app.ts"]
+        });
+        const payload = JSON.parse(response.content[0].text);
+
+        expect(payload.status).toBe("success");
+        expect(payload.verification?.contentMatch).toBe(true);
+        expect(payload.summary.bullets.some((bullet: string) => bullet.includes("Auto-verify:"))).toBe(true);
+    });
+
+    it("auto-verifies write apply responses when possible", async () => {
+        const fileSystem = new MemoryFileSystem();
+        await fileSystem.writeFile("src/new.ts", "export const generated = 123;\n");
+        const draftPack = {
+            id: "draft_write_verify_1",
+            phantomFiles: [{ path: "src/new.ts", content: "export const generated = 123;\n", isNew: true, language: "ts" }]
+        };
+        const flowArtifactManager = {
+            get: jest.fn((id: string) => (id === "draft_write_verify_1" ? { type: "draft", pack: draftPack } : undefined))
+        };
+        const context = makeContext({ fileSystem, flowArtifactManager });
+        const handler = new TaskHandlers(context as any);
+        const writeResponse = {
+            success: true,
+            status: "ok",
+            draftPack: { id: "draft_write_verify_1" },
+            sessionId: "s-write-verify"
+        };
+        context.orchestrationEngine.executePillar.mockResolvedValue(writeResponse);
+
+        const response = await handler.handle("task", {
+            request: "apply write",
+            mode: "write",
+            safety: "apply",
+            budget: "balanced",
+            targetPath: "src/new.ts",
+            draftId: "draft_write_verify_1",
+            applyToken: "token_write_1"
+        });
+        const payload = JSON.parse(response.content[0].text);
+
+        expect(payload.status).toBe("success");
+        expect(payload.verification?.contentMatch).toBe(true);
+        expect(payload.summary.bullets.some((bullet: string) => bullet.includes("Auto-verify:"))).toBe(true);
+    });
 });

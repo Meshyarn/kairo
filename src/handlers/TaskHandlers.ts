@@ -964,6 +964,47 @@ export class TaskHandlers extends BaseHandler {
         return rewritten;
     }
 
+    private buildEvidenceContinuation(args: {
+        reason: string;
+        nextCalls?: Array<{ tool: string; args: Record<string, unknown>; reason?: string }>;
+        defaults: { request: string; budget: TaskBudget; output?: any; traceEnabled: boolean; sessionId?: string };
+    }): TaskEvidencePack["continuation"] | undefined {
+        const nextCalls = Array.isArray(args.nextCalls) ? args.nextCalls : [];
+        if (nextCalls.length === 0) return undefined;
+
+        const normalized: Array<{ tool: "task" | "manage"; args: Record<string, unknown> }> = [];
+        const seen = new Set<string>();
+        for (const nextCall of nextCalls) {
+            if (!nextCall || typeof nextCall.tool !== "string") continue;
+            let tool: "task" | "manage" | undefined;
+            let callArgs: Record<string, unknown> | undefined;
+
+            if (nextCall.tool === "task" || nextCall.tool === "manage") {
+                tool = nextCall.tool;
+                callArgs = nextCall.args ?? {};
+            } else {
+                const rewritten = this.rewriteToolCallForCompact({ tool: nextCall.tool, args: nextCall.args }, args.defaults);
+                if (rewritten?.tool === "task" || rewritten?.tool === "manage") {
+                    tool = rewritten.tool;
+                    callArgs = rewritten.args;
+                }
+            }
+
+            if (!tool || !callArgs) continue;
+            const key = `${tool}:${JSON.stringify(callArgs)}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            normalized.push({ tool, args: callArgs });
+            if (normalized.length >= 3) break;
+        }
+
+        if (normalized.length === 0) return undefined;
+        return {
+            reason: args.reason,
+            nextCalls: normalized
+        };
+    }
+
     private async buildVerificationResult(args: {
         targetPath?: string;
         draftId?: string;
@@ -1175,6 +1216,36 @@ export class TaskHandlers extends BaseHandler {
                 targetFiles,
                 paths
             });
+            const combinedNextCalls = [
+                ...(nextCalls ?? []),
+                ...(decisionGate.nextCalls ?? [])
+            ];
+            const packDegradedReasons = this.mergeDegradedReasons(
+                response?.degradedReasons,
+                decisionGate.reasons ? buildDegradedReasons(decisionGate.reasons) : undefined
+            );
+            if (decisionGate.insufficient || response?.degraded !== undefined) {
+                evidencePack.degraded = Boolean(response?.degraded) || decisionGate.insufficient;
+            }
+            if (packDegradedReasons) {
+                evidencePack.degradedReasons = packDegradedReasons;
+            }
+            const continuation = decisionGate.insufficient
+                ? this.buildEvidenceContinuation({
+                    reason: "insufficient_evidence",
+                    nextCalls: combinedNextCalls,
+                    defaults: {
+                        request,
+                        budget,
+                        output: outputPayload,
+                        traceEnabled,
+                        sessionId
+                    }
+                })
+                : undefined;
+            if (continuation) {
+                evidencePack.continuation = continuation;
+            }
             const lodResolution = this.resolveTaskLod({
                 defaultLod: budgetPolicy.defaultLod,
                 evidencePack,
@@ -1212,10 +1283,6 @@ export class TaskHandlers extends BaseHandler {
             if (decisionGate.insufficient) {
                 summary.bullets.push("Decision gate: insufficient evidence; add explicit paths/targets or retry with follow-up guidance.");
             }
-            const combinedNextCalls = [
-                ...(nextCalls ?? []),
-                ...(decisionGate.nextCalls ?? [])
-            ];
             const guidance = this.rewriteGuidanceForCompact({
                 guidance: this.buildGuidance(response?.guidance, combinedNextCalls.length > 0 ? combinedNextCalls : undefined),
                 request,
@@ -1233,10 +1300,7 @@ export class TaskHandlers extends BaseHandler {
                 artifacts.push({ id: evidenceArtifactId, kind: "evidence", detail: "summary" });
             }
             const details = outputFormat === "standard" ? { pillar: "understand", response } : undefined;
-            const degradedReasons = this.mergeDegradedReasons(
-                response?.degradedReasons,
-                decisionGate.reasons ? buildDegradedReasons(decisionGate.reasons) : undefined
-            );
+            const degradedReasons = packDegradedReasons;
             const inlineEvidence = this.buildInlineEvidence({ lod: lodResolution.lod, evidencePack });
             const payload = {
                 ok: true,
@@ -1319,6 +1383,66 @@ export class TaskHandlers extends BaseHandler {
                 if (evidenceFileVersions) {
                     evidencePack.fileVersions = evidenceFileVersions;
                 }
+                let targetStringCandidates = this.buildTargetStringCandidates({
+                    evidencePack,
+                    maxCandidates: Math.min(3, budgetPolicy.maxEvidenceItems)
+                });
+                if ((!targetStringCandidates || targetStringCandidates.length === 0) && budgetPolicy.maxSteps >= 2) {
+                    const maxAnchorFiles = budget === "deep" ? 2 : 1;
+                    const ranked = Array.isArray(evidencePack.rankedFiles) ? evidencePack.rankedFiles : [];
+                    const anchorTargets = ranked
+                        .map((item) => item.filePath)
+                        .filter((filePath) => {
+                            const lower = filePath.toLowerCase();
+                            return !lower.endsWith(".md") && !lower.endsWith(".mdx");
+                        })
+                        .slice(0, maxAnchorFiles);
+                    if (anchorTargets.length > 0) {
+                        try {
+                            const anchorResponse = await executePillar("explore", {
+                                paths: anchorTargets,
+                                sessionId,
+                                profile: "lean",
+                                view: "full",
+                                trace: traceEnabled,
+                                limits: { maxBytes: 200000, maxChars: 20000 }
+                            });
+                            const anchorPack = buildEvidencePackFromExplore({
+                                response: anchorResponse,
+                                request,
+                                budgetPolicy,
+                                intentCategory: routing.category
+                            });
+                            for (const item of anchorPack.evidence ?? []) {
+                                if (item.kind !== "code" || typeof item.anchorText !== "string") continue;
+                                const existing = evidencePack.evidence.find((entry) => entry.filePath === item.filePath && entry.kind === "code");
+                                if (existing) {
+                                    existing.anchorText = item.anchorText;
+                                    existing.location = item.location;
+                                }
+                            }
+                            const anchoredCandidates = this.buildTargetStringCandidates({
+                                evidencePack: anchorPack,
+                                maxCandidates: maxAnchorFiles
+                            });
+                            const merged = [
+                                ...(anchoredCandidates ?? []),
+                                ...(targetStringCandidates ?? [])
+                            ];
+                            if (merged.length > 0) {
+                                const seen = new Set<string>();
+                                targetStringCandidates = merged.filter((candidate) => {
+                                    const key = `${candidate.filePath}:${candidate.anchorText}`;
+                                    if (seen.has(key)) return false;
+                                    seen.add(key);
+                                    return true;
+                                });
+                            }
+                        } catch {
+                            // ignore anchor extraction failures
+                        }
+                    }
+                }
                 const lodResolution = this.resolveTaskLod({
                     defaultLod: budgetPolicy.defaultLod,
                     evidencePack,
@@ -1355,10 +1479,6 @@ export class TaskHandlers extends BaseHandler {
                 });
                 const details = outputFormat === "standard" ? { pillar: "explore", response } : undefined;
                 const inlineEvidence = this.buildInlineEvidence({ lod: lodResolution.lod, evidencePack });
-                const targetStringCandidates = this.buildTargetStringCandidates({
-                    evidencePack,
-                    maxCandidates: Math.min(3, budgetPolicy.maxEvidenceItems)
-                });
                 const artifacts: Array<{ id: string; kind: string; detail: "summary" | "full" }> = [];
                 if (evidenceArtifactId) {
                     artifacts.push({ id: evidenceArtifactId, kind: "evidence", detail: "summary" });
@@ -1498,6 +1618,34 @@ export class TaskHandlers extends BaseHandler {
                 ...(applyLimits ? { limits: applyLimits } : {})
             });
             const summary = this.buildApplySummary({ response, request });
+            let status = this.mapStatus(response);
+            let verification: VerificationResult | undefined;
+            let verificationReasons: string[] = [];
+            const autoVerifyTargetPath = (typeof response?.targetFile === "string" ? response.targetFile : undefined)
+                ?? (typeof response?.targetPath === "string" ? response.targetPath : undefined)
+                ?? applyTargets[0];
+            const autoVerifyDraftId = draftId;
+            const canAutoVerify = status === "success"
+                && budgetPolicy.maxSteps >= 2
+                && Boolean(autoVerifyTargetPath)
+                && Boolean(autoVerifyDraftId)
+                && Boolean(this.context.fileSystem)
+                && Boolean(this.context.flowArtifactManager);
+            if (canAutoVerify) {
+                const result = await this.buildVerificationResult({
+                    targetPath: autoVerifyTargetPath,
+                    draftId: autoVerifyDraftId
+                });
+                verification = result.verification;
+                verificationReasons = result.reasons;
+                summary.bullets.push(
+                    `Auto-verify: exists=${verification.exists ? "yes" : "no"}, draftMatch=${verification.contentMatch === true ? "yes" : (verification.contentMatch === false ? "no" : "unknown")}.`
+                );
+                if (verificationReasons.length > 0 && status === "success") {
+                    const isBlocked = verificationReasons.includes("file_missing") || verificationReasons.includes("draft_missing");
+                    status = isBlocked ? "blocked" : "partial_success";
+                }
+            }
             const guidance = this.rewriteGuidanceForCompact({
                 guidance: this.buildGuidance(response?.guidance, nextCalls),
                 request,
@@ -1524,10 +1672,15 @@ export class TaskHandlers extends BaseHandler {
                 artifacts.push({ id: response.postReview.id, kind: "review", detail: "summary" });
             }
             const details = outputFormat === "standard" ? { pillar: "change", response } : undefined;
+            const verifyDegradedReasons = verificationReasons.length > 0
+                ? buildDegradedReasons(verificationReasons, { filePath: verification?.relPath ?? verification?.targetPath })
+                : undefined;
+            const degradedReasons = this.mergeDegradedReasons(response?.degradedReasons, verifyDegradedReasons);
+            const degraded = Boolean(response?.degraded) || verificationReasons.length > 0;
             const payload = {
                 ok: true,
                 sessionId: response?.sessionId ?? sessionId,
-                status: this.mapStatus(response),
+                status,
                 mode: routing.mode,
                 budget,
                 surface,
@@ -1535,8 +1688,9 @@ export class TaskHandlers extends BaseHandler {
                 ...(details ? { details } : {}),
                 ...(draftId ? { draftId } : {}),
                 ...(artifacts.length > 0 ? { artifacts } : {}),
-                ...(response?.degraded !== undefined ? { degraded: response.degraded } : {}),
-                ...(response?.degradedReasons ? { degradedReasons: response.degradedReasons } : {}),
+                ...(verification ? { verification } : {}),
+                ...(response?.degraded !== undefined || verificationReasons.length > 0 ? { degraded } : {}),
+                ...(degradedReasons ? { degradedReasons } : {}),
                 ...(guidance ? { guidance } : {}),
                 ...(autoRepair ? { autoRepair } : {}),
                 stats: {
@@ -1639,6 +1793,33 @@ export class TaskHandlers extends BaseHandler {
                 ...(responseLimits ? { limits: responseLimits } : {})
             });
             const summary = this.buildWriteSummary({ response, request });
+            let status = this.mapStatus(response);
+            let verification: VerificationResult | undefined;
+            let verificationReasons: string[] = [];
+            const writeDraftId = (typeof response?.draftPack?.id === "string" ? response.draftPack.id : undefined)
+                ?? draftId;
+            const canAutoVerify = writeSafety === "apply"
+                && status === "success"
+                && budgetPolicy.maxSteps >= 2
+                && Boolean(writeTargetPath)
+                && Boolean(writeDraftId)
+                && Boolean(this.context.fileSystem)
+                && Boolean(this.context.flowArtifactManager);
+            if (canAutoVerify) {
+                const result = await this.buildVerificationResult({
+                    targetPath: writeTargetPath,
+                    draftId: writeDraftId
+                });
+                verification = result.verification;
+                verificationReasons = result.reasons;
+                summary.bullets.push(
+                    `Auto-verify: exists=${verification.exists ? "yes" : "no"}, draftMatch=${verification.contentMatch === true ? "yes" : (verification.contentMatch === false ? "no" : "unknown")}.`
+                );
+                if (verificationReasons.length > 0 && status === "success") {
+                    const isBlocked = verificationReasons.includes("file_missing") || verificationReasons.includes("draft_missing");
+                    status = isBlocked ? "blocked" : "partial_success";
+                }
+            }
             const inlineEvidence = prepEvidencePack && prepLodResolution
                 ? this.buildInlineEvidence({ lod: prepLodResolution.lod, evidencePack: prepEvidencePack })
                 : undefined;
@@ -1671,10 +1852,15 @@ export class TaskHandlers extends BaseHandler {
                 artifacts.push({ id: prepEvidenceArtifactId, kind: "evidence", detail: "summary" });
             }
             const details = outputFormat === "standard" ? { pillar: "write", response } : undefined;
+            const verifyDegradedReasons = verificationReasons.length > 0
+                ? buildDegradedReasons(verificationReasons, { filePath: verification?.relPath ?? verification?.targetPath })
+                : undefined;
+            const degradedReasons = this.mergeDegradedReasons(response?.degradedReasons, verifyDegradedReasons);
+            const degraded = Boolean(response?.degraded) || verificationReasons.length > 0;
             const payload = {
                 ok: true,
                 sessionId: response?.sessionId ?? sessionId,
-                status: this.mapStatus(response),
+                status,
                 mode: routing.mode,
                 budget,
                 surface,
@@ -1685,8 +1871,9 @@ export class TaskHandlers extends BaseHandler {
                 ...(writeApplyToken ? { applyToken: writeApplyToken } : {}),
                 ...(applyTokenExpiresAt ? { applyTokenExpiresAt } : {}),
                 ...(artifacts.length > 0 ? { artifacts } : {}),
-                ...(response?.degraded !== undefined ? { degraded: response.degraded } : {}),
-                ...(response?.degradedReasons ? { degradedReasons: response.degradedReasons } : {}),
+                ...(verification ? { verification } : {}),
+                ...(response?.degraded !== undefined || verificationReasons.length > 0 ? { degraded } : {}),
+                ...(degradedReasons ? { degradedReasons } : {}),
                 ...(guidance ? { guidance } : {}),
                 stats: {
                     latencyMs: Date.now() - startedAt
@@ -1857,6 +2044,12 @@ export class TaskHandlers extends BaseHandler {
         if (analyzeDecisionGate?.nextCalls?.length) {
             combinedNextCalls.push(...analyzeDecisionGate.nextCalls);
         }
+        const degradedReasons = this.mergeDegradedReasons(
+            response?.degradedReasons,
+            decisionGate.reasons ? buildDegradedReasons(decisionGate.reasons) : undefined,
+            analyzeDecisionGate?.reasons ? buildDegradedReasons(analyzeDecisionGate.reasons) : undefined
+        );
+        const decisionInsufficient = decisionGate.insufficient || analyzeDecisionGate?.insufficient;
         const guidance = this.rewriteGuidanceForCompact({
             guidance: this.buildGuidance(response?.guidance, combinedNextCalls.length > 0 ? combinedNextCalls : undefined),
             request,
@@ -1893,11 +2086,33 @@ export class TaskHandlers extends BaseHandler {
             })()
             : exploreEvidencePack;
         let evidenceArtifactId: string | undefined;
+        if (degradedReasons) {
+            evidencePack.degradedReasons = degradedReasons;
+        }
+        if (response?.degraded !== undefined || decisionInsufficient) {
+            evidencePack.degraded = Boolean(response?.degraded) || Boolean(decisionInsufficient);
+        }
+        if (decisionInsufficient) {
+            const continuation = this.buildEvidenceContinuation({
+                reason: "insufficient_evidence",
+                nextCalls: combinedNextCalls,
+                defaults: {
+                    request,
+                    budget,
+                    output: outputPayload,
+                    traceEnabled,
+                    sessionId
+                }
+            });
+            if (continuation) {
+                evidencePack.continuation = continuation;
+            }
+        }
         const lodResolution = this.resolveTaskLod({
             defaultLod: budgetPolicy.defaultLod,
             evidencePack,
             hasEvidenceArtifact: budgetPolicy.defaultLod >= 3,
-            decisionInsufficient: decisionGate.insufficient || analyzeDecisionGate?.insufficient
+            decisionInsufficient
         });
         if (lodResolution.lod >= 3) {
             const fileVersions = await this.buildFileVersionsSnapshot(
@@ -1933,16 +2148,11 @@ export class TaskHandlers extends BaseHandler {
         const details = outputFormat === "standard"
             ? (understandResponse ? { pillar: "explore", response, followUp: { pillar: "understand", response: understandResponse } } : { pillar: "explore", response })
             : undefined;
-        const degradedReasons = this.mergeDegradedReasons(
-            response?.degradedReasons,
-            decisionGate.reasons ? buildDegradedReasons(decisionGate.reasons) : undefined,
-            analyzeDecisionGate?.reasons ? buildDegradedReasons(analyzeDecisionGate.reasons) : undefined
-        );
         const inlineEvidence = this.buildInlineEvidence({ lod: lodResolution.lod, evidencePack });
         const payload = {
             ok: true,
             sessionId: understandResponse?.sessionId ?? response?.sessionId ?? sessionId,
-            status: (decisionGate.insufficient || analyzeDecisionGate?.insufficient) ? "partial_success" : this.mapStatus(understandResponse ?? response),
+            status: decisionInsufficient ? "partial_success" : this.mapStatus(understandResponse ?? response),
             mode: routing.mode,
             budget,
             surface,
@@ -1951,7 +2161,7 @@ export class TaskHandlers extends BaseHandler {
             ...(details ? { details } : {}),
             ...(packId ? { packId } : {}),
             ...(artifacts.length > 0 ? { artifacts } : {}),
-            ...(response?.degraded !== undefined || decisionGate.insufficient || analyzeDecisionGate?.insufficient ? { degraded: Boolean(response?.degraded) || decisionGate.insufficient || analyzeDecisionGate?.insufficient } : {}),
+            ...(response?.degraded !== undefined || decisionInsufficient ? { degraded: Boolean(response?.degraded) || decisionInsufficient } : {}),
             ...(degradedReasons ? { degradedReasons } : {}),
             ...(guidance ? { guidance } : {}),
             stats: {
