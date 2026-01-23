@@ -17,6 +17,10 @@ task({ request: "Summarize the auth flow." })
 // Analyze (structure/relationships)
 task({ request: "Explain the architecture and key modules.", mode: "analyze", budget: "balanced" })
 
+// Deep evidence (compact surface)
+const analysis = await task({ request: "Explain the architecture and key modules.", mode: "analyze", budget: "deep" })
+await manage({ command: "artifact", target: analysis.artifacts?.[0]?.id, detail: "full" })
+
 // Plan change (prep-only if edits are omitted)
 const prep = await task({ request: "Tighten JWT validation.", mode: "plan_change", targetFiles: ["src/auth/jwt.ts"] })
 
@@ -31,6 +35,8 @@ Notes:
 - `mode="auto"` never applies changes (server-gated).
 - `mode="write"` / `mode="verify"` are supported on the compact surface (ADR-086). Use pillar tools when you need full per-pillar options.
 - Use `manage({ command: "schema", tool: "task", detail: "full" })` when you need the full schema.
+- When `task` returns `status="partial_success"` with `guidance.nextCalls`, follow those calls (they are rewritten to compact-safe tools when needed).
+- Use `budget="deep"` when you need evidence packs; follow up with `manage({ command: "artifact", target, detail: "full" })` for depth.
 
 ---
 

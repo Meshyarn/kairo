@@ -35,6 +35,7 @@ High-level router for promptless workflows (ask/analyze/plan/apply).
 | `safety` | `"plan" \| "apply"` |  | Hint only (used when `mode="auto"`). |
 | `output.format` | `"summary" \| "standard"` |  | Default is policy-driven (typically `summary` in MCP mode). |
 | `output.maxTokens` | `number` |  | Response envelope token cap for this call. |
+| `output.maxChars` | `number` |  | Response envelope character cap for this call. |
 | `trace` | `boolean` |  | Include `decisionTrace`/`effectiveOptions` when available. |
 
 **Notes**
@@ -46,7 +47,19 @@ High-level router for promptless workflows (ask/analyze/plan/apply).
 - `mode="write"` / `mode="verify"` are supported on the compact surface (ADR-086).
 - `mode="write"`: provide `targetPath` (or `targetFiles[0]`) and include content in a fenced code block inside `request` (e.g. ```ts ... ```). If no code block is present, plan mode will fall back to smart generation.
 - `mode="verify"`: compares the current file content against the draft pack (when `draftId` is provided). `Base version` is a drift signal against the pre-apply snapshot and is only evaluated when draft content does not match.
+- After successful apply flows, `task` may embed a cheap `verification` result in the same response (`apply_change`, or `write` with `safety="apply"`).
 - Full schema on-demand: `manage({ command: "schema", tool: "task", detail: "full" })` (returns an artifact id).
+- `output.maxTokens/maxChars` are hard caps; `task` will downshift LOD and inline evidence to fit.
+
+**Response (task highlights)**
+
+- `summary` — title/bullets/next (always present).
+- `evidence` — bounded evidence list (ranked files and/or short excerpts based on LOD).
+- `artifacts` — includes `evidence` packs (`kind: "evidence"`) for deeper follow-up via `manage`.
+- `changePrep.targetStringCandidates` — bounded exact anchors for `plan_change` when available.
+- `verification` — present for `mode="verify"` and may also appear on successful apply flows.
+- `decisionTrace` — orchestration and LOD decisions when `trace: true`.
+- `stats.responseBudget` — present when envelope enforcement applied.
 
 **Usage**
 
@@ -55,6 +68,7 @@ High-level router for promptless workflows (ask/analyze/plan/apply).
 - `task({ request: "Plan: tighten JWT validation.", mode: "plan_change", targetFiles: ["src/auth/jwt.ts"] })` (prep)
 - `task({ request: "Plan: tighten JWT validation.", mode: "plan_change", edits: [{ filePath: "src/auth/jwt.ts", targetString: "OLD", replacementString: "NEW" }] })` (draft)
 - `task({ request: "Apply the plan.", mode: "apply_change", draftId, applyToken })`
+- `manage({ command: "artifact", target: "<evidenceId>", detail: "full" })` (deep evidence)
 
 ---
 
@@ -378,7 +392,7 @@ Project/session state utilities.
 - `manage({ command: "reindex", paths: [...] })` attempts a scoped reindex of specific paths (only when supported by the runtime).
 - `manage({ command: "export", targetType: "transaction", target: "<txId>" })` returns a patch export.
 - `manage({ command: "import", target: "<path>" })` is restricted to `.kairo` by default. Importing from outside requires `allowExternal: true` or `KAIRO_MANAGE_IMPORT_ALLOW_EXTERNAL=true`.
-- `manage({ command: "artifact", detail: "summary" | "full" })` returns summary/full views for graph artifacts.
+- `manage({ command: "artifact", detail: "summary" | "full" })` returns summary/full views for graph and evidence artifacts.
 - For raw graph payloads, use `manage({ command: "export", targetType: "artifact", target: "<artifactId>" })`.
 
 **Parameters**

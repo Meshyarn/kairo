@@ -67,6 +67,7 @@ Timeouts are primarily controlled by your MCP host (per-request timeout). Some o
 | `KAIRO_STORAGE_PRUNE_ON_START` | Run prune once on startup. | `true` to enable. |
 | `KAIRO_STORAGE_PRUNE_FLOW_ARTIFACTS` | Include flow artifacts in prune. | `true` to enable. |
 | `KAIRO_STORAGE_PRUNE_COMPACT` | Run compact rewrite after prune. | `true` to enable. |
+| `KAIRO_TASK_EVIDENCE_TTL_MS` | Task evidence pack TTL (ms). | Default `1800000` (30 minutes). |
 | `KAIRO_EVIDENCE_PACK_MAX_COUNT` | Evidence pack max count cap. | Default ~300. |
 | `KAIRO_EVIDENCE_PACK_MAX_BYTES` | Evidence pack byte cap. | Default 100MB. |
 | `KAIRO_EVIDENCE_PACK_STALE_CHECK_MAX_ITEMS` | Evidence pack stale sampling limit. | Default 24 items. |
