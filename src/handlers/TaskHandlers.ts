@@ -9,6 +9,7 @@ import { buildDegradedReasons } from "../orchestration/DegradedReasonMapper.js";
 import { buildEvidencePackFromExplore, buildEvidencePackFromUnderstand } from "../orchestration/task/TaskEvidenceBuilder.js";
 import type { DegradedReason } from "../types/tool-responses.js";
 import type { TaskEvidencePack } from "../types/flow-artifacts.js";
+import { metrics } from "../utils/MetricsCollector.js";
 
 type TaskMode = "auto" | "ask" | "analyze" | "plan_change" | "apply_change" | "write" | "verify";
 type TaskProfile = "lean" | "fast" | "balanced" | "deep";
@@ -233,12 +234,27 @@ export class TaskHandlers extends BaseHandler {
         if (args.traceBuilder) {
             args.response.decisionTrace = args.traceBuilder.finalize();
         }
-        enforceTaskResponseBudget({
+        const budgetResult = enforceTaskResponseBudget({
             response: args.response,
             maxTokens: args.maxTokens,
             maxChars: args.maxChars,
             minEvidenceItems: args.budgetPolicy.minEvidence
         });
+        metrics.observe("task.response.size_chars", budgetResult.usedChars, "basic");
+        metrics.observe("task.response.estimated_tokens", budgetResult.estimatedTokens, "basic");
+        if (budgetResult.applied) {
+            metrics.inc("task.response_budget_exceeded_total", 1, "basic");
+            args.traceBuilder?.recordEvent({
+                area: "budget",
+                code: "task.response_budget_exceeded",
+                data: {
+                    estimatedTokens: budgetResult.estimatedTokens,
+                    usedChars: budgetResult.usedChars,
+                    maxTokens: args.maxTokens,
+                    maxChars: args.maxChars
+                }
+            });
+        }
         return args.response;
     }
 
@@ -422,6 +438,54 @@ export class TaskHandlers extends BaseHandler {
             ...(suggested ? { suggestedActions: suggested } : {}),
             ...(computedNextCalls ? { nextCalls: computedNextCalls } : {})
         };
+    }
+
+    private recordTaskMetrics(args: {
+        mode: TaskMode;
+        budget: TaskBudget;
+        stepCount: number;
+        traceBuilder?: TraceBuilder;
+        lod?: {
+            defaultLod: number;
+            resolvedLod: number;
+            evidencePack?: TaskEvidencePack;
+        };
+    }): void {
+        metrics.inc("task.request_total", 1, "basic");
+        metrics.inc(`task.mode.${args.mode}.total`, 1, "basic");
+        metrics.inc(`task.budget.${args.budget}.total`, 1, "basic");
+        metrics.observe("task.steps.count", args.stepCount, "basic");
+        metrics.observe(`task.steps.count.${args.mode}`, args.stepCount, "basic");
+        if (args.lod) {
+            metrics.gauge("task.lod.resolved", args.lod.resolvedLod, "basic");
+            metrics.gauge(`task.lod.resolved.${args.mode}`, args.lod.resolvedLod, "basic");
+            metrics.gauge(`task.lod.default.${args.mode}`, args.lod.defaultLod, "basic");
+            if (args.lod.resolvedLod < args.lod.defaultLod) {
+                metrics.inc("task.lod.downshift_total", 1, "basic");
+                metrics.inc(`task.lod.downshift.${args.lod.defaultLod}_to_${args.lod.resolvedLod}`, 1, "basic");
+            }
+            const evidenceItems = args.lod.evidencePack?.evidence?.length ?? 0;
+            const evidenceFiles = args.lod.evidencePack?.rankedFiles?.length ?? 0;
+            metrics.observe("task.evidence.items", evidenceItems, "basic");
+            metrics.observe("task.evidence.files", evidenceFiles, "basic");
+        }
+        args.traceBuilder?.recordEvent({
+            area: "policy",
+            code: "task.metrics",
+            data: {
+                mode: args.mode,
+                budget: args.budget,
+                stepCount: args.stepCount,
+                ...(args.lod
+                    ? {
+                        defaultLod: args.lod.defaultLod,
+                        resolvedLod: args.lod.resolvedLod,
+                        evidenceItems: args.lod.evidencePack?.evidence?.length ?? 0,
+                        evidenceFiles: args.lod.evidencePack?.rankedFiles?.length ?? 0
+                    }
+                    : {})
+            }
+        });
     }
 
     private storeEvidencePack(args: { pack: TaskEvidencePack; sessionId?: string; intent?: string }): string | undefined {
@@ -1057,6 +1121,12 @@ export class TaskHandlers extends BaseHandler {
             traceBuilder.setBudget({ maxTokens, maxChars });
         }
 
+        let stepCount = 0;
+        const executePillar = async (pillar: string, payload: Record<string, unknown>) => {
+            stepCount += 1;
+            return this.context.orchestrationEngine.executePillar(pillar, payload);
+        };
+
         const routing = this.resolveRoutingMode(mode, request);
         if (traceBuilder) {
             traceBuilder.recordEvent({
@@ -1075,7 +1145,7 @@ export class TaskHandlers extends BaseHandler {
         });
 
         if (routing.mode === "analyze") {
-            const response = await this.context.orchestrationEngine.executePillar("understand", {
+            const response = await executePillar("understand", {
                 goal: request,
                 targetFiles: targetFiles.length > 0 ? targetFiles : undefined,
                 sessionId,
@@ -1186,6 +1256,17 @@ export class TaskHandlers extends BaseHandler {
                     latencyMs: Date.now() - startedAt
                 }
             };
+            this.recordTaskMetrics({
+                mode: routing.mode,
+                budget,
+                stepCount,
+                traceBuilder,
+                lod: {
+                    defaultLod: budgetPolicy.defaultLod,
+                    resolvedLod: lodResolution.lod,
+                    evidencePack
+                }
+            });
             return this.finalizeTaskResponse({
                 response: payload,
                 traceBuilder,
@@ -1201,7 +1282,7 @@ export class TaskHandlers extends BaseHandler {
                 : (targetPath ? [targetPath] : (paths.length > 0 ? paths : []));
             const planLimits = responseLimits;
             if (edits.length === 0) {
-                const response = await this.context.orchestrationEngine.executePillar("explore", {
+                const response = await executePillar("explore", {
                     query: request,
                     paths: paths.length > 0 ? paths : undefined,
                     targetFiles: planTargets.length > 0 ? planTargets : undefined,
@@ -1307,6 +1388,17 @@ export class TaskHandlers extends BaseHandler {
                         latencyMs: Date.now() - startedAt
                     }
                 };
+                this.recordTaskMetrics({
+                    mode: routing.mode,
+                    budget,
+                    stepCount,
+                    traceBuilder,
+                    lod: {
+                        defaultLod: budgetPolicy.defaultLod,
+                        resolvedLod: lodResolution.lod,
+                        evidencePack
+                    }
+                });
                 return this.finalizeTaskResponse({
                     response: payload,
                     traceBuilder,
@@ -1316,7 +1408,7 @@ export class TaskHandlers extends BaseHandler {
                 });
             }
 
-            const response = await this.context.orchestrationEngine.executePillar("change", {
+            const response = await executePillar("change", {
                 intent: request,
                 targetFiles: planTargets.length > 0 ? planTargets : undefined,
                 edits,
@@ -1372,6 +1464,12 @@ export class TaskHandlers extends BaseHandler {
                     latencyMs: Date.now() - startedAt
                 }
             };
+            this.recordTaskMetrics({
+                mode: routing.mode,
+                budget,
+                stepCount,
+                traceBuilder
+            });
             return this.finalizeTaskResponse({
                 response: payload,
                 traceBuilder,
@@ -1386,7 +1484,7 @@ export class TaskHandlers extends BaseHandler {
                 ? targetFiles
                 : (targetPath ? [targetPath] : (paths.length > 0 ? paths : []));
             const applyLimits = responseLimits;
-            const response = await this.context.orchestrationEngine.executePillar("change", {
+            const response = await executePillar("change", {
                 intent: request,
                 targetFiles: applyTargets.length > 0 ? applyTargets : undefined,
                 ...(edits.length > 0 ? { edits } : {}),
@@ -1445,6 +1543,12 @@ export class TaskHandlers extends BaseHandler {
                     latencyMs: Date.now() - startedAt
                 }
             };
+            this.recordTaskMetrics({
+                mode: routing.mode,
+                budget,
+                stepCount,
+                traceBuilder
+            });
             return this.finalizeTaskResponse({
                 response: payload,
                 traceBuilder,
@@ -1462,7 +1566,7 @@ export class TaskHandlers extends BaseHandler {
             let prepEvidenceArtifactId: string | undefined;
             let prepLodResolution: { lod: number; reason?: string } | undefined;
             if (writeSafety === "plan" && extractedContent === undefined && budgetPolicy.maxSteps >= 2) {
-                const exploreResponse = await this.context.orchestrationEngine.executePillar("explore", {
+                const exploreResponse = await executePillar("explore", {
                     query: request,
                     paths: paths.length > 0 ? paths : undefined,
                     targetFiles: writeTargetPath ? [writeTargetPath] : undefined,
@@ -1520,7 +1624,7 @@ export class TaskHandlers extends BaseHandler {
                     });
                 }
             }
-            const response = await this.context.orchestrationEngine.executePillar("write", {
+            const response = await executePillar("write", {
                 intent: request,
                 targetPath: writeTargetPath,
                 ...(extractedContent !== undefined ? { content: extractedContent } : {}),
@@ -1588,6 +1692,21 @@ export class TaskHandlers extends BaseHandler {
                     latencyMs: Date.now() - startedAt
                 }
             };
+            this.recordTaskMetrics({
+                mode: routing.mode,
+                budget,
+                stepCount,
+                traceBuilder,
+                ...(prepEvidencePack && prepLodResolution
+                    ? {
+                        lod: {
+                            defaultLod: budgetPolicy.defaultLod,
+                            resolvedLod: prepLodResolution.lod,
+                            evidencePack: prepEvidencePack
+                        }
+                    }
+                    : {})
+            });
             return this.finalizeTaskResponse({
                 response: payload,
                 traceBuilder,
@@ -1631,6 +1750,12 @@ export class TaskHandlers extends BaseHandler {
                     latencyMs: Date.now() - startedAt
                 }
             };
+            this.recordTaskMetrics({
+                mode: routing.mode,
+                budget,
+                stepCount,
+                traceBuilder
+            });
             return this.finalizeTaskResponse({
                 response: payload,
                 traceBuilder,
@@ -1640,7 +1765,7 @@ export class TaskHandlers extends BaseHandler {
             });
         }
 
-        const response = await this.context.orchestrationEngine.executePillar("explore", {
+        const response = await executePillar("explore", {
             query: request,
             paths: paths.length > 0 ? paths : undefined,
             targetFiles: targetFiles.length > 0 ? targetFiles : undefined,
@@ -1674,7 +1799,7 @@ export class TaskHandlers extends BaseHandler {
             ?? response?.data?.code?.[0]?.filePath
             ?? response?.data?.docs?.[0]?.filePath;
         if (decisionGate.insufficient && budgetPolicy.maxSteps >= 2 && topTarget) {
-            understandResponse = await this.context.orchestrationEngine.executePillar("understand", {
+            understandResponse = await executePillar("understand", {
                 goal: request,
                 targetFiles: [topTarget],
                 sessionId,
@@ -1833,6 +1958,17 @@ export class TaskHandlers extends BaseHandler {
                 latencyMs: Date.now() - startedAt
             }
         };
+        this.recordTaskMetrics({
+            mode: routing.mode,
+            budget,
+            stepCount,
+            traceBuilder,
+            lod: {
+                defaultLod: budgetPolicy.defaultLod,
+                resolvedLod: lodResolution.lod,
+                evidencePack
+            }
+        });
         return this.finalizeTaskResponse({
             response: payload,
             traceBuilder,
