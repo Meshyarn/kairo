@@ -259,6 +259,16 @@ async function main() {
       "budget_exceeded should be reported when envelope is enforced"
     );
 
+    const cappedStandard = await callTaskParsed({
+      request: "explain auth flow in detail",
+      mode: "ask",
+      budget: "deep",
+      trace: true,
+      output: { format: "standard", maxChars: 200 }
+    });
+    assert(cappedStandard.stats?.responseBudget?.applied === true, "standard output should apply response budget");
+    assert(!cappedStandard.details, "response budget should drop details first");
+
     // 9) plan_change prep should include targetStringCandidates (anchor extraction)
     const changePrep = await callTaskParsed({
       request: "Update signToken to include issuer.",
@@ -372,6 +382,11 @@ async function main() {
       targetFiles: ["src/auth/jwt.ts"]
     });
     assert(invalidApply.status === "blocked", "apply_change invalid token should be blocked");
+    const invalidReason = invalidApply.details?.response?.blockedReason ?? invalidApply.details?.response?.errorCode;
+    assert(
+      invalidReason === "apply_token_invalid" || invalidReason === "APPLY_TOKEN_INVALID",
+      "apply_change invalid token should report invalid reason"
+    );
 
     // 12) apply_change auto-verify (plan -> apply)
     const changeApply = await callTaskWithReindexRetry({
@@ -471,6 +486,24 @@ async function main() {
     });
     assert(missingWriteApply.status === "blocked", "write apply without token should be blocked");
 
+    const invalidWriteApply = await callTaskParsed({
+      request: "Apply write plan with invalid token.",
+      mode: "write",
+      budget: "balanced",
+      safety: "apply",
+      output: { format: "standard" },
+      targetPath: "src/generated.ts",
+      draftId: writePlan.draftId,
+      applyToken: "invalid_token",
+      sessionId: typeof writeSessionId === "string" ? writeSessionId : undefined
+    });
+    assert(invalidWriteApply.status === "blocked", "write apply invalid token should be blocked");
+    const invalidWriteReason = invalidWriteApply.details?.response?.blockedReason ?? invalidWriteApply.details?.response?.errorCode;
+    assert(
+      invalidWriteReason === "apply_token_invalid" || invalidWriteReason === "APPLY_TOKEN_INVALID",
+      "write apply invalid token should report invalid reason"
+    );
+
     const writeApply = await callTaskWithReindexRetry({
       request: "Apply write plan.",
       mode: "write",
@@ -485,6 +518,58 @@ async function main() {
     assert(writeApply.verification?.contentMatch === true, "write apply should include verification contentMatch");
     const generated = readText(path.join(tempRoot, "src", "generated.ts"));
     assert(generated.includes("export const generated = 123;"), "write apply should write file content");
+
+    // 14) timebox propagation (perStep)
+    const timeboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "kairo-adr087-timebox-"));
+    writeJson(path.join(timeboxRoot, ".kairo", "config", "mcp.json"), {
+      version: 1,
+      mode: "mcp",
+      preset: "mcp-balanced",
+      timeboxMs: { total: 5000, perStep: 250 },
+      publicSurface: "compact"
+    });
+    writeText(
+      path.join(timeboxRoot, "src", "app.ts"),
+      ["export function entry() {", "  return 1;", "}", ""].join("\n")
+    );
+    let timeboxServer: SmartContextServer | undefined;
+    try {
+      timeboxServer = new SmartContextServer(timeboxRoot);
+      const callToolTimebox = async (name: string, args: any) =>
+        (timeboxServer as any).handleCallTool(name, args) as Promise<ToolResponse>;
+      const waitTimeboxIndex = async () => {
+        const startedAt = Date.now();
+        while (true) {
+          const statusRaw = await callToolTimebox("manage", { command: "status", detail: "summary", suppressLogs: true });
+          const status = parseToolPayload(statusRaw);
+          const snapshot = status?.result?.indexSnapshot;
+          const dirty = Number(snapshot?.dirtyFileCount ?? 0);
+          const staleRisk = snapshot?.staleRisk;
+          if (dirty === 0 && staleRisk !== "high") return;
+          if (Date.now() - startedAt > 30_000) {
+            throw new Error(`timebox index did not become healthy (dirty=${dirty}, staleRisk=${String(staleRisk)})`);
+          }
+          await new Promise((r) => setTimeout(r, 100));
+        }
+      };
+      await callToolTimebox("manage", { command: "reindex", suppressLogs: true });
+      await waitTimeboxIndex();
+      const timeboxAsk = parseToolPayload(
+        await callToolTimebox("task", {
+          request: "entrypoint",
+          mode: "ask",
+          budget: "lean",
+          trace: true,
+          output: { format: "standard" }
+        })
+      );
+      const timeoutMs = timeboxAsk.details?.response?.effectiveOptions?.limits?.timeoutMs;
+      assert(timeoutMs === 250, "timebox perStep should propagate into effectiveOptions.limits.timeoutMs");
+    } finally {
+      if (timeboxServer) {
+        await timeboxServer.shutdown().catch(() => undefined);
+      }
+    }
 
     console.log("[ADR-087 mock] OK:", {
       tempRoot,
