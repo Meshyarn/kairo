@@ -242,6 +242,23 @@ function compactArtifact(artifact: any): any {
       }
     };
   }
+  if (artifact.type === "evidence" && artifact.pack) {
+    const pack = artifact.pack;
+    return {
+      ...artifact,
+      pack: {
+        id: pack.id,
+        intent: pack.intent,
+        createdAt: pack.createdAt,
+        expiresAt: pack.expiresAt,
+        rankedFiles: Array.isArray(pack.rankedFiles) ? pack.rankedFiles.slice(0, 10) : [],
+        evidence: Array.isArray(pack.evidence) ? pack.evidence.slice(0, 3) : [],
+        caps: pack.caps,
+        degraded: pack.degraded,
+        degradedReasons: pack.degradedReasons
+      }
+    };
+  }
   return artifact;
 }
 

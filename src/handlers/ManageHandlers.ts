@@ -17,7 +17,7 @@ import { FeatureFlags } from "../config/FeatureFlags.js";
 import { computeAdaptiveFlowGate, resolveRolloutPresetFromEnv } from "../orchestration/adaptive-flow/AdaptiveFlowGate.js";
 import { buildDegradedReasons } from "../orchestration/DegradedReasonMapper.js";
 import type { TransactionLogEntry } from "../engine/TransactionLog.js";
-import type { ArtifactManagerStatus, FlowArtifact, FlowSession, GraphPack } from "../types/flow-artifacts.js";
+import type { ArtifactManagerStatus, FlowArtifact, FlowSession, GraphPack, TaskEvidencePack } from "../types/flow-artifacts.js";
 import type { ToolSpec } from "../server/tools/ToolSpecRegistry.js";
 import { hashContent } from "../utils/hash.js";
 import { detectServiceRoots } from "../utils/ServiceRootDetector.js";
@@ -906,6 +906,43 @@ export class ManageHandlers extends BaseHandler {
         return response;
     }
 
+    private buildEvidenceArtifactResponse(
+        artifact: FlowArtifact,
+        options: { detail: "summary" | "full"; maxTokens?: number; maxChars?: number }
+    ) {
+        const pack = (artifact as any).pack as TaskEvidencePack | undefined;
+        if (!pack) {
+            return {
+                success: false,
+                output: "Artifact not found."
+            };
+        }
+        const rankedFiles = Array.isArray(pack.rankedFiles) ? pack.rankedFiles : [];
+        const evidence = Array.isArray(pack.evidence) ? pack.evidence : [];
+        const view = {
+            detail: options.detail,
+            rankedFiles: options.detail === "summary" ? rankedFiles.slice(0, 10) : rankedFiles,
+            evidence: options.detail === "summary" ? evidence.slice(0, 3) : evidence,
+            caps: pack.caps,
+            degraded: pack.degraded,
+            degradedReasons: pack.degradedReasons
+        };
+        const artifactPayload: FlowArtifact = {
+            ...artifact,
+            pack: {
+                ...pack,
+                evidence: options.detail === "summary" ? evidence.slice(0, 3) : evidence,
+                rankedFiles: options.detail === "summary" ? rankedFiles.slice(0, 10) : rankedFiles
+            }
+        } as FlowArtifact;
+        return {
+            success: true,
+            output: "Artifact retrieved.",
+            artifact: artifactPayload,
+            view
+        };
+    }
+
     private parseNumberEnv(raw: string | undefined, fallback: number): number {
         if (!raw) return fallback;
         const value = Number(raw);
@@ -1558,16 +1595,30 @@ export class ManageHandlers extends BaseHandler {
                     }
                     artifacts = artifacts.slice(0, limit);
                     const sanitized = artifacts.map((artifact) => {
-                        if (artifact.type !== "graph") return artifact;
-                        const pack = (artifact as any).pack as GraphPack | undefined;
-                        if (!pack) return artifact;
-                        return {
-                            ...artifact,
-                            pack: {
-                                ...pack,
-                                raw: undefined
-                            }
-                        } as FlowArtifact;
+                        if (artifact.type === "graph") {
+                            const pack = (artifact as any).pack as GraphPack | undefined;
+                            if (!pack) return artifact;
+                            return {
+                                ...artifact,
+                                pack: {
+                                    ...pack,
+                                    raw: undefined
+                                }
+                            } as FlowArtifact;
+                        }
+                        if (artifact.type === "evidence") {
+                            const pack = (artifact as any).pack as TaskEvidencePack | undefined;
+                            if (!pack) return artifact;
+                            return {
+                                ...artifact,
+                                pack: {
+                                    ...pack,
+                                    rankedFiles: Array.isArray(pack.rankedFiles) ? pack.rankedFiles.slice(0, 5) : [],
+                                    evidence: Array.isArray(pack.evidence) ? pack.evidence.slice(0, 2) : []
+                                }
+                            } as FlowArtifact;
+                        }
+                        return artifact;
                     });
                     const summary = this.buildWorkflowSummary();
                     return {
@@ -1591,6 +1642,14 @@ export class ManageHandlers extends BaseHandler {
                         return this.buildGraphArtifactResponse(artifact, {
                             detail,
                             limit,
+                            ...envelopeBudget
+                        });
+                    }
+                    if (artifact?.type === "evidence") {
+                        const detail = args?.detail === "full" ? "full" : "summary";
+                        const envelopeBudget = this.resolveManageEnvelopeBudget(args);
+                        return this.buildEvidenceArtifactResponse(artifact, {
+                            detail,
                             ...envelopeBudget
                         });
                     }

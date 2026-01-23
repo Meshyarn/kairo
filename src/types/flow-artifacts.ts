@@ -189,6 +189,37 @@ export type StylePackConfigDetection = {
 
 export type DraftPackId = string;
 
+export type EvidencePackId = string;
+
+export type TaskEvidenceSource = "explore.preview" | "explore.full" | "explore.section" | "understand.summary";
+
+export interface TaskEvidenceItem {
+    filePath: string;
+    kind: "code" | "doc";
+    source: TaskEvidenceSource;
+    excerpt: string;
+    reason: string;
+    score?: number;
+    truncated?: boolean;
+    anchorText?: string;
+    location?: { lineStart?: number; lineEnd?: number };
+}
+
+export interface TaskEvidencePack {
+    id: EvidencePackId;
+    intent: string;
+    createdAt: number;
+    expiresAt?: number;
+    rankedFiles: Array<{ filePath: string; reason: string; score?: number }>;
+    fileVersions?: Record<string, { expectedVersion?: number; expectedHash?: string }>;
+    evidence: TaskEvidenceItem[];
+    relatedArtifacts?: Array<{ id: string; kind: string; detail: "summary" | "full" }>;
+    continuation?: { reason: string; nextCalls: Array<{ tool: "task" | "manage"; args: Record<string, unknown> }> };
+    caps?: { maxItems: number; maxExcerptChars: number; maxFiles: number };
+    degraded?: boolean;
+    degradedReasons?: any[];
+}
+
 export interface SkeletonCode {
     content: string;
     signatures: Array<{
@@ -383,7 +414,7 @@ export interface ReviewReport {
     reviewedFiles: string[];
 }
 
-export type ArtifactType = "research" | "analysis" | "style" | "draft" | "review" | "graph" | "schema";
+export type ArtifactType = "research" | "analysis" | "style" | "draft" | "review" | "graph" | "schema" | "evidence";
 export type ArtifactId =
     | ResearchPackId
     | AnalysisPackId
@@ -391,7 +422,8 @@ export type ArtifactId =
     | DraftPackId
     | ReviewReportId
     | GraphPackId
-    | SchemaArtifactId;
+    | SchemaArtifactId
+    | EvidencePackId;
 
 export interface FlowArtifactBase {
     id: ArtifactId;
@@ -434,6 +466,11 @@ export interface GraphArtifact extends FlowArtifactBase {
     pack: GraphPack;
 }
 
+export interface EvidenceArtifact extends FlowArtifactBase {
+    type: "evidence";
+    pack: TaskEvidencePack;
+}
+
 export type SchemaExport = {
     tool: string;
     schemaVersion: string;
@@ -455,6 +492,7 @@ export type FlowArtifact =
     | DraftArtifact
     | ReviewArtifact
     | GraphArtifact
+    | EvidenceArtifact
     | SchemaArtifact;
 
 export interface ArtifactManagerStatus {
@@ -507,6 +545,7 @@ export interface FlowSession {
         drafts: DraftPackId[];
         reviews: ReviewReportId[];
         graphs?: GraphPackId[];
+        evidence?: EvidencePackId[];
     };
     updatedAt?: number;
     outcome?: FlowSessionOutcome;

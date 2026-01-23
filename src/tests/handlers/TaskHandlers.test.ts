@@ -79,6 +79,62 @@ describe("TaskHandlers", () => {
         expect(payload.status).toBe("success");
     });
 
+    it("adds evidence pack for deep ask responses", async () => {
+        const flowArtifactManager = { store: jest.fn((artifact: any) => artifact.id) };
+        const context = makeContext({ flowArtifactManager });
+        const handler = new TaskHandlers(context as any);
+        const exploreResponse = {
+            success: true,
+            status: "ok",
+            data: {
+                docs: [],
+                code: [
+                    { kind: "file_preview", filePath: "src/app.ts", preview: "export const app = 1;" },
+                    { kind: "file_preview", filePath: "src/utils.ts", preview: "export const util = () => {};" }
+                ]
+            },
+            pack: { packId: "pack_1", hit: false, createdAt: Date.now() },
+            sessionId: "s-evidence"
+        };
+        context.orchestrationEngine.executePillar.mockResolvedValue(exploreResponse);
+
+        const response = await handler.handle("task", { request: "find app", budget: "deep" });
+        const payload = JSON.parse(response.content[0].text);
+
+        expect(payload.evidence?.length).toBeGreaterThan(0);
+        expect(payload.artifacts?.some((artifact: any) => artifact.kind === "evidence")).toBe(true);
+        expect(flowArtifactManager.store).toHaveBeenCalled();
+        const storedArtifact = (flowArtifactManager.store as jest.Mock).mock.calls[0][0] as any;
+        expect(storedArtifact.type).toBe("evidence");
+        expect(storedArtifact.sessionId).toBe("s-evidence");
+        expect(typeof storedArtifact.expiresAt).toBe("number");
+    });
+
+    it("adds evidence pack for deep analyze responses", async () => {
+        const flowArtifactManager = { store: jest.fn((artifact: any) => artifact.id) };
+        const context = makeContext({ flowArtifactManager });
+        const handler = new TaskHandlers(context as any);
+        const understandResponse = {
+            success: true,
+            status: "ok",
+            summary: "Analysis results for core.",
+            primaryFile: "src/core.ts",
+            symbols: [],
+            dependencies: [],
+            sessionId: "s-evidence-2"
+        };
+        context.orchestrationEngine.executePillar.mockResolvedValue(understandResponse);
+
+        const response = await handler.handle("task", { request: "core analysis", mode: "analyze", budget: "deep" });
+        const payload = JSON.parse(response.content[0].text);
+
+        expect(payload.evidence?.length).toBeGreaterThan(0);
+        expect(payload.artifacts?.some((artifact: any) => artifact.kind === "evidence")).toBe(true);
+        const storedArtifact = (flowArtifactManager.store as jest.Mock).mock.calls[0][0] as any;
+        expect(storedArtifact.type).toBe("evidence");
+        expect(storedArtifact.sessionId).toBe("s-evidence-2");
+    });
+
     it("returns change prep when plan_change has no edits", async () => {
         const context = makeContext();
         const handler = new TaskHandlers(context as any);

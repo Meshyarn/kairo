@@ -138,7 +138,8 @@ export class FlowArtifactManager {
             draft: rawCounts.draft ?? 0,
             review: rawCounts.review ?? 0,
             graph: rawCounts.graph ?? 0,
-            schema: rawCounts.schema ?? 0
+            schema: rawCounts.schema ?? 0,
+            evidence: rawCounts.evidence ?? 0
         };
         const lastUpdatedAt = Math.max(
             session.updatedAt ?? session.startedAt,
@@ -151,7 +152,8 @@ export class FlowArtifactManager {
             draft: session.artifacts.drafts.slice(-1)[0],
             review: session.artifacts.reviews.slice(-1)[0],
             graph: session.artifacts.graphs?.slice(-1)[0],
-            schema: undefined
+            schema: undefined,
+            evidence: session.artifacts.evidence?.slice(-1)[0]
         };
         return { session, summary: { counts, lastUpdatedAt, latestIds } };
     }
@@ -737,7 +739,7 @@ export class FlowArtifactManager {
         if (type || ensureDir) {
             return candidate;
         }
-        const types: ArtifactType[] = ["research", "analysis", "style", "draft", "review", "graph"];
+        const types: ArtifactType[] = ["research", "analysis", "style", "draft", "review", "graph", "schema", "evidence"];
         for (const entryType of types) {
             const entryPath = path.join(this.persistPath, `${entryType}s`, `${id}.json`);
             if (await this.fileSystem.exists(entryPath)) {
@@ -804,7 +806,8 @@ export class FlowArtifactManager {
             artifacts: {
                 drafts: [],
                 reviews: [],
-                graphs: []
+                graphs: [],
+                evidence: []
             }
         };
         this.sessions.set(session.id, session);
@@ -843,6 +846,14 @@ export class FlowArtifactManager {
                 }
                 if (!session.artifacts.graphs.includes(artifact.pack.id)) {
                     session.artifacts.graphs.push(artifact.pack.id);
+                }
+                break;
+            case "evidence":
+                if (!session.artifacts.evidence) {
+                    session.artifacts.evidence = [];
+                }
+                if (!session.artifacts.evidence.includes(artifact.pack.id)) {
+                    session.artifacts.evidence.push(artifact.pack.id);
                 }
                 break;
             default:
@@ -895,6 +906,11 @@ export class FlowArtifactManager {
             case "graph":
                 if (session.artifacts.graphs) {
                     session.artifacts.graphs = session.artifacts.graphs.filter((id) => id !== artifact.pack.id);
+                }
+                break;
+            case "evidence":
+                if (session.artifacts.evidence) {
+                    session.artifacts.evidence = session.artifacts.evidence.filter((id) => id !== artifact.pack.id);
                 }
                 break;
             default:
