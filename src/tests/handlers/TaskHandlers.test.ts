@@ -199,6 +199,28 @@ describe("TaskHandlers", () => {
         expect(payload.packId).toBe("pack_2");
     });
 
+    it("surfaces targetString candidates in change prep when anchor text is available", async () => {
+        const context = makeContext();
+        const handler = new TaskHandlers(context as any);
+        const exploreResponse = {
+            success: true,
+            status: "ok",
+            data: {
+                docs: [],
+                code: [{ kind: "file_full", filePath: "src/app.ts", content: "export const foo = 1;" }]
+            },
+            pack: { packId: "pack_targets", hit: false, createdAt: Date.now() },
+            sessionId: "s3b"
+        };
+        context.orchestrationEngine.executePillar.mockResolvedValue(exploreResponse);
+
+        const response = await handler.handle("task", { request: "update app", mode: "plan_change", budget: "balanced" });
+        const payload = JSON.parse(response.content[0].text);
+
+        expect(payload.changePrep?.targetStringCandidates?.length).toBeGreaterThan(0);
+        expect(payload.changePrep?.targetStringCandidates?.[0]?.anchorText).toContain("export const foo");
+    });
+
     it("routes plan_change with edits to change plan", async () => {
         const context = makeContext();
         const handler = new TaskHandlers(context as any);
@@ -311,6 +333,51 @@ describe("TaskHandlers", () => {
             expect.objectContaining({ targetPath: "src/alias.ts" })
         );
         expect(payload.draftId).toBe("draft_write_2");
+    });
+
+    it("adds prep evidence for write plan without content", async () => {
+        const context = makeContext();
+        const handler = new TaskHandlers(context as any);
+        const exploreResponse = {
+            success: true,
+            status: "ok",
+            data: {
+                docs: [],
+                code: [{ kind: "file_preview", filePath: "src/template.ts", preview: "export const template = 1;" }]
+            },
+            pack: { packId: "pack_write", hit: false, createdAt: Date.now() },
+            sessionId: "s-write"
+        };
+        const writeResponse = {
+            success: true,
+            status: "draft",
+            draftPack: { id: "draft_write_3" },
+            sessionId: "s-write"
+        };
+        context.orchestrationEngine.executePillar
+            .mockResolvedValueOnce(exploreResponse)
+            .mockResolvedValueOnce(writeResponse);
+
+        const response = await handler.handle("task", {
+            request: "Create component",
+            mode: "write",
+            budget: "balanced",
+            targetFiles: ["src/new.ts"]
+        });
+        const payload = JSON.parse(response.content[0].text);
+
+        expect(context.orchestrationEngine.executePillar).toHaveBeenNthCalledWith(
+            1,
+            "explore",
+            expect.objectContaining({ query: "Create component", view: "preview" })
+        );
+        expect(context.orchestrationEngine.executePillar).toHaveBeenNthCalledWith(
+            2,
+            "write",
+            expect.objectContaining({ intent: "Create component", targetPath: "src/new.ts", smartWrite: true })
+        );
+        expect(payload.evidence?.length).toBeGreaterThan(0);
+        expect(payload.summary.bullets.some((bullet: string) => bullet.includes("Prep evidence"))).toBe(true);
     });
 
     it("verifies file content against draft pack", async () => {

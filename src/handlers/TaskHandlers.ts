@@ -362,6 +362,25 @@ export class TaskHandlers extends BaseHandler {
         }));
     }
 
+    private buildTargetStringCandidates(args: {
+        evidencePack?: TaskEvidencePack;
+        maxCandidates: number;
+    }): Array<{ filePath: string; anchorText: string; reason?: string; location?: { lineStart?: number; lineEnd?: number } }> | undefined {
+        const pack = args.evidencePack;
+        if (!pack) return undefined;
+        const evidence = Array.isArray(pack.evidence) ? pack.evidence : [];
+        const candidates = evidence
+            .filter((item) => item.kind === "code" && typeof item.anchorText === "string" && item.anchorText.length > 0)
+            .map((item) => ({
+                filePath: item.filePath,
+                anchorText: item.anchorText!,
+                reason: item.reason,
+                ...(item.location ? { location: item.location } : {})
+            }))
+            .slice(0, Math.max(0, args.maxCandidates));
+        return candidates.length > 0 ? candidates : undefined;
+    }
+
     private resolveTaskLod(args: {
         defaultLod: number;
         evidencePack?: TaskEvidencePack;
@@ -1255,6 +1274,10 @@ export class TaskHandlers extends BaseHandler {
                 });
                 const details = outputFormat === "standard" ? { pillar: "explore", response } : undefined;
                 const inlineEvidence = this.buildInlineEvidence({ lod: lodResolution.lod, evidencePack });
+                const targetStringCandidates = this.buildTargetStringCandidates({
+                    evidencePack,
+                    maxCandidates: Math.min(3, budgetPolicy.maxEvidenceItems)
+                });
                 const artifacts: Array<{ id: string; kind: string; detail: "summary" | "full" }> = [];
                 if (evidenceArtifactId) {
                     artifacts.push({ id: evidenceArtifactId, kind: "evidence", detail: "summary" });
@@ -1273,7 +1296,8 @@ export class TaskHandlers extends BaseHandler {
                     changePrep: {
                         recommendedTargets,
                         ...(fileVersions ? { fileVersions } : {}),
-                        editsTemplate
+                        editsTemplate,
+                        ...(targetStringCandidates ? { targetStringCandidates } : {})
                     },
                     ...(artifacts.length > 0 ? { artifacts } : {}),
                     ...(response?.degraded !== undefined ? { degraded: response.degraded } : {}),
@@ -1434,6 +1458,68 @@ export class TaskHandlers extends BaseHandler {
             const writeSafety = safety ?? "plan";
             const writeTargetPath = this.resolveTargetPath(targetFiles, paths, targetPath);
             const extractedContent = writeSafety === "plan" ? this.extractContentFromRequest(request) : undefined;
+            let prepEvidencePack: TaskEvidencePack | undefined;
+            let prepEvidenceArtifactId: string | undefined;
+            let prepLodResolution: { lod: number; reason?: string } | undefined;
+            if (writeSafety === "plan" && extractedContent === undefined && budgetPolicy.maxSteps >= 2) {
+                const exploreResponse = await this.context.orchestrationEngine.executePillar("explore", {
+                    query: request,
+                    paths: paths.length > 0 ? paths : undefined,
+                    targetFiles: writeTargetPath ? [writeTargetPath] : undefined,
+                    sessionId,
+                    profile,
+                    view: "preview",
+                    trace: traceEnabled,
+                    limits: responseLimits
+                });
+                const relatedArtifacts = exploreResponse?.researchPack?.id
+                    ? [{ id: exploreResponse.researchPack.id, kind: "research", detail: "summary" as const }]
+                    : undefined;
+                prepEvidencePack = buildEvidencePackFromExplore({
+                    response: exploreResponse,
+                    request,
+                    budgetPolicy,
+                    intentCategory: routing.category,
+                    relatedArtifacts
+                });
+                prepLodResolution = this.resolveTaskLod({
+                    defaultLod: budgetPolicy.defaultLod,
+                    evidencePack: prepEvidencePack,
+                    hasEvidenceArtifact: budgetPolicy.defaultLod >= 3
+                });
+                if (prepLodResolution.lod >= 3) {
+                    const fileVersions = await this.buildFileVersionsSnapshot(
+                        prepEvidencePack.rankedFiles.map((item) => item.filePath)
+                    );
+                    if (fileVersions) {
+                        prepEvidencePack.fileVersions = fileVersions;
+                    }
+                    prepEvidenceArtifactId = this.storeEvidencePack({
+                        pack: prepEvidencePack,
+                        sessionId: exploreResponse?.sessionId ?? sessionId,
+                        intent: request
+                    });
+                }
+                if (traceBuilder) {
+                    traceBuilder.recordEvent({
+                        area: "policy",
+                        code: "task.composite_flow",
+                        data: {
+                            steps: ["explore", "write"],
+                            reason: "write_plan_prep"
+                        }
+                    });
+                    traceBuilder.recordEvent({
+                        area: "policy",
+                        code: "task.lod",
+                        data: {
+                            defaultLod: budgetPolicy.defaultLod,
+                            resolvedLod: prepLodResolution.lod,
+                            reason: prepLodResolution.reason
+                        }
+                    });
+                }
+            }
             const response = await this.context.orchestrationEngine.executePillar("write", {
                 intent: request,
                 targetPath: writeTargetPath,
@@ -1449,6 +1535,12 @@ export class TaskHandlers extends BaseHandler {
                 ...(responseLimits ? { limits: responseLimits } : {})
             });
             const summary = this.buildWriteSummary({ response, request });
+            const inlineEvidence = prepEvidencePack && prepLodResolution
+                ? this.buildInlineEvidence({ lod: prepLodResolution.lod, evidencePack: prepEvidencePack })
+                : undefined;
+            if (inlineEvidence?.length) {
+                summary.bullets.push("Prep evidence: similar files and snippets gathered for write planning.");
+            }
             const guidance = this.rewriteGuidanceForCompact({
                 guidance: this.buildGuidance(response?.guidance, nextCalls),
                 request,
@@ -1471,6 +1563,9 @@ export class TaskHandlers extends BaseHandler {
             if (response?.postReview?.id) {
                 artifacts.push({ id: response.postReview.id, kind: "review", detail: "summary" });
             }
+            if (prepEvidenceArtifactId) {
+                artifacts.push({ id: prepEvidenceArtifactId, kind: "evidence", detail: "summary" });
+            }
             const details = outputFormat === "standard" ? { pillar: "write", response } : undefined;
             const payload = {
                 ok: true,
@@ -1480,6 +1575,7 @@ export class TaskHandlers extends BaseHandler {
                 budget,
                 surface,
                 summary,
+                ...(inlineEvidence ? { evidence: inlineEvidence } : {}),
                 ...(details ? { details } : {}),
                 ...(draftPackId ? { draftId: draftPackId } : {}),
                 ...(writeApplyToken ? { applyToken: writeApplyToken } : {}),

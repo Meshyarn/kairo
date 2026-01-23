@@ -39,6 +39,12 @@ const buildEvidenceItem = (item: ExploreItem, kind: "code" | "doc", maxExcerptCh
     const excerptSource = typeof item.content === "string" ? item.content : (item.preview ?? "");
     const truncated = excerptSource.length > maxExcerptChars;
     const excerpt = truncate(excerptSource, maxExcerptChars);
+    const anchorText = kind === "code"
+        && !truncated
+        && typeof item.content === "string"
+        && item.content.length > 0
+        ? item.content
+        : undefined;
     return {
         filePath: item.filePath,
         kind,
@@ -47,6 +53,7 @@ const buildEvidenceItem = (item: ExploreItem, kind: "code" | "doc", maxExcerptCh
         reason: reasonForItem(item),
         score: typeof item.score === "number" ? item.score : undefined,
         truncated,
+        ...(anchorText ? { anchorText } : {}),
         ...(item.range?.startLine || item.range?.endLine
             ? { location: { lineStart: item.range?.startLine, lineEnd: item.range?.endLine } }
             : {})
