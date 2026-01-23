@@ -2,11 +2,13 @@ import { BaseHandler } from "./BaseHandler.js";
 import { HandlerContext } from "./HandlerContext.js";
 import { IntentRouter } from "../orchestration/IntentRouter.js";
 import type { ExploreResponse } from "../orchestration/pillars/explore/ResultFormatter.js";
-import { resolveAutopilotPolicy, resolvePublicSurface } from "../orchestration/policy/McpModePresetRegistry.js";
+import { enforceTaskResponseBudget } from "../orchestration/budget/ResponseEnvelopeBudgeter.js";
+import { TraceBuilder } from "../orchestration/trace/TraceBuilder.js";
+import { resolveAutopilotPolicy, resolvePublicSurface, resolveTaskBudgetPolicy, type TaskBudget, type TaskBudgetPolicy } from "../orchestration/policy/McpModePresetRegistry.js";
 import { buildDegradedReasons } from "../orchestration/DegradedReasonMapper.js";
+import type { DegradedReason } from "../types/tool-responses.js";
 
 type TaskMode = "auto" | "ask" | "analyze" | "plan_change" | "apply_change" | "write" | "verify";
-type TaskBudget = "lean" | "balanced" | "deep";
 type TaskProfile = "lean" | "fast" | "balanced" | "deep";
 type AutoRepairAttempt = {
     tool: string;
@@ -119,6 +121,122 @@ export class TaskHandlers extends BaseHandler {
         const parsed = Number(raw);
         if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
         return parsed;
+    }
+
+    private extractMaxChars(value: any): number | undefined {
+        const raw = value?.maxChars;
+        const parsed = Number(raw);
+        if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+        return parsed;
+    }
+
+    private mergeDegradedReasons(...sources: Array<DegradedReason[] | undefined>): DegradedReason[] | undefined {
+        const combined = sources.flatMap((items) => items ?? []);
+        if (combined.length === 0) return undefined;
+        const seen = new Set<string>();
+        const unique: DegradedReason[] = [];
+        for (const entry of combined) {
+            const key = `${entry.type}|${entry.filePath ?? ""}|${entry.message}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            unique.push(entry);
+        }
+        return unique.length > 0 ? unique : undefined;
+    }
+
+    private buildExploreDecisionGate(args: {
+        response: ExploreResponse;
+        budgetPolicy: TaskBudgetPolicy;
+        request: string;
+        budget: TaskBudget;
+        sessionId?: string;
+        targetFiles: string[];
+    }): { insufficient: boolean; reasons?: string[]; nextCalls?: Array<{ tool: string; args: Record<string, unknown>; reason?: string }> } {
+        const codeItems = Array.isArray(args.response?.data?.code) ? args.response.data.code : [];
+        const docItems = Array.isArray(args.response?.data?.docs) ? args.response.data.docs : [];
+        const targets = new Set<string>();
+        for (const item of [...codeItems, ...docItems]) {
+            if (typeof item?.filePath === "string") {
+                targets.add(item.filePath);
+            }
+        }
+        const evidenceCount = codeItems.length + docItems.length;
+        const hasExplicitTarget = args.targetFiles.length > 0;
+        const enoughTargets = hasExplicitTarget || targets.size >= args.budgetPolicy.minTargets;
+        const enoughEvidence = evidenceCount >= args.budgetPolicy.minEvidence;
+        const insufficient = !(enoughTargets && enoughEvidence);
+        if (!insufficient) return { insufficient };
+
+        const reasons = ["insufficient_evidence"];
+        const topTarget = args.targetFiles[0]
+            ?? codeItems[0]?.filePath
+            ?? docItems[0]?.filePath;
+        const nextCalls: Array<{ tool: string; args: Record<string, unknown>; reason?: string }> = [];
+        if (topTarget) {
+            nextCalls.push({
+                tool: "task",
+                args: {
+                    request: args.request,
+                    mode: "analyze",
+                    budget: args.budget,
+                    targetFiles: [topTarget],
+                    sessionId: args.sessionId
+                },
+                reason: "Need deeper analysis of the top candidate file."
+            });
+        }
+        return { insufficient, reasons, nextCalls };
+    }
+
+    private buildAnalyzeDecisionGate(args: {
+        response: any;
+        budgetPolicy: TaskBudgetPolicy;
+        request: string;
+        budget: TaskBudget;
+        sessionId?: string;
+        targetFiles: string[];
+        paths: string[];
+    }): { insufficient: boolean; reasons?: string[]; nextCalls?: Array<{ tool: string; args: Record<string, unknown>; reason?: string }> } {
+        const primaryFile = typeof args.response?.primaryFile === "string" ? args.response.primaryFile : "";
+        const hasPrimary = primaryFile.length > 0 && primaryFile !== "unknown";
+        if (hasPrimary) return { insufficient: false };
+
+        const reasons = ["insufficient_evidence"];
+        const nextCalls: Array<{ tool: string; args: Record<string, unknown>; reason?: string }> = [];
+        if (args.targetFiles.length > 0 || args.paths.length > 0) {
+            nextCalls.push({
+                tool: "task",
+                args: {
+                    request: args.request,
+                    mode: "ask",
+                    budget: args.budget,
+                    targetFiles: args.targetFiles.length > 0 ? args.targetFiles : undefined,
+                    paths: args.paths.length > 0 ? args.paths : undefined,
+                    sessionId: args.sessionId
+                },
+                reason: "Need more discovery signals before analysis."
+            });
+        }
+        return { insufficient: true, reasons, nextCalls };
+    }
+
+    private finalizeTaskResponse(args: {
+        response: Record<string, any>;
+        traceBuilder?: TraceBuilder;
+        budgetPolicy: TaskBudgetPolicy;
+        maxTokens?: number;
+        maxChars?: number;
+    }) {
+        if (args.traceBuilder) {
+            args.response.decisionTrace = args.traceBuilder.finalize();
+        }
+        enforceTaskResponseBudget({
+            response: args.response,
+            maxTokens: args.maxTokens,
+            maxChars: args.maxChars,
+            minEvidenceItems: args.budgetPolicy.minEvidence
+        });
+        return args.response;
     }
 
     private buildNextCalls(args: {
@@ -789,6 +907,8 @@ export class TaskHandlers extends BaseHandler {
             : autopilotPolicy.defaultOutputFormat;
         const outputPayload = args?.output && typeof args.output === "object" ? args.output : undefined;
         const maxTokens = this.extractMaxTokens(args?.output);
+        const maxChars = this.extractMaxChars(args?.output);
+        const responseLimits = maxTokens || maxChars ? { maxTokens, maxChars } : undefined;
         const sessionId = typeof args?.sessionId === "string" ? args.sessionId : undefined;
         const draftId = typeof args?.draftId === "string" ? args.draftId : undefined;
         const applyToken = typeof args?.applyToken === "string" ? args.applyToken : undefined;
@@ -798,8 +918,57 @@ export class TaskHandlers extends BaseHandler {
         const edits = this.extractEdits(args?.edits);
         const traceEnabled = args?.trace === true;
         const surface = resolvePublicSurface();
+        const budgetPolicy = resolveTaskBudgetPolicy(budget);
+        const traceBuilder = traceEnabled
+            ? new TraceBuilder(
+                "task",
+                {
+                    profile: {
+                        source: typeof args?.budget === "string" ? "explicit" : "default",
+                        explicit: typeof args?.budget === "string",
+                        resolved: budget,
+                        requested: args?.budget,
+                        note: "task budget"
+                    },
+                    safety: safety
+                        ? {
+                            source: "explicit",
+                            explicit: true,
+                            resolved: safety,
+                            requested: args?.safety
+                        }
+                        : undefined,
+                    trace: {
+                        source: traceEnabled ? "explicit" : "default",
+                        explicit: traceEnabled,
+                        resolved: traceEnabled
+                    }
+                },
+                { startedAtMs: startedAt }
+            )
+            : undefined;
+        if (traceBuilder) {
+            traceBuilder.recordEvent({
+                area: "budget",
+                code: "task.budget_policy",
+                data: {
+                    budget,
+                    maxSteps: budgetPolicy.maxSteps,
+                    minTargets: budgetPolicy.minTargets,
+                    minEvidence: budgetPolicy.minEvidence
+                }
+            });
+            traceBuilder.setBudget({ maxTokens, maxChars });
+        }
 
         const routing = this.resolveRoutingMode(mode, request);
+        if (traceBuilder) {
+            traceBuilder.recordEvent({
+                area: "policy",
+                code: "task.route",
+                data: { mode: routing.mode, category: routing.category }
+            });
+        }
         const routingNote = routing.category === "change" || routing.category === "write" || routing.category === "manage"
             ? "Change/write/manage intent detected; returning read-only context."
             : undefined;
@@ -816,11 +985,37 @@ export class TaskHandlers extends BaseHandler {
                 sessionId,
                 profile,
                 trace: traceEnabled,
-                limits: maxTokens ? { maxTokens } : undefined
+                limits: responseLimits
             });
+            const decisionGate = this.buildAnalyzeDecisionGate({
+                response,
+                budgetPolicy,
+                request,
+                budget,
+                sessionId,
+                targetFiles,
+                paths
+            });
+            if (traceBuilder) {
+                traceBuilder.recordEvent({
+                    area: "policy",
+                    code: "task.decision_gate",
+                    data: {
+                        mode: "analyze",
+                        insufficient: decisionGate.insufficient
+                    }
+                });
+            }
             const summary = this.buildUnderstandSummary({ response, request });
+            if (decisionGate.insufficient) {
+                summary.bullets.push("Decision gate: insufficient evidence; add explicit paths/targets or retry with follow-up guidance.");
+            }
+            const combinedNextCalls = [
+                ...(nextCalls ?? []),
+                ...(decisionGate.nextCalls ?? [])
+            ];
             const guidance = this.rewriteGuidanceForCompact({
-                guidance: this.buildGuidance(response?.guidance, nextCalls),
+                guidance: this.buildGuidance(response?.guidance, combinedNextCalls.length > 0 ? combinedNextCalls : undefined),
                 request,
                 budget,
                 output: outputPayload,
@@ -832,30 +1027,41 @@ export class TaskHandlers extends BaseHandler {
                 ? [{ id: response.callGraphArtifactId, kind: "call_graph", detail: "summary" }]
                 : undefined;
             const details = outputFormat === "standard" ? { pillar: "understand", response } : undefined;
-            return {
+            const degradedReasons = this.mergeDegradedReasons(
+                response?.degradedReasons,
+                decisionGate.reasons ? buildDegradedReasons(decisionGate.reasons) : undefined
+            );
+            const payload = {
                 ok: true,
                 sessionId: response?.sessionId ?? sessionId,
-                status: this.mapStatus(response),
+                status: decisionGate.insufficient ? "partial_success" : this.mapStatus(response),
                 mode: routing.mode,
                 budget,
                 surface,
                 summary,
                 ...(details ? { details } : {}),
                 ...(artifacts ? { artifacts } : {}),
-                ...(response?.degraded !== undefined ? { degraded: response.degraded } : {}),
-                ...(response?.degradedReasons ? { degradedReasons: response.degradedReasons } : {}),
+                ...(response?.degraded !== undefined || decisionGate.insufficient ? { degraded: Boolean(response?.degraded) || decisionGate.insufficient } : {}),
+                ...(degradedReasons ? { degradedReasons } : {}),
                 ...(guidance ? { guidance } : {}),
                 stats: {
                     latencyMs: Date.now() - startedAt
                 }
             };
+            return this.finalizeTaskResponse({
+                response: payload,
+                traceBuilder,
+                budgetPolicy,
+                maxTokens,
+                maxChars
+            });
         }
 
         if (routing.mode === "plan_change") {
             const planTargets = targetFiles.length > 0
                 ? targetFiles
                 : (targetPath ? [targetPath] : (paths.length > 0 ? paths : []));
-            const planLimits = maxTokens ? { maxTokens } : undefined;
+            const planLimits = responseLimits;
             if (edits.length === 0) {
                 const response = await this.context.orchestrationEngine.executePillar("explore", {
                     query: request,
@@ -893,7 +1099,7 @@ export class TaskHandlers extends BaseHandler {
                     surface
                 });
                 const details = outputFormat === "standard" ? { pillar: "explore", response } : undefined;
-                return {
+                const payload = {
                     ok: true,
                     sessionId: response?.sessionId ?? sessionId,
                     status: "partial_success",
@@ -915,6 +1121,13 @@ export class TaskHandlers extends BaseHandler {
                         latencyMs: Date.now() - startedAt
                     }
                 };
+                return this.finalizeTaskResponse({
+                    response: payload,
+                    traceBuilder,
+                    budgetPolicy,
+                    maxTokens,
+                    maxChars
+                });
             }
 
             const response = await this.context.orchestrationEngine.executePillar("change", {
@@ -953,7 +1166,7 @@ export class TaskHandlers extends BaseHandler {
                 artifacts.push({ id: response.postReview.id, kind: "review", detail: "summary" });
             }
             const details = outputFormat === "standard" ? { pillar: "change", response } : undefined;
-            return {
+            const payload = {
                 ok: true,
                 sessionId: response?.sessionId ?? sessionId,
                 status: this.mapStatus(response),
@@ -973,13 +1186,20 @@ export class TaskHandlers extends BaseHandler {
                     latencyMs: Date.now() - startedAt
                 }
             };
+            return this.finalizeTaskResponse({
+                response: payload,
+                traceBuilder,
+                budgetPolicy,
+                maxTokens,
+                maxChars
+            });
         }
 
         if (routing.mode === "apply_change") {
             const applyTargets = targetFiles.length > 0
                 ? targetFiles
                 : (targetPath ? [targetPath] : (paths.length > 0 ? paths : []));
-            const applyLimits = maxTokens ? { maxTokens } : undefined;
+            const applyLimits = responseLimits;
             const response = await this.context.orchestrationEngine.executePillar("change", {
                 intent: request,
                 targetFiles: applyTargets.length > 0 ? applyTargets : undefined,
@@ -1020,7 +1240,7 @@ export class TaskHandlers extends BaseHandler {
                 artifacts.push({ id: response.postReview.id, kind: "review", detail: "summary" });
             }
             const details = outputFormat === "standard" ? { pillar: "change", response } : undefined;
-            return {
+            const payload = {
                 ok: true,
                 sessionId: response?.sessionId ?? sessionId,
                 status: this.mapStatus(response),
@@ -1039,6 +1259,13 @@ export class TaskHandlers extends BaseHandler {
                     latencyMs: Date.now() - startedAt
                 }
             };
+            return this.finalizeTaskResponse({
+                response: payload,
+                traceBuilder,
+                budgetPolicy,
+                maxTokens,
+                maxChars
+            });
         }
 
         if (routing.mode === "write") {
@@ -1057,7 +1284,7 @@ export class TaskHandlers extends BaseHandler {
                 ...(draftId ? { draftId } : {}),
                 ...(applyToken ? { applyToken } : {}),
                 ...(typeof args?.refinement === "string" ? { refinement: args.refinement } : {}),
-                ...(maxTokens ? { limits: { maxTokens } } : {})
+                ...(responseLimits ? { limits: responseLimits } : {})
             });
             const summary = this.buildWriteSummary({ response, request });
             const guidance = this.rewriteGuidanceForCompact({
@@ -1083,7 +1310,7 @@ export class TaskHandlers extends BaseHandler {
                 artifacts.push({ id: response.postReview.id, kind: "review", detail: "summary" });
             }
             const details = outputFormat === "standard" ? { pillar: "write", response } : undefined;
-            return {
+            const payload = {
                 ok: true,
                 sessionId: response?.sessionId ?? sessionId,
                 status: this.mapStatus(response),
@@ -1103,6 +1330,13 @@ export class TaskHandlers extends BaseHandler {
                     latencyMs: Date.now() - startedAt
                 }
             };
+            return this.finalizeTaskResponse({
+                response: payload,
+                traceBuilder,
+                budgetPolicy,
+                maxTokens,
+                maxChars
+            });
         }
 
         if (routing.mode === "verify") {
@@ -1123,7 +1357,7 @@ export class TaskHandlers extends BaseHandler {
                 sessionId,
                 surface
             });
-            return {
+            const payload = {
                 ok: true,
                 sessionId: sessionId ?? "unknown",
                 status,
@@ -1139,6 +1373,13 @@ export class TaskHandlers extends BaseHandler {
                     latencyMs: Date.now() - startedAt
                 }
             };
+            return this.finalizeTaskResponse({
+                response: payload,
+                traceBuilder,
+                budgetPolicy,
+                maxTokens,
+                maxChars
+            });
         }
 
         const response = await this.context.orchestrationEngine.executePillar("explore", {
@@ -1149,11 +1390,39 @@ export class TaskHandlers extends BaseHandler {
             profile,
             view: "preview",
             trace: traceEnabled,
-            limits: maxTokens ? { maxTokens } : undefined
+            limits: responseLimits
         });
+        const decisionGate = this.buildExploreDecisionGate({
+            response,
+            budgetPolicy,
+            request,
+            budget,
+            sessionId,
+            targetFiles
+        });
+        if (traceBuilder) {
+            traceBuilder.recordEvent({
+                area: "policy",
+                code: "task.decision_gate",
+                data: {
+                    mode: "ask",
+                    insufficient: decisionGate.insufficient,
+                    codeCount: response?.data?.code?.length ?? 0,
+                    docCount: response?.data?.docs?.length ?? 0
+                }
+            });
+        }
         const summary = this.buildExploreSummary({ response, request, routingNote });
+        if (decisionGate.insufficient) {
+            summary.bullets.push("Decision gate: insufficient evidence; add explicit paths/targets or retry with follow-up guidance.");
+            summary.next.push("Provide explicit paths/targetFiles to improve evidence quality.");
+        }
+        const combinedNextCalls = [
+            ...(nextCalls ?? []),
+            ...(decisionGate.nextCalls ?? [])
+        ];
         const guidance = this.rewriteGuidanceForCompact({
-            guidance: this.buildGuidance(response?.guidance, nextCalls),
+            guidance: this.buildGuidance(response?.guidance, combinedNextCalls.length > 0 ? combinedNextCalls : undefined),
             request,
             budget,
             output: outputPayload,
@@ -1163,22 +1432,33 @@ export class TaskHandlers extends BaseHandler {
         });
         const packId = response?.pack?.packId ?? response?.researchPack?.id;
         const details = outputFormat === "standard" ? { pillar: "explore", response } : undefined;
-        return {
+        const degradedReasons = this.mergeDegradedReasons(
+            response?.degradedReasons,
+            decisionGate.reasons ? buildDegradedReasons(decisionGate.reasons) : undefined
+        );
+        const payload = {
             ok: true,
             sessionId: response?.sessionId ?? sessionId,
-            status: this.mapStatus(response),
+            status: decisionGate.insufficient ? "partial_success" : this.mapStatus(response),
             mode: routing.mode,
             budget,
             surface,
             summary,
             ...(details ? { details } : {}),
             ...(packId ? { packId } : {}),
-            ...(response?.degraded !== undefined ? { degraded: response.degraded } : {}),
-            ...(response?.degradedReasons ? { degradedReasons: response.degradedReasons } : {}),
+            ...(response?.degraded !== undefined || decisionGate.insufficient ? { degraded: Boolean(response?.degraded) || decisionGate.insufficient } : {}),
+            ...(degradedReasons ? { degradedReasons } : {}),
             ...(guidance ? { guidance } : {}),
             stats: {
                 latencyMs: Date.now() - startedAt
             }
         };
+        return this.finalizeTaskResponse({
+            response: payload,
+            traceBuilder,
+            budgetPolicy,
+            maxTokens,
+            maxChars
+        });
     }
 }

@@ -51,7 +51,7 @@ describe("TaskHandlers", () => {
         );
         expect(payload.summary.title).toContain("find app");
         expect(payload.packId).toBe("pack_1");
-        expect(payload.status).toBe("success");
+        expect(payload.status).toBe("partial_success");
     });
 
     it("routes analyze to understand and returns summary", async () => {

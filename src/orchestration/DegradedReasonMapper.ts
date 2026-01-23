@@ -118,6 +118,11 @@ const PARITY_REASON_MAP: Record<string, {
     message: "Token or time budget exceeded; results may be partial.",
     severity: "warning"
   },
+  insufficient_evidence: {
+    type: "degraded",
+    message: "Insufficient evidence returned; add explicit paths or target files for a more precise result.",
+    severity: "warning"
+  },
   doc_search_skipped: {
     type: "doc_search_skipped",
     message: "Documentation search was skipped; results may be incomplete.",

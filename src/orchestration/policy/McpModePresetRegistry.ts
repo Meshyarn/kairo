@@ -6,6 +6,17 @@ export type McpMode = "mcp" | "dev" | "ci";
 export type McpPresetId = "mcp-lean" | "mcp-balanced" | "mcp-deep";
 export type McpPublicSurface = "compact" | "pillars";
 export type PolicyProfile = "lean" | "fast" | "balanced" | "deep";
+export type TaskBudget = "lean" | "balanced" | "deep";
+
+export type TaskBudgetPolicy = {
+  maxSteps: number;
+  defaultLod: 0 | 1 | 2 | 3 | 4;
+  maxEvidenceItems: number;
+  maxExcerptChars: number;
+  maxEvidenceFiles: number;
+  minTargets: number;
+  minEvidence: number;
+};
 
 export type ApplyHandshakePolicy = {
   required: boolean;
@@ -102,6 +113,36 @@ export type McpPolicyOverrides = {
     total?: number;
     perStep?: number;
   };
+};
+
+const TASK_BUDGET_POLICIES: Record<TaskBudget, TaskBudgetPolicy> = {
+  lean: {
+    maxSteps: 1,
+    defaultLod: 1,
+    maxEvidenceItems: 2,
+    maxExcerptChars: 240,
+    maxEvidenceFiles: 2,
+    minTargets: 2,
+    minEvidence: 1
+  },
+  balanced: {
+    maxSteps: 2,
+    defaultLod: 2,
+    maxEvidenceItems: 4,
+    maxExcerptChars: 400,
+    maxEvidenceFiles: 4,
+    minTargets: 3,
+    minEvidence: 2
+  },
+  deep: {
+    maxSteps: 3,
+    defaultLod: 3,
+    maxEvidenceItems: 6,
+    maxExcerptChars: 800,
+    maxEvidenceFiles: 6,
+    minTargets: 5,
+    minEvidence: 3
+  }
 };
 
 const MCP_PRESETS: Record<McpPresetId, McpPreset> = {
@@ -404,6 +445,13 @@ export const resolvePublicSurface = (): McpPublicSurface => {
 
 export const resolveTimeboxPolicy = (): McpTimeboxPolicy => {
   return resolveMcpPolicy().timeboxMs ?? {};
+};
+
+export const resolveTaskBudgetPolicy = (budget?: string): TaskBudgetPolicy => {
+  if (budget === "balanced" || budget === "deep" || budget === "lean") {
+    return TASK_BUDGET_POLICIES[budget];
+  }
+  return TASK_BUDGET_POLICIES.lean;
 };
 
 export const resolveDefaultProfile = (_tool?: string): PolicyProfile | undefined => {
