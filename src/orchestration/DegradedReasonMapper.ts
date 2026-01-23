@@ -183,7 +183,7 @@ const PARITY_REASON_MAP: Record<string, {
   },
   apply_token_missing: {
     type: "apply_token_missing",
-    message: "Apply token is missing or invalid; re-plan before applying.",
+    message: "Apply token is missing; re-plan before applying.",
     severity: "critical"
   },
   apply_token_expired: {
@@ -194,6 +194,11 @@ const PARITY_REASON_MAP: Record<string, {
   apply_token_used: {
     type: "apply_token_used",
     message: "Apply token has already been used; re-plan to get a new token.",
+    severity: "critical"
+  },
+  apply_token_invalid: {
+    type: "apply_token_invalid",
+    message: "Apply token is invalid; re-plan to get a new token.",
     severity: "critical"
   },
   language_parser_unavailable: {
