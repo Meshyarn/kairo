@@ -1541,18 +1541,40 @@ export class TaskHandlers extends BaseHandler {
                 ...(planLimits ? { limits: planLimits } : {})
             });
             const summary = this.buildPlanSummary({ response, request });
+            const draftPackId = response?.draftPack?.id;
+            const planApplyToken = typeof response?.applyToken === "string" ? response.applyToken : undefined;
+            const applyTokenExpiresAt = typeof response?.applyTokenExpiresAt === "number" ? response.applyTokenExpiresAt : undefined;
+            const effectiveSessionId = response?.sessionId ?? sessionId;
+            const enhancedNextCalls: Array<{ tool: string; args: Record<string, unknown>; reason?: string }> = Array.isArray(nextCalls)
+                ? [...nextCalls]
+                : [];
+            if (draftPackId && planApplyToken && effectiveSessionId) {
+                enhancedNextCalls.unshift({
+                    tool: "task",
+                    args: {
+                        request,
+                        mode: "apply_change",
+                        budget,
+                        sessionId: effectiveSessionId,
+                        draftId: draftPackId,
+                        applyToken: planApplyToken,
+                        ...(planTargets.length > 0 ? { targetFiles: planTargets } : {}),
+                        ...(edits.length > 0 ? { edits } : {}),
+                        ...(outputPayload ? { output: outputPayload } : {}),
+                        ...(traceEnabled ? { trace: true } : {})
+                    },
+                    reason: "Apply the planned change."
+                });
+            }
             const guidance = this.rewriteGuidanceForCompact({
-                guidance: this.buildGuidance(response?.guidance, nextCalls),
+                guidance: this.buildGuidance(response?.guidance, enhancedNextCalls.length > 0 ? enhancedNextCalls : undefined),
                 request,
                 budget,
                 output: outputPayload,
                 traceEnabled,
-                sessionId,
+                sessionId: effectiveSessionId,
                 surface
             });
-            const draftPackId = response?.draftPack?.id;
-            const planApplyToken = typeof response?.applyToken === "string" ? response.applyToken : undefined;
-            const applyTokenExpiresAt = typeof response?.applyTokenExpiresAt === "number" ? response.applyTokenExpiresAt : undefined;
             const artifacts: Array<{ id: string; kind: string; detail: "summary" | "full" }> = [];
             if (draftPackId) {
                 artifacts.push({ id: draftPackId, kind: "draft", detail: "summary" });
@@ -1826,18 +1848,40 @@ export class TaskHandlers extends BaseHandler {
             if (inlineEvidence?.length) {
                 summary.bullets.push("Prep evidence: similar files and snippets gathered for write planning.");
             }
+            const draftPackId = response?.draftPack?.id;
+            const writeApplyToken = typeof response?.applyToken === "string" ? response.applyToken : undefined;
+            const applyTokenExpiresAt = typeof response?.applyTokenExpiresAt === "number" ? response.applyTokenExpiresAt : undefined;
+            const effectiveSessionId = response?.sessionId ?? sessionId;
+            const enhancedNextCalls: Array<{ tool: string; args: Record<string, unknown>; reason?: string }> = Array.isArray(nextCalls)
+                ? [...nextCalls]
+                : [];
+            if (writeSafety === "plan" && draftPackId && writeApplyToken && effectiveSessionId && writeTargetPath) {
+                enhancedNextCalls.unshift({
+                    tool: "task",
+                    args: {
+                        request,
+                        mode: "write",
+                        safety: "apply",
+                        budget,
+                        sessionId: effectiveSessionId,
+                        draftId: draftPackId,
+                        applyToken: writeApplyToken,
+                        targetPath: writeTargetPath,
+                        ...(outputPayload ? { output: outputPayload } : {}),
+                        ...(traceEnabled ? { trace: true } : {})
+                    },
+                    reason: "Apply the planned write."
+                });
+            }
             const guidance = this.rewriteGuidanceForCompact({
-                guidance: this.buildGuidance(response?.guidance, nextCalls),
+                guidance: this.buildGuidance(response?.guidance, enhancedNextCalls.length > 0 ? enhancedNextCalls : undefined),
                 request,
                 budget,
                 output: outputPayload,
                 traceEnabled,
-                sessionId,
+                sessionId: effectiveSessionId,
                 surface
             });
-            const draftPackId = response?.draftPack?.id;
-            const writeApplyToken = typeof response?.applyToken === "string" ? response.applyToken : undefined;
-            const applyTokenExpiresAt = typeof response?.applyTokenExpiresAt === "number" ? response.applyTokenExpiresAt : undefined;
             const artifacts: Array<{ id: string; kind: string; detail: "summary" | "full" }> = [];
             if (draftPackId) {
                 artifacts.push({ id: draftPackId, kind: "draft", detail: "summary" });

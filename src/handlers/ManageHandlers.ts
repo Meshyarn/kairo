@@ -1,5 +1,4 @@
 import * as path from "path";
-import { promises as fs } from "fs";
 import { createHash } from "crypto";
 import { BaseHandler } from "./BaseHandler.js";
 import { HandlerContext } from "./HandlerContext.js";
@@ -32,6 +31,11 @@ export class ManageHandlers extends BaseHandler {
 
     constructor(private context: HandlerContext) {
         super(context.toolSpecRegistry);
+    }
+
+    private async copyFile(sourcePath: string, targetPath: string): Promise<void> {
+        const content = await this.context.fileSystem.readFile(sourcePath);
+        await this.context.fileSystem.writeFile(targetPath, content);
     }
 
     async handle(name: string, args: any): Promise<any> {
@@ -265,6 +269,9 @@ export class ManageHandlers extends BaseHandler {
             if (checked >= maxFiles) break;
             const absPath = this.resolveAbsolutePath(record.path);
             const relativePath = this.resolveRelativePath(record.path);
+            if (shouldIgnoreRelative(relativePath)) {
+                continue;
+            }
             const scope = getScope(absPath);
             let isMismatched = false;
             try {
@@ -1726,7 +1733,7 @@ export class ManageHandlers extends BaseHandler {
                         return { success: false, output: "Patch manifest not found." };
                     }
                     const exportDir = path.join(PathManager.getHistoryDir(), "exports");
-                    await fs.mkdir(exportDir, { recursive: true });
+                    await this.context.fileSystem.createDir(exportDir);
                     const filesToCopy: string[] = [];
                     const manifestPath = patchStore.resolveManifestPath(patchRef);
                     filesToCopy.push(manifestPath);
@@ -1739,7 +1746,7 @@ export class ManageHandlers extends BaseHandler {
                     const exportedPaths: string[] = [];
                     for (const filePath of filesToCopy) {
                         const targetPath = path.join(exportDir, path.basename(filePath));
-                        await fs.copyFile(filePath, targetPath);
+                        await this.copyFile(filePath, targetPath);
                         exportedPaths.push(targetPath);
                     }
                     return {

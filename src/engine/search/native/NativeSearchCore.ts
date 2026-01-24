@@ -152,11 +152,10 @@ export class NativeSearchCore {
     }
 
     public reset(): void {
-        const reset = this.core.reset;
-        if (!reset) {
+        if (!this.core.reset) {
             throw new NativeSearchError("CAP_NATIVE_SEARCH_UNAVAILABLE", "Native search reset is unavailable.");
         }
-        return this.wrapNativeCall(() => reset());
+        return this.wrapNativeCall(() => this.core.reset!());
     }
 
     public getIndexDir(): string {
