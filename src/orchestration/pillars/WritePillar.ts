@@ -45,6 +45,9 @@ import { evaluateIntegrityGuardrailBlock } from "./shared/IntegrityGuardrailDeci
 import type { OptionSource, TraceOptionResolution } from "../../types/option-trace.js";
 import { TraceBuilder } from "../trace/TraceBuilder.js";
 import { applyFormatterBridge } from "../formatter/FormatterBridge.js";
+import type { ContentSource } from "../../types/content-source.js";
+import { createIgnoreMatcher, resolveContentSource } from "../../utils/ContentSourceResolver.js";
+import type { ConfigurationManager } from "../../config/ConfigurationManager.js";
 
 const resolveOptionSource = (explicit: boolean, hasSession: boolean): OptionSource => {
   if (explicit) return "explicit";
@@ -184,6 +187,7 @@ export class WritePillar {
         targetPath: inputTargetPath,
         template,
         content: initialContent,
+        contentSource,
         hasExplicitContent,
         safeWrite,
         quickGenerate,
@@ -335,6 +339,39 @@ export class WritePillar {
         }
         return resolvedSessionId ? { ...next, sessionId: resolvedSessionId } : next;
       };
+
+      if (contentSource) {
+        const configurationManager = this.registry.getMetadata<ConfigurationManager>("configurationManager");
+        const ignoreGlobs = configurationManager?.getIgnoreGlobs?.() ?? [];
+        const resolution = await resolveContentSource(contentSource as ContentSource, {
+          rootPath: this.resolveRootPath(),
+          fileSystem: this.resolveFileSystem(),
+          repoRegistry,
+          repoScope,
+          pathNormalizer,
+          artifactManager,
+          ignoreMatcher: createIgnoreMatcher(ignoreGlobs)
+        });
+        if (!resolution.ok) {
+          return attachSession({
+            success: false,
+            status: resolution.error.status,
+            message: resolution.error.message,
+            errorCode: resolution.error.errorCode,
+            blockedReason: resolution.error.blockedReason,
+            createdFiles: [],
+            transactionId: null,
+            rollbackAvailable: false,
+            contentSourceError: resolution.error,
+            guidance: {
+              message: resolution.error.message,
+              suggestedActions: []
+            }
+          });
+        }
+        content = resolution.content;
+      }
+
       const requireApplyToken = applyPolicy.required && !dryRun;
       const invalidateApplyTokenOnDrift = () => {
         if (!applyPolicy.invalidateOnDrift || dryRun || !resolvedSessionId || !draftId) return;
@@ -372,7 +409,11 @@ export class WritePillar {
           targetPath,
           safety: "plan"
         };
-        if (hasExplicitContent) nextArgs.content = initialContent;
+        if (contentSource) {
+          nextArgs.contentSource = contentSource;
+        } else if (hasExplicitContent) {
+          nextArgs.content = initialContent;
+        }
         if (refinement) nextArgs.refinement = refinement;
         if (resolvedSessionId) nextArgs.sessionId = resolvedSessionId;
         return {

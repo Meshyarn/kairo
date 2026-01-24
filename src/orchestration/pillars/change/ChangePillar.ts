@@ -79,7 +79,7 @@ import {
     evaluateLanguageParityGate,
     formatParityBlockMessage
 } from "../../../config/LanguageParityGate.js";
-import { normalizeRepoScope } from "../../../utils/RepoScope.js";
+import { normalizeRepoScope, type NormalizedRepoScope } from "../../../utils/RepoScope.js";
 import { evaluateRepoEditPolicy } from "../shared/RepoGuard.js";
 import { normalizeChangeInput } from "./ChangeInputNormalizer.js";
 import { buildWorkflowMeta, buildWorkflowWarnings } from "../shared/WorkflowMeta.js";
@@ -88,6 +88,8 @@ import { evaluateIntegrityGuardrailBlock } from "../shared/IntegrityGuardrailDec
 import type { OptionSource, TraceOptionResolution } from "../../../types/option-trace.js";
 import { TraceBuilder } from "../../trace/TraceBuilder.js";
 import { applyFormatterBridge } from "../../formatter/FormatterBridge.js";
+import { createIgnoreMatcher, resolveContentSource } from "../../../utils/ContentSourceResolver.js";
+import type { ContentSource } from "../../../types/content-source.js";
 
 const resolveOptionSource = (explicit: boolean, hasSession: boolean): OptionSource => {
   if (explicit) return "explicit";
@@ -615,6 +617,43 @@ export class ChangePillar {
           },
           indexSnapshot: staleGuard.snapshot
         });
+      }
+
+      const hasContentSources = rawEdits.some((edit: any) => Boolean(edit?.targetSource || edit?.replacementSource));
+      if (hasContentSources) {
+        const configurationManager = this.registry.getMetadata<ConfigurationManager>("configurationManager");
+        const ignoreGlobs = configurationManager?.getIgnoreGlobs?.() ?? [];
+        const resolution = await this.resolveContentSourcesForEdits({
+          edits: rawEdits,
+          rootPath: this.resolveRootPath(),
+          fileSystem,
+          repoRegistry,
+          repoScope,
+          pathNormalizer,
+          artifactManager,
+          ignoreMatcher: createIgnoreMatcher(ignoreGlobs)
+        });
+        if (!resolution.ok) {
+          return attachWorkflow({
+            success: false,
+            status: resolution.error.status,
+            message: resolution.error.message,
+            errorCode: resolution.error.errorCode,
+            blockedReason: resolution.error.blockedReason,
+            contentSourceError: {
+              ...resolution.error,
+              editIndex: resolution.editIndex,
+              field: resolution.field
+            },
+            guidance: {
+              message: resolution.error.message,
+              suggestedActions: []
+            },
+            sessionId: resolvedSessionId
+          });
+        }
+        rawEdits = resolution.edits;
+        constraints.edits = rawEdits;
       }
 
       if (useV2 && shouldBatch) {
@@ -1769,6 +1808,73 @@ export class ChangePillar {
       if (p) paths.add(p);
     }
     return Array.from(paths);
+  }
+
+  private async resolveContentSourcesForEdits(args: {
+    edits: any[];
+    rootPath: string;
+    fileSystem: IFileSystem;
+    repoRegistry?: RepoRegistry;
+    repoScope?: NormalizedRepoScope;
+    pathNormalizer?: PathNormalizer;
+    artifactManager?: FlowArtifactManager;
+    ignoreMatcher?: { ignores: (filePath: string) => boolean };
+  }): Promise<
+    | { ok: true; edits: any[] }
+    | { ok: false; error: any; editIndex: number; field: "targetSource" | "replacementSource" }
+  > {
+    const resolved: any[] = [];
+
+    for (let index = 0; index < args.edits.length; index += 1) {
+      const edit = args.edits[index];
+      let next = { ...edit };
+
+      if (edit?.targetSource) {
+        const result = await resolveContentSource(edit.targetSource as ContentSource, {
+          rootPath: args.rootPath,
+          fileSystem: args.fileSystem,
+          repoRegistry: args.repoRegistry,
+          repoScope: args.repoScope,
+          pathNormalizer: args.pathNormalizer,
+          artifactManager: args.artifactManager,
+          ignoreMatcher: args.ignoreMatcher
+        });
+        if (!result.ok) {
+          return { ok: false, error: result.error, editIndex: index, field: "targetSource" };
+        }
+        next = {
+          ...next,
+          targetString: result.content
+        };
+        delete (next as any).targetStringBase64;
+        delete (next as any).targetBase64;
+      }
+
+      if (edit?.replacementSource) {
+        const result = await resolveContentSource(edit.replacementSource as ContentSource, {
+          rootPath: args.rootPath,
+          fileSystem: args.fileSystem,
+          repoRegistry: args.repoRegistry,
+          repoScope: args.repoScope,
+          pathNormalizer: args.pathNormalizer,
+          artifactManager: args.artifactManager,
+          ignoreMatcher: args.ignoreMatcher
+        });
+        if (!result.ok) {
+          return { ok: false, error: result.error, editIndex: index, field: "replacementSource" };
+        }
+        next = {
+          ...next,
+          replacementString: result.content
+        };
+        delete (next as any).replacementStringBase64;
+        delete (next as any).replacementBase64;
+      }
+
+      resolved.push(next);
+    }
+
+    return { ok: true, edits: resolved };
   }
 
   private buildSchemaCoaching(args: { errorCode: string; targetPath?: string; intent?: string }) {

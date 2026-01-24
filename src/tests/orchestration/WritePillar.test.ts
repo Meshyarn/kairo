@@ -78,6 +78,33 @@ describe("WritePillar", () => {
     expect(result.rollbackAvailable).toBe(true);
   });
 
+  it("prefers contentSource inline over content", async () => {
+    const registry = new InternalToolRegistry();
+    registry.register("code_read", async () => "");
+    const editTransaction: jest.MockedFunction<(args: any) => Promise<any>> = jest
+      .fn(async () => ({ success: true, operation: { id: "op-inline" } })) as any;
+    registry.register("edit_transaction", editTransaction);
+
+    const pillar = new WritePillar(registry);
+    const context = new OrchestrationContext();
+    const result = await pillar.execute(
+      makeIntent({
+        targetPath: "src/inline.ts",
+        content: "old",
+        contentSource: { kind: "inline", text: "new" },
+        safeWrite: true
+      }) as any,
+      context
+    );
+
+    expect(result.success).toBe(true);
+    expect(editTransaction).toHaveBeenCalled();
+    const [firstCall] = editTransaction.mock.calls;
+    expect(firstCall).toBeDefined();
+    const args = firstCall?.[0] as any;
+    expect(args?.edits?.[0]?.replacementString).toBe("new");
+  });
+
   it("blocks apply when reviewOptions.blockOn triggers", async () => {
     const registry = new InternalToolRegistry();
     registry.register("code_read", async () => "");

@@ -119,6 +119,46 @@ describe("Pillars", () => {
     expect(editCalls[0].edits[0].replacementString).toBe("NEW_CODE");
   });
 
+  it("ChangePillar resolves contentSource edits", async () => {
+    const registry = new InternalToolRegistry();
+    const editCalls: any[] = [];
+    registry.register("edit_transaction", async (args: any) => {
+      editCalls.push(args);
+      return {
+        success: true,
+        diff: "diff",
+        impactPreview: { riskLevel: "low", summary: { impactedFiles: [] } }
+      } as any;
+    });
+    registry.register("impact_analyze", async () => ({ riskLevel: "low" } as any));
+    registry.register("relationship_analyze", async () => ({ nodes: [], edges: [] } as any));
+    registry.register("hotspot_detect", async () => ([] as any));
+
+    const pillar = new ChangePillar(registry);
+    const intent = {
+      category: "change",
+      action: "modify",
+      targets: ["src/demo.ts"],
+      originalIntent: "update demo",
+      constraints: {
+        dryRun: true,
+        includeImpact: true,
+        edits: [
+          {
+            targetSource: { kind: "inline", text: "OLD_CODE" },
+            replacementSource: { kind: "inline", text: "NEW_CODE" }
+          }
+        ]
+      },
+      confidence: 1
+    };
+
+    const result = await pillar.execute(intent as any, new OrchestrationContext());
+    expect(result.success).toBe(true);
+    expect(editCalls[0].edits[0].targetString).toBe("OLD_CODE");
+    expect(editCalls[0].edits[0].replacementString).toBe("NEW_CODE");
+  });
+
   it("ChangePillar attaches related docs using document_section", async () => {
     const registry = new InternalToolRegistry();
     registry.register("edit_transaction", async () => ({

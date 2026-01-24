@@ -445,6 +445,7 @@ export class SmartContextServer {
         this.internalRegistry.setMetadata('dependencyGraph', this.dependencyGraph);
         this.internalRegistry.setMetadata('fileSystem', this.fileSystem);
         this.internalRegistry.setMetadata('flowArtifactManager', this.flowArtifactManager);
+        this.internalRegistry.setMetadata('configurationManager', this.configurationManager);
         this.internalRegistry.setMetadata('rootPath', this.rootPath);
         this.internalRegistry.setMetadata('repoRegistry', this.repoRegistry);
         this.internalRegistry.setMetadata('boundaryAdapterRegistry', this.boundaryAdapterRegistry);
