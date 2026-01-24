@@ -12,6 +12,9 @@ This folder contains the minimal docs needed to run `kairo` and connect it to an
 For quick validation from source, see:
 - `npm run smoke:mcp-mock-client`
 - `npm run benchmark:adr-085-search-slo`
+- `npm run smoke:adr-088-compact-guidance`
+- `npm run smoke:adr-088-stdio-guidance-closure`
+- `npm run benchmark:adr-088-search-accuracy`
 
 ## Agent docs (recommended)
 

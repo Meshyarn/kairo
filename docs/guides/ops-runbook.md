@@ -8,16 +8,20 @@ This runbook covers the OSS launch checklist and the post-launch iteration loop 
 - `npm run build`
 - `npm run build:core-rs` (if needed for your platform)
 - `npm run test:dist:single dist/tests/integration/McpHostCompatibility.e2e.test.js`
+- `npm run test:perf:dist` (optional: dist/performance suite)
 
 2) SLO gates
 - `npm run benchmark:adr-084-task-slo`
 - `npm run benchmark:adr-078-cost-slo`
 - `npm run benchmark:adr-085-search-slo`
+- `npm run benchmark:adr-088-search-accuracy`
 
 3) Smoke tests
 - `npm run smoke:mcp-mock-client`
 - `npm run smoke:adr-084-beta-log`
 - `npm run smoke:adr-084-hardening`
+- `npm run smoke:adr-088-compact-guidance`
+- `npm run smoke:adr-088-stdio-guidance-closure`
 
 4) Docs
 - `docs/guides/getting-started.md`
@@ -27,6 +31,9 @@ This runbook covers the OSS launch checklist and the post-launch iteration loop 
 5) Release hygiene
 - Ensure `LICENSE` and `README.md` are accurate
 - Confirm `.kairo/` is ignored in downstream repos
+
+CI automation:
+- `.github/workflows/adr-088-verification.yml` (manual workflow_dispatch)
 
 ## Post-launch iteration loop
 

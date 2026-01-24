@@ -1,0 +1,38 @@
+name: adr-088 verification
+
+on:
+  workflow_dispatch:
+
+jobs:
+  adr-088:
+    runs-on: ubuntu-latest
+    env:
+      KAIRO_TEST_USE_NATIVE_CORE: "false"
+      KAIRO_RUST_CORE_ENABLED: "false"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+      - name: Install deps
+        run: npm ci
+      - name: Build
+        run: npm run build
+      - name: ADR-088 compact guidance smoke
+        run: npm run smoke:adr-088-compact-guidance
+      - name: ADR-088 stdio guidance closure
+        run: npm run smoke:adr-088-stdio-guidance-closure
+      - name: ADR-088 search accuracy
+        run: npm run benchmark:adr-088-search-accuracy
+      - name: ADR-088 perf (multi-repo)
+        run: npm run test:perf:dist -- dist/tests/performance/multi_repo_search_benchmark.test.js
+      - name: Upload ADR-088 reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: adr-088-reports
+          path: |
+            benchmarks/reports/adr-088-search-accuracy-*.json
+            benchmarks/reports/adr-088-stdio-guidance-closure-*.json
