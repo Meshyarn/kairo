@@ -6,7 +6,7 @@ import { WebTreeSitterBackend } from './WebTreeSitterBackend.js';
 import { JsAstBackend } from './JsAstBackend.js';
 import { SnapshotBackend } from './SnapshotBackend.js';
 import { EngineConfig, LOD_LEVEL, AnalysisRequest, LODResult, LODPromotionStats, SymbolInfo } from '../types.js';
-import { LanguageConfigLoader } from '../config/LanguageConfig.js';
+import { LanguageConfigLoader, BUILTIN_LANGUAGE_MAPPINGS } from '../config/LanguageConfig.js';
 import { AdaptiveAstManager } from './AdaptiveAstManager.js';
 import { FeatureFlags } from '../config/FeatureFlags.js';
 import { AdaptiveFlowMetrics } from '../utils/AdaptiveFlowMetrics.js';
@@ -176,8 +176,10 @@ export class AstManager implements AdaptiveAstManager {
 
     public async getLanguageForFile(filePath: string): Promise<any> {
         if (!this.initialized) await this.init();
-        const mapping = this.getLanguageMapping(filePath);
-        const languageId = mapping?.languageId ?? path.extname(filePath).replace('.', '');
+        const languageId = this.resolveLanguageId(filePath);
+        if (languageId === "plain_text") {
+            return null;
+        }
         return this.backend!.getLanguage(languageId);
     }
 
@@ -199,6 +201,9 @@ export class AstManager implements AdaptiveAstManager {
     }
 
     public async generateUniversalSkeleton(filePath: string, content: string, options?: any): Promise<string> {
+        if (this.getLanguageId(filePath) === "plain_text") {
+            return content;
+        }
         let doc: AstDocument | undefined;
         try {
             doc = await this.parseFile(filePath, content);
@@ -215,6 +220,9 @@ export class AstManager implements AdaptiveAstManager {
     }
 
     public async findIdentifiers(filePath: string, content: string, targetNames: string[]): Promise<any[]> {
+        if (this.getLanguageId(filePath) === "plain_text") {
+            return [];
+        }
         let doc: AstDocument | undefined;
         try {
             doc = await this.parseFile(filePath, content);
@@ -501,16 +509,12 @@ export class AstManager implements AdaptiveAstManager {
         if (mapping?.languageId) {
             return mapping.languageId;
         }
-        const fallback = path.extname(filePath).replace('.', '');
-        if (fallback) {
-            return fallback;
-        }
-        throw new Error(`Unsupported language for ${filePath}`);
+        return "plain_text";
     }
 
     private getLanguageMapping(filePath: string) {
         const ext = path.extname(filePath).toLowerCase();
-        return this.languageConfig?.getLanguageMapping(ext);
+        return this.languageConfig?.getLanguageMapping(ext) ?? BUILTIN_LANGUAGE_MAPPINGS[ext];
     }
 
     public async dispose(): Promise<void> {

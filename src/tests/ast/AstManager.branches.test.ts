@@ -16,10 +16,10 @@ describe("AstManager Branches", () => {
         expect(["ts", "typescript"]).toContain(langId);
 
         // Branch: no mapping, but has extension
-        expect(manager.getLanguageId("a.unknown")).toBe("unknown");
+        expect(manager.getLanguageId("a.unknown")).toBe("plain_text");
 
         // Branch: no mapping, no extension
-        expect(() => manager.getLanguageId("nofile")).toThrow("Unsupported language");
+        expect(manager.getLanguageId("nofile")).toBe("plain_text");
     });
 
     it("covers dispose branches", async () => {

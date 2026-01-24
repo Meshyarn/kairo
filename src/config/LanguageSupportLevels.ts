@@ -51,6 +51,6 @@ export function getSupportForLanguageId(languageId: string): LanguageSupportSpec
 export function getSupportForFilePath(filePath: string): LanguageSupportSpec | undefined {
     const ext = path.extname(filePath).toLowerCase();
     const mapping = BUILTIN_LANGUAGE_MAPPINGS[ext];
-    const languageId = mapping?.languageId ?? ext.replace(".", "");
-    return getSupportForLanguageId(languageId);
+    const languageId = mapping?.languageId;
+    return getSupportForLanguageId(languageId ?? "plain_text") ?? getSupportForLanguageId("plain_text");
 }

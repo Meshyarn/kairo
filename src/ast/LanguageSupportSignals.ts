@@ -22,6 +22,9 @@ export async function checkQuerySupport(
     if (!entry) {
         return { degraded: true, reason: "unsupported_language" };
     }
+    if (!entry.requiredQueryPack) {
+        return { degraded: false };
+    }
     const required = options?.required ?? true;
     try {
         const language = await astManager.getLanguageForFile(filePath);

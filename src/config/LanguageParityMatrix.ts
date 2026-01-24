@@ -82,6 +82,13 @@ export const LANGUAGE_PARITY_MATRIX: LanguageParityMatrix = {
       requiredQueries: ["symbols", "skeleton"]
     },
     {
+      languageId: "plain_text",
+      supportLevel: "L2",
+      requiredQueryPack: false,
+      requiredWasmGrammar: false,
+      requiredSyntaxValidator: false
+    },
+    {
       languageId: "markdown",
       supportLevel: "L2",
       requiredQueryPack: true,
