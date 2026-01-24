@@ -287,7 +287,7 @@ export class DependencyGraph {
         return results;
     }
 
-    public async getIndexStatus(): Promise<IndexStatus> {
+    public async getIndexStatus(options?: { includePerFile?: boolean; perFileLimit?: number }): Promise<IndexStatus> {
         const files = this.db.listFiles();
         const totalFiles = files.length;
         const unresolvedEntries = this.db.listUnresolved();
@@ -298,15 +298,24 @@ export class DependencyGraph {
             error: entry.error ?? 'Module resolution failed'
         }));
 
-        const perFile: IndexStatus['perFile'] = {};
-        for (const file of files) {
-            const unresolved = this.db.listUnresolvedForFile(file.path).map(u => u.specifier);
-            perFile[file.path] = {
-                resolved: unresolved.length === 0,
-                unresolvedImports: unresolved,
-                incomingDependenciesCount: this.db.countDependencies(file.path, 'incoming'),
-                outgoingDependenciesCount: this.db.countDependencies(file.path, 'outgoing')
-            };
+        const includePerFile = options?.includePerFile !== false;
+        const perFileLimit = typeof options?.perFileLimit === "number" && Number.isFinite(options.perFileLimit)
+            ? Math.max(0, Math.floor(options.perFileLimit))
+            : undefined;
+
+        let perFile: IndexStatus["perFile"] | undefined;
+        if (includePerFile) {
+            perFile = {};
+            const slice = typeof perFileLimit === "number" ? files.slice(0, perFileLimit) : files;
+            for (const file of slice) {
+                const unresolved = this.db.listUnresolvedForFile(file.path).map(u => u.specifier);
+                perFile[file.path] = {
+                    resolved: unresolved.length === 0,
+                    unresolvedImports: unresolved,
+                    incomingDependenciesCount: this.db.countDependencies(file.path, 'incoming'),
+                    outgoingDependenciesCount: this.db.countDependencies(file.path, 'outgoing')
+                };
+            }
         }
 
         const unresolvedRatio = totalFiles === 0 ? 0 : totalUnresolved / totalFiles;
@@ -334,7 +343,7 @@ export class DependencyGraph {
                 confidence,
                 isMonorepo: this.detectMonorepo()
             },
-            perFile
+            ...(perFile ? { perFile } : {})
         };
     }
 

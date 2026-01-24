@@ -1,5 +1,4 @@
 import path from "path";
-import { FeatureFlags } from "../../../config/FeatureFlags.js";
 import { PathManager } from "../../../utils/PathManager.js";
 import { NativeModuleLoader } from "../../../orchestration/capabilities/NativeModuleLoader.js";
 
@@ -105,10 +104,6 @@ export class NativeSearchCore {
     private readonly indexDir: string;
 
     constructor(rootPath: string, options: NativeSearchCoreOptions = {}) {
-        if (!FeatureFlags.isEnabled(FeatureFlags.RUST_CORE_ENABLED)) {
-            throw new NativeSearchError("CAP_NATIVE_SEARCH_UNAVAILABLE", "Rust core disabled.");
-        }
-
         const loader = NativeModuleLoader.getShared();
         const rust = loader.getRustCore();
         if (!rust || !("NativeSearchCore" in rust)) {

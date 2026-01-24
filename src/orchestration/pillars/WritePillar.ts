@@ -177,7 +177,7 @@ export class WritePillar {
         constraints,
         targets,
         originalIntent,
-        targetPath,
+        targetPath: inputTargetPath,
         template,
         content: initialContent,
         hasExplicitContent,
@@ -195,9 +195,14 @@ export class WritePillar {
         applyToken,
         refinement
       } = input;
+      let targetPath = inputTargetPath;
       let resolvedSessionId = input.resolvedSessionId;
       if (applyPolicy.required && dryRun && !resolvedSessionId && artifactManager) {
         resolvedSessionId = artifactManager.resolveSessionId("new", originalIntent);
+      }
+      const draftArtifact = draftId ? artifactManager?.get(draftId) : undefined;
+      if (!dryRun && !resolvedSessionId && typeof (draftArtifact as any)?.sessionId === "string") {
+        resolvedSessionId = (draftArtifact as any).sessionId;
       }
       const sessionProfile = sessionPolicy?.write?.profile ?? sessionPolicy?.profile;
       const sessionSafety = sessionPolicy?.write?.safety ?? sessionPolicy?.safety;
@@ -253,10 +258,13 @@ export class WritePillar {
         ?? (resolvedSessionId && artifactManager
           ? artifactManager.getLatestStylePack(resolvedSessionId)
           : undefined);
-      const draftArtifact = draftId ? artifactManager?.get(draftId) : undefined;
       const draftPack = draftArtifact?.type === "draft" ? (draftArtifact as any).pack : undefined;
       const draftContent = draftPack?.phantomFiles?.[0]?.content as string | undefined;
+      const draftTargetPath = draftPack?.phantomFiles?.[0]?.path as string | undefined;
       const expectedFileVersions = (constraints as any).fileVersions ?? draftPack?.fileVersions;
+      if (!targetPath && draftTargetPath) {
+        targetPath = draftTargetPath;
+      }
       if (!hasExplicitContent && draftContent) {
         content = draftContent;
       }

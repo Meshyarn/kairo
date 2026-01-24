@@ -296,7 +296,7 @@ export class SmartContextServer {
         );
 
         this.indexStateManager = new IndexStateManager(async () => {
-            const status = await this.dependencyGraph.getIndexStatus();
+            const status = await this.dependencyGraph.getIndexStatus({ includePerFile: false });
             const totalFiles = status?.global?.totalFiles ?? 0;
             const indexedFiles = status?.global?.indexedFiles ?? totalFiles;
             const lastRebuilt = status?.global?.lastRebuiltAt

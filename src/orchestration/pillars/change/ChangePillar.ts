@@ -202,9 +202,13 @@ export class ChangePillar {
         refinement
       } = input;
       let resolvedSessionId = input.resolvedSessionId;
+      const draftArtifact = draftId ? artifactManager?.get(draftId) : undefined;
       let { includeImpact, includeSymbolImpact, reviewOptions, diffMode, refinedIntent } = input;
       if (applyPolicy.required && dryRun && !resolvedSessionId && artifactManager) {
         resolvedSessionId = artifactManager.resolveSessionId("new", originalIntent);
+      }
+      if (!dryRun && !resolvedSessionId && typeof (draftArtifact as any)?.sessionId === "string") {
+        resolvedSessionId = (draftArtifact as any).sessionId;
       }
       if (dryRun) {
         metrics.inc("change.plan_total");
@@ -281,7 +285,6 @@ export class ChangePillar {
           artifactManager?.updateSessionPolicy(resolvedSessionId, policyPatch as any, "merge");
         }
       }
-      const draftArtifact = draftId ? artifactManager?.get(draftId) : undefined;
       const draftPackFromId = draftArtifact?.type === "draft" ? (draftArtifact as any).pack : undefined;
       const draftPhantom = draftPackFromId?.phantomFiles?.[0];
       const draftContent = typeof draftPhantom?.content === "string" ? draftPhantom.content : undefined;

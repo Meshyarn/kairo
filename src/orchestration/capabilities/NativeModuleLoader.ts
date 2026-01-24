@@ -322,6 +322,10 @@ const l2Norm = (vec: Float32Array): number => {
 };
 
 const shouldUseTestStub = (): boolean => {
+    const rustCoreEnv = (process.env.KAIRO_RUST_CORE_ENABLED ?? "").trim().toLowerCase();
+    if (rustCoreEnv === "false" || rustCoreEnv === "0" || rustCoreEnv === "off") {
+        return true;
+    }
     if (process.env.KAIRO_TEST_USE_NATIVE_CORE === "true") return false;
     return process.env.NODE_ENV === "test" || process.env.JEST_WORKER_ID != null;
 };

@@ -684,6 +684,33 @@ export class TaskHandlers extends BaseHandler {
         };
     }
 
+    private inferReplacementFromRequest(args: { request: string; targetString: string }): string | undefined {
+        const request = String(args.request ?? "").replace(/\s+/g, " ").trim();
+        if (!request) return undefined;
+        const targetString = String(args.targetString ?? "");
+        if (!targetString) return undefined;
+
+        const patterns: RegExp[] = [
+            /from\s+["'`]?(.+?)["'`]?\s+to\s+["'`]?(.+?)["'`]?(?:[.?!]|$)/i,
+            /rename\s+["'`]?(.+?)["'`]?\s+to\s+["'`]?(.+?)["'`]?(?:[.?!]|$)/i,
+            /replace\s+["'`]?(.+?)["'`]?\s+with\s+["'`]?(.+?)["'`]?(?:[.?!]|$)/i
+        ];
+
+        for (const pattern of patterns) {
+            const match = request.match(pattern);
+            if (!match) continue;
+            const from = match[1]?.trim();
+            const to = match[2]?.trim();
+            if (!from || !to) continue;
+            if (!targetString.includes(from)) continue;
+            const replaced = targetString.replace(from, to);
+            if (replaced !== targetString) {
+                return replaced;
+            }
+        }
+        return undefined;
+    }
+
     private buildPlanSummary(args: {
         response: any;
         request: string;
@@ -1468,8 +1495,54 @@ export class TaskHandlers extends BaseHandler {
                     });
                 }
                 const summary = this.buildPlanPrepSummary({ request, recommendedTargets, packId });
+                const prepNextCalls: Array<{ tool: string; args: Record<string, unknown>; reason?: string }> = [];
+                const seededCandidate = Array.isArray(targetStringCandidates)
+                    ? targetStringCandidates.find((candidate) => typeof candidate?.filePath === "string" && typeof candidate?.anchorText === "string")
+                    : undefined;
+                const seededTargetString = typeof seededCandidate?.anchorText === "string" ? seededCandidate.anchorText : undefined;
+                const inferredReplacement = seededTargetString
+                    ? this.inferReplacementFromRequest({ request, targetString: seededTargetString })
+                    : undefined;
+                const seededEdits = seededCandidate && seededTargetString
+                    ? [{
+                        filePath: seededCandidate.filePath,
+                        targetString: seededTargetString,
+                        replacementString: inferredReplacement ?? "<replacement>"
+                    }]
+                    : (Array.isArray((editsTemplate as any)?.edits) ? (editsTemplate as any).edits : undefined);
+                if (Array.isArray(seededEdits) && seededEdits.length > 0) {
+                    prepNextCalls.push({
+                        tool: "task",
+                        args: {
+                            request,
+                            mode: "plan_change",
+                            budget,
+                            sessionId: response?.sessionId ?? sessionId,
+                            targetFiles: typeof seededCandidate?.filePath === "string"
+                                ? [seededCandidate.filePath]
+                                : (recommendedTargets.length > 0 ? [recommendedTargets[0]] : undefined),
+                            edits: seededEdits,
+                            ...(outputPayload ? { output: outputPayload } : {}),
+                            ...(traceEnabled ? { trace: true } : {})
+                        },
+                        reason: inferredReplacement
+                            ? "Attempt a best-effort plan based on the inferred replacement."
+                            : "Draft a plan with an explicit edit (fill in the replacement if needed)."
+                    });
+                }
+                if (packId) {
+                    prepNextCalls.push({
+                        tool: "manage",
+                        args: { command: "artifact", target: packId, detail: "summary" },
+                        reason: "Inspect the explore pack artifact."
+                    });
+                }
+                const combinedNextCalls = [
+                    ...prepNextCalls,
+                    ...(Array.isArray(nextCalls) ? nextCalls : [])
+                ];
                 const guidance = this.rewriteGuidanceForCompact({
-                    guidance: this.buildGuidance(response?.guidance, nextCalls),
+                    guidance: this.buildGuidance(response?.guidance, combinedNextCalls.length > 0 ? combinedNextCalls : undefined),
                     request,
                     budget,
                     output: outputPayload,
@@ -1558,8 +1631,6 @@ export class TaskHandlers extends BaseHandler {
                         sessionId: effectiveSessionId,
                         draftId: draftPackId,
                         applyToken: planApplyToken,
-                        ...(planTargets.length > 0 ? { targetFiles: planTargets } : {}),
-                        ...(edits.length > 0 ? { edits } : {}),
                         ...(outputPayload ? { output: outputPayload } : {}),
                         ...(traceEnabled ? { trace: true } : {})
                     },
@@ -1668,8 +1739,27 @@ export class TaskHandlers extends BaseHandler {
                     status = isBlocked ? "blocked" : "partial_success";
                 }
             }
+            const enhancedNextCalls: Array<{ tool: string; args: Record<string, unknown>; reason?: string }> = Array.isArray(nextCalls)
+                ? [...nextCalls]
+                : [];
+            if (status !== "success") {
+                enhancedNextCalls.unshift({
+                    tool: "task",
+                    args: {
+                        request,
+                        mode: "plan_change",
+                        budget,
+                        sessionId: response?.sessionId ?? sessionId,
+                        ...(applyTargets.length > 0 ? { targetFiles: applyTargets } : {}),
+                        ...(edits.length > 0 ? { edits } : {}),
+                        ...(outputPayload ? { output: outputPayload } : {}),
+                        ...(traceEnabled ? { trace: true } : {})
+                    },
+                    reason: "Re-plan to refresh tokens/file versions, then re-apply."
+                });
+            }
             const guidance = this.rewriteGuidanceForCompact({
-                guidance: this.buildGuidance(response?.guidance, nextCalls),
+                guidance: this.buildGuidance(response?.guidance, enhancedNextCalls.length > 0 ? enhancedNextCalls : undefined),
                 request,
                 budget,
                 output: outputPayload,
@@ -1820,16 +1910,20 @@ export class TaskHandlers extends BaseHandler {
             let verificationReasons: string[] = [];
             const writeDraftId = (typeof response?.draftPack?.id === "string" ? response.draftPack.id : undefined)
                 ?? draftId;
+            const autoVerifyTargetPath = (typeof response?.targetPath === "string" ? response.targetPath : undefined)
+                ?? (typeof response?.targetFile === "string" ? response.targetFile : undefined)
+                ?? (Array.isArray(response?.createdFiles) ? response.createdFiles[0]?.path : undefined)
+                ?? writeTargetPath;
             const canAutoVerify = writeSafety === "apply"
                 && status === "success"
                 && budgetPolicy.maxSteps >= 2
-                && Boolean(writeTargetPath)
+                && Boolean(autoVerifyTargetPath)
                 && Boolean(writeDraftId)
                 && Boolean(this.context.fileSystem)
                 && Boolean(this.context.flowArtifactManager);
             if (canAutoVerify) {
                 const result = await this.buildVerificationResult({
-                    targetPath: writeTargetPath,
+                    targetPath: autoVerifyTargetPath,
                     draftId: writeDraftId
                 });
                 verification = result.verification;
@@ -1855,7 +1949,7 @@ export class TaskHandlers extends BaseHandler {
             const enhancedNextCalls: Array<{ tool: string; args: Record<string, unknown>; reason?: string }> = Array.isArray(nextCalls)
                 ? [...nextCalls]
                 : [];
-            if (writeSafety === "plan" && draftPackId && writeApplyToken && effectiveSessionId && writeTargetPath) {
+            if (writeSafety === "plan" && draftPackId && writeApplyToken && effectiveSessionId) {
                 enhancedNextCalls.unshift({
                     tool: "task",
                     args: {
@@ -1866,7 +1960,6 @@ export class TaskHandlers extends BaseHandler {
                         sessionId: effectiveSessionId,
                         draftId: draftPackId,
                         applyToken: writeApplyToken,
-                        targetPath: writeTargetPath,
                         ...(outputPayload ? { output: outputPayload } : {}),
                         ...(traceEnabled ? { trace: true } : {})
                     },

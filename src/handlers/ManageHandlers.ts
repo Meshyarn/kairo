@@ -1,5 +1,6 @@
 import * as path from "path";
 import { createHash } from "crypto";
+import { performance } from "node:perf_hooks";
 import { BaseHandler } from "./BaseHandler.js";
 import { HandlerContext } from "./HandlerContext.js";
 import { metrics } from "../utils/MetricsCollector.js";
@@ -428,6 +429,38 @@ export class ManageHandlers extends BaseHandler {
             ...(status ?? {}),
             degradedReasons: buildDegradedReasons(degraded)
         };
+    }
+
+    private buildProcessStats(): any {
+        try {
+            const mem = process.memoryUsage();
+            const cpu = process.cpuUsage();
+            const resource = typeof (process as any).resourceUsage === "function"
+                ? (process as any).resourceUsage()
+                : undefined;
+            const elu = typeof (performance as any).eventLoopUtilization === "function"
+                ? (performance as any).eventLoopUtilization()
+                : undefined;
+            return {
+                pid: process.pid,
+                uptimeSec: process.uptime(),
+                memoryBytes: {
+                    rss: mem.rss,
+                    heapUsed: mem.heapUsed,
+                    heapTotal: mem.heapTotal,
+                    external: mem.external,
+                    arrayBuffers: mem.arrayBuffers
+                },
+                cpuMicros: {
+                    user: cpu.user,
+                    system: cpu.system
+                },
+                ...(resource ? { resourceUsage: resource } : {}),
+                ...(elu ? { eventLoopUtilization: elu } : {})
+            };
+        } catch {
+            return undefined;
+        }
     }
 
     private buildNativeSearchStatus() {
@@ -1012,10 +1045,13 @@ export class ManageHandlers extends BaseHandler {
                         this.context.dependencyGraph.setLoggingEnabled(false);
                     }
                     try {
-                        await this.context.dependencyGraph.ensureBuilt();
-                        const status = await this.context.dependencyGraph.getIndexStatus();
                         const detail = args?.detail ?? args?.verbosity ?? 'summary';
                         const includePerFile = detail === 'full' || detail === 'verbose' || args?.includePerFile === true;
+                        const shouldEnsureBuilt = includePerFile || args?.ensureBuilt === true;
+                        if (shouldEnsureBuilt) {
+                            await this.context.dependencyGraph.ensureBuilt();
+                        }
+                        const status = await this.context.dependencyGraph.getIndexStatus({ includePerFile });
                         const lastRebuiltAt = status?.global?.lastRebuiltAt
                             ? Date.parse(status.global.lastRebuiltAt)
                             : undefined;
@@ -1040,6 +1076,7 @@ export class ManageHandlers extends BaseHandler {
                         const metricsSnapshot = metrics.snapshot();
                         const costSummary = this.buildCostSummary(status?.global?.totalFiles, metricsSnapshot);
                         const telemetrySummary = this.buildTelemetrySummary(metricsSnapshot);
+                        const processStats = this.buildProcessStats();
                         const workflowSummary = this.buildWorkflowSummary();
 
                         if (includePerFile) {
@@ -1057,6 +1094,7 @@ export class ManageHandlers extends BaseHandler {
                                 drift: driftStatus,
                                 cost: costSummary,
                                 telemetry: telemetrySummary,
+                                processStats,
                                 ...workflowSummary,
                                 rollout: rolloutStatus,
                                 activity: {
@@ -1067,13 +1105,19 @@ export class ManageHandlers extends BaseHandler {
                             };
                         }
                         const limit = typeof args?.limit === 'number' ? args.limit : 20;
-                        const unresolvedSample = Object.entries(status.perFile ?? {})
-                            .filter(([, value]) => !(value as any)?.resolved)
+                        const unresolvedByFile = new Map<string, string[]>();
+                        const resolutionErrors = status?.global?.resolutionErrors ?? [];
+                        for (const entry of resolutionErrors) {
+                            const filePath = String((entry as any)?.filePath ?? "");
+                            const spec = String((entry as any)?.importSpecifier ?? "");
+                            if (!filePath || !spec) continue;
+                            const list = unresolvedByFile.get(filePath) ?? [];
+                            list.push(spec);
+                            unresolvedByFile.set(filePath, list);
+                        }
+                        const unresolvedSample = Array.from(unresolvedByFile.entries())
                             .slice(0, limit)
-                            .map(([filePath, value]) => ({
-                                filePath,
-                                unresolvedImports: (value as any)?.unresolvedImports ?? []
-                            }));
+                            .map(([filePath, unresolvedImports]) => ({ filePath, unresolvedImports }));
                         return {
                             success: true,
                             output: "Index status",
@@ -1091,6 +1135,7 @@ export class ManageHandlers extends BaseHandler {
                             drift: driftStatus,
                             cost: costSummary,
                             telemetry: telemetrySummary,
+                            processStats,
                             ...workflowSummary,
                             rollout: rolloutStatus,
                             activity: {
