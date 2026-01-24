@@ -137,9 +137,12 @@ async function run() {
     thresholds
   };
 
-  const reportDir = path.join(process.cwd(), "benchmarks", "reports");
-  fs.mkdirSync(reportDir, { recursive: true });
-  const reportPath = path.join(reportDir, `adr-088-search-accuracy-${Date.now()}.json`);
+  const explicitReportPath = process.env.KAIRO_ADR088_SEARCH_REPORT_PATH;
+  const defaultReportDir = path.join(process.cwd(), "benchmarks", "reports");
+  const reportPath = explicitReportPath
+    ? path.resolve(process.cwd(), explicitReportPath)
+    : path.join(defaultReportDir, `adr-088-search-accuracy-${Date.now()}.json`);
+  fs.mkdirSync(path.dirname(reportPath), { recursive: true });
   fs.writeFileSync(reportPath, JSON.stringify(report, null, 2), "utf-8");
   console.log(`Wrote ADR-088 search accuracy report to ${reportPath}`);
 

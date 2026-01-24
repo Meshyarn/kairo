@@ -445,9 +445,12 @@ async function run() {
     runs
   };
 
-  const reportDir = path.join(process.cwd(), "benchmarks", "reports");
-  fs.mkdirSync(reportDir, { recursive: true });
-  const reportPath = path.join(reportDir, `adr-088-stdio-guidance-closure-${Date.now()}.json`);
+  const explicitReportPath = process.env.KAIRO_ADR088_CLOSURE_REPORT_PATH;
+  const defaultReportDir = path.join(process.cwd(), "benchmarks", "reports");
+  const reportPath = explicitReportPath
+    ? path.resolve(process.cwd(), explicitReportPath)
+    : path.join(defaultReportDir, `adr-088-stdio-guidance-closure-${Date.now()}.json`);
+  fs.mkdirSync(path.dirname(reportPath), { recursive: true });
   fs.writeFileSync(reportPath, JSON.stringify(report, null, 2), "utf-8");
   console.log(`Wrote ADR-088 stdio guidance closure report to ${reportPath}`);
 
