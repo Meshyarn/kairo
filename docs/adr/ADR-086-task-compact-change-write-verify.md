@@ -24,6 +24,8 @@ Input mapping:
 - Target selection: `targetFiles[0]` → `targetPath` (primary), with a `targetPath` compat alias and a fallback to `paths[0]`.
 - Content: extracted from a fenced code block in `request` (e.g. ```ts … ```). If absent, plan mode uses smart generation (`smartWrite=true`) to draft.
 - Apply handshake: apply requires `draftId + applyToken` when `applyHandshake.required=true` (MCP default).
+  - When applying a write draft, the draft target path is enforced: mismatched `targetPath` is blocked to avoid mis-application.
+  - When `draftId` is provided, `targetPath` can be inferred from the draft (hosts don’t need to re-send it for apply).
 
 ### 2) Enable `task(mode="verify")`
 

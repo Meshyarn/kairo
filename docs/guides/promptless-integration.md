@@ -130,7 +130,7 @@ Treat `task` as the only entrypoint for the model:
 }
 ```
 
-Note: As of ADR-086, `task` supports `mode="write"` and `mode="verify"` on the compact surface. These modes can still return `blocked` for safety/policy reasons (missing target path, expired apply token, review/guardrail blocks). Switch to `KAIRO_PUBLIC_SURFACE=pillars` when you need full pillar-level options.
+Note: As of ADR-086, `task` supports `mode="write"` and `mode="verify"` on the compact surface. These modes can still return `blocked` for safety/policy reasons (missing target path, apply token missing/expired/used, fileVersion drift, review/guardrail blocks, draft target mismatch). Switch to `KAIRO_PUBLIC_SURFACE=pillars` when you need full pillar-level options.
 
 ## Evidence Pack follow-up (ADR-087)
 
@@ -172,8 +172,15 @@ Safe change flow:
 1. `task` with `mode="plan_change"`
    - if `edits` is omitted: returns prep (`editsTemplate` + target hints + fileVersions)
    - if `edits` is provided: returns `draftId` + `applyToken` (in MCP mode)
-2. `task` with `mode="apply_change"` + `draftId` + `applyToken`
+2. `task` with `mode="apply_change"` + `draftId` + `applyToken` (no need to re-send `targetFiles`/`edits`)
    - apply responses may include an embedded `verification` result; otherwise follow up with `task(mode="verify")` if you need confirmation.
+
+Safe write flow:
+1. `task` with `mode="write"` + `safety="plan"` + `targetPath`
+   - include content in a fenced code block inside `request` (e.g. ```ts ... ```)
+   - returns `draftId` + `applyToken` (in MCP mode)
+2. `task` with `mode="write"` + `safety="apply"` + `draftId` + `applyToken`
+   - do not override the draft target; mismatched `targetPath` is blocked for safety
 
 ## Troubleshooting (no prompts)
 

@@ -22,6 +22,9 @@ This runbook covers the OSS launch checklist and the post-launch iteration loop 
 - `npm run smoke:adr-084-hardening`
 - `npm run smoke:adr-088-compact-guidance`
 - `npm run smoke:adr-088-stdio-guidance-closure`
+- `npm run smoke:adr-088-change-write-minimal-apply`
+- `npm run smoke:adr-088-change-write-deep`
+- `npm run smoke:adr-088-stdio-stress`
 
 4) Docs
 - `docs/guides/getting-started.md`

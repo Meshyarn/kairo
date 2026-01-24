@@ -43,9 +43,12 @@ High-level router for promptless workflows (ask/analyze/plan/apply).
 - `mode="plan_change"` behaves in two stages:
   - Without `edits`: returns target hints + `fileVersions` + `editsTemplate` (prep-only).
   - With `edits`: runs a real plan and returns `draftId` + (in MCP mode) `applyToken`.
-- `mode="apply_change"` requires `draftId` and (in MCP mode) a valid `applyToken`.
+- `mode="apply_change"` applies a prior draft. In `KAIRO_MODE=mcp` it requires `draftId` and a valid `applyToken`.
+  - When applying a draft, you typically only need `draftId + applyToken` (re-sending `targetFiles`/`edits` is optional).
+  - If `draftId` is provided, Kairo will attempt to resolve the correct session from the draft to tolerate host sessionId drift (passing `sessionId` is still recommended).
 - `mode="write"` / `mode="verify"` are supported on the compact surface (ADR-086).
-- `mode="write"`: provide `targetPath` (or `targetFiles[0]`) and include content in a fenced code block inside `request` (e.g. ```ts ... ```). If no code block is present, plan mode will fall back to smart generation.
+- `mode="write"`: provide `targetPath` (or `targetFiles[0]`) and include content in a fenced code block inside `request` (e.g. ```ts ... ```).
+  - When applying a write draft (`draftId`), `targetPath` can be omitted (inferred from the draft); if provided, it must match the draft target or apply will be blocked.
 - `mode="verify"`: compares the current file content against the draft pack (when `draftId` is provided). `Base version` is a drift signal against the pre-apply snapshot and is only evaluated when draft content does not match.
 - After successful apply flows, `task` may embed a cheap `verification` result in the same response (`apply_change`, or `write` with `safety="apply"`).
 - Full schema on-demand: `manage({ command: "schema", tool: "task", detail: "full" })` (returns an artifact id).
@@ -329,7 +332,7 @@ Create or scaffold files.
 | Field | Type | Required | Notes |
 |---|---|---:|---|
 | `intent` | `string` | ✓ | What to create. |
-| `targetPath` | `string` |  | Where to create it. |
+| `targetPath` | `string` |  | Where to create it. When applying an existing draft (`draftId`), the target may be inferred from the draft; if provided, it must match the draft target. |
 | `template` | `string` |  | Template name/path (if supported). |
 | `content` | `string` |  | Explicit content overrides generation. |
 | `fileVersions` | `object` |  | Advanced stale-guard: `{ [relPath]: { expectedVersion?, expectedHash? } }` (typically from `DraftPack.fileVersions` or a prior read). |
@@ -356,7 +359,8 @@ Create or scaffold files.
 
 **Notes**
 
-- `change(plan)` failure may include `schemaCoaching` with `requiredFields`, `editsTemplate`, and `helpUrl` to guide a retry.
+- In `KAIRO_MODE=mcp`, `safety:"apply"` is server-gated by default: plan returns `applyToken`, and apply requires `draftId + applyToken`.
+- When applying a write draft, overriding the draft target path is blocked for safety.
 
 **Workflow output**
 

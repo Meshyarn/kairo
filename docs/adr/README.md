@@ -92,6 +92,7 @@ The entries below cover all ADRs from the project history. Items marked “retou
 - ADR-084 (retouched): MCP autopilot & preset layer (compact surface + `task` router + apply handshake) → `docs/adr/ADR-084-mcp-autopilot-and-preset-layer.md`
 - ADR-086 (summary): Expand `task` to support `write`/`verify` in `publicSurface=compact` → `docs/adr/ADR-086-task-compact-change-write-verify.md`
 - ADR-087 (summary): Make `task` production-grade via adaptive LOD + evidence packs → `docs/adr/ADR-087-task-adaptive-lod-and-evidence-pack.md` (full: `.archive/ADR-087-task-adaptive-lod-and-evidence-pack.md`)
+- ADR-088 (summary): Agent trust E2E verification & optimization program (MCP stdio) → `docs/adr/ADR-088-agent-trust-e2e-verification-and-optimization-program.md`
 - ADR-085 (summary): Rust native search core (Tantivy integration) → `docs/adr/ADR-085-rust-native-search-core-tantivy.md`
 - ADR-055-H: Adaptive trust policy (no curated summary)
 - ADR-055-L: Action guidance + Understand fallback graph (no curated summary)
