@@ -38,6 +38,7 @@
     "benchmark:adr-088-env-matrix": "npm run build && node scripts/adr-088-env-matrix.mjs",
     "benchmark:adr-088-long-run": "npm run build && node scripts/adr-088-long-run.mjs",
     "smoke:adr-088-change-write-minimal-apply": "npm run build && node scripts/adr-088-change-write-minimal-apply.mjs",
+    "smoke:adr-088-change-write-deep": "npm run build && node scripts/adr-088-change-write-deep.mjs",
     "smoke:adr-084-beta-log": "npm run build && node scripts/adr-084-beta-log-smoke.mjs",
     "smoke:adr-084-hardening": "npm run build && node scripts/adr-084-hardening-smoke.mjs",
     "smoke:adr-088-compact-guidance": "npm run build && node scripts/adr-088-compact-guidance-smoke.mjs",

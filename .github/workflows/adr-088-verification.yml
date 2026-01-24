@@ -38,6 +38,8 @@ jobs:
         run: npm run smoke:adr-088-stdio-guidance-closure
       - name: ADR-088 change/write minimal apply
         run: npm run smoke:adr-088-change-write-minimal-apply
+      - name: ADR-088 change/write deep
+        run: npm run smoke:adr-088-change-write-deep
       - name: ADR-088 stdio stress
         run: npm run smoke:adr-088-stdio-stress
       - name: ADR-088 agent-loop simulator
@@ -69,6 +71,7 @@ jobs:
           if-no-files-found: warn
           path: |
             benchmarks/reports/adr-088-agent-loop-simulator-*.json
+            benchmarks/reports/adr-088-change-write-deep-*.json
             benchmarks/reports/adr-088-change-write-minimal-apply-*.json
             benchmarks/reports/adr-088-env-matrix-*.json
             benchmarks/reports/adr-088-env-matrix-*/
