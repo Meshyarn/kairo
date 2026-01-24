@@ -27,24 +27,26 @@ export function normalizeChangeInput(
     helpers: {
         resolveSessionId: (rawSessionId: string | undefined, originalIntent: string) => string | undefined;
         getSessionPolicy: (sessionId: string | undefined) => any;
+        resolveDraftSessionId?: (draftId: string) => string | undefined;
     }
 ): ChangeInput {
     const { targets, constraints, originalIntent } = intent;
     const baseIntent = originalIntent ?? "";
     const { includeImpact = false, includeSymbolImpact = false } = constraints;
     const integrityOptions = IntegrityEngine.resolveOptions(constraints.integrity, "change");
+    const draftId = typeof (constraints as any).draftId === "string" ? (constraints as any).draftId : undefined;
+    const applyToken = typeof (constraints as any).applyToken === "string" ? (constraints as any).applyToken : undefined;
+    const refinement = typeof (constraints as any).refinement === "string" ? (constraints as any).refinement : undefined;
+    const refinedIntent = refinement ? `${baseIntent}\nRefinement: ${refinement}` : baseIntent;
     const rawSessionId = typeof constraints.sessionId === "string" ? constraints.sessionId : undefined;
-    const resolvedSessionId = helpers.resolveSessionId(rawSessionId, baseIntent);
+    const draftSessionId = draftId ? helpers.resolveDraftSessionId?.(draftId) : undefined;
+    const resolvedSessionId = helpers.resolveSessionId(draftSessionId ?? rawSessionId, baseIntent);
     const sessionPolicy = helpers.getSessionPolicy(resolvedSessionId);
     const resolvedOptions = OptionResolver.resolveChangeOptions(constraints, resolvedSessionId, sessionPolicy);
     const dryRun = resolvedOptions.effective.dryRun;
     const reviewOptions = resolvedOptions.effective.reviewOptions;
     const traceEnabled = resolvedOptions.effective.traceEnabled;
     const diffMode = resolvedOptions.effective.diffMode;
-    const draftId = typeof (constraints as any).draftId === "string" ? (constraints as any).draftId : undefined;
-    const applyToken = typeof (constraints as any).applyToken === "string" ? (constraints as any).applyToken : undefined;
-    const refinement = typeof (constraints as any).refinement === "string" ? (constraints as any).refinement : undefined;
-    const refinedIntent = refinement ? `${baseIntent}\nRefinement: ${refinement}` : baseIntent;
 
     return {
         targets,

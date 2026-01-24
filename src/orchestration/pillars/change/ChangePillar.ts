@@ -186,7 +186,11 @@ export class ChangePillar {
       const applyPolicy = resolveApplyHandshakePolicy();
       const input = normalizeChangeInput(intent, {
         resolveSessionId: (rawSessionId, fallback) => artifactManager?.resolveSessionId(rawSessionId, fallback),
-        getSessionPolicy: (sessionId) => (sessionId ? artifactManager?.getSession(sessionId)?.policy : undefined)
+        getSessionPolicy: (sessionId) => (sessionId ? artifactManager?.getSession(sessionId)?.policy : undefined),
+        resolveDraftSessionId: (draftId) => {
+          const artifact = artifactManager?.get(draftId) as any;
+          return typeof artifact?.sessionId === "string" ? artifact.sessionId : undefined;
+        }
       });
       const {
         targets,
