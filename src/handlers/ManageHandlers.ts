@@ -1115,6 +1115,16 @@ export class ManageHandlers extends BaseHandler {
                             list.push(spec);
                             unresolvedByFile.set(filePath, list);
                         }
+                        if (unresolvedByFile.size === 0) {
+                            const perFile = status?.perFile ?? {};
+                            for (const [filePath, entry] of Object.entries(perFile)) {
+                                const unresolved = Array.isArray((entry as any)?.unresolvedImports)
+                                    ? (entry as any).unresolvedImports
+                                    : [];
+                                if (unresolved.length === 0) continue;
+                                unresolvedByFile.set(filePath, unresolved.map((spec: any) => String(spec)));
+                            }
+                        }
                         const unresolvedSample = Array.from(unresolvedByFile.entries())
                             .slice(0, limit)
                             .map(([filePath, unresolvedImports]) => ({ filePath, unresolvedImports }));

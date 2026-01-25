@@ -1,5 +1,6 @@
 import type { ParsedIntent } from "../../IntentRouter.js";
 import { OptionResolver } from "../../options/OptionResolver.js";
+import type { ContentSource } from "../../../types/content-source.js";
 
 export type WriteInput = {
     constraints: any;
@@ -8,6 +9,7 @@ export type WriteInput = {
     targetPath?: string;
     template?: string;
     content: string;
+    contentSource?: ContentSource;
     hasExplicitContent: boolean;
     safeWrite: boolean;
     quickGenerate: boolean;
@@ -33,12 +35,22 @@ export function normalizeWriteInput(
         resolveDraftSessionId?: (draftId: string) => string | undefined;
     }
 ): WriteInput {
+    const decodeBase64 = (value: unknown): string | undefined => {
+        if (typeof value !== "string" || value.length === 0) return undefined;
+        return Buffer.from(value, "base64").toString("utf8");
+    };
     const { constraints, targets, originalIntent } = intent;
     const baseIntent = originalIntent ?? "";
     const targetPath = constraints.targetPath || targets[0];
     const template = constraints.template;
-    const content = constraints.content ?? "";
-    const hasExplicitContent = constraints.content !== undefined;
+    const rawBase64 = (constraints as any).contentBase64 ?? (constraints as any).contentB64;
+    let contentSource = (constraints as any).contentSource as ContentSource | undefined;
+    if (!contentSource && typeof rawBase64 === "string" && rawBase64.length > 0) {
+        contentSource = { kind: "base64", base64: rawBase64, charset: "utf8" };
+    }
+    const decodedContent = contentSource ? undefined : decodeBase64(rawBase64);
+    const content = decodedContent ?? constraints.content ?? "";
+    const hasExplicitContent = contentSource !== undefined || constraints.content !== undefined || typeof decodedContent === "string";
     const safeWriteExplicit = typeof (constraints as any).safeWrite === "boolean";
     let safeWrite = Boolean((constraints as any).safeWrite);
     const quickGenerate = Boolean((constraints as any).quickGenerate);
@@ -67,6 +79,7 @@ export function normalizeWriteInput(
         targetPath,
         template,
         content,
+        contentSource,
         hasExplicitContent,
         safeWrite,
         quickGenerate,

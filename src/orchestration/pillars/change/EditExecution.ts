@@ -76,6 +76,10 @@ export function normalizeEdits(
 ): { edits: any[]; invalidEdits: any[] } {
   const edits: any[] = [];
   const invalidEdits: any[] = [];
+  const decodeBase64 = (value: unknown): string | undefined => {
+    if (typeof value !== 'string' || value.length === 0) return undefined;
+    return Buffer.from(value, 'base64').toString('utf8');
+  };
 
   for (const edit of rawEdits) {
     const operation = normalizeOperation(edit?.operation ?? edit?.op);
@@ -87,7 +91,8 @@ export function normalizeEdits(
     const targetFallback = typeof edit?.target === 'string' && !isLikelyFilePath(edit.target)
       ? edit.target
       : '';
-    const targetString = edit?.targetString
+    const targetString = decodeBase64(edit?.targetStringBase64 ?? edit?.targetBase64)
+      ?? edit?.targetString
       ?? edit?.targetContent
       ?? edit?.from
       ?? edit?.search
@@ -95,7 +100,8 @@ export function normalizeEdits(
       ?? edit?.anchorString
       ?? targetFallback
       ?? '';
-    let replacementString = edit?.replacementString
+    let replacementString = decodeBase64(edit?.replacementStringBase64 ?? edit?.replacementBase64)
+      ?? edit?.replacementString
       ?? edit?.replacement
       ?? edit?.replace
       ?? edit?.template

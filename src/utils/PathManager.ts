@@ -114,6 +114,10 @@ export class PathManager {
         return this.resolve('temp');
     }
 
+    static getTmpDir() {
+        return this.resolve('tmp');
+    }
+
     static getTestRootDir() {
         return path.join(this.getTempDir(), 'tests');
     }

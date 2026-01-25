@@ -265,6 +265,7 @@ function applyCanonicalizationV2(
 
   applyFileAliasMapping(toolSpec, args, findings);
   applyDryRunAlias(toolSpec, args, findings);
+  applyContentSourceAliasMapping(toolSpec, args, findings);
 }
 
 function applyFileAliasMapping(
@@ -342,6 +343,112 @@ function applyDryRunAlias(
       details: { from: "dryRun", to: "safety" }
     });
   }
+}
+
+function applyContentSourceAliasMapping(
+  toolSpec: ToolSpec,
+  args: Record<string, any>,
+  findings: CompatFinding[]
+): void {
+  if (toolSpec.name === "write") {
+    const contentBase64 = typeof args.contentBase64 === "string" ? args.contentBase64 : undefined;
+    const contentB64 = typeof args.contentB64 === "string" ? args.contentB64 : undefined;
+    const hasContentBase64 = typeof contentBase64 === "string" && contentBase64.length > 0;
+    const hasContentB64 = typeof contentB64 === "string" && contentB64.length > 0;
+    const chosenBase64 = hasContentBase64 ? contentBase64 : (hasContentB64 ? contentB64 : undefined);
+
+    if ((hasContentBase64 || hasContentB64) && args.contentSource === undefined && chosenBase64) {
+      args.contentSource = { kind: "base64", base64: chosenBase64, charset: "utf8" };
+    }
+
+    if (hasContentBase64) {
+      findings.push({
+        severity: "warning",
+        code: "DEPRECATED_FIELD_USED",
+        message: "contentBase64 is deprecated. Use contentSource with kind=base64 instead.",
+        details: { from: "contentBase64", to: "contentSource", kind: "base64" }
+      });
+      delete args.contentBase64;
+    }
+    if (hasContentB64) {
+      findings.push({
+        severity: "warning",
+        code: "DEPRECATED_FIELD_USED",
+        message: "contentB64 is deprecated. Use contentSource with kind=base64 instead.",
+        details: { from: "contentB64", to: "contentSource", kind: "base64" }
+      });
+      delete args.contentB64;
+    }
+    return;
+  }
+
+  if (toolSpec.name !== "change") return;
+  if (!Array.isArray(args.edits)) return;
+
+  args.edits = args.edits.map((edit: any, index: number) => {
+    if (!isPlainObject(edit)) return edit;
+    const next = { ...edit };
+    const targetStringBase64 = typeof next.targetStringBase64 === "string" ? next.targetStringBase64 : undefined;
+    const targetBase64 = typeof next.targetBase64 === "string" ? next.targetBase64 : undefined;
+    const replacementStringBase64 = typeof next.replacementStringBase64 === "string" ? next.replacementStringBase64 : undefined;
+    const replacementBase64 = typeof next.replacementBase64 === "string" ? next.replacementBase64 : undefined;
+
+    const hasTargetStringBase64 = typeof targetStringBase64 === "string" && targetStringBase64.length > 0;
+    const hasTargetBase64 = typeof targetBase64 === "string" && targetBase64.length > 0;
+    const hasReplacementStringBase64 = typeof replacementStringBase64 === "string" && replacementStringBase64.length > 0;
+    const hasReplacementBase64 = typeof replacementBase64 === "string" && replacementBase64.length > 0;
+
+    const targetBase64Value = hasTargetStringBase64 ? targetStringBase64 : (hasTargetBase64 ? targetBase64 : undefined);
+    const replacementBase64Value = hasReplacementStringBase64
+      ? replacementStringBase64
+      : (hasReplacementBase64 ? replacementBase64 : undefined);
+
+    if ((hasTargetStringBase64 || hasTargetBase64) && next.targetSource === undefined && targetBase64Value) {
+      next.targetSource = { kind: "base64", base64: targetBase64Value, charset: "utf8" };
+    }
+    if ((hasReplacementStringBase64 || hasReplacementBase64) && next.replacementSource === undefined && replacementBase64Value) {
+      next.replacementSource = { kind: "base64", base64: replacementBase64Value, charset: "utf8" };
+    }
+
+    if (hasTargetStringBase64) {
+      findings.push({
+        severity: "warning",
+        code: "DEPRECATED_FIELD_USED",
+        message: `edits[${index}].targetStringBase64 is deprecated. Use edits[].targetSource with kind=base64 instead.`,
+        details: { from: `edits[${index}].targetStringBase64`, to: "edits[].targetSource", kind: "base64" }
+      });
+      delete next.targetStringBase64;
+    }
+    if (hasTargetBase64) {
+      findings.push({
+        severity: "warning",
+        code: "DEPRECATED_FIELD_USED",
+        message: `edits[${index}].targetBase64 is deprecated. Use edits[].targetSource with kind=base64 instead.`,
+        details: { from: `edits[${index}].targetBase64`, to: "edits[].targetSource", kind: "base64" }
+      });
+      delete next.targetBase64;
+    }
+    if (hasReplacementStringBase64) {
+      findings.push({
+        severity: "warning",
+        code: "DEPRECATED_FIELD_USED",
+        message: `edits[${index}].replacementStringBase64 is deprecated. Use edits[].replacementSource with kind=base64 instead.`,
+        details: { from: `edits[${index}].replacementStringBase64`, to: "edits[].replacementSource", kind: "base64" }
+      });
+      delete next.replacementStringBase64;
+    }
+    if (hasReplacementBase64) {
+      findings.push({
+        severity: "warning",
+        code: "DEPRECATED_FIELD_USED",
+        message: `edits[${index}].replacementBase64 is deprecated. Use edits[].replacementSource with kind=base64 instead.`,
+        details: { from: `edits[${index}].replacementBase64`, to: "edits[].replacementSource", kind: "base64" }
+      });
+      delete next.replacementBase64;
+    }
+
+    return next;
+  });
 }
 
 function applySchemaCoercions(

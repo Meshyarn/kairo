@@ -445,6 +445,7 @@ export class SmartContextServer {
         this.internalRegistry.setMetadata('dependencyGraph', this.dependencyGraph);
         this.internalRegistry.setMetadata('fileSystem', this.fileSystem);
         this.internalRegistry.setMetadata('flowArtifactManager', this.flowArtifactManager);
+        this.internalRegistry.setMetadata('configurationManager', this.configurationManager);
         this.internalRegistry.setMetadata('rootPath', this.rootPath);
         this.internalRegistry.setMetadata('repoRegistry', this.repoRegistry);
         this.internalRegistry.setMetadata('boundaryAdapterRegistry', this.boundaryAdapterRegistry);
@@ -737,6 +738,7 @@ export class SmartContextServer {
         if (!Number.isFinite(intervalMs) || intervalMs <= 0) return;
         const includeOnStart = process.env.KAIRO_STORAGE_PRUNE_ON_START === "true";
         const includeFlowArtifacts = process.env.KAIRO_STORAGE_PRUNE_FLOW_ARTIFACTS === "true";
+        const includeTempFiles = process.env.KAIRO_STORAGE_PRUNE_TEMP_FILES === "true";
         const compact = process.env.KAIRO_STORAGE_PRUNE_COMPACT === "true";
 
         const runPrune = async () => {
@@ -746,6 +748,9 @@ export class SmartContextServer {
                 const targets: StoragePruneTarget[] = includeFlowArtifacts
                     ? ["evidence_packs", "chunk_summaries", "flow_artifacts"]
                     : ["evidence_packs", "chunk_summaries"];
+                if (includeTempFiles && !targets.includes("temp_files")) {
+                    targets.push("temp_files");
+                }
                 const service = new StorageMaintenanceService(
                     this.indexDatabase,
                     this.documentSearchEngine,

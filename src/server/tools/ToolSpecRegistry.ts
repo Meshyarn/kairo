@@ -64,6 +64,48 @@ const SCHEMA_VERSION: ToolSchemaVersion = "2026-01-12";
 
 const DEFAULT_ADDITIONAL_PROPERTIES = false;
 
+const CONTENT_SOURCE_SCHEMA = {
+  anyOf: [
+    {
+      type: "object",
+      properties: {
+        kind: { type: "string", enum: ["inline"] },
+        text: { type: "string" }
+      },
+      required: ["kind", "text"],
+      additionalProperties: false
+    },
+    {
+      type: "object",
+      properties: {
+        kind: { type: "string", enum: ["base64"] },
+        base64: { type: "string" },
+        charset: { type: "string", enum: ["utf8"] }
+      },
+      required: ["kind", "base64"],
+      additionalProperties: false
+    },
+    {
+      type: "object",
+      properties: {
+        kind: { type: "string", enum: ["file"] },
+        path: { type: "string" }
+      },
+      required: ["kind", "path"],
+      additionalProperties: false
+    },
+    {
+      type: "object",
+      properties: {
+        kind: { type: "string", enum: ["artifact"] },
+        id: { type: "string" }
+      },
+      required: ["kind", "id"],
+      additionalProperties: false
+    }
+  ]
+};
+
 export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
   const internalTools: ToolSpec[] = [
     {
@@ -459,7 +501,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
             properties: {
               targets: {
                 type: "array",
-                items: { type: "string", enum: ["evidence_packs", "chunk_summaries", "flow_artifacts"] }
+                items: { type: "string", enum: ["evidence_packs", "chunk_summaries", "flow_artifacts", "temp_files"] }
               },
               includeExpired: { type: "boolean" },
               includeStale: { type: "boolean" },
@@ -1078,7 +1120,20 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
           safety: { type: "string", enum: ["plan", "apply"] },
           target: { type: "string" },
           targetFiles: { type: "array", items: { type: "string" } },
-          edits: { type: "array", items: { type: "object" } },
+          edits: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                filePath: { type: "string" },
+                operation: { type: "string" },
+                targetString: { type: "string" },
+                replacementString: { type: "string" },
+                targetSource: CONTENT_SOURCE_SCHEMA,
+                replacementSource: CONTENT_SOURCE_SCHEMA
+              }
+            }
+          },
           sessionId: { type: "string" },
           trace: { type: "boolean" },
           stylePack: { anyOf: [{ type: "string" }, { type: "object" }] },
@@ -1261,6 +1316,8 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
           targetPath: { type: "string" },
           template: { type: "string" },
           content: { type: "string" },
+          contentBase64: { type: "string" },
+          contentSource: CONTENT_SOURCE_SCHEMA,
           dryRun: { type: "boolean" },
           sessionId: { type: "string" },
           trace: { type: "boolean" },
@@ -1454,7 +1511,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
             properties: {
               targets: {
                 type: "array",
-                items: { type: "string", enum: ["evidence_packs", "chunk_summaries", "flow_artifacts"] }
+                items: { type: "string", enum: ["evidence_packs", "chunk_summaries", "flow_artifacts", "temp_files"] }
               },
               includeExpired: { type: "boolean" },
               includeStale: { type: "boolean" },

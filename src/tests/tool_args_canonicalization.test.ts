@@ -46,4 +46,41 @@ describe("Tool args canonicalization v2", () => {
     expect(args.paths).toEqual(["src"]);
     expect(args.trace).toBe(true);
   });
+
+  it("maps contentBase64 to contentSource for write", () => {
+    const toolSpec = registry.get("write");
+    if (!toolSpec) throw new Error("Missing write tool spec");
+
+    const base64 = Buffer.from("hello").toString("base64");
+    const { args, findings } = normalizeArgs(toolSpec, { intent: "create", contentBase64: base64 }, "compat");
+
+    expect(args.contentSource).toEqual({ kind: "base64", base64, charset: "utf8" });
+    expect(args.contentBase64).toBeUndefined();
+    expect(findings.some((finding) => finding.code === "DEPRECATED_FIELD_USED")).toBe(true);
+  });
+
+  it("maps edit base64 fields to contentSource for change", () => {
+    const toolSpec = registry.get("change");
+    if (!toolSpec) throw new Error("Missing change tool spec");
+
+    const base64 = Buffer.from("target").toString("base64");
+    const { args, findings } = normalizeArgs(
+      toolSpec,
+      {
+        intent: "update",
+        edits: [
+          {
+            filePath: "src/app.ts",
+            targetStringBase64: base64,
+            replacementString: "next"
+          }
+        ]
+      },
+      "compat"
+    );
+
+    expect(args.edits[0].targetSource).toEqual({ kind: "base64", base64, charset: "utf8" });
+    expect(args.edits[0].targetStringBase64).toBeUndefined();
+    expect(findings.some((finding) => finding.code === "DEPRECATED_FIELD_USED")).toBe(true);
+  });
 });

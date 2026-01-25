@@ -45,6 +45,9 @@ import { evaluateIntegrityGuardrailBlock } from "./shared/IntegrityGuardrailDeci
 import type { OptionSource, TraceOptionResolution } from "../../types/option-trace.js";
 import { TraceBuilder } from "../trace/TraceBuilder.js";
 import { applyFormatterBridge } from "../formatter/FormatterBridge.js";
+import type { ContentSource } from "../../types/content-source.js";
+import { createIgnoreMatcher, resolveContentSource } from "../../utils/ContentSourceResolver.js";
+import type { ConfigurationManager } from "../../config/ConfigurationManager.js";
 
 const resolveOptionSource = (explicit: boolean, hasSession: boolean): OptionSource => {
   if (explicit) return "explicit";
@@ -184,6 +187,7 @@ export class WritePillar {
         targetPath: inputTargetPath,
         template,
         content: initialContent,
+        contentSource,
         hasExplicitContent,
         safeWrite,
         quickGenerate,
@@ -327,14 +331,101 @@ export class WritePillar {
           };
           (next as any).decisionTrace = traceBuilder?.finalize();
         }
-        if (workflowWarnings.length > 0) {
-          next.workflowWarnings = workflowWarnings;
-        }
-        if (overrideTrace) {
-          (next as any).overrideTrace = overrideTrace;
-        }
-        return resolvedSessionId ? { ...next, sessionId: resolvedSessionId } : next;
+      if (workflowWarnings.length > 0) {
+        next.workflowWarnings = workflowWarnings;
+      }
+      if (overrideTrace) {
+        (next as any).overrideTrace = overrideTrace;
+      }
+      return resolvedSessionId ? { ...next, sessionId: resolvedSessionId } : next;
       };
+
+      if (!dryRun && draftId && draftContent && hasExplicitContent) {
+        const reasonCode = "draft_content_override_blocked";
+        const message = "Draft apply does not allow overriding content. Re-run plan to regenerate the draft content.";
+        const nextArgs: Record<string, unknown> = {
+          intent: originalIntent,
+          targetPath,
+          safety: "plan"
+        };
+        if (contentSource) {
+          nextArgs.contentSource = contentSource;
+        } else if (hasExplicitContent) {
+          nextArgs.content = initialContent;
+        }
+        if (refinement) nextArgs.refinement = refinement;
+        if (resolvedSessionId) nextArgs.sessionId = resolvedSessionId;
+        return attachSession({
+          success: false,
+          status: "blocked",
+          message,
+          errorCode: "DRAFT_CONTENT_OVERRIDE_BLOCKED",
+          blockedReason: reasonCode,
+          degradedReasons: buildDegradedReasons([reasonCode]),
+          createdFiles: [],
+          transactionId: null,
+          rollbackAvailable: false,
+          guidance: {
+            message,
+            suggestedActions: [
+              {
+                id: "write.plan",
+                priority: 1,
+                description: "Re-plan the write to regenerate a draft with the intended content.",
+                rationale: "Apply must use the draft snapshot (no re-reading sources) for safety and repeatability.",
+                toolCall: { tool: "write", args: nextArgs }
+              }
+            ]
+          }
+        });
+      }
+
+      if (contentSource) {
+        const configurationManager = this.registry.getMetadata<ConfigurationManager>("configurationManager");
+        const ignoreGlobs = configurationManager?.getIgnoreGlobs?.() ?? [];
+        const resolution = await resolveContentSource(contentSource as ContentSource, {
+          rootPath: this.resolveRootPath(),
+          fileSystem: this.resolveFileSystem(),
+          repoRegistry,
+          repoScope,
+          pathNormalizer,
+          artifactManager,
+          ignoreMatcher: createIgnoreMatcher(ignoreGlobs)
+        });
+        if (!resolution.ok) {
+          return attachSession({
+            success: false,
+            status: resolution.error.status,
+            message: resolution.error.message,
+            errorCode: resolution.error.errorCode,
+            blockedReason: resolution.error.blockedReason,
+            createdFiles: [],
+            transactionId: null,
+            rollbackAvailable: false,
+            contentSourceError: resolution.error,
+            guidance: {
+              message: resolution.error.message,
+              suggestedActions: []
+            }
+          });
+        }
+        if (traceBuilder) {
+          traceBuilder.recordEvent({
+            area: "io",
+            code: "content_source_used",
+            data: {
+              field: "contentSource",
+              kind: resolution.meta.kind,
+              bytes: typeof resolution.meta.bytes === "number"
+                ? resolution.meta.bytes
+                : Buffer.byteLength(resolution.content, "utf8"),
+              ...(resolution.meta.resolvedPath ? { path: resolution.meta.resolvedPath } : {})
+            }
+          });
+        }
+        content = resolution.content;
+      }
+
       const requireApplyToken = applyPolicy.required && !dryRun;
       const invalidateApplyTokenOnDrift = () => {
         if (!applyPolicy.invalidateOnDrift || dryRun || !resolvedSessionId || !draftId) return;
@@ -372,7 +463,11 @@ export class WritePillar {
           targetPath,
           safety: "plan"
         };
-        if (hasExplicitContent) nextArgs.content = initialContent;
+        if (contentSource) {
+          nextArgs.contentSource = contentSource;
+        } else if (hasExplicitContent) {
+          nextArgs.content = initialContent;
+        }
         if (refinement) nextArgs.refinement = refinement;
         if (resolvedSessionId) nextArgs.sessionId = resolvedSessionId;
         return {
