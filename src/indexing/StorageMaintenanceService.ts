@@ -4,9 +4,12 @@ import type { DocumentSearchEngine } from "../documents/search/DocumentSearchEng
 import type { FlowArtifactManager } from "../orchestration/flow-artifact-manager.js";
 import type { WarningV1 } from "../types/guidance.js";
 import { metrics } from "../utils/MetricsCollector.js";
+import { PathManager } from "../utils/PathManager.js";
+import * as fs from "fs";
+import * as path from "path";
 
 export type StoragePruneMode = "plan" | "apply";
-export type StoragePruneTarget = "evidence_packs" | "chunk_summaries" | "flow_artifacts";
+export type StoragePruneTarget = "evidence_packs" | "chunk_summaries" | "flow_artifacts" | "temp_files";
 
 export type StoragePruneOptions = {
     mode?: StoragePruneMode;
@@ -23,6 +26,10 @@ export type StoragePruneOptions = {
     };
     flowArtifacts?: {
         removeOrphans?: boolean;
+    };
+    tempFiles?: {
+        maxAgeMs?: number;
+        maxFiles?: number;
     };
 };
 
@@ -50,6 +57,16 @@ export type FlowArtifactPruneReport = {
     removedSessions?: number;
 };
 
+export type TempFilePruneReport = {
+    basePaths: string[];
+    beforeCount: number;
+    afterCount: number;
+    deleted: number;
+    bytesBefore?: number;
+    bytesAfter?: number;
+    sample?: string[];
+};
+
 export type StoragePruneReport = {
     startedAt: string;
     finishedAt: string;
@@ -57,6 +74,7 @@ export type StoragePruneReport = {
     evidencePacks?: EvidencePackPruneReport;
     summaries?: SummaryPruneReport;
     flowArtifacts?: FlowArtifactPruneReport;
+    tempFiles?: TempFilePruneReport;
 };
 
 export type StoragePruneResult = {
@@ -113,6 +131,9 @@ export class StorageMaintenanceService {
         }
         if (targets.includes("flow_artifacts")) {
             report.flowArtifacts = await this.pruneFlowArtifacts(options, mode, warnings);
+        }
+        if (targets.includes("temp_files")) {
+            report.tempFiles = await this.pruneTempFiles(options, mode, warnings);
         }
 
         report.finishedAt = new Date().toISOString();
@@ -381,6 +402,134 @@ export class StorageMaintenanceService {
             fixedIndexEntries: persisted.fixedIndexEntries,
             removedSessions: persisted.removedSessions
         };
+    }
+
+    private async pruneTempFiles(
+        options: StoragePruneOptions,
+        mode: StoragePruneMode,
+        warnings: WarningV1[]
+    ): Promise<TempFilePruneReport> {
+        const maxAgeMs = resolveLimit(options.tempFiles?.maxAgeMs, "KAIRO_TEMP_FILE_TTL_MS", 7 * 24 * 60 * 60 * 1000);
+        const maxFiles = resolveLimit(options.tempFiles?.maxFiles, "KAIRO_TEMP_FILE_MAX_COUNT", 0);
+        const rootPath = PathManager.getRootPath();
+        const basePaths = Array.from(
+            new Set([
+                PathManager.getTmpDir(),
+                PathManager.getTempDir()
+            ].map((p) => path.resolve(p)))
+        );
+        const entries: Array<{ filePath: string; size: number; mtimeMs: number }> = [];
+
+        for (const basePath of basePaths) {
+            const collected = await collectTempEntries(basePath);
+            entries.push(...collected);
+        }
+
+        const beforeCount = entries.length;
+        const bytesBefore = entries.reduce((total, entry) => total + entry.size, 0);
+        const now = Date.now();
+        let candidates = entries.filter((entry) => maxAgeMs > 0 && now - entry.mtimeMs >= maxAgeMs);
+
+        if (maxFiles > 0 && candidates.length > maxFiles) {
+            candidates = candidates
+                .sort((a, b) => a.mtimeMs - b.mtimeMs)
+                .slice(0, candidates.length - maxFiles);
+        }
+
+        const deleted: string[] = [];
+        if (mode === "apply") {
+            for (const entry of candidates) {
+                try {
+                    await fs.promises.unlink(entry.filePath);
+                    deleted.push(entry.filePath);
+                } catch (error: any) {
+                    warnings.push({
+                        severity: "warning",
+                        code: "temp_file_prune_failed",
+                        message: `Failed to delete temp file: ${entry.filePath} (${error?.message ?? String(error)})`,
+                        affectedTargets: [entry.filePath]
+                    });
+                }
+            }
+            for (const basePath of basePaths) {
+                await cleanupEmptyDirs(basePath);
+            }
+        }
+
+        const deletedSet = new Set(deleted);
+        const remaining = entries.filter((entry) => !deletedSet.has(entry.filePath));
+        const afterCount = remaining.length;
+        const bytesAfter = remaining.reduce((total, entry) => total + entry.size, 0);
+
+        return {
+            basePaths: basePaths.map((p) => path.relative(rootPath, p) || p),
+            beforeCount,
+            afterCount,
+            deleted: deleted.length,
+            bytesBefore,
+            bytesAfter,
+            sample: deleted.slice(0, 10).map((filePath) => path.relative(rootPath, filePath) || filePath)
+        };
+    }
+}
+
+async function collectTempEntries(basePath: string): Promise<Array<{ filePath: string; size: number; mtimeMs: number }>> {
+    const entries: Array<{ filePath: string; size: number; mtimeMs: number }> = [];
+    let stats: fs.Stats | undefined;
+    try {
+        stats = await fs.promises.stat(basePath);
+    } catch {
+        return entries;
+    }
+    if (!stats.isDirectory()) return entries;
+
+    const stack = [basePath];
+    while (stack.length > 0) {
+        const current = stack.pop()!;
+        let dirEntries: fs.Dirent[] = [];
+        try {
+            dirEntries = await fs.promises.readdir(current, { withFileTypes: true });
+        } catch {
+            continue;
+        }
+        for (const entry of dirEntries) {
+            const fullPath = path.join(current, entry.name);
+            if (entry.isDirectory()) {
+                stack.push(fullPath);
+                continue;
+            }
+            if (entry.isSymbolicLink()) {
+                continue;
+            }
+            if (entry.isFile()) {
+                try {
+                    const fileStat = await fs.promises.stat(fullPath);
+                    entries.push({
+                        filePath: fullPath,
+                        size: fileStat.size,
+                        mtimeMs: fileStat.mtimeMs
+                    });
+                } catch {
+                    continue;
+                }
+            }
+        }
+    }
+    return entries;
+}
+
+async function cleanupEmptyDirs(basePath: string): Promise<void> {
+    const dirStat = await fs.promises.stat(basePath).catch(() => null);
+    if (!dirStat || !dirStat.isDirectory()) return;
+    const entries = await fs.promises.readdir(basePath, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const fullPath = path.join(basePath, entry.name);
+        await cleanupEmptyDirs(fullPath);
+    }
+    const remaining = await fs.promises.readdir(basePath).catch(() => []);
+    if (remaining.length === 0) {
+        await fs.promises.rmdir(basePath).catch(() => undefined);
     }
 }
 

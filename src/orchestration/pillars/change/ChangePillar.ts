@@ -347,6 +347,7 @@ export class ChangePillar {
       };
 
       let rawEdits = Array.isArray(constraints.edits) ? constraints.edits : [];
+      rawEdits = this.normalizeLegacyContentSources(rawEdits);
       let targetFiles = this.resolveTargetFiles(constraints, targets);
       let editPaths = this.collectEditPaths(rawEdits);
       let shouldBatch = this.shouldUseBatch(constraints, targetFiles, editPaths);
@@ -650,6 +651,13 @@ export class ChangePillar {
               suggestedActions: []
             },
             sessionId: resolvedSessionId
+          });
+        }
+        if (traceBuilder && resolution.usage && (resolution.usage.targetSource || resolution.usage.replacementSource)) {
+          traceBuilder.recordEvent({
+            area: "io",
+            code: "content_source_used",
+            data: resolution.usage
           });
         }
         rawEdits = resolution.edits;
@@ -1810,6 +1818,68 @@ export class ChangePillar {
     return Array.from(paths);
   }
 
+  private normalizeLegacyContentSources(edits: any[]): any[] {
+    if (!Array.isArray(edits) || edits.length === 0) return edits;
+    let mutated = false;
+    const normalized = edits.map((edit) => {
+      if (!edit || typeof edit !== "object" || Array.isArray(edit)) return edit;
+      let next = { ...edit };
+      let changed = false;
+      const targetStringBase64 = typeof next.targetStringBase64 === "string" ? next.targetStringBase64 : undefined;
+      const targetBase64 = typeof next.targetBase64 === "string" ? next.targetBase64 : undefined;
+      const replacementStringBase64 = typeof next.replacementStringBase64 === "string" ? next.replacementStringBase64 : undefined;
+      const replacementBase64 = typeof next.replacementBase64 === "string" ? next.replacementBase64 : undefined;
+
+      if (next.targetSource === undefined) {
+        const targetBase64Value =
+          (typeof targetStringBase64 === "string" && targetStringBase64.length > 0)
+            ? targetStringBase64
+            : (typeof targetBase64 === "string" && targetBase64.length > 0 ? targetBase64 : undefined);
+        if (targetBase64Value) {
+          next.targetSource = { kind: "base64", base64: targetBase64Value, charset: "utf8" };
+          changed = true;
+        }
+      }
+      if (next.replacementSource === undefined) {
+        const replacementBase64Value =
+          (typeof replacementStringBase64 === "string" && replacementStringBase64.length > 0)
+            ? replacementStringBase64
+            : (typeof replacementBase64 === "string" && replacementBase64.length > 0 ? replacementBase64 : undefined);
+        if (replacementBase64Value) {
+          next.replacementSource = { kind: "base64", base64: replacementBase64Value, charset: "utf8" };
+          changed = true;
+        }
+      }
+
+      if (changed || next.targetSource !== undefined || next.replacementSource !== undefined) {
+        if (typeof targetStringBase64 === "string") {
+          delete next.targetStringBase64;
+          changed = true;
+        }
+        if (typeof targetBase64 === "string") {
+          delete next.targetBase64;
+          changed = true;
+        }
+        if (typeof replacementStringBase64 === "string") {
+          delete next.replacementStringBase64;
+          changed = true;
+        }
+        if (typeof replacementBase64 === "string") {
+          delete next.replacementBase64;
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        mutated = true;
+        return next;
+      }
+      return edit;
+    });
+
+    return mutated ? normalized : edits;
+  }
+
   private async resolveContentSourcesForEdits(args: {
     edits: any[];
     rootPath: string;
@@ -1820,10 +1890,20 @@ export class ChangePillar {
     artifactManager?: FlowArtifactManager;
     ignoreMatcher?: { ignores: (filePath: string) => boolean };
   }): Promise<
-    | { ok: true; edits: any[] }
+    | { ok: true; edits: any[]; usage?: { targetSource?: Record<string, { count: number; bytes: number }>; replacementSource?: Record<string, { count: number; bytes: number }> } }
     | { ok: false; error: any; editIndex: number; field: "targetSource" | "replacementSource" }
   > {
     const resolved: any[] = [];
+    const usage: { targetSource?: Record<string, { count: number; bytes: number }>; replacementSource?: Record<string, { count: number; bytes: number }> } = {};
+    const recordUsage = (field: "targetSource" | "replacementSource", kind: string, bytes: number) => {
+      const bucket = field === "targetSource"
+        ? (usage.targetSource ??= {})
+        : (usage.replacementSource ??= {});
+      const entry = bucket[kind] ?? { count: 0, bytes: 0 };
+      entry.count += 1;
+      entry.bytes += bytes;
+      bucket[kind] = entry;
+    };
 
     for (let index = 0; index < args.edits.length; index += 1) {
       const edit = args.edits[index];
@@ -1842,10 +1922,16 @@ export class ChangePillar {
         if (!result.ok) {
           return { ok: false, error: result.error, editIndex: index, field: "targetSource" };
         }
+        recordUsage(
+          "targetSource",
+          result.meta.kind,
+          typeof result.meta.bytes === "number" ? result.meta.bytes : Buffer.byteLength(result.content, "utf8")
+        );
         next = {
           ...next,
           targetString: result.content
         };
+        delete (next as any).targetSource;
         delete (next as any).targetStringBase64;
         delete (next as any).targetBase64;
       }
@@ -1863,10 +1949,16 @@ export class ChangePillar {
         if (!result.ok) {
           return { ok: false, error: result.error, editIndex: index, field: "replacementSource" };
         }
+        recordUsage(
+          "replacementSource",
+          result.meta.kind,
+          typeof result.meta.bytes === "number" ? result.meta.bytes : Buffer.byteLength(result.content, "utf8")
+        );
         next = {
           ...next,
           replacementString: result.content
         };
+        delete (next as any).replacementSource;
         delete (next as any).replacementStringBase64;
         delete (next as any).replacementBase64;
       }
@@ -1874,7 +1966,7 @@ export class ChangePillar {
       resolved.push(next);
     }
 
-    return { ok: true, edits: resolved };
+    return { ok: true, edits: resolved, usage };
   }
 
   private buildSchemaCoaching(args: { errorCode: string; targetPath?: string; intent?: string }) {

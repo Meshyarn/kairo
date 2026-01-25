@@ -43,8 +43,12 @@ export function normalizeWriteInput(
     const baseIntent = originalIntent ?? "";
     const targetPath = constraints.targetPath || targets[0];
     const template = constraints.template;
-    const contentSource = (constraints as any).contentSource as ContentSource | undefined;
-    const decodedContent = decodeBase64((constraints as any).contentBase64 ?? (constraints as any).contentB64);
+    const rawBase64 = (constraints as any).contentBase64 ?? (constraints as any).contentB64;
+    let contentSource = (constraints as any).contentSource as ContentSource | undefined;
+    if (!contentSource && typeof rawBase64 === "string" && rawBase64.length > 0) {
+        contentSource = { kind: "base64", base64: rawBase64, charset: "utf8" };
+    }
+    const decodedContent = contentSource ? undefined : decodeBase64(rawBase64);
     const content = decodedContent ?? constraints.content ?? "";
     const hasExplicitContent = contentSource !== undefined || constraints.content !== undefined || typeof decodedContent === "string";
     const safeWriteExplicit = typeof (constraints as any).safeWrite === "boolean";

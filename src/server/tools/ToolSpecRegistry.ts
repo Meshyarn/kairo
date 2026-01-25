@@ -501,7 +501,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
             properties: {
               targets: {
                 type: "array",
-                items: { type: "string", enum: ["evidence_packs", "chunk_summaries", "flow_artifacts"] }
+                items: { type: "string", enum: ["evidence_packs", "chunk_summaries", "flow_artifacts", "temp_files"] }
               },
               includeExpired: { type: "boolean" },
               includeStale: { type: "boolean" },
@@ -1511,7 +1511,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
             properties: {
               targets: {
                 type: "array",
-                items: { type: "string", enum: ["evidence_packs", "chunk_summaries", "flow_artifacts"] }
+                items: { type: "string", enum: ["evidence_packs", "chunk_summaries", "flow_artifacts", "temp_files"] }
               },
               includeExpired: { type: "boolean" },
               includeStale: { type: "boolean" },

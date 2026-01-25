@@ -369,6 +369,20 @@ export class WritePillar {
             }
           });
         }
+        if (traceBuilder) {
+          traceBuilder.recordEvent({
+            area: "io",
+            code: "content_source_used",
+            data: {
+              field: "contentSource",
+              kind: resolution.meta.kind,
+              bytes: typeof resolution.meta.bytes === "number"
+                ? resolution.meta.bytes
+                : Buffer.byteLength(resolution.content, "utf8"),
+              ...(resolution.meta.resolvedPath ? { path: resolution.meta.resolvedPath } : {})
+            }
+          });
+        }
         content = resolution.content;
       }
 
