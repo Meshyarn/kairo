@@ -90,6 +90,7 @@ The entries below cover all ADRs from the project history. Items marked “retou
 - ADR-082 (summary): Simulate → Reason → Execute (StrategySearch + MCTS) for Change reliability → `docs/adr/ADR-082-simulate-reason-execute-mcts.md`
 - ADR-083 (summary): Language-agnostic symbolic guards (portable semantic checks + optional solver) → `docs/adr/ADR-083-language-agnostic-symbolic-guards.md`
 - ADR-084 (retouched): MCP autopilot & preset layer (compact surface + `task` router + apply handshake) → `docs/adr/ADR-084-mcp-autopilot-and-preset-layer.md`
+- ADR-086 (summary): Expand `task` to support `write`/`verify` in `publicSurface=compact` → `docs/adr/ADR-086-task-compact-change-write-verify.md`
 - ADR-085 (summary): Rust native search core (Tantivy integration) → `docs/adr/ADR-085-rust-native-search-core-tantivy.md`
 - ADR-055-H: Adaptive trust policy (no curated summary)
 - ADR-055-L: Action guidance + Understand fallback graph (no curated summary)

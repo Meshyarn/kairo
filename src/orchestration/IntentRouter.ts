@@ -202,9 +202,9 @@ export class IntentRouter {
       private detectCategory(intent: string): IntentCategory {
     const patterns: [RegExp, IntentCategory][] = [
       // 1. Specific action intent priority
-      [/\b(modify|change|add|remove|refactor|fix|bug|patch|update|implement|write|edit|수정|변경|추가|삭제|리팩토링|버그|패치)\b/i, 'change'],
+      [/\b(create|make|scaffold|generate|template|new file|write|생성|만들|작성|스캐폴드|템플릿)\b/i, 'write'],
+      [/\b(modify|change|add|remove|refactor|fix|bug|patch|update|implement|edit|수정|변경|추가|삭제|리팩토링|버그|패치)\b/i, 'change'],
       [/\b(find|search|where|location|definition|usage|call|trace|look for|locate|찾|검색|어디|정의|사용|호출|추적|탐색)\b/i, 'explore'],
-      [/\b(create|make|scaffold|generate|template|new file|생성|만들|작성|스캐폴드|템플릿)\b/i, 'write'],
       [/\b(read|view|preview|content|code|diff|compare|open|show|읽|보기|미리보기|내용|코드|비교)\b/i, 'explore'],
       [/\b(status|undo|redo|rebuild|index|history|manage|rollback|상태|되돌리|재실행|인덱스|관리)\b/i, 'manage'],
       // 2. Broad understanding intent at the end

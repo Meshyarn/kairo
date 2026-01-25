@@ -144,18 +144,26 @@ export class ChangePillar {
   
   constructor(private readonly registry: InternalToolRegistry) {}
 
+  private resolveRootPath(): string {
+    const injected =
+      typeof this.registry.getMetadata === "function"
+        ? this.registry.getMetadata<string>("rootPath")
+        : undefined;
+    return typeof injected === "string" && injected.length > 0 ? injected : process.cwd();
+  }
+
   private resolveFileSystem(): IFileSystem {
     if (this.fileSystem) return this.fileSystem;
     const injected =
       typeof this.registry.getMetadata === "function"
         ? this.registry.getMetadata<IFileSystem>("fileSystem")
         : undefined;
-    this.fileSystem = injected ?? new NodeFileSystem(process.cwd());
+    this.fileSystem = injected ?? new NodeFileSystem(this.resolveRootPath());
     return this.fileSystem;
   }
 
   private getEditCoordinator(): EditCoordinator {
-    const rootPath = process.cwd();
+    const rootPath = this.resolveRootPath();
     const fileSystem = this.resolveFileSystem();
     const editorEngine = new EditorEngine(rootPath, fileSystem);
     const historyEngine = new HistoryEngine(rootPath, fileSystem);
@@ -163,7 +171,7 @@ export class ChangePillar {
   }
 
   private getEditResolver(): EditResolver {
-    const rootPath = process.cwd();
+    const rootPath = this.resolveRootPath();
     const fileSystem = this.resolveFileSystem();
     const editorEngine = new EditorEngine(rootPath, fileSystem);
     return new EditResolver(fileSystem, editorEngine);
@@ -340,57 +348,76 @@ export class ChangePillar {
         if (!applyPolicy.invalidateOnDrift || dryRun || !resolvedSessionId || !draftId) return;
         artifactManager?.invalidateApplyToken(resolvedSessionId, draftId);
       };
+      let applyTokenConsumed = false;
 
-      if (requireApplyToken) {
-        const validation = (resolvedSessionId && draftId && applyToken && artifactManager)
+      const validateApplyToken = (consume: boolean) => {
+        return (resolvedSessionId && draftId && applyToken && artifactManager)
           ? artifactManager.validateApplyToken({
               sessionId: resolvedSessionId,
               draftId,
               token: applyToken,
               oneTime: applyPolicy.oneTime,
-              consume: applyPolicy.oneTime
+              consume
             })
           : { valid: false, reason: "missing" as const };
-        if (!validation.valid) {
-          const reasonCode = validation.reason === "expired"
-            ? "apply_token_expired"
-            : (validation.reason === "used" ? "apply_token_used" : "apply_token_missing");
-          const message = reasonCode === "apply_token_expired"
-            ? "Apply token expired. Re-run the plan to get a new token."
-            : (reasonCode === "apply_token_used"
-              ? "Apply token already used. Re-run the plan to get a new token."
-              : "Apply token required to apply changes. Re-run the plan to get a token.");
-          const nextArgs: Record<string, unknown> = {
-            intent: originalIntent,
-            safety: "plan"
-          };
-          if (targetFiles.length > 0) nextArgs.targetFiles = targetFiles;
-          if (rawEdits.length > 0) nextArgs.edits = rawEdits;
-          if (refinement) nextArgs.refinement = refinement;
-          if (resolvedSessionId) nextArgs.sessionId = resolvedSessionId;
-          return attachWorkflow({
-            success: false,
-            status: "blocked",
+      };
+
+      const buildApplyTokenBlockedResponse = (validation: any) => {
+        const reasonCode = validation.reason === "expired"
+          ? "apply_token_expired"
+          : (validation.reason === "used" ? "apply_token_used" : "apply_token_missing");
+        const message = reasonCode === "apply_token_expired"
+          ? "Apply token expired. Re-run the plan to get a new token."
+          : (reasonCode === "apply_token_used"
+            ? "Apply token already used. Re-run the plan to get a new token."
+            : "Apply token required to apply changes. Re-run the plan to get a token.");
+        const nextArgs: Record<string, unknown> = {
+          intent: originalIntent,
+          safety: "plan"
+        };
+        if (targetFiles.length > 0) nextArgs.targetFiles = targetFiles;
+        if (rawEdits.length > 0) nextArgs.edits = rawEdits;
+        if (refinement) nextArgs.refinement = refinement;
+        if (resolvedSessionId) nextArgs.sessionId = resolvedSessionId;
+        return {
+          success: false,
+          status: "blocked",
+          message,
+          errorCode: reasonCode === "apply_token_expired"
+            ? "APPLY_TOKEN_EXPIRED"
+            : (reasonCode === "apply_token_used" ? "APPLY_TOKEN_USED" : "APPLY_TOKEN_MISSING"),
+          blockedReason: reasonCode,
+          degradedReasons: buildDegradedReasons([reasonCode]),
+          guidance: {
             message,
-            errorCode: reasonCode === "apply_token_expired"
-              ? "APPLY_TOKEN_EXPIRED"
-              : (reasonCode === "apply_token_used" ? "APPLY_TOKEN_USED" : "APPLY_TOKEN_MISSING"),
-            blockedReason: reasonCode,
-            degradedReasons: buildDegradedReasons([reasonCode]),
-            guidance: {
-              message,
-              suggestedActions: [
-                {
-                  id: "change.plan",
-                  priority: 1,
-                  description: "Re-plan the change to generate a fresh apply token.",
-                  rationale: "Apply requires a valid token generated during planning.",
-                  toolCall: { tool: "change", args: nextArgs }
-                }
-              ]
-            },
-            sessionId: resolvedSessionId
-          });
+            suggestedActions: [
+              {
+                id: "change.plan",
+                priority: 1,
+                description: "Re-plan the change to generate a fresh apply token.",
+                rationale: "Apply requires a valid token generated during planning.",
+                toolCall: { tool: "change", args: nextArgs }
+              }
+            ]
+          },
+          sessionId: resolvedSessionId
+        };
+      };
+
+      const consumeApplyTokenOnce = () => {
+        if (!requireApplyToken || applyTokenConsumed) return null;
+        const validation = validateApplyToken(applyPolicy.oneTime);
+        if (!validation.valid) {
+          return buildApplyTokenBlockedResponse(validation);
+        }
+        applyTokenConsumed = true;
+        return null;
+      };
+
+      if (requireApplyToken) {
+        const validation = validateApplyToken(false);
+        if (!validation.valid) {
+          return attachWorkflow(buildApplyTokenBlockedResponse(validation));
         }
       }
 
@@ -578,6 +605,10 @@ export class ChangePillar {
       }
 
       if (useV2 && shouldBatch) {
+        const tokenBlock = consumeApplyTokenOnce();
+        if (tokenBlock) {
+          return attachWorkflow(tokenBlock);
+        }
         const result = await executeV2BatchChange(
           { intent, context, rawEdits, targetFiles, dryRun, v2Mode },
           () => this.getEditResolver(),
@@ -629,7 +660,20 @@ export class ChangePillar {
           }
         }
         const result = await executeBatchChange(
-          { intent, context, rawEdits, targetFiles, dryRun, includeImpact, dependencyGraph, indexStateManager, constraints, diffMode, fileVersions: batchFileVersions },
+          {
+            intent,
+            context,
+            rawEdits,
+            targetFiles,
+            dryRun,
+            includeImpact,
+            dependencyGraph,
+            indexStateManager,
+            constraints,
+            diffMode,
+            fileVersions: batchFileVersions,
+            beforeApply: dryRun ? undefined : () => consumeApplyTokenOnce()
+          },
           (ctx, tool, args) => this.runTool(ctx, tool, args),
           (e) => this.extractEditFilePath(e),
           (args) => this.buildFailureGuidance(args)
@@ -1129,6 +1173,10 @@ export class ChangePillar {
           });
         }
       }
+      const tokenBlock = consumeApplyTokenOnce();
+      if (tokenBlock) {
+        return attachWorkflow(tokenBlock);
+      }
       const stopEdit = metrics.startTimer("change.edit_coordinator_ms");
       let editResult: any;
       try {
@@ -1460,7 +1508,7 @@ export class ChangePillar {
         formatterResult = await applyFormatterBridge({
           mode: formatterMode,
           filePaths: formatterTargets,
-          rootPath: process.cwd(),
+          rootPath: this.resolveRootPath(),
           fileSystem,
           tool: "change",
           rollbackAvailable: Boolean(finalResult.operation?.id)
@@ -2777,7 +2825,7 @@ export class ChangePillar {
       return undefined;
     }
 
-    const manifestLoader = new ContractManifestLoader(process.cwd());
+    const manifestLoader = new ContractManifestLoader(this.resolveRootPath());
     const guardConfig = resolveSymbolicGuardConfig();
     const contractMode = guardConfig.contractGuard.mode;
     const allowConsumerScan = contractMode === "spec_plus_consumer_scan" && guardConfig.contractGuard.consumerScan.enabled;

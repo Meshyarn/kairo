@@ -14,6 +14,7 @@ import { normalizePath, toRelativePath } from "../../utils/PathHelpers.js";
 import { AstDiffEngine, type AstChange } from "../../ast/AstDiffEngine.js";
 import { getSupportForFilePath, SupportLevel } from "../../config/LanguageSupportLevels.js";
 import { metrics } from "../../utils/MetricsCollector.js";
+import { PathManager } from "../../utils/PathManager.js";
 
 type GuardrailStatus = "pass" | "warn" | "block";
 type LanguageParityMode = "strict" | "balanced" | "permissive";
@@ -204,7 +205,7 @@ export async function evaluateIntegrityGuardrails(args: GuardrailContext): Promi
             }
         }
     }
-    const moduleResolver = new ModuleResolver(process.cwd());
+    const moduleResolver = new ModuleResolver(PathManager.getRootPath());
     const extractor = new UnifiedExtractor(astManager.getQueryProvider(), {
         moduleResolver
     });
@@ -1352,7 +1353,7 @@ export function resolveGuardrailTargetPath(targetPath: string): string {
     if (path.isAbsolute(targetPath)) {
         return targetPath;
     }
-    return path.join(process.cwd(), targetPath);
+    return path.join(PathManager.getRootPath(), targetPath);
 }
 
 export function normalizeGuardrailContent(content: string | null | undefined): string {
