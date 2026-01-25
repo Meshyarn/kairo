@@ -857,7 +857,8 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
             type: "object",
             properties: {
               format: { type: "string", enum: ["summary", "standard"] },
-              maxTokens: { type: "number" }
+              maxTokens: { type: "number" },
+              maxChars: { type: "number" }
             }
           },
           trace: { type: "boolean" }

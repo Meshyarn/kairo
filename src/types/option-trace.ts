@@ -1,4 +1,4 @@
-export type TracePillar = "explore" | "understand" | "change" | "write" | "manage";
+export type TracePillar = "task" | "explore" | "understand" | "change" | "write" | "manage";
 
 export type OptionSource = "explicit" | "session" | "default" | "computed";
 

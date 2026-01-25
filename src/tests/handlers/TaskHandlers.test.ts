@@ -51,7 +51,7 @@ describe("TaskHandlers", () => {
         );
         expect(payload.summary.title).toContain("find app");
         expect(payload.packId).toBe("pack_1");
-        expect(payload.status).toBe("success");
+        expect(payload.status).toBe("partial_success");
     });
 
     it("routes analyze to understand and returns summary", async () => {
@@ -79,6 +79,102 @@ describe("TaskHandlers", () => {
         expect(payload.status).toBe("success");
     });
 
+    it("runs composite explore→understand when evidence is insufficient", async () => {
+        const context = makeContext();
+        const handler = new TaskHandlers(context as any);
+        const exploreResponse = {
+            success: true,
+            status: "ok",
+            data: { docs: [], code: [{ kind: "file_preview", filePath: "src/app.ts", preview: "export const app = 1;" }] },
+            pack: { packId: "pack_comp", hit: false, createdAt: Date.now() },
+            sessionId: "s-comp"
+        };
+        const understandResponse = {
+            success: true,
+            status: "ok",
+            summary: "Analysis results for app.",
+            primaryFile: "src/app.ts",
+            symbols: [],
+            dependencies: [],
+            sessionId: "s-comp"
+        };
+        context.orchestrationEngine.executePillar
+            .mockResolvedValueOnce(exploreResponse)
+            .mockResolvedValueOnce(understandResponse);
+
+        const response = await handler.handle("task", { request: "app details", budget: "balanced", mode: "ask" });
+        const payload = JSON.parse(response.content[0].text);
+
+        expect(context.orchestrationEngine.executePillar).toHaveBeenNthCalledWith(
+            1,
+            "explore",
+            expect.objectContaining({ query: "app details", view: "preview" })
+        );
+        expect(context.orchestrationEngine.executePillar).toHaveBeenNthCalledWith(
+            2,
+            "understand",
+            expect.objectContaining({ goal: "app details", targetFiles: ["src/app.ts"] })
+        );
+        expect(payload.summary.bullets.some((bullet: string) => bullet.startsWith("Deep analysis:"))).toBe(true);
+        expect(payload.status).toBe("partial_success");
+    });
+
+    it("adds evidence pack for deep ask responses", async () => {
+        const flowArtifactManager = { store: jest.fn((artifact: any) => artifact.id) };
+        const context = makeContext({ flowArtifactManager });
+        const handler = new TaskHandlers(context as any);
+        const exploreResponse = {
+            success: true,
+            status: "ok",
+            data: {
+                docs: [],
+                code: [
+                    { kind: "file_preview", filePath: "src/app.ts", preview: "export const app = 1;" },
+                    { kind: "file_preview", filePath: "src/utils.ts", preview: "export const util = () => {};" }
+                ]
+            },
+            pack: { packId: "pack_1", hit: false, createdAt: Date.now() },
+            sessionId: "s-evidence"
+        };
+        context.orchestrationEngine.executePillar.mockResolvedValue(exploreResponse);
+
+        const response = await handler.handle("task", { request: "find app", budget: "deep" });
+        const payload = JSON.parse(response.content[0].text);
+
+        expect(payload.evidence?.length).toBeGreaterThan(0);
+        expect(payload.artifacts?.some((artifact: any) => artifact.kind === "evidence")).toBe(true);
+        expect(flowArtifactManager.store).toHaveBeenCalled();
+        const storedArtifact = (flowArtifactManager.store as jest.Mock).mock.calls[0][0] as any;
+        expect(storedArtifact.type).toBe("evidence");
+        expect(storedArtifact.sessionId).toBe("s-evidence");
+        expect(typeof storedArtifact.expiresAt).toBe("number");
+    });
+
+    it("adds evidence pack for deep analyze responses", async () => {
+        const flowArtifactManager = { store: jest.fn((artifact: any) => artifact.id) };
+        const context = makeContext({ flowArtifactManager });
+        const handler = new TaskHandlers(context as any);
+        const understandResponse = {
+            success: true,
+            status: "ok",
+            summary: "Analysis results for core.",
+            primaryFile: "src/core.ts",
+            symbols: [],
+            dependencies: [],
+            sessionId: "s-evidence-2"
+        };
+        context.orchestrationEngine.executePillar.mockResolvedValue(understandResponse);
+
+        const response = await handler.handle("task", { request: "core analysis", mode: "analyze", budget: "deep" });
+        const payload = JSON.parse(response.content[0].text);
+
+        expect(payload.evidence?.length).toBeGreaterThan(0);
+        expect(payload.artifacts?.some((artifact: any) => artifact.kind === "evidence")).toBe(true);
+        const storedArtifact = (flowArtifactManager.store as jest.Mock).mock.calls[0][0] as any;
+        expect(storedArtifact.type).toBe("evidence");
+        expect(storedArtifact.sessionId).toBe("s-evidence-2");
+    });
+
     it("returns change prep when plan_change has no edits", async () => {
         const context = makeContext();
         const handler = new TaskHandlers(context as any);
@@ -101,6 +197,28 @@ describe("TaskHandlers", () => {
         expect(payload.status).toBe("partial_success");
         expect(payload.changePrep?.recommendedTargets).toContain("src/app.ts");
         expect(payload.packId).toBe("pack_2");
+    });
+
+    it("surfaces targetString candidates in change prep when anchor text is available", async () => {
+        const context = makeContext();
+        const handler = new TaskHandlers(context as any);
+        const exploreResponse = {
+            success: true,
+            status: "ok",
+            data: {
+                docs: [],
+                code: [{ kind: "file_full", filePath: "src/app.ts", content: "export const foo = 1;" }]
+            },
+            pack: { packId: "pack_targets", hit: false, createdAt: Date.now() },
+            sessionId: "s3b"
+        };
+        context.orchestrationEngine.executePillar.mockResolvedValue(exploreResponse);
+
+        const response = await handler.handle("task", { request: "update app", mode: "plan_change", budget: "balanced" });
+        const payload = JSON.parse(response.content[0].text);
+
+        expect(payload.changePrep?.targetStringCandidates?.length).toBeGreaterThan(0);
+        expect(payload.changePrep?.targetStringCandidates?.[0]?.anchorText).toContain("export const foo");
     });
 
     it("routes plan_change with edits to change plan", async () => {
@@ -215,6 +333,51 @@ describe("TaskHandlers", () => {
             expect.objectContaining({ targetPath: "src/alias.ts" })
         );
         expect(payload.draftId).toBe("draft_write_2");
+    });
+
+    it("adds prep evidence for write plan without content", async () => {
+        const context = makeContext();
+        const handler = new TaskHandlers(context as any);
+        const exploreResponse = {
+            success: true,
+            status: "ok",
+            data: {
+                docs: [],
+                code: [{ kind: "file_preview", filePath: "src/template.ts", preview: "export const template = 1;" }]
+            },
+            pack: { packId: "pack_write", hit: false, createdAt: Date.now() },
+            sessionId: "s-write"
+        };
+        const writeResponse = {
+            success: true,
+            status: "draft",
+            draftPack: { id: "draft_write_3" },
+            sessionId: "s-write"
+        };
+        context.orchestrationEngine.executePillar
+            .mockResolvedValueOnce(exploreResponse)
+            .mockResolvedValueOnce(writeResponse);
+
+        const response = await handler.handle("task", {
+            request: "Create component",
+            mode: "write",
+            budget: "balanced",
+            targetFiles: ["src/new.ts"]
+        });
+        const payload = JSON.parse(response.content[0].text);
+
+        expect(context.orchestrationEngine.executePillar).toHaveBeenNthCalledWith(
+            1,
+            "explore",
+            expect.objectContaining({ query: "Create component", view: "preview" })
+        );
+        expect(context.orchestrationEngine.executePillar).toHaveBeenNthCalledWith(
+            2,
+            "write",
+            expect.objectContaining({ intent: "Create component", targetPath: "src/new.ts", smartWrite: true })
+        );
+        expect(payload.evidence?.length).toBeGreaterThan(0);
+        expect(payload.summary.bullets.some((bullet: string) => bullet.includes("Prep evidence"))).toBe(true);
     });
 
     it("verifies file content against draft pack", async () => {
@@ -359,5 +522,76 @@ describe("TaskHandlers", () => {
         } finally {
             PathManager.setRoot(originalRoot);
         }
+    });
+
+    it("auto-verifies apply_change responses when possible", async () => {
+        const fileSystem = new MemoryFileSystem();
+        await fileSystem.writeFile("src/app.ts", "export const value = 2;\n");
+        const draftPack = {
+            id: "draft_apply_verify_1",
+            phantomFiles: [{ path: "src/app.ts", content: "export const value = 2;\n", isNew: false, language: "ts" }]
+        };
+        const flowArtifactManager = {
+            get: jest.fn((id: string) => (id === "draft_apply_verify_1" ? { type: "draft", pack: draftPack } : undefined))
+        };
+        const context = makeContext({ fileSystem, flowArtifactManager });
+        const handler = new TaskHandlers(context as any);
+        const changeResponse = {
+            success: true,
+            status: "ok",
+            targetFile: "src/app.ts",
+            sessionId: "s-apply-verify"
+        };
+        context.orchestrationEngine.executePillar.mockResolvedValue(changeResponse);
+
+        const response = await handler.handle("task", {
+            request: "apply plan",
+            mode: "apply_change",
+            budget: "balanced",
+            draftId: "draft_apply_verify_1",
+            applyToken: "token_1",
+            targetFiles: ["src/app.ts"]
+        });
+        const payload = JSON.parse(response.content[0].text);
+
+        expect(payload.status).toBe("success");
+        expect(payload.verification?.contentMatch).toBe(true);
+        expect(payload.summary.bullets.some((bullet: string) => bullet.includes("Auto-verify:"))).toBe(true);
+    });
+
+    it("auto-verifies write apply responses when possible", async () => {
+        const fileSystem = new MemoryFileSystem();
+        await fileSystem.writeFile("src/new.ts", "export const generated = 123;\n");
+        const draftPack = {
+            id: "draft_write_verify_1",
+            phantomFiles: [{ path: "src/new.ts", content: "export const generated = 123;\n", isNew: true, language: "ts" }]
+        };
+        const flowArtifactManager = {
+            get: jest.fn((id: string) => (id === "draft_write_verify_1" ? { type: "draft", pack: draftPack } : undefined))
+        };
+        const context = makeContext({ fileSystem, flowArtifactManager });
+        const handler = new TaskHandlers(context as any);
+        const writeResponse = {
+            success: true,
+            status: "ok",
+            draftPack: { id: "draft_write_verify_1" },
+            sessionId: "s-write-verify"
+        };
+        context.orchestrationEngine.executePillar.mockResolvedValue(writeResponse);
+
+        const response = await handler.handle("task", {
+            request: "apply write",
+            mode: "write",
+            safety: "apply",
+            budget: "balanced",
+            targetPath: "src/new.ts",
+            draftId: "draft_write_verify_1",
+            applyToken: "token_write_1"
+        });
+        const payload = JSON.parse(response.content[0].text);
+
+        expect(payload.status).toBe("success");
+        expect(payload.verification?.contentMatch).toBe(true);
+        expect(payload.summary.bullets.some((bullet: string) => bullet.includes("Auto-verify:"))).toBe(true);
     });
 });

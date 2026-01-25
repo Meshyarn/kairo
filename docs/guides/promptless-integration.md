@@ -132,6 +132,32 @@ Treat `task` as the only entrypoint for the model:
 
 Note: As of ADR-086, `task` supports `mode="write"` and `mode="verify"` on the compact surface. These modes can still return `blocked` for safety/policy reasons (missing target path, expired apply token, review/guardrail blocks). Switch to `KAIRO_PUBLIC_SURFACE=pillars` when you need full pillar-level options.
 
+## Evidence Pack follow-up (ADR-087)
+
+When you need depth without expanding the tool surface, ask `task` for a deep budget and then fetch the evidence pack via `manage`:
+
+```json
+{
+  "request": "Explain the auth flow and key files.",
+  "mode": "analyze",
+  "budget": "deep"
+}
+```
+
+Then:
+
+```json
+{
+  "command": "artifact",
+  "target": "<evidenceId>",
+  "detail": "full"
+}
+```
+
+Notes:
+- `task` returns inline `evidence` plus an evidence-pack artifact id in `artifacts`.
+- Use `output.maxTokens/maxChars` to cap response size; `task` will downshift LOD to fit.
+
 When you need deeper options, fetch a schema on demand:
 
 ```json
@@ -147,6 +173,7 @@ Safe change flow:
    - if `edits` is omitted: returns prep (`editsTemplate` + target hints + fileVersions)
    - if `edits` is provided: returns `draftId` + `applyToken` (in MCP mode)
 2. `task` with `mode="apply_change"` + `draftId` + `applyToken`
+   - apply responses may include an embedded `verification` result; otherwise follow up with `task(mode="verify")` if you need confirmation.
 
 ## Troubleshooting (no prompts)
 

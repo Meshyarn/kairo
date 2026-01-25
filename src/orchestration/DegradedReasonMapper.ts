@@ -118,6 +118,11 @@ const PARITY_REASON_MAP: Record<string, {
     message: "Token or time budget exceeded; results may be partial.",
     severity: "warning"
   },
+  insufficient_evidence: {
+    type: "degraded",
+    message: "Insufficient evidence returned; add explicit paths or target files for a more precise result.",
+    severity: "warning"
+  },
   doc_search_skipped: {
     type: "doc_search_skipped",
     message: "Documentation search was skipped; results may be incomplete.",
@@ -178,7 +183,7 @@ const PARITY_REASON_MAP: Record<string, {
   },
   apply_token_missing: {
     type: "apply_token_missing",
-    message: "Apply token is missing or invalid; re-plan before applying.",
+    message: "Apply token is missing; re-plan before applying.",
     severity: "critical"
   },
   apply_token_expired: {
@@ -189,6 +194,11 @@ const PARITY_REASON_MAP: Record<string, {
   apply_token_used: {
     type: "apply_token_used",
     message: "Apply token has already been used; re-plan to get a new token.",
+    severity: "critical"
+  },
+  apply_token_invalid: {
+    type: "apply_token_invalid",
+    message: "Apply token is invalid; re-plan to get a new token.",
     severity: "critical"
   },
   language_parser_unavailable: {

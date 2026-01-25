@@ -16,7 +16,7 @@ For quick validation from source, see:
 ## Agent docs (recommended)
 
 - `docs/agent/TOOL_REFERENCE.md` — public tool input reference (`task`/`manage` + pillars)
-- `docs/agent/AGENT_PLAYBOOK.md` — recommended usage patterns
+- `docs/agent/AGENT_PLAYBOOK.md` — recommended usage patterns (evidence packs + compact follow-ups)
 
 ## Architecture (curated ADRs)
 

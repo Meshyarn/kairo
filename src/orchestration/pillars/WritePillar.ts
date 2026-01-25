@@ -346,12 +346,16 @@ export class WritePillar {
       const buildApplyTokenBlockedResponse = (validation: any) => {
         const reasonCode = validation.reason === "expired"
           ? "apply_token_expired"
-          : (validation.reason === "used" ? "apply_token_used" : "apply_token_missing");
+          : (validation.reason === "used"
+            ? "apply_token_used"
+            : (validation.reason === "invalid" ? "apply_token_invalid" : "apply_token_missing"));
         const message = reasonCode === "apply_token_expired"
           ? "Apply token expired. Re-run the plan to get a new token."
           : (reasonCode === "apply_token_used"
             ? "Apply token already used. Re-run the plan to get a new token."
-            : "Apply token required to apply changes. Re-run the plan to get a token.");
+            : (reasonCode === "apply_token_invalid"
+              ? "Apply token invalid. Re-run the plan to get a new token."
+              : "Apply token required to apply changes. Re-run the plan to get a token."));
         const nextArgs: Record<string, unknown> = {
           intent: originalIntent,
           targetPath,
@@ -366,7 +370,9 @@ export class WritePillar {
           message,
           errorCode: reasonCode === "apply_token_expired"
             ? "APPLY_TOKEN_EXPIRED"
-            : (reasonCode === "apply_token_used" ? "APPLY_TOKEN_USED" : "APPLY_TOKEN_MISSING"),
+            : (reasonCode === "apply_token_used"
+              ? "APPLY_TOKEN_USED"
+              : (reasonCode === "apply_token_invalid" ? "APPLY_TOKEN_INVALID" : "APPLY_TOKEN_MISSING")),
           blockedReason: reasonCode,
           degradedReasons: buildDegradedReasons([reasonCode]),
           guidance: {

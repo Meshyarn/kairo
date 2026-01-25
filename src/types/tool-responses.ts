@@ -17,6 +17,7 @@ export type DegradedReasonType =
   | "apply_token_missing"
   | "apply_token_expired"
   | "apply_token_used"
+  | "apply_token_invalid"
   | "degraded";
 
 export type DegradedReason = {
