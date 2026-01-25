@@ -331,14 +331,54 @@ export class WritePillar {
           };
           (next as any).decisionTrace = traceBuilder?.finalize();
         }
-        if (workflowWarnings.length > 0) {
-          next.workflowWarnings = workflowWarnings;
-        }
-        if (overrideTrace) {
-          (next as any).overrideTrace = overrideTrace;
-        }
-        return resolvedSessionId ? { ...next, sessionId: resolvedSessionId } : next;
+      if (workflowWarnings.length > 0) {
+        next.workflowWarnings = workflowWarnings;
+      }
+      if (overrideTrace) {
+        (next as any).overrideTrace = overrideTrace;
+      }
+      return resolvedSessionId ? { ...next, sessionId: resolvedSessionId } : next;
       };
+
+      if (!dryRun && draftId && draftContent && hasExplicitContent) {
+        const reasonCode = "draft_content_override_blocked";
+        const message = "Draft apply does not allow overriding content. Re-run plan to regenerate the draft content.";
+        const nextArgs: Record<string, unknown> = {
+          intent: originalIntent,
+          targetPath,
+          safety: "plan"
+        };
+        if (contentSource) {
+          nextArgs.contentSource = contentSource;
+        } else if (hasExplicitContent) {
+          nextArgs.content = initialContent;
+        }
+        if (refinement) nextArgs.refinement = refinement;
+        if (resolvedSessionId) nextArgs.sessionId = resolvedSessionId;
+        return attachSession({
+          success: false,
+          status: "blocked",
+          message,
+          errorCode: "DRAFT_CONTENT_OVERRIDE_BLOCKED",
+          blockedReason: reasonCode,
+          degradedReasons: buildDegradedReasons([reasonCode]),
+          createdFiles: [],
+          transactionId: null,
+          rollbackAvailable: false,
+          guidance: {
+            message,
+            suggestedActions: [
+              {
+                id: "write.plan",
+                priority: 1,
+                description: "Re-plan the write to regenerate a draft with the intended content.",
+                rationale: "Apply must use the draft snapshot (no re-reading sources) for safety and repeatability.",
+                toolCall: { tool: "write", args: nextArgs }
+              }
+            ]
+          }
+        });
+      }
 
       if (contentSource) {
         const configurationManager = this.registry.getMetadata<ConfigurationManager>("configurationManager");

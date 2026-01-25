@@ -205,6 +205,43 @@ describe("WritePillar", () => {
     expect(result.draftPack.phantomFiles[0].content).toBe("export const seed = 1;\n");
   });
 
+  it("blocks apply when draftId is provided but content is overridden", async () => {
+    const registry = new InternalToolRegistry();
+    const manager = new FlowArtifactManager();
+    const draftId = "draft_override_block";
+    manager.store({
+      id: draftId,
+      type: "draft",
+      createdAt: Date.now(),
+      pack: {
+        id: draftId,
+        intent: "seed",
+        skeleton: { content: "", signatures: [], structure: { imports: [], exports: [], dependencies: [] }, placeholders: [] },
+        phantomFiles: [{
+          path: "src/seed.ts",
+          content: "export const seed = 1;\n",
+          isNew: true,
+          language: "ts"
+        }],
+        preflightCheck: { syntaxValid: true, typesResolvable: true, guardrailsPassed: true, warnings: [] },
+        createdAt: Date.now(),
+        status: "pending"
+      }
+    } as any);
+    registry.setMetadata("flowArtifactManager", manager);
+
+    const pillar = new WritePillar(registry);
+    const context = new OrchestrationContext();
+    const result = await pillar.execute(
+      makeIntent({ targetPath: "src/seed.ts", dryRun: false, draftId, content: "override" }) as any,
+      context
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.status).toBe("blocked");
+    expect(result.blockedReason).toBe("draft_content_override_blocked");
+  });
+
   it("blocks apply when apply token is missing in mcp mode", async () => {
     const originalMode = process.env.KAIRO_MODE;
     process.env.KAIRO_MODE = "mcp";

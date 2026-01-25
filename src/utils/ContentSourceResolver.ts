@@ -6,6 +6,7 @@ import type { NormalizedRepoScope } from "./RepoScope.js";
 import type { PathNormalizer } from "./PathNormalizer.js";
 import type { IFileSystem } from "../platform/FileSystem.js";
 import type { FlowArtifactManager } from "../orchestration/flow-artifact-manager.js";
+import { metrics } from "./MetricsCollector.js";
 
 export type ContentSourceResolveError = {
   errorCode: string;
@@ -59,6 +60,7 @@ export async function resolveContentSource(
       if (typeof (source as any).text !== "string") {
         return buildError("CONTENT_SOURCE_INVALID", "contentSource.inline.text must be a string.", "failure");
       }
+      recordMetrics("inline", Buffer.byteLength((source as any).text, "utf8"));
       return { ok: true, content: (source as any).text, meta: { kind: "inline" } };
     case "base64":
       return resolveBase64Source(source as any);
@@ -170,6 +172,7 @@ async function resolveFileSource(
       { path: workspacePath, error: error?.message ?? String(error) }
     );
   }
+  recordMetrics("file", stats.size);
   return { ok: true, content, meta: { kind: "file", resolvedPath: workspacePath, bytes: stats.size } };
 }
 
@@ -195,6 +198,7 @@ function resolveBase64Source(source: { base64?: unknown; charset?: unknown }): C
     return buildError("CONTENT_SOURCE_DECODE_FAILED", "contentSource.base64 is not valid base64.", "failure");
   }
 
+  recordMetrics("base64", buffer.length);
   return { ok: true, content: buffer.toString("utf8"), meta: { kind: "base64" } };
 }
 
@@ -228,6 +232,7 @@ function resolveArtifactSource(
     }
     const phantomContent = phantomFiles[0]?.content;
     if (typeof phantomContent === "string") {
+      recordMetrics("artifact", Buffer.byteLength(phantomContent, "utf8"));
       return { ok: true, content: phantomContent, meta: { kind: "artifact" } };
     }
   }
@@ -243,6 +248,7 @@ function resolveArtifactSource(
     pickString(artifact?.pack?.text);
 
   if (typeof candidate === "string") {
+    recordMetrics("artifact", Buffer.byteLength(candidate, "utf8"));
     return { ok: true, content: candidate, meta: { kind: "artifact" } };
   }
 
@@ -506,4 +512,12 @@ function buildErrorValue(
     ...(blockedReason ? { blockedReason } : {}),
     ...(details ? { details } : {})
   };
+}
+
+function recordMetrics(kind: string, bytes?: number): void {
+  metrics.inc("content_source.resolve.count", 1, "basic");
+  metrics.inc(`content_source.kind.${kind}.count`, 1, "basic");
+  if (typeof bytes === "number" && Number.isFinite(bytes)) {
+    metrics.observe("content_source.bytes", bytes, "detailed");
+  }
 }
