@@ -134,6 +134,36 @@ const extractIndexFromSubscript = (text: string): string => {
     return match ? match[1].trim() : "";
 };
 
+const positionFromIndex = (content: string, index: number): { line: number; column: number } => {
+    if (index <= 0) return { line: 1, column: 1 };
+    let line = 1;
+    let lastLineStart = 0;
+    for (let i = 0; i < content.length && i < index; i += 1) {
+        if (content[i] === "\n") {
+            line += 1;
+            lastLineStart = i + 1;
+        }
+    }
+    return { line, column: index - lastLineStart + 1 };
+};
+
+const extractIndexFallbacks = (content: string, limit: number): Array<{ indexText: string; snippet: string; startIndex: number }> => {
+    const results: Array<{ indexText: string; snippet: string; startIndex: number }> = [];
+    const pattern = /([A-Za-z_$][\w$]*)\s*\[\s*([A-Za-z_$][\w$]*)\s*\]/g;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(content)) !== null) {
+        const indexText = match[2];
+        if (!indexText) continue;
+        results.push({
+            indexText,
+            snippet: match[0].slice(0, 160),
+            startIndex: match.index
+        });
+        if (results.length >= limit) break;
+    }
+    return results;
+};
+
 export class SymbolicGuardEngine {
     public async evaluate(args: { filePath: string; content: string }): Promise<SymbolicGuardResult> {
         const start = Date.now();
@@ -272,6 +302,25 @@ export class SymbolicGuardEngine {
 
             const indexRule = config.rules.index_bounds;
             if (indexRule?.enabled) {
+                if (indexAccesses.length === 0) {
+                    const fallbacks = extractIndexFallbacks(args.content, config.maxConstraints);
+                    for (const fallback of fallbacks) {
+                        const guardTexts: string[] = [];
+                        const guarded = hasIndexGuard(fallback.indexText, guardTexts);
+                        if (!guarded && isSimpleIdentifier(fallback.indexText)) {
+                            const position = positionFromIndex(args.content, fallback.startIndex);
+                            pushDiagnostic({
+                                code: "index_bounds",
+                                severity: indexRule.severity,
+                                message: `Index access uses '${fallback.indexText}' without an obvious bounds guard.`,
+                                filePath: args.filePath,
+                                line: position.line,
+                                column: position.column,
+                                evidence: { snippet: fallback.snippet }
+                            });
+                        }
+                    }
+                }
                 for (const access of indexAccesses) {
                     if (Date.now() - start > config.timeoutMs) {
                         degradedReasons.push("symbolic_budget_exceeded");
