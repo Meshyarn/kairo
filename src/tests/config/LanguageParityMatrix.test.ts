@@ -13,6 +13,7 @@ describe("LanguageParityMatrix", () => {
         "java",
         "php",
         "sql",
+        "plain_text",
         "markdown",
         "c",
         "cpp",

@@ -49,6 +49,7 @@ To keep safety invariants consistent across host UX differences, the server enfo
 - Issue `applyToken` only in the plan phase
 - Block apply without `draftId + applyToken`
 - Recommended default policy: TTL/one-time/session-bound/drift-bound
+  - Tokens remain session-bound, but when a `draftId` is provided Kairo can derive the effective session from the draft to tolerate host sessionId drift.
 
 ### 7) verify is not “execution”, but “safe validation + an execution plan”
 

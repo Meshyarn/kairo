@@ -12,6 +12,11 @@ This folder contains the minimal docs needed to run `kairo` and connect it to an
 For quick validation from source, see:
 - `npm run smoke:mcp-mock-client`
 - `npm run benchmark:adr-085-search-slo`
+- `npm run smoke:adr-088-compact-guidance`
+- `npm run smoke:adr-088-stdio-guidance-closure`
+- `npm run smoke:adr-088-change-write-minimal-apply`
+- `npm run smoke:adr-088-change-write-deep`
+- `npm run benchmark:adr-088-search-accuracy`
 
 ## Agent docs (recommended)
 
@@ -23,5 +28,6 @@ For quick validation from source, see:
 - `docs/adr/README.md` — curated ADR index + summaries
 - `docs/adr/ADR-084-mcp-autopilot-and-preset-layer.md` — promptless MCP defaults (`task` + presets + handshake)
 - `docs/adr/ADR-085-rust-native-search-core-tantivy.md` — native search core (Tantivy via `@kairo/core-rs`)
+- `docs/adr/ADR-088-agent-trust-e2e-verification-and-optimization-program.md` — agent trust verification program (E2E harnesses + CI gates)
 
 More detailed references beyond these curated ADRs are intentionally kept out of the OSS docs set for now.

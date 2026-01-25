@@ -30,6 +30,7 @@ export function normalizeWriteInput(
     helpers: {
         resolveSessionId: (rawSessionId: string | undefined, originalIntent: string) => string | undefined;
         getSessionPolicy: (sessionId: string | undefined) => any;
+        resolveDraftSessionId?: (draftId: string) => string | undefined;
     }
 ): WriteInput {
     const { constraints, targets, originalIntent } = intent;
@@ -43,8 +44,11 @@ export function normalizeWriteInput(
     const quickGenerate = Boolean((constraints as any).quickGenerate);
     const smartWrite = Boolean((constraints as any).smartWrite);
     const styleReference = (constraints as any).styleReference as string[] | undefined;
+    const draftId = typeof (constraints as any).draftId === "string" ? (constraints as any).draftId : undefined;
+    const applyToken = typeof (constraints as any).applyToken === "string" ? (constraints as any).applyToken : undefined;
     const rawSessionId = typeof (constraints as any).sessionId === "string" ? (constraints as any).sessionId : undefined;
-    const resolvedSessionId = helpers.resolveSessionId(rawSessionId, baseIntent);
+    const draftSessionId = draftId ? helpers.resolveDraftSessionId?.(draftId) : undefined;
+    const resolvedSessionId = helpers.resolveSessionId(draftSessionId ?? rawSessionId, baseIntent);
     const sessionPolicy = helpers.getSessionPolicy(resolvedSessionId);
     const resolvedOptions = OptionResolver.resolveWriteOptions(constraints, resolvedSessionId, sessionPolicy);
     if (!safeWriteExplicit && resolvedOptions.effective.profile === "lean") {
@@ -54,8 +58,6 @@ export function normalizeWriteInput(
     const traceEnabled = resolvedOptions.effective.traceEnabled;
     const draftOptions = (constraints as any).draftOptions as { skeletonOnly?: boolean } | undefined;
     const reviewOptions = resolvedOptions.effective.reviewOptions;
-    const draftId = typeof (constraints as any).draftId === "string" ? (constraints as any).draftId : undefined;
-    const applyToken = typeof (constraints as any).applyToken === "string" ? (constraints as any).applyToken : undefined;
     const refinement = typeof (constraints as any).refinement === "string" ? (constraints as any).refinement : undefined;
 
     return {

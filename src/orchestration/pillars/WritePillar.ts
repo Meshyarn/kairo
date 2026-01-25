@@ -171,13 +171,17 @@ export class WritePillar {
       const applyPolicy = resolveApplyHandshakePolicy();
       const input = normalizeWriteInput(intent, {
         resolveSessionId: (rawSessionId, fallback) => artifactManager?.resolveSessionId(rawSessionId, fallback),
-        getSessionPolicy: (sessionId) => (sessionId ? artifactManager?.getSession(sessionId)?.policy : undefined)
+        getSessionPolicy: (sessionId) => (sessionId ? artifactManager?.getSession(sessionId)?.policy : undefined),
+        resolveDraftSessionId: (draftId) => {
+          const artifact = artifactManager?.get(draftId) as any;
+          return typeof artifact?.sessionId === "string" ? artifact.sessionId : undefined;
+        }
       });
       const {
         constraints,
         targets,
         originalIntent,
-        targetPath,
+        targetPath: inputTargetPath,
         template,
         content: initialContent,
         hasExplicitContent,
@@ -195,10 +199,12 @@ export class WritePillar {
         applyToken,
         refinement
       } = input;
+      let targetPath = inputTargetPath;
       let resolvedSessionId = input.resolvedSessionId;
       if (applyPolicy.required && dryRun && !resolvedSessionId && artifactManager) {
         resolvedSessionId = artifactManager.resolveSessionId("new", originalIntent);
       }
+      const draftArtifact = draftId ? artifactManager?.get(draftId) : undefined;
       const sessionProfile = sessionPolicy?.write?.profile ?? sessionPolicy?.profile;
       const sessionSafety = sessionPolicy?.write?.safety ?? sessionPolicy?.safety;
       const traceBuilder = traceEnabled
@@ -253,10 +259,15 @@ export class WritePillar {
         ?? (resolvedSessionId && artifactManager
           ? artifactManager.getLatestStylePack(resolvedSessionId)
           : undefined);
-      const draftArtifact = draftId ? artifactManager?.get(draftId) : undefined;
       const draftPack = draftArtifact?.type === "draft" ? (draftArtifact as any).pack : undefined;
-      const draftContent = draftPack?.phantomFiles?.[0]?.content as string | undefined;
+      const draftPhantomFiles = Array.isArray(draftPack?.phantomFiles) ? draftPack.phantomFiles : undefined;
+      const draftPhantomFile = draftPhantomFiles?.length === 1 ? draftPhantomFiles[0] : undefined;
+      const draftContent = typeof draftPhantomFile?.content === "string" ? draftPhantomFile.content : undefined;
+      const draftTargetPath = typeof draftPhantomFile?.path === "string" ? draftPhantomFile.path : undefined;
       const expectedFileVersions = (constraints as any).fileVersions ?? draftPack?.fileVersions;
+      if (!targetPath && draftTargetPath) {
+        targetPath = draftTargetPath;
+      }
       if (!hasExplicitContent && draftContent) {
         content = draftContent;
       }
@@ -399,6 +410,69 @@ export class WritePillar {
         applyTokenConsumed = true;
         return null;
       };
+
+      if (!dryRun && draftId && draftPack && draftPhantomFiles && draftPhantomFiles.length !== 1) {
+        const reasonCode = "draft_target_ambiguous";
+        const message = "Draft pack contains multiple targets; re-run plan or specify the intended target path.";
+        const nextArgs: Record<string, unknown> = {
+          intent: originalIntent,
+          safety: "plan",
+          ...(resolvedSessionId ? { sessionId: resolvedSessionId } : {})
+        };
+        return attachSession({
+          success: false,
+          status: "blocked",
+          message,
+          errorCode: "DRAFT_TARGET_AMBIGUOUS",
+          blockedReason: reasonCode,
+          degradedReasons: buildDegradedReasons([reasonCode]),
+          guidance: {
+            message,
+            suggestedActions: [
+              {
+                id: "write.plan",
+                priority: 1,
+                description: "Re-plan the write to generate a single-target draft.",
+                rationale: "Apply requires an unambiguous draft target.",
+                toolCall: { tool: "write", args: nextArgs }
+              }
+            ]
+          }
+        });
+      }
+
+      if (!dryRun && draftId && draftPack && draftTargetPath && targetPath && draftTargetPath !== targetPath) {
+        const reasonCode = "draft_target_mismatch";
+        const message = "Draft target path does not match the requested target. Apply using the draft target path.";
+        const nextArgs: Record<string, unknown> = {
+          intent: originalIntent,
+          targetPath: draftTargetPath,
+          safety: "apply",
+          draftId,
+          ...(applyToken ? { applyToken } : {}),
+          ...(resolvedSessionId ? { sessionId: resolvedSessionId } : {})
+        };
+        return attachSession({
+          success: false,
+          status: "blocked",
+          message,
+          errorCode: "DRAFT_TARGET_MISMATCH",
+          blockedReason: reasonCode,
+          degradedReasons: buildDegradedReasons([reasonCode], { filePath: targetPath }),
+          guidance: {
+            message,
+            suggestedActions: [
+              {
+                id: "write.apply",
+                priority: 1,
+                description: "Retry apply using the draft target path.",
+                rationale: "Draft content must align with the intended target file.",
+                toolCall: { tool: "write", args: nextArgs }
+              }
+            ]
+          }
+        });
+      }
 
       if (!targetPath) {
         return attachSession({

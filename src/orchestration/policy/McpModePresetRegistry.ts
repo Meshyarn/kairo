@@ -1,6 +1,6 @@
-import fs from "fs";
 import path from "path";
 import { PathManager } from "../../utils/PathManager.js";
+import { NodeFileSystem } from "../../platform/FileSystem.js";
 
 export type McpMode = "mcp" | "dev" | "ci";
 export type McpPresetId = "mcp-lean" | "mcp-balanced" | "mcp-deep";
@@ -291,24 +291,25 @@ const resolveConfigPath = (): string => {
 
 const loadConfig = (): McpConfigFile | undefined => {
   const configPath = resolveConfigPath();
-  if (!fs.existsSync(configPath)) {
+  const fileSystem = new NodeFileSystem(PathManager.getRootPath());
+  if (!fileSystem.existsSync?.(configPath)) {
     cachedConfig = null;
     return undefined;
   }
-  let stats: fs.Stats;
+  let stats: { mtime: number };
   try {
-    stats = fs.statSync(configPath);
+    stats = fileSystem.statSync?.(configPath) ?? { mtime: 0 };
   } catch {
     return undefined;
   }
-  if (cachedConfig && cachedConfig.path === configPath && cachedConfig.mtimeMs === stats.mtimeMs) {
+  if (cachedConfig && cachedConfig.path === configPath && cachedConfig.mtimeMs === stats.mtime) {
     return cachedConfig.config;
   }
   try {
-    const raw = fs.readFileSync(configPath, "utf-8");
+    const raw = fileSystem.readFileSync?.(configPath) ?? "";
     const parsed = JSON.parse(raw);
     const config = sanitizeConfig(parsed);
-    cachedConfig = { path: configPath, mtimeMs: stats.mtimeMs, config };
+    cachedConfig = { path: configPath, mtimeMs: stats.mtime, config };
     return config;
   } catch (error) {
     console.warn(`[McpModePresetRegistry] Failed to read ${path.basename(configPath)}:`, error);

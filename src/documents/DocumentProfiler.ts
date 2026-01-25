@@ -28,6 +28,9 @@ interface LinkNode {
 }
 
 export class DocumentProfiler {
+    private static markdownTreeSitterDisabled = false;
+    private static markdownTreeSitterDisabledReason?: string;
+
     constructor(
         private readonly rootPath: string,
         private readonly linkResolver: DocumentLinkResolver = new DocumentLinkResolver(rootPath),
@@ -42,7 +45,7 @@ export class DocumentProfiler {
         const lines = splitLines(input.content);
         const lineOffsets = computeLineOffsets(input.content);
 
-        const shouldUseTreeSitter = input.kind === "markdown";
+        const shouldUseTreeSitter = input.kind === "markdown" && !DocumentProfiler.markdownTreeSitterDisabled;
         let treeMarkdownHeadings: HeadingNode[] | null = null;
         let treeMarkdownLinks: LinkNode[] | null = null;
 
@@ -60,7 +63,19 @@ export class DocumentProfiler {
                     line: i.lineNumber
                 }));
             } catch (e) {
-                console.warn(`[DocumentProfiler] AstManager fallback for ${input.filePath}:`, e);
+                const message = e instanceof Error ? e.message : String(e);
+                if (!DocumentProfiler.markdownTreeSitterDisabled && message.includes("Incompatible language version")) {
+                    DocumentProfiler.markdownTreeSitterDisabled = true;
+                    DocumentProfiler.markdownTreeSitterDisabledReason = message;
+                    console.warn(`[DocumentProfiler] Disabled markdown tree-sitter extraction: ${message}`);
+                } else if (
+                    DocumentProfiler.markdownTreeSitterDisabledReason &&
+                    message === DocumentProfiler.markdownTreeSitterDisabledReason
+                ) {
+                    // already logged (avoid spamming on every markdown file)
+                } else {
+                    console.warn(`[DocumentProfiler] AstManager fallback for ${input.filePath}:`, e);
+                }
             }
         }
 

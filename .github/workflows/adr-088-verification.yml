@@ -1,0 +1,81 @@
+name: adr-088 verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_env_matrix:
+        description: "Run ADR-088 env-matrix (pairwise env-var sampling)"
+        required: false
+        default: "true"
+      run_perf:
+        description: "Run performance test (multi-repo benchmark)"
+        required: false
+        default: "true"
+  schedule:
+    - cron: "0 3 * * 1"
+
+jobs:
+  adr-088:
+    runs-on: ubuntu-latest
+    env:
+      KAIRO_TEST_USE_NATIVE_CORE: "false"
+      KAIRO_RUST_CORE_ENABLED: "false"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+      - name: Install deps
+        run: npm ci
+      - name: Build
+        run: npm run build
+      - name: ADR-088 compact guidance smoke
+        run: npm run smoke:adr-088-compact-guidance
+      - name: ADR-088 stdio guidance closure
+        run: npm run smoke:adr-088-stdio-guidance-closure
+      - name: ADR-088 change/write minimal apply
+        run: npm run smoke:adr-088-change-write-minimal-apply
+      - name: ADR-088 change/write deep
+        run: npm run smoke:adr-088-change-write-deep
+      - name: ADR-088 stdio stress
+        run: npm run smoke:adr-088-stdio-stress
+      - name: ADR-088 agent-loop simulator
+        run: npm run benchmark:adr-088-agent-loop
+      - name: ADR-088 search accuracy
+        env:
+          KAIRO_ADR088_FILE_COUNT: "400"
+          KAIRO_ADR088_QUERY_COUNT: "80"
+          KAIRO_ADR088_SEARCH_MIN_MRR: "0.95"
+          KAIRO_ADR088_SEARCH_MIN_P1: "0.95"
+          KAIRO_ADR088_SEARCH_MIN_RK: "0.95"
+        run: npm run benchmark:adr-088-search-accuracy
+      - name: ADR-088 env matrix (pairwise)
+        if: github.event_name == 'workflow_dispatch' && inputs.run_env_matrix == 'true'
+        run: npm run benchmark:adr-088-env-matrix
+      - name: ADR-088 long-run (small)
+        env:
+          KAIRO_ADR088_LONGRUN_FILE_COUNT: "400"
+          KAIRO_ADR088_LONGRUN_QUERY_COUNT: "40"
+          KAIRO_ADR088_LONGRUN_SAMPLE_EVERY: "10"
+        run: npm run benchmark:adr-088-long-run
+      - name: ADR-088 perf (multi-repo)
+        if: github.event_name == 'workflow_dispatch' && inputs.run_perf == 'true'
+        run: npm run test:perf:dist -- dist/tests/performance/multi_repo_search_benchmark.test.js
+      - name: Upload ADR-088 reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: adr-088-reports
+          if-no-files-found: warn
+          path: |
+            benchmarks/reports/adr-088-agent-loop-simulator-*.json
+            benchmarks/reports/adr-088-change-write-deep-*.json
+            benchmarks/reports/adr-088-change-write-minimal-apply-*.json
+            benchmarks/reports/adr-088-env-matrix-*.json
+            benchmarks/reports/adr-088-env-matrix-*/
+            benchmarks/reports/adr-088-long-run-*.json
+            benchmarks/reports/adr-088-search-accuracy-*.json
+            benchmarks/reports/adr-088-stdio-guidance-closure-*.json
+            benchmarks/reports/adr-088-stdio-stress-*.json

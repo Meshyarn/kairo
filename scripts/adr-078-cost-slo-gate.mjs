@@ -2,6 +2,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+process.env.NODE_ENV = process.env.NODE_ENV ?? "test";
+process.env.KAIRO_MODE = process.env.KAIRO_MODE ?? "mcp";
+process.env.KAIRO_PUBLIC_SURFACE = process.env.KAIRO_PUBLIC_SURFACE ?? "compact";
+process.env.KAIRO_WARMUP_ENABLED = "false";
+process.env.KAIRO_ALLOW_CWD_ROOT = "true";
+process.env.KAIRO_HEARTBEAT = "false";
 process.env.KAIRO_METRICS_MODE = process.env.KAIRO_METRICS_MODE ?? "basic";
 
 const DEFAULT_THRESHOLDS = {

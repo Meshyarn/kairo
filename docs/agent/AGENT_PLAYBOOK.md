@@ -36,6 +36,7 @@ Notes:
 - `mode="write"` / `mode="verify"` are supported on the compact surface (ADR-086). Use pillar tools when you need full per-pillar options.
 - Use `manage({ command: "schema", tool: "task", detail: "full" })` when you need the full schema.
 - When `task` returns `status="partial_success"` with `guidance.nextCalls`, follow those calls (they are rewritten to compact-safe tools when needed).
+- For apply flows in MCP mode, follow `guidance.nextCalls` whenever possible (it carries the right `draftId/applyToken` and session context). When applying manually, `draftId + applyToken` is the minimal contract; avoid overriding the write draft target path.
 - Use `budget="deep"` when you need evidence packs; follow up with `manage({ command: "artifact", target, detail: "full" })` for depth.
 
 ---
