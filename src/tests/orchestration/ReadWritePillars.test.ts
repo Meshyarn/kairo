@@ -1,4 +1,4 @@
-import { describe, it, expect } from "@jest/globals";
+import { describe, it, expect, beforeEach, afterEach } from "@jest/globals";
 import { ReadPillar } from "../../orchestration/pillars/ReadPillar.js";
 import { WritePillar } from "../../orchestration/pillars/WritePillar.js";
 import { OrchestrationContext } from "../../orchestration/OrchestrationContext.js";
@@ -90,6 +90,20 @@ describe("ReadPillar", () => {
 });
 
 describe("WritePillar", () => {
+  const originalMode = process.env.KAIRO_MODE;
+
+  beforeEach(() => {
+    process.env.KAIRO_MODE = "dev";
+  });
+
+  afterEach(() => {
+    if (originalMode === undefined) {
+      delete process.env.KAIRO_MODE;
+    } else {
+      process.env.KAIRO_MODE = originalMode;
+    }
+  });
+
   it("uses file_write fast-path when content is provided", async () => {
     const registry = new InternalToolRegistry();
     const writeCalls: any[] = [];

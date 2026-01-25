@@ -17,19 +17,27 @@ jest.setTimeout(30000);
 describe('Cross-Pillar Workflow Integration', () => {
   let server: SmartContextServer;
   let testRoot: string;
+  const originalMode = process.env.KAIRO_MODE;
 
   beforeEach(async () => {
+    process.env.KAIRO_MODE = "dev";
     testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'workflow-test-'));
     fs.mkdirSync(path.join(testRoot, 'src'), { recursive: true });
     
     fs.writeFileSync(path.join(testRoot, 'src', 'app.ts'), 'export class App { run() { return \"start\"; } }');
     
     server = new SmartContextServer(testRoot);
+    await server.waitForInitialScan();
   });
 
   afterEach(async () => {
     await server.shutdown();
     fs.rmSync(testRoot, { recursive: true, force: true });
+    if (originalMode === undefined) {
+      delete process.env.KAIRO_MODE;
+    } else {
+      process.env.KAIRO_MODE = originalMode;
+    }
   });
 
   it('executes a typical agent loop: Explore -> Understand -> Change -> Verify', async () => {

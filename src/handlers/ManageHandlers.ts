@@ -18,14 +18,17 @@ import { computeAdaptiveFlowGate, resolveRolloutPresetFromEnv } from "../orchest
 import { buildDegradedReasons } from "../orchestration/DegradedReasonMapper.js";
 import type { TransactionLogEntry } from "../engine/TransactionLog.js";
 import type { ArtifactManagerStatus, FlowArtifact, FlowSession, GraphPack } from "../types/flow-artifacts.js";
+import type { ToolSpec } from "../server/tools/ToolSpecRegistry.js";
 import { hashContent } from "../utils/hash.js";
 import { detectServiceRoots } from "../utils/ServiceRootDetector.js";
 import { PatchStore } from "../engine/PatchStore.js";
 import { estimateTokens } from "../orchestration/TokenBudget.js";
+import { resolveEnvelopeMaxTokens } from "../orchestration/policy/McpModePresetRegistry.js";
 
 export class ManageHandlers extends BaseHandler {
     private reindexInProgress = false;
     private reindexLastResult?: { success: boolean; output: string; startedAt: string; finishedAt?: string };
+    private readonly schemaArtifactTtlMs = 30 * 60 * 1000;
 
     constructor(private context: HandlerContext) {
         super(context.toolSpecRegistry);
@@ -60,6 +63,14 @@ export class ManageHandlers extends BaseHandler {
 
     private resolveAbsolutePath(inputPath: string): string {
         return this.context.pathNormalizer.toAbsolute(this.resolveRelativePath(inputPath));
+    }
+
+    private isWithinKairoDir(targetPath: string): boolean {
+        const baseDir = path.resolve(PathManager.resolve());
+        const resolvedTarget = path.resolve(targetPath);
+        const relative = path.relative(baseDir, resolvedTarget);
+        if (!relative || relative === ".") return true;
+        return !relative.startsWith("..") && !path.isAbsolute(relative);
     }
 
     private buildRolloutStatus(fileCount?: number) {
@@ -412,9 +423,9 @@ export class ManageHandlers extends BaseHandler {
         };
     }
 
-    private buildCostSummary(fileCount?: number) {
-        const snapshot = metrics.snapshot();
-        const getHist = (name: string) => snapshot.histograms[name];
+    private buildCostSummary(fileCount?: number, snapshot?: ReturnType<typeof metrics.snapshot>) {
+        const metricsSnapshot = snapshot ?? metrics.snapshot();
+        const getHist = (name: string) => metricsSnapshot.histograms[name];
         const scaleTier = this.resolveScaleTier(fileCount);
         return {
             histograms: {
@@ -424,6 +435,68 @@ export class ManageHandlers extends BaseHandler {
                 write: getHist("write.total_ms")
             },
             ...(scaleTier ? { scaleTier } : {})
+        };
+    }
+
+    private buildTelemetrySummary(snapshot: ReturnType<typeof metrics.snapshot>) {
+        const counters = snapshot.counters ?? {};
+        const histograms = snapshot.histograms ?? {};
+        const roundRatio = (value: number) => Math.round(value * 1000) / 1000;
+        const collectEntries = (prefix: string, label: string) => Object.entries(counters)
+            .filter(([key]) => key.startsWith(prefix))
+            .map(([key, count]) => ({
+                [label]: key.slice(prefix.length),
+                count
+            }));
+        const buildTop = (entries: Array<Record<string, any>>, limit: number) => entries
+            .sort((a, b) => (b.count as number) - (a.count as number))
+            .slice(0, limit);
+
+        const toolPrefix = "tool.calls.";
+        const toolEntries = Object.entries(counters)
+            .filter(([key]) => key.startsWith(toolPrefix) && key !== "tool.calls_total")
+            .map(([key, count]) => ({ tool: key.slice(toolPrefix.length), count }))
+            .sort((a, b) => b.count - a.count);
+        const toolTotal = counters["tool.calls_total"] ?? toolEntries.reduce((sum, entry) => sum + entry.count, 0);
+        const toolTop = toolEntries.slice(0, 5).map((entry) => ({
+            tool: entry.tool,
+            count: entry.count,
+            ...(toolTotal > 0 ? { ratio: roundRatio(entry.count / toolTotal) } : {})
+        }));
+
+        const timeoutEntriesAll = collectEntries("timeout.", "location");
+        const timeoutTotal = timeoutEntriesAll.reduce((sum, entry) => sum + (entry.count as number), 0);
+        const timeoutEntries = buildTop(timeoutEntriesAll, 5);
+
+        const degradedEntriesAll = collectEntries("degraded.reason.", "type");
+        const degradedTotal = degradedEntriesAll.reduce((sum, entry) => sum + (entry.count as number), 0);
+        const degradedEntries = buildTop(degradedEntriesAll, 5);
+
+        const planTotal = counters["change.plan_total"] ?? 0;
+        const applyTotal = counters["change.apply_total"] ?? 0;
+
+        return {
+            tools: {
+                total: toolTotal,
+                top: toolTop
+            },
+            timeouts: {
+                total: timeoutTotal,
+                top: timeoutEntries
+            },
+            degradedReasons: {
+                total: degradedTotal,
+                top: degradedEntries
+            },
+            responseEnvelope: {
+                tokens: histograms["response.envelope.tokens"],
+                chars: histograms["response.envelope.chars"]
+            },
+            changeConversion: {
+                plan: planTotal,
+                apply: applyTotal,
+                ...(planTotal > 0 ? { rate: roundRatio(applyTotal / planTotal) } : {})
+            }
         };
     }
 
@@ -611,6 +684,54 @@ export class ManageHandlers extends BaseHandler {
         return "manage";
     }
 
+    private resolveToolSpec(toolName: string): ToolSpec | undefined {
+        return this.context.toolSpecRegistry?.get(toolName) ?? this.toolSpecRegistry?.get(toolName);
+    }
+
+    private buildSchemaSummary(toolSpec: ToolSpec): {
+        tool: string;
+        schemaVersion: string;
+        description?: string;
+        required: string[];
+        properties: Array<{ name: string; type?: string; enum?: unknown[]; description?: string }>;
+        propertyCount: number;
+        additionalProperties?: boolean;
+        truncated: boolean;
+    } {
+        const schema = toolSpec.inputSchema ?? { type: "object", properties: {} };
+        const properties = schema.properties ?? {};
+        const entries = Object.entries(properties).map(([name, value]) => {
+            const detail = value && typeof value === "object" ? value as Record<string, unknown> : {};
+            const type = typeof detail.type === "string"
+                ? detail.type
+                : (Array.isArray(detail.enum) ? "enum" : (Array.isArray(detail.anyOf) ? "anyOf" : "object"));
+            const entry: { name: string; type?: string; enum?: unknown[]; description?: string } = { name, type };
+            if (Array.isArray(detail.enum)) {
+                entry.enum = detail.enum.slice(0, 12);
+            }
+            if (typeof detail.description === "string") {
+                entry.description = detail.description;
+            }
+            return entry;
+        });
+        const limited = entries.slice(0, 50);
+        return {
+            tool: toolSpec.name,
+            schemaVersion: toolSpec.schemaVersion,
+            description: toolSpec.description,
+            required: Array.isArray(schema.required) ? schema.required : [],
+            properties: limited,
+            propertyCount: entries.length,
+            additionalProperties: schema.additionalProperties === true,
+            truncated: entries.length > limited.length
+        };
+    }
+
+    private generateSchemaArtifactId(nowMs: number): string {
+        const suffix = Math.random().toString(36).slice(2, 8);
+        return `schema_${nowMs.toString(36)}_${suffix}`;
+    }
+
     private mapSessionState(status: FlowSession["status"]): "active" | "idle" | "completed" | "degraded" {
         if (status === "completed") return "completed";
         if (status === "abandoned") return "idle";
@@ -628,17 +749,15 @@ export class ManageHandlers extends BaseHandler {
 
     private resolveManageEnvelopeBudget(args: any): { maxTokens?: number; maxChars?: number } {
         const limits = args?.limits ?? {};
+        const policyMaxTokens = resolveEnvelopeMaxTokens("manage");
         const maxTokens = Number.isFinite(limits.maxTokens) && limits.maxTokens > 0
             ? limits.maxTokens
-            : this.parseNumberEnv(process.env.KAIRO_MANAGE_MAX_TOKENS, NaN);
-        const fallbackTokens = Number.isFinite(maxTokens)
-            ? maxTokens
-            : this.parseNumberEnv(process.env.KAIRO_DEFAULT_MAX_TOKENS, NaN);
+            : policyMaxTokens;
         const maxChars = Number.isFinite(limits.maxChars) && limits.maxChars > 0
             ? limits.maxChars
             : this.parseNumberEnv(process.env.KAIRO_MANAGE_MAX_CHARS, NaN);
         return {
-            maxTokens: Number.isFinite(fallbackTokens) ? fallbackTokens : undefined,
+            maxTokens: Number.isFinite(maxTokens) ? maxTokens : undefined,
             maxChars: Number.isFinite(maxChars) ? maxChars : undefined
         };
     }
@@ -858,7 +977,9 @@ export class ManageHandlers extends BaseHandler {
                         const rolloutStatus = this.buildRolloutStatus(status?.global?.totalFiles);
                         const symbolIndexStatus = this.buildSymbolIndexStatus();
                         const driftStatus = await this.buildWorkspaceDrift();
-                        const costSummary = this.buildCostSummary(status?.global?.totalFiles);
+                        const metricsSnapshot = metrics.snapshot();
+                        const costSummary = this.buildCostSummary(status?.global?.totalFiles, metricsSnapshot);
+                        const telemetrySummary = this.buildTelemetrySummary(metricsSnapshot);
                         const workflowSummary = this.buildWorkflowSummary();
 
                         if (includePerFile) {
@@ -874,6 +995,7 @@ export class ManageHandlers extends BaseHandler {
                                 symbolIndex: symbolIndexStatus,
                                 drift: driftStatus,
                                 cost: costSummary,
+                                telemetry: telemetrySummary,
                                 ...workflowSummary,
                                 rollout: rolloutStatus,
                                 activity: {
@@ -906,6 +1028,7 @@ export class ManageHandlers extends BaseHandler {
                             symbolIndex: symbolIndexStatus,
                             drift: driftStatus,
                             cost: costSummary,
+                            telemetry: telemetrySummary,
                             ...workflowSummary,
                             rollout: rolloutStatus,
                             activity: {
@@ -1065,6 +1188,50 @@ export class ManageHandlers extends BaseHandler {
                         cost: costSummary,
                         ...workflowSummary,
                         rollout: rolloutStatus
+                    };
+                }
+            case 'schema':
+                {
+                    const toolName = typeof args?.tool === "string"
+                        ? args.tool
+                        : (typeof args?.target === "string" ? args.target : "");
+                    if (!toolName) {
+                        return { success: false, output: "Missing tool name for schema export." };
+                    }
+                    const toolSpec = this.resolveToolSpec(toolName);
+                    if (!toolSpec) {
+                        return { success: false, output: `Unknown tool: ${toolName}` };
+                    }
+                    const detail = args?.detail === "full" ? "full" : "summary";
+                    if (detail === "summary") {
+                        return {
+                            success: true,
+                            output: "Schema summary ready.",
+                            schema: this.buildSchemaSummary(toolSpec)
+                        };
+                    }
+                    const exportedAt = Date.now();
+                    const artifactId = this.generateSchemaArtifactId(exportedAt);
+                    const schemaExport = {
+                        tool: toolSpec.name,
+                        schemaVersion: toolSpec.schemaVersion,
+                        description: toolSpec.description,
+                        inputSchema: toolSpec.inputSchema,
+                        compat: toolSpec.compat,
+                        exportedAt
+                    };
+                    this.context.flowArtifactManager.store({
+                        id: artifactId,
+                        type: "schema",
+                        createdAt: exportedAt,
+                        expiresAt: exportedAt + this.schemaArtifactTtlMs,
+                        schema: schemaExport
+                    });
+                    return {
+                        success: true,
+                        output: "Schema export ready.",
+                        artifactId,
+                        schemaVersion: toolSpec.schemaVersion
                     };
                 }
             case 'symbol_index_status':
@@ -1504,7 +1671,26 @@ export class ManageHandlers extends BaseHandler {
                     if (!target) {
                         return { success: false, output: "Missing artifact file path." };
                     }
-                    const artifact = await this.context.flowArtifactManager.importFromPath(target);
+                    const allowExternal = args?.allowExternal === true
+                        || process.env.KAIRO_MANAGE_IMPORT_ALLOW_EXTERNAL === "true";
+                    let resolvedPath: string;
+                    try {
+                        resolvedPath = allowExternal
+                            ? (path.isAbsolute(target) ? target : path.resolve(this.context.rootPath, target))
+                            : this.resolveAbsolutePath(target);
+                    } catch (error) {
+                        return {
+                            success: false,
+                            output: `Invalid artifact path: ${error instanceof Error ? error.message : String(error)}`
+                        };
+                    }
+                    if (!allowExternal && !this.isWithinKairoDir(resolvedPath)) {
+                        return {
+                            success: false,
+                            output: "Import is restricted to the Kairo data directory. Set KAIRO_MANAGE_IMPORT_ALLOW_EXTERNAL=true to override."
+                        };
+                    }
+                    const artifact = await this.context.flowArtifactManager.importFromPath(resolvedPath);
                     return {
                         success: Boolean(artifact),
                         output: artifact ? "Artifact imported." : "Artifact import failed.",

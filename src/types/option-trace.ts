@@ -74,6 +74,7 @@ export type EffectiveOptionsV1 =
       sources?: string;
       depth?: string;
       include?: Record<string, boolean>;
+      limits?: Record<string, number | undefined>;
     }
   | {
       version: 1;

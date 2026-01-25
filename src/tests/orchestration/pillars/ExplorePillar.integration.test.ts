@@ -26,8 +26,10 @@ jest.setTimeout(60000);
 describe('ExplorePillar Integration', () => {
   let server: SmartContextServer;
   let testRoot: string;
+  const originalMode = process.env.KAIRO_MODE;
 
   beforeEach(async () => {
+    process.env.KAIRO_MODE = "dev";
     testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'explore-test-'));
     fs.mkdirSync(path.join(testRoot, 'src'), { recursive: true });
     fs.mkdirSync(path.join(testRoot, 'docs'), { recursive: true });
@@ -38,11 +40,17 @@ describe('ExplorePillar Integration', () => {
     fs.writeFileSync(path.join(testRoot, 'docs', 'guide.md'), '# Guide\nhello from docs.');
     
     server = new SmartContextServer(testRoot);
+    await server.waitForInitialScan();
   });
 
   afterEach(async () => {
     await server.shutdown();
     fs.rmSync(testRoot, { recursive: true, force: true });
+    if (originalMode === undefined) {
+      delete process.env.KAIRO_MODE;
+    } else {
+      process.env.KAIRO_MODE = originalMode;
+    }
   });
 
   it('performs query-based exploration across docs and code', async () => {

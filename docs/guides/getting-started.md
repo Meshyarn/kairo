@@ -2,6 +2,8 @@
 
 Kairo is an MCP server that communicates over **stdio**. Your MCP host launches it and applies timeouts/permissions.
 
+By default (`KAIRO_MODE=mcp`), Kairo exposes a **compact** tool surface (`task` + `manage`). If you want to call the Five Pillars directly, set `KAIRO_PUBLIC_SURFACE=pillars`.
+
 ## Requirements
 
 - Node.js (modern LTS recommended)
@@ -118,6 +120,10 @@ Point your MCP host at the built entry (Claude CLI / Gemini CLI / Codex CLI all 
   "timeout": 300000,
   "env": {
     "NODE_OPTIONS": "--max-old-space-size=4096",
+    "KAIRO_MODE": "mcp",
+    "KAIRO_PUBLIC_SURFACE": "compact",
+    "KAIRO_LOG_TO_FILE": "true",
+    "KAIRO_ALLOW_STDOUT_LOGS": "false",
     "KAIRO_MAX_RESULTS": "25"
   }
 }
@@ -129,8 +135,8 @@ If your MCP host runs the server from a different working directory, always set 
 
 Prefer a read-first workflow:
 
-- Enable `explore` / `understand` by default
-- Enable `change` / `write` only when you intend to apply edits
+- In compact surface: allow `task` / `manage` by default
+- If you expose pillars: allow `explore` / `understand` by default, and enable `change` / `write` only when you intend to apply edits
 
 Some MCP hosts support allow/deny lists for tool names and shell commands. If yours does, start with read-only and expand gradually.
 
@@ -147,10 +153,18 @@ Use `manage({ command: "status" })` to check `drift`, and `manage({ command: "hi
 
 ## First calls
 
+Compact surface (default):
+
+- `task({ request: "Find the entrypoint and summarize it." })`
+- `task({ request: "Explain the project architecture.", mode: "analyze" })`
+- `manage({ command: "status" })`
+
+Pillars surface (optional, set `KAIRO_PUBLIC_SURFACE=pillars`):
+
 - `explore({ query: "entrypoint" })`
 - `explore({ paths: ["README.md"], view: "preview" })`
 - `understand({ goal: "Explain the project architecture" })`
-- `change({ intent: "Update greeting", targetFiles: ["src/greeting.ts"], edits: [{ targetString: "\"hello\"", replacementString: "\"hi\"" }], options: { dryRun: true } })`
+- `change({ intent: "Update greeting", targetFiles: ["src/greeting.ts"], edits: [{ targetString: "\"hello\"", replacementString: "\"hi\"" }], safety: "plan" })`
 
 ## Writer's Flow (sessions) quickstart
 
@@ -158,7 +172,7 @@ For the best review quality and iteration speed, use a session and build the cor
 
 1) `explore` (optional) with `research.sketch=true`
 2) `understand` with `vibe.extract=true` and `analysis.clusters=true`
-3) `write` / `change` in `dryRun` first, then apply
+3) `write` / `change` in plan first, then apply
 
 Note: cluster summaries require GraphRAG to be enabled (`KAIRO_GRAPHRAG_ENABLED=true` or `.kairo/config/graphrag.json`). See `docs/guides/configuration.md`.
 
@@ -179,12 +193,12 @@ const plan = await change({
   intent: "Update greeting",
   targetFiles: ["src/greeting.ts"],
   edits: [{ targetString: "\"hello\"", replacementString: "\"hi\"" }],
-  options: { dryRun: true },
+  safety: "plan",
   sessionId
 });
 
 // Inspect: plan.workflowMeta + plan.workflowWarnings (if present)
-await change({ ...plan, options: { dryRun: false }, sessionId });
+await change({ ...plan, safety: "apply", sessionId });
 ```
 
 When sessions are used, `write`/`change` include `workflowMeta` and (if needed) `workflowWarnings` to make missing steps obvious.
@@ -194,3 +208,5 @@ See `README.md` for the public overview.
 ## Next
 
 - Configuration: `docs/guides/configuration.md`
+- Promptless MCP setup: `docs/guides/promptless-integration.md`
+- Ops runbook: `docs/guides/ops-runbook.md`

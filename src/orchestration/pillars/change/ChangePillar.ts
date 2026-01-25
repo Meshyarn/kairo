@@ -67,6 +67,8 @@ import { AstManager } from "../../../ast/AstManager.js";
 import type { PathNormalizer } from "../../../utils/PathNormalizer.js";
 import { resolveSymbolicGuardConfig } from "../../../config/SymbolicGuardConfig.js";
 import { estimateTokens } from "../../TokenBudget.js";
+import { enforceChangeResponseBudget } from "../../budget/ResponseEnvelopeBudgeter.js";
+import { resolveApplyHandshakePolicy, resolveEnvelopeMaxTokens } from "../../policy/McpModePresetRegistry.js";
 import {
     computeAdaptiveFlowGate,
     recordAdaptiveFlowGateTrace,
@@ -173,6 +175,7 @@ export class ChangePillar {
       const fileSystem = this.resolveFileSystem();
       const ucg = context.getState<UnifiedContextGraph>('ucg');
       const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
+      const applyPolicy = resolveApplyHandshakePolicy();
       const input = normalizeChangeInput(intent, {
         resolveSessionId: (rawSessionId, fallback) => artifactManager?.resolveSessionId(rawSessionId, fallback),
         getSessionPolicy: (sessionId) => (sessionId ? artifactManager?.getSession(sessionId)?.policy : undefined)
@@ -182,14 +185,24 @@ export class ChangePillar {
         constraints,
         originalIntent,
         integrityOptions,
-        resolvedSessionId,
         sessionPolicy,
         resolvedOptions,
         dryRun,
         traceEnabled,
-        draftId
+        draftId,
+        applyToken,
+        refinement
       } = input;
+      let resolvedSessionId = input.resolvedSessionId;
       let { includeImpact, includeSymbolImpact, reviewOptions, diffMode, refinedIntent } = input;
+      if (applyPolicy.required && dryRun && !resolvedSessionId && artifactManager) {
+        resolvedSessionId = artifactManager.resolveSessionId("new", originalIntent);
+      }
+      if (dryRun) {
+        metrics.inc("change.plan_total");
+      } else {
+        metrics.inc("change.apply_total");
+      }
       const sessionProfile = sessionPolicy?.change?.profile ?? sessionPolicy?.profile;
       const sessionSafety = sessionPolicy?.change?.safety ?? sessionPolicy?.safety;
       const traceBuilder = traceEnabled
@@ -278,28 +291,35 @@ export class ChangePillar {
         artifactManager
       });
       const workflowWarnings = buildWorkflowWarnings(workflowMeta, Boolean(resolvedSessionId));
+      const responseEnvelope = this.resolveEnvelopeBudget(constraints);
       let strategySearchSummary: any | undefined;
       let overrideTrace: OverrideTrace | undefined;
       const attachWorkflow = <T extends Record<string, any>>(payload: T): T & { workflowMeta: WorkflowMeta; workflowWarnings?: string[] } => {
         const next = {
           ...payload,
           workflowMeta,
-          ...(strategySearchSummary ? { strategySearch: strategySearchSummary } : {}),
-          ...(traceEnabled
-            ? {
-                effectiveOptions: {
-                  version: 1,
-                  pillar: "change",
-                  profile: resolvedOptions.effective.profile,
-                  safety: resolvedOptions.effective.safety,
-                  dryRun,
-                  reviewOptions,
-                  diffMode
-                },
-                decisionTrace: traceBuilder?.finalize()
-              }
-            : {})
+          ...(strategySearchSummary ? { strategySearch: strategySearchSummary } : {})
         } as T & { workflowMeta: WorkflowMeta; workflowWarnings?: string[] };
+        if (responseEnvelope.maxTokens || responseEnvelope.maxChars) {
+          enforceChangeResponseBudget({
+            response: next,
+            maxTokens: responseEnvelope.maxTokens,
+            maxChars: responseEnvelope.maxChars,
+            traceBuilder
+          });
+        }
+        if (traceEnabled) {
+          (next as any).effectiveOptions = {
+            version: 1,
+            pillar: "change",
+            profile: resolvedOptions.effective.profile,
+            safety: resolvedOptions.effective.safety,
+            dryRun,
+            reviewOptions,
+            diffMode
+          };
+          (next as any).decisionTrace = traceBuilder?.finalize();
+        }
         if (workflowWarnings.length > 0) {
           next.workflowWarnings = workflowWarnings;
         }
@@ -315,6 +335,64 @@ export class ChangePillar {
       let shouldBatch = this.shouldUseBatch(constraints, targetFiles, editPaths);
       let overrideTargets = targetFiles.length > 0 ? targetFiles : editPaths;
       const formatterMode = resolveFormatterMode(constraints);
+      const requireApplyToken = applyPolicy.required && !dryRun;
+      const invalidateApplyTokenOnDrift = () => {
+        if (!applyPolicy.invalidateOnDrift || dryRun || !resolvedSessionId || !draftId) return;
+        artifactManager?.invalidateApplyToken(resolvedSessionId, draftId);
+      };
+
+      if (requireApplyToken) {
+        const validation = (resolvedSessionId && draftId && applyToken && artifactManager)
+          ? artifactManager.validateApplyToken({
+              sessionId: resolvedSessionId,
+              draftId,
+              token: applyToken,
+              oneTime: applyPolicy.oneTime,
+              consume: applyPolicy.oneTime
+            })
+          : { valid: false, reason: "missing" as const };
+        if (!validation.valid) {
+          const reasonCode = validation.reason === "expired"
+            ? "apply_token_expired"
+            : (validation.reason === "used" ? "apply_token_used" : "apply_token_missing");
+          const message = reasonCode === "apply_token_expired"
+            ? "Apply token expired. Re-run the plan to get a new token."
+            : (reasonCode === "apply_token_used"
+              ? "Apply token already used. Re-run the plan to get a new token."
+              : "Apply token required to apply changes. Re-run the plan to get a token.");
+          const nextArgs: Record<string, unknown> = {
+            intent: originalIntent,
+            safety: "plan"
+          };
+          if (targetFiles.length > 0) nextArgs.targetFiles = targetFiles;
+          if (rawEdits.length > 0) nextArgs.edits = rawEdits;
+          if (refinement) nextArgs.refinement = refinement;
+          if (resolvedSessionId) nextArgs.sessionId = resolvedSessionId;
+          return attachWorkflow({
+            success: false,
+            status: "blocked",
+            message,
+            errorCode: reasonCode === "apply_token_expired"
+              ? "APPLY_TOKEN_EXPIRED"
+              : (reasonCode === "apply_token_used" ? "APPLY_TOKEN_USED" : "APPLY_TOKEN_MISSING"),
+            blockedReason: reasonCode,
+            degradedReasons: buildDegradedReasons([reasonCode]),
+            guidance: {
+              message,
+              suggestedActions: [
+                {
+                  id: "change.plan",
+                  priority: 1,
+                  description: "Re-plan the change to generate a fresh apply token.",
+                  rationale: "Apply requires a valid token generated during planning.",
+                  toolCall: { tool: "change", args: nextArgs }
+                }
+              ]
+            },
+            sessionId: resolvedSessionId
+          });
+        }
+      }
 
       const strategyOutcome = await this.evaluateStrategySearch({
         strategy: (constraints as any).strategySearch,
@@ -517,6 +595,7 @@ export class ChangePillar {
           const mismatch = await this.detectFileVersionMismatch(batchFileVersions, fileVersionManager, pathNormalizer);
           if (mismatch) {
             const degradedReasons = buildDegradedReasons(["file_version_mismatch"], { filePath: mismatch.filePath });
+            invalidateApplyTokenOnDrift();
             return attachWorkflow({
               success: false,
               status: "blocked",
@@ -1016,6 +1095,7 @@ export class ChangePillar {
         const mismatch = await this.detectFileVersionMismatch(fileVersions, fileVersionManager, pathNormalizer);
         if (mismatch) {
           const degradedReasons = buildDegradedReasons(["file_version_mismatch"], { filePath: mismatch.filePath });
+          invalidateApplyTokenOnDrift();
           return attachWorkflow({
             success: false,
             status: "blocked",
@@ -1068,6 +1148,7 @@ export class ChangePillar {
 
       if (!editResult.success && editResult.errorCode === "FILE_VERSION_MISMATCH" && targetPath) {
         const degradedReasons = buildDegradedReasons(["file_version_mismatch"], { filePath: targetPath });
+        invalidateApplyTokenOnDrift();
         return attachWorkflow({
           success: false,
           status: "blocked",
@@ -1175,6 +1256,7 @@ export class ChangePillar {
           }
           if (!correctedResult.success && correctedResult.errorCode === "FILE_VERSION_MISMATCH" && targetPath) {
             const degradedReasons = buildDegradedReasons(["file_version_mismatch"], { filePath: targetPath });
+            invalidateApplyTokenOnDrift();
             return attachWorkflow({
               success: false,
               status: "blocked",
@@ -1301,6 +1383,7 @@ export class ChangePillar {
         : finalResult.diff;
 
       let draftPack: any = undefined;
+      let applyTokenRecord: { token: string; issuedAt: number; expiresAt: number } | undefined;
       if (dryRun && targetPath) {
         const originalContent = reviewOriginalContent ?? "";
         const nextContent = reviewNextContent ?? originalContent;
@@ -1318,12 +1401,20 @@ export class ChangePillar {
           draftPack.fileVersions = fileVersionsSnapshot;
         }
         draftPack.workflowMeta = workflowMeta;
+        if (applyPolicy.required && artifactManager && resolvedSessionId) {
+          applyTokenRecord = artifactManager.issueApplyToken({
+            sessionId: resolvedSessionId,
+            draftId: draftPack.id,
+            ttlMs: applyPolicy.tokenTtlMs
+          });
+        }
         const applyAction = successGuidance?.suggestedActions?.find((action: any) => action?.id === "change.apply");
         if (applyAction?.toolCall?.tool === "change" && applyAction.toolCall.args && typeof applyAction.toolCall.args === "object") {
           applyAction.toolCall.args = {
             ...applyAction.toolCall.args,
             draftId: draftPack.id,
-            ...(draftPack.fileVersions ? { fileVersions: draftPack.fileVersions } : {})
+            ...(draftPack.fileVersions ? { fileVersions: draftPack.fileVersions } : {}),
+            ...(applyTokenRecord?.token ? { applyToken: applyTokenRecord.token } : {})
           };
         }
       }
@@ -1544,6 +1635,9 @@ export class ChangePillar {
         rollbackAvailable: !dryRun && Boolean(finalResult.success),
         autoCorrected,
         autoCorrectionAttempts: autoCorrectionAttempts.length > 0 ? autoCorrectionAttempts : undefined,
+        ...(applyTokenRecord
+          ? { applyToken: applyTokenRecord.token, applyTokenExpiresAt: applyTokenRecord.expiresAt }
+          : {}),
         guidance: failureGuidance ?? successGuidance,
         sessionId: resolvedSessionId,
         relatedDocs,
@@ -1580,6 +1674,21 @@ export class ChangePillar {
   private resolveTargetFiles(constraints: any, targets: string[]): string[] {
     const fromConstraints = Array.isArray(constraints?.targetFiles) ? constraints.targetFiles : [];
     return (fromConstraints.length > 0 ? fromConstraints : targets).filter((t: any) => typeof t === 'string');
+  }
+
+  private resolveEnvelopeBudget(constraints: any): { maxTokens?: number; maxChars?: number } {
+    const limits = constraints?.limits ?? {};
+    const policyMaxTokens = resolveEnvelopeMaxTokens("change");
+    const maxTokens = Number.isFinite(limits.maxTokens) && limits.maxTokens > 0
+      ? limits.maxTokens
+      : policyMaxTokens;
+    const maxChars = Number.isFinite(limits.maxChars) && limits.maxChars > 0
+      ? limits.maxChars
+      : undefined;
+    return {
+      maxTokens: Number.isFinite(maxTokens) ? maxTokens : undefined,
+      maxChars: Number.isFinite(maxChars) ? maxChars : undefined
+    };
   }
 
   private async resolveParityGate(
@@ -2027,6 +2136,12 @@ export class ChangePillar {
 
     const startTime = Date.now();
     const deadline = startTime + config.timeboxMs;
+    let timeboxExceeded = false;
+    const recordTimeboxExceeded = () => {
+      if (timeboxExceeded) return;
+      timeboxExceeded = true;
+      metrics.inc("timeout.change.strategy_search");
+    };
     const dependencyGraph = this.registry.getMetadata<DependencyGraph>("dependencyGraph");
     const indexStateManager = this.registry.getMetadata<IndexStateManager>("indexStateManager");
     const symbolicGuardConfig = resolveSymbolicGuardConfig();
@@ -2248,6 +2363,7 @@ export class ChangePillar {
             return;
           }
           if (Date.now() > deadline || Date.now() > impactDeadline) {
+            recordTimeboxExceeded();
             appendCandidateDegraded("reasoning_budget_exceeded");
             return;
           }
@@ -2318,6 +2434,7 @@ export class ChangePillar {
             const fileSystem = this.resolveFileSystem();
             for (const [filePath, editsForFile] of mapped.fileEdits.entries()) {
               if (Date.now() > deadline || Date.now() > impactDeadline) {
+                recordTimeboxExceeded();
                 appendCandidateDegraded("reasoning_budget_exceeded");
                 break;
               }
@@ -2535,6 +2652,7 @@ export class ChangePillar {
         let rollouts = 0;
         while (rollouts < mctsConfig.maxRollouts) {
           if (Date.now() > deadline) {
+            recordTimeboxExceeded();
             recordDegraded("reasoning_budget_exceeded", { evaluatedCount: evaluated.length });
             if (args.traceBuilder) {
               args.traceBuilder.recordEvent({
@@ -2589,6 +2707,7 @@ export class ChangePillar {
     } else {
       for (const entry of normalizedCandidates) {
         if (Date.now() > deadline) {
+          recordTimeboxExceeded();
           summary.degradedReasons.push("reasoning_budget_exceeded");
           if (args.traceBuilder) {
             args.traceBuilder.recordEvent({

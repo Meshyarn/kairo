@@ -41,6 +41,10 @@ export function normalizeArgs(toolSpec: ToolSpec, rawArgs: any, mode: ToolSchema
   const findings: CompatFinding[] = [];
   const droppedFields: string[] = [];
 
+  if (mode === "compat") {
+    applyCanonicalizationV2(toolSpec, args, findings);
+  }
+
   const aliases = toolSpec.compat?.aliases ?? [];
   for (const alias of aliases) {
     const value = getPathValue(args, alias.from);
@@ -96,6 +100,10 @@ export function normalizeArgs(toolSpec: ToolSpec, rawArgs: any, mode: ToolSchema
     if (current === undefined) {
       setPathValue(args, entry.path, entry.value);
     }
+  }
+
+  if (mode === "compat") {
+    applySchemaCoercions(toolSpec.inputSchema, args, findings);
   }
 
   if (mode === "compat" && toolSpec.inputSchema?.additionalProperties === false) {
@@ -210,4 +218,248 @@ function deletePathValue(obj: Record<string, any>, path: string): void {
 
 function isPlainObject(value: any): value is Record<string, any> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function applyCanonicalizationV2(
+  toolSpec: ToolSpec,
+  args: Record<string, any>,
+  findings: CompatFinding[]
+): void {
+  const schema = toolSpec.inputSchema;
+  const hasLimitsMaxTokens = schemaHasPath(schema, "limits.maxTokens");
+  const hasOutputMaxTokens = schemaHasPath(schema, "output.maxTokens");
+  const hasLimitsMaxResults = schemaHasPath(schema, "limits.maxResults");
+  const hasTopLevelLimit = schemaHasTopLevelProperty(schema, "limit");
+  const hasTopLevelMaxResults = schemaHasTopLevelProperty(schema, "maxResults");
+  const hasTopLevelTopK = schemaHasTopLevelProperty(schema, "topK");
+
+  if (hasLimitsMaxTokens) {
+    applyAliasPath(args, "limits.max_tokens", "limits.maxTokens", findings, "Use limits.maxTokens instead of limits.max_tokens.");
+    applyAliasPath(args, "limits.max_token", "limits.maxTokens", findings, "Use limits.maxTokens instead of limits.max_token.");
+  }
+  if (hasOutputMaxTokens) {
+    applyAliasPath(args, "output.max_tokens", "output.maxTokens", findings, "Use output.maxTokens instead of output.max_tokens.");
+    applyAliasPath(args, "output.max_token", "output.maxTokens", findings, "Use output.maxTokens instead of output.max_token.");
+  }
+
+  const maxTokenTarget = hasOutputMaxTokens ? "output.maxTokens" : (hasLimitsMaxTokens ? "limits.maxTokens" : undefined);
+  if (maxTokenTarget) {
+    applyAliasKeys(
+      args,
+      ["maxTokens", "max_tokens", "max_token"],
+      maxTokenTarget,
+      findings,
+      `Mapped max token field to ${maxTokenTarget}.`
+    );
+  }
+
+  if (hasLimitsMaxResults && !hasTopLevelLimit && !hasTopLevelMaxResults && !hasTopLevelTopK) {
+    applyAliasKeys(
+      args,
+      ["maxResults", "max_results", "topK", "top_k", "limit"],
+      "limits.maxResults",
+      findings,
+      "Mapped result limit field to limits.maxResults."
+    );
+  }
+
+  applyFileAliasMapping(toolSpec, args, findings);
+  applyDryRunAlias(toolSpec, args, findings);
+}
+
+function applyFileAliasMapping(
+  toolSpec: ToolSpec,
+  args: Record<string, any>,
+  findings: CompatFinding[]
+): void {
+  const schema = toolSpec.inputSchema;
+  const hasPaths = schemaHasTopLevelProperty(schema, "paths");
+  const hasTargetFiles = schemaHasTopLevelProperty(schema, "targetFiles");
+  if (!hasPaths && !hasTargetFiles) {
+    return;
+  }
+
+  const aliasKeys = ["files", "file", "paths"];
+  for (const key of aliasKeys) {
+    const value = args[key];
+    if (value === undefined || value === null) continue;
+
+    let targetPath: string | undefined;
+    if (toolSpec.name === "task") {
+      if (key === "paths") {
+        targetPath = hasPaths ? "paths" : undefined;
+      } else {
+        const mode = typeof args.mode === "string" ? args.mode : undefined;
+        if (mode === "plan_change" || mode === "apply_change" || mode === "write") {
+          targetPath = hasTargetFiles ? "targetFiles" : (hasPaths ? "paths" : undefined);
+        } else {
+          targetPath = hasPaths ? "paths" : (hasTargetFiles ? "targetFiles" : undefined);
+        }
+      }
+    } else if (hasTargetFiles && hasPaths) {
+      targetPath = key === "paths" ? "paths" : "targetFiles";
+    } else if (hasTargetFiles) {
+      targetPath = "targetFiles";
+    } else if (hasPaths) {
+      targetPath = "paths";
+    }
+
+    if (!targetPath) continue;
+    applyAliasPath(args, key, targetPath, findings, `Mapped ${key} to ${targetPath}.`);
+  }
+}
+
+function applyDryRunAlias(
+  toolSpec: ToolSpec,
+  args: Record<string, any>,
+  findings: CompatFinding[]
+): void {
+  if (!schemaHasTopLevelProperty(toolSpec.inputSchema, "safety")) return;
+  const hasDryRun = schemaHasTopLevelProperty(toolSpec.inputSchema, "dryRun");
+  if (hasDryRun) return;
+  const raw = args.dryRun;
+  const coerced = coerceBoolean(raw);
+  if (coerced !== true) return;
+
+  let changed = false;
+  if (schemaHasPath(toolSpec.inputSchema, "options.dryRun")) {
+    if (getPathValue(args, "options.dryRun") === undefined) {
+      setPathValue(args, "options.dryRun", true);
+      changed = true;
+    }
+  }
+  if (getPathValue(args, "safety") === undefined) {
+    setPathValue(args, "safety", "plan");
+    changed = true;
+  }
+  delete args.dryRun;
+  changed = true;
+  if (changed) {
+    findings.push({
+      severity: "warning",
+      code: "SCHEMA_ALIAS_USED",
+      message: "Mapped dryRun=true to safety=plan.",
+      details: { from: "dryRun", to: "safety" }
+    });
+  }
+}
+
+function applySchemaCoercions(
+  schema: ToolSpec["inputSchema"],
+  args: Record<string, any>,
+  findings: CompatFinding[],
+  prefix: string = ""
+): void {
+  const properties = schema?.properties ?? {};
+  for (const [key, spec] of Object.entries(properties)) {
+    if (!Object.prototype.hasOwnProperty.call(args, key)) continue;
+    const value = args[key];
+    if (value === undefined || value === null) continue;
+    const path = prefix ? `${prefix}.${key}` : key;
+
+    if (spec?.type === "array" && !Array.isArray(value)) {
+      args[key] = [value];
+      findings.push({
+        severity: "warning",
+        code: "COERCION_APPLIED",
+        message: `Coerced ${path} to array.`,
+        details: { from: value, to: args[key] }
+      });
+      continue;
+    }
+
+    if (spec?.type === "number" && typeof value === "string") {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) {
+        args[key] = parsed;
+        findings.push({
+          severity: "warning",
+          code: "COERCION_APPLIED",
+          message: `Coerced ${path} from string to number.`,
+          details: { from: value, to: parsed }
+        });
+      }
+      continue;
+    }
+
+    if (spec?.type === "boolean" && typeof value === "string") {
+      const coerced = coerceBoolean(value);
+      if (typeof coerced === "boolean") {
+        args[key] = coerced;
+        findings.push({
+          severity: "warning",
+          code: "COERCION_APPLIED",
+          message: `Coerced ${path} from string to boolean.`,
+          details: { from: value, to: coerced }
+        });
+      }
+      continue;
+    }
+
+    if (spec?.type === "object" && isPlainObject(value)) {
+      applySchemaCoercions(spec, value, findings, path);
+    }
+  }
+}
+
+function applyAliasKeys(
+  args: Record<string, any>,
+  keys: string[],
+  targetPath: string,
+  findings: CompatFinding[],
+  message: string
+): void {
+  for (const key of keys) {
+    const value = getPathValue(args, key);
+    if (value === undefined) continue;
+    applyAliasPath(args, key, targetPath, findings, message);
+  }
+}
+
+function applyAliasPath(
+  args: Record<string, any>,
+  fromPath: string,
+  toPath: string,
+  findings: CompatFinding[],
+  message: string
+): void {
+  if (fromPath === toPath) return;
+  const value = getPathValue(args, fromPath);
+  if (value === undefined) return;
+  const targetValue = getPathValue(args, toPath);
+  if (targetValue === undefined) {
+    setPathValue(args, toPath, value);
+  }
+  deletePathValue(args, fromPath);
+  findings.push({
+    severity: "warning",
+    code: "SCHEMA_ALIAS_USED",
+    message,
+    details: { from: fromPath, to: toPath }
+  });
+}
+
+function schemaHasTopLevelProperty(schema: ToolSpec["inputSchema"], key: string): boolean {
+  return Boolean(schema?.properties && Object.prototype.hasOwnProperty.call(schema.properties, key));
+}
+
+function schemaHasPath(schema: ToolSpec["inputSchema"], path: string): boolean {
+  const parts = path.split(".");
+  let current: any = schema;
+  for (const part of parts) {
+    if (!current?.properties) return false;
+    const next = current.properties[part];
+    if (!next) return false;
+    current = next;
+  }
+  return true;
+}
+
+function coerceBoolean(value: any): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true") return true;
+  if (normalized === "false") return false;
+  return undefined;
 }

@@ -12,7 +12,9 @@ export function resolveAllowGraphs(args: {
   const stopTimer = metrics.startTimer("decision.understand_allow_graphs_ms", "detailed");
   try {
   if (args.isDocument) return false;
-  if (!args.strongQuery) return false;
+  if (!args.strongQuery) {
+    return args.includeCalls || args.includeDependencies || args.includeHotSpots;
+  }
   return (args.budgetProfile ?? null) !== "safe" || args.includeCalls || args.includeDependencies || args.includeHotSpots;
   } finally {
     stopTimer();

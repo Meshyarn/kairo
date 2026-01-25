@@ -1,4 +1,4 @@
-import { describe, it, expect } from "@jest/globals";
+import { describe, it, expect, beforeEach, afterEach } from "@jest/globals";
 import { InternalToolRegistry } from "../../orchestration/InternalToolRegistry.js";
 import { OrchestrationContext } from "../../orchestration/OrchestrationContext.js";
 import { UnderstandPillar } from "../../orchestration/pillars/UnderstandPillar.js";
@@ -14,6 +14,20 @@ const baseIntent = {
 };
 
 describe("Pillars", () => {
+  const originalMode = process.env.KAIRO_MODE;
+
+  beforeEach(() => {
+    process.env.KAIRO_MODE = "dev";
+  });
+
+  afterEach(() => {
+    if (originalMode === undefined) {
+      delete process.env.KAIRO_MODE;
+    } else {
+      process.env.KAIRO_MODE = originalMode;
+    }
+  });
+
   it("UnderstandPillar returns skeleton string and hotspots", async () => {
     const registry = new InternalToolRegistry();
     registry.register("project_search", async () => ({

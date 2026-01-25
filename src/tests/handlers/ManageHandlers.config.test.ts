@@ -33,6 +33,7 @@ describe("ManageHandlers config bootstrap", () => {
         expect(result.success).toBe(true);
         const plan = result.plan as Array<{ op: string; path: string }>;
         const paths = plan.map((entry) => entry.path);
+        expect(paths).toContain(path.join(root, ".kairo", "config", "mcp.json"));
         expect(paths).toContain(path.join(root, ".kairo", "config", ".mcp-config.json"));
         expect(paths).not.toContain(path.join(root, ".kairo", "config", "mcp-config.json"));
         expect(paths).not.toContain(path.join(root, ".mcp-config.json"));
@@ -53,6 +54,7 @@ describe("ManageHandlers config bootstrap", () => {
 
         expect(result.success).toBe(true);
         expect(fs.existsSync(path.join(root, ".kairo", "config", ".mcp-config.json"))).toBe(true);
+        expect(fs.existsSync(path.join(root, ".kairo", "config", "mcp.json"))).toBe(true);
         const backups = fs.readdirSync(path.join(root, ".kairo", "config"))
             .filter((name) => name.startsWith(".mcp-config.json.bak."));
         expect(backups.length).toBeGreaterThan(0);

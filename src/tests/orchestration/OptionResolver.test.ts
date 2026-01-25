@@ -1,5 +1,6 @@
 import { describe, it, expect } from "@jest/globals";
 import { OptionResolver } from "../../orchestration/options/OptionResolver.js";
+import { resolveTimeboxPolicy } from "../../orchestration/policy/McpModePresetRegistry.js";
 
 describe("OptionResolver", () => {
   it("applies sources to include when include is not explicit", () => {
@@ -60,7 +61,7 @@ describe("OptionResolver", () => {
     expect(OptionResolver.resolveChangeOptions({ profile: "fast" } as any).effective.diffMode).toBe("myers");
     expect(OptionResolver.resolveChangeOptions({ profile: "balanced" } as any).effective.diffMode).toBe("semantic");
     expect(OptionResolver.resolveChangeOptions({ profile: "deep" } as any).effective.diffMode).toBe("semantic");
-    expect(OptionResolver.resolveChangeOptions({} as any).effective.diffMode).toBeUndefined();
+    expect(OptionResolver.resolveChangeOptions({} as any).effective.diffMode).toBe("myers");
   });
 
   it("applies session policy when no explicit overrides", () => {
@@ -71,5 +72,18 @@ describe("OptionResolver", () => {
 
     expect(result.effective.sources).toBe("docs");
     expect(result.effective.profile).toBe("deep");
+  });
+
+  it("applies mcp timebox defaults to explore limits", () => {
+    const originalEnv = { ...process.env };
+    try {
+      process.env.KAIRO_MODE = "mcp";
+      delete process.env.KAIRO_PRESET;
+      const policy = resolveTimeboxPolicy();
+      const result = OptionResolver.resolveExploreOptions({} as any);
+      expect(result.effective.limits.timeoutMs).toBe(policy.perStep);
+    } finally {
+      process.env = { ...originalEnv };
+    }
   });
 });

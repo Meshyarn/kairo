@@ -84,6 +84,8 @@ import { MetricsExportService } from "../utils/metrics/MetricsExportService.js";
 import { CacheInvalidationHub } from "./CacheInvalidationHub.js";
 import { BoundaryAdapterRegistry } from "../contracts/BoundaryAdapterRegistry.js";
 import { ContractRegistry } from "../contracts/ContractRegistry.js";
+import { resolveLogToFileEnabled, resolvePublicSurface } from "../orchestration/policy/McpModePresetRegistry.js";
+import { BetaTelemetryLogger, type BetaTelemetryEvent } from "../utils/BetaTelemetryLogger.js";
 
 // Orchestration Imports
 import { OrchestrationEngine } from "../orchestration/OrchestrationEngine.js";
@@ -92,6 +94,8 @@ import { WorkflowPlanner } from "../orchestration/WorkflowPlanner.js";
 import { InternalToolRegistry } from "../orchestration/InternalToolRegistry.js";
 import { CachingStrategy } from "../orchestration/CachingStrategy.js";
 import { FlowArtifactManager } from "../orchestration/flow-artifact-manager.js";
+import { estimateTokens } from "../orchestration/TokenBudget.js";
+import { hashContent } from "../utils/hash.js";
 
 // Handler Imports
 import { SearchHandlers } from "../handlers/SearchHandlers.js";
@@ -103,6 +107,7 @@ import { NavigateHandlers } from "../handlers/NavigateHandlers.js";
 import { IntegrityHandlers } from "../handlers/IntegrityHandlers.js";
 import { HandlerRegistry } from "../handlers/HandlerRegistry.js";
 import { createHandlerContext, type HandlerContext } from "../handlers/HandlerContext.js";
+import { TaskHandlers } from "../handlers/TaskHandlers.js";
 
 export class SmartContextServer {
     private server: Server;
@@ -171,6 +176,7 @@ export class SmartContextServer {
     private toolSpecRegistry = createDefaultToolSpecRegistry();
     private handlerContext?: HandlerContext;
     private vectorIndexInitPromise?: Promise<void>;
+    private betaTelemetry?: BetaTelemetryLogger;
 
     private searchHandlers!: SearchHandlers;
     private codeHandlers!: CodeHandlers;
@@ -179,6 +185,7 @@ export class SmartContextServer {
     private manageHandlers!: ManageHandlers;
     private navigateHandlers!: NavigateHandlers;
     private integrityHandlers!: IntegrityHandlers;
+    private taskHandlers!: TaskHandlers;
     private handlerRegistry!: HandlerRegistry;
 
 
@@ -194,6 +201,7 @@ export class SmartContextServer {
         RolloutController.applyFromEnv();
         ModularRolloutController.applyFromEnv();
         PathManager.setRoot(this.rootPath);
+        this.betaTelemetry = BetaTelemetryLogger.fromEnv(this.rootPath);
         this.fileSystem = new NodeFileSystem(this.rootPath);
         this.alertDispatcher = new AlertDispatcher({
             rootPath: this.rootPath,
@@ -393,7 +401,10 @@ export class SmartContextServer {
 
         // Orchestration Layer
         this.internalRegistry = new InternalToolRegistry();
-        this.flowArtifactManager = new FlowArtifactManager();
+        this.flowArtifactManager = new FlowArtifactManager({
+            persistPath: PathManager.resolve("flow-artifacts"),
+            fileSystem: this.fileSystem
+        });
         this.orchestrationEngine = new OrchestrationEngine(
             new IntentRouter(),
             new WorkflowPlanner(),
@@ -478,6 +489,7 @@ export class SmartContextServer {
         this.manageHandlers = new ManageHandlers(handlerContext);
         this.navigateHandlers = new NavigateHandlers(handlerContext);
         this.integrityHandlers = new IntegrityHandlers(handlerContext);
+        this.taskHandlers = new TaskHandlers(handlerContext);
 
         this.handlerRegistry.register(this.searchHandlers);
         this.handlerRegistry.register(this.codeHandlers);
@@ -486,6 +498,7 @@ export class SmartContextServer {
         this.handlerRegistry.register(this.manageHandlers);
         this.handlerRegistry.register(this.navigateHandlers);
         this.handlerRegistry.register(this.integrityHandlers);
+        this.handlerRegistry.register(this.taskHandlers);
     }
 
     private isTestEnv(): boolean {
@@ -532,7 +545,7 @@ export class SmartContextServer {
 
     private initFileLogger(): void {
         if (this.logStream) return;
-        const enabled = process.env.KAIRO_LOG_TO_FILE === "true" || !!process.env.KAIRO_LOG_FILE;
+        const enabled = resolveLogToFileEnabled() || !!process.env.KAIRO_LOG_FILE;
         if (!enabled) return;
         const singleFilePath = process.env.KAIRO_LOG_FILE;
         const logDir = process.env.KAIRO_LOG_DIR
@@ -926,7 +939,12 @@ export class SmartContextServer {
             exposeInternal: exposeInternalTools,
             exposeCompat: exposeFileTools
         });
-        return tools.map((tool: ToolSpec) => ({
+        const surface = resolvePublicSurface();
+        const compactToolNames = new Set(["task", "manage"]);
+        const filtered = surface === "compact" && !exposeInternalTools && !exposeFileTools
+            ? tools.filter((tool) => compactToolNames.has(tool.name))
+            : tools;
+        return filtered.map((tool: ToolSpec) => ({
             name: tool.name,
             description: tool.description,
             inputSchema: tool.inputSchema
@@ -936,6 +954,14 @@ export class SmartContextServer {
     private async handleCallTool(name: string, args: any): Promise<any> {
         const rolloutContext = this.buildRolloutContext(args);
         return FeatureFlags.withContext(rolloutContext, async () => {
+            this.recordToolCallTelemetry(name);
+            const startedAt = Date.now();
+            const finalizeResponse = (response: any) => {
+                this.ensureResponseHasIsError(response);
+                this.recordResponseTelemetry(name, response);
+                this.recordBetaTelemetry(name, args, response, startedAt);
+                return response;
+            };
             try {
                 const toolSpec = this.toolSpecRegistry.get(name);
                 const mode = getToolSchemaMode();
@@ -943,10 +969,10 @@ export class SmartContextServer {
                 if (toolSpec) {
                     const validation = validateArgs(toolSpec, normalized.args, mode);
                     if (validation.missing.length > 0) {
-                        return this.errorResponse("MissingParameter", `Missing required parameter(s): ${validation.missing.join(", ")}`);
+                        return finalizeResponse(this.errorResponse("MissingParameter", `Missing required parameter(s): ${validation.missing.join(", ")}`));
                     }
                     if (validation.invalid.length > 0) {
-                        return this.errorResponse("InvalidArguments", "Invalid arguments.", { invalid: validation.invalid });
+                        return finalizeResponse(this.errorResponse("InvalidArguments", "Invalid arguments.", { invalid: validation.invalid }));
                     }
                 }
                 const useModularHandlers = FeatureFlags.isEnabled(FeatureFlags.MODULAR_HANDLERS_ENABLED, rolloutContext);
@@ -963,15 +989,14 @@ export class SmartContextServer {
                     }
                 }
                 if (result !== null) {
-                    this.ensureResponseHasIsError(result);
-                    return result;
+                    return finalizeResponse(result);
                 }
                 throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
             } catch (error: any) {
                 if (error instanceof McpError) {
                     throw error;
                 }
-                return this.errorResponse(error?.code ?? "InternalError", error?.message ?? "Unknown error", error?.details);
+                return finalizeResponse(this.errorResponse(error?.code ?? "InternalError", error?.message ?? "Unknown error", error?.details));
             }
         });
     }
@@ -1090,6 +1115,199 @@ export class SmartContextServer {
         } catch {
             // ignore parsing errors
         }
+    }
+
+    private recordToolCallTelemetry(name: string): void {
+        const toolName = typeof name === "string" && name.trim().length > 0 ? name.trim() : "unknown";
+        metrics.inc("tool.calls_total");
+        metrics.inc(`tool.calls.${toolName}`);
+    }
+
+    private recordResponseTelemetry(name: string, response: any): void {
+        try {
+            const text = this.extractResponseText(response);
+            if (!text) return;
+            const toolName = typeof name === "string" && name.trim().length > 0 ? name.trim() : "unknown";
+            const usedChars = text.length;
+            metrics.observe("response.envelope.chars", usedChars);
+            metrics.observe(`response.envelope.chars.${toolName}`, usedChars);
+            const estimatedTokens = estimateTokens(text, { languageId: "json" });
+            metrics.observe("response.envelope.tokens", estimatedTokens);
+            metrics.observe(`response.envelope.tokens.${toolName}`, estimatedTokens);
+            const degradedReasons = this.extractDegradedReasonTypes(text);
+            for (const reason of degradedReasons) {
+                metrics.inc(`degraded.reason.${reason}`);
+            }
+        } catch {
+            // ignore telemetry failures
+        }
+    }
+
+    private recordBetaTelemetry(name: string, args: any, response: any, startedAt: number): void {
+        if (!this.betaTelemetry) return;
+        try {
+            const toolName = typeof name === "string" && name.trim().length > 0 ? name.trim() : "unknown";
+            const text = this.extractResponseText(response);
+            const responseChars = text?.length ?? 0;
+            const responseTokens = text ? estimateTokens(text, { languageId: "json" }) : undefined;
+            const payload = this.safeParsePayload(text);
+            const event: BetaTelemetryEvent = {
+                tool: toolName,
+                surface: resolvePublicSurface(),
+                latencyMs: Math.max(0, Date.now() - startedAt),
+                responseChars: responseChars > 0 ? responseChars : undefined,
+                responseTokens,
+                status: this.resolvePayloadStatus(payload, response),
+                errorCode: this.resolvePayloadErrorCode(payload, response),
+                degraded: typeof payload?.degraded === "boolean" ? payload.degraded : undefined,
+                degradedReasons: Array.isArray(payload?.degradedReasons) ? payload.degradedReasons : undefined,
+                contractFindingCodes: this.extractContractFindingCodes(payload),
+                ...this.buildBetaInputSummary(toolName, args)
+            };
+            this.betaTelemetry.record(event);
+        } catch {
+            // ignore beta telemetry failures
+        }
+    }
+
+    private safeParsePayload(text?: string): any | undefined {
+        if (!text) return undefined;
+        const trimmed = text.trim();
+        if (!trimmed || (trimmed[0] !== "{" && trimmed[0] !== "[")) {
+            return undefined;
+        }
+        if (trimmed.length > 200_000) {
+            return undefined;
+        }
+        try {
+            return JSON.parse(trimmed);
+        } catch {
+            return undefined;
+        }
+    }
+
+    private resolvePayloadStatus(payload: any, response: any): "ok" | "error" | undefined {
+        if (payload?.ok === true || payload?.success === true) return "ok";
+        if (payload?.ok === false || payload?.success === false) return "error";
+        if (response?.isError === true) return "error";
+        return undefined;
+    }
+
+    private resolvePayloadErrorCode(payload: any, response: any): string | undefined {
+        if (typeof payload?.errorCode === "string") return payload.errorCode;
+        if (typeof payload?.result?.errorCode === "string") return payload.result.errorCode;
+        const text = response?.content?.[0]?.text;
+        if (typeof text === "string" && text.includes("MissingParameter")) return "MissingParameter";
+        return undefined;
+    }
+
+    private extractContractFindingCodes(payload: any): string[] | undefined {
+        const findings = payload?.contract?.findings;
+        if (!Array.isArray(findings)) return undefined;
+        const codes = findings
+            .map((entry: any) => entry?.code)
+            .filter((code: any) => typeof code === "string") as string[];
+        return codes.length > 0 ? codes.slice(0, 8) : undefined;
+    }
+
+    private buildBetaInputSummary(toolName: string, args: any): Partial<BetaTelemetryEvent> {
+        if (!args || typeof args !== "object") return {};
+        const summary: Partial<BetaTelemetryEvent> = {};
+        if (toolName === "task") {
+            summary.mode = typeof args.mode === "string" ? args.mode : undefined;
+            summary.budget = typeof args.budget === "string" ? args.budget : undefined;
+            summary.outputFormat = typeof args.output?.format === "string" ? args.output.format : undefined;
+            if (typeof args.request === "string" && args.request.trim().length > 0) {
+                summary.requestHash = hashContent(args.request.trim());
+            }
+        } else if (typeof args.goal === "string" && args.goal.trim().length > 0) {
+            summary.requestHash = hashContent(args.goal.trim());
+        } else if (typeof args.intent === "string" && args.intent.trim().length > 0) {
+            summary.requestHash = hashContent(args.intent.trim());
+        } else if (typeof args.query === "string" && args.query.trim().length > 0) {
+            summary.requestHash = hashContent(args.query.trim());
+        }
+
+        summary.editsCount = Array.isArray(args.edits) ? args.edits.length : undefined;
+        summary.pathsCount = Array.isArray(args.paths) ? args.paths.length : undefined;
+        summary.targetFilesCount = Array.isArray(args.targetFiles) ? args.targetFiles.length : undefined;
+        return summary;
+    }
+
+    private extractResponseText(response: any): string | undefined {
+        if (!response || typeof response !== "object") return undefined;
+        const content = (response as any).content;
+        if (!Array.isArray(content)) return undefined;
+        const parts: string[] = [];
+        for (const item of content) {
+            if (item?.type === "text" && typeof item.text === "string") {
+                parts.push(item.text);
+            }
+        }
+        return parts.length > 0 ? parts.join("\n") : undefined;
+    }
+
+    private extractDegradedReasonTypes(text: string): string[] {
+        const trimmed = text.trim();
+        if (!trimmed || (trimmed[0] !== "{" && trimmed[0] !== "[")) {
+            return [];
+        }
+        let payload: any;
+        try {
+            payload = JSON.parse(trimmed);
+        } catch {
+            return [];
+        }
+        return this.collectDegradedReasonTypes(payload);
+    }
+
+    private collectDegradedReasonTypes(payload: any): string[] {
+        const seen = new Set<string>();
+        const stack: any[] = [payload];
+        let guard = 0;
+        while (stack.length > 0 && guard < 500) {
+            const current = stack.pop();
+            guard += 1;
+            if (!current || typeof current !== "object") continue;
+            if (Array.isArray(current)) {
+                const limit = Math.min(current.length, 50);
+                for (let i = 0; i < limit; i += 1) {
+                    const entry = current[i];
+                    if (entry && typeof entry === "object") {
+                        stack.push(entry);
+                    }
+                }
+                continue;
+            }
+            const degradedSets = [
+                (current as any).degradedReasons,
+                (current as any).degradedReasonDetails
+            ];
+            for (const reasons of degradedSets) {
+                if (!Array.isArray(reasons)) continue;
+                for (const entry of reasons) {
+                    if (typeof entry === "string" && entry.trim().length > 0) {
+                        seen.add(entry.trim());
+                        continue;
+                    }
+                    if (entry && typeof entry === "object") {
+                        const type = (entry as any).type ?? (entry as any).code ?? (entry as any).reason;
+                        if (typeof type === "string" && type.trim().length > 0) {
+                            seen.add(type.trim());
+                        }
+                    }
+                }
+            }
+            const values = Object.values(current);
+            const limit = Math.min(values.length, 50);
+            for (let i = 0; i < limit; i += 1) {
+                const value = values[i];
+                if (value && typeof value === "object") {
+                    stack.push(value);
+                }
+            }
+        }
+        return Array.from(seen);
     }
 
     private isPillarTool(name: string): boolean {

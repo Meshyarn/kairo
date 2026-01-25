@@ -1,9 +1,23 @@
-import { describe, it, expect } from "@jest/globals";
+import { describe, it, expect, beforeEach, afterEach } from "@jest/globals";
 import { InternalToolRegistry } from "../../orchestration/InternalToolRegistry.js";
 import { OrchestrationContext } from "../../orchestration/OrchestrationContext.js";
 import { ChangePillar } from "../../orchestration/pillars/change/ChangePillar.js";
 
 describe("ChangePillar integrity blocking", () => {
+  const originalMode = process.env.KAIRO_MODE;
+
+  beforeEach(() => {
+    process.env.KAIRO_MODE = "dev";
+  });
+
+  afterEach(() => {
+    if (originalMode === undefined) {
+      delete process.env.KAIRO_MODE;
+    } else {
+      process.env.KAIRO_MODE = originalMode;
+    }
+  });
+
   it("blocks apply when high severity integrity findings exist", async () => {
     const registry = new InternalToolRegistry();
     const editCalls: any[] = [];

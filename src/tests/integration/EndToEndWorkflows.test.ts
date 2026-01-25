@@ -24,8 +24,10 @@ const extractText = (response: any): string => {
 describe('End-to-end workflows', () => {
     let server: SmartContextServer;
     let testRoot: string;
+    const originalMode = process.env.KAIRO_MODE;
 
     beforeEach(async () => {
+        process.env.KAIRO_MODE = "dev";
         testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'kairo-e2e-'));
         fs.mkdirSync(path.join(testRoot, 'src'), { recursive: true });
         fs.writeFileSync(
@@ -41,6 +43,11 @@ describe('End-to-end workflows', () => {
     afterEach(async () => {
         await server.shutdown();
         fs.rmSync(testRoot, { recursive: true, force: true });
+        if (originalMode === undefined) {
+            delete process.env.KAIRO_MODE;
+        } else {
+            process.env.KAIRO_MODE = originalMode;
+        }
     });
 
     it('explore → code_read → change 흐름이 정상 동작한다', async () => {

@@ -393,6 +393,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
               "reindex",
               "history",
               "test",
+              "schema",
               "metrics",
               "metrics_reset",
               "config",
@@ -414,6 +415,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
             ]
           },
           detail: { type: "string", enum: ["summary", "full"] },
+          tool: { type: "string" },
           target: { type: "string" },
           targetType: { type: "string", enum: ["artifact", "transaction", "patchRef"] },
           format: { type: "string", enum: ["unified_diff", "structured_edits", "both"] },
@@ -832,6 +834,38 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
 
   const pillarTools: ToolSpec[] = [
     {
+      name: "task",
+      description: "High-level router for ask/analyze/plan workflows.",
+      schemaVersion: SCHEMA_VERSION,
+      visibility: "public",
+      inputSchema: {
+        type: "object",
+        properties: {
+          request: { type: "string" },
+          mode: { type: "string", enum: ["auto", "ask", "analyze", "plan_change", "apply_change", "write", "verify"] },
+          budget: { type: "string", enum: ["lean", "balanced", "deep"] },
+          sessionId: { type: "string" },
+          draftId: { type: "string" },
+          applyToken: { type: "string" },
+          refinement: { type: "string" },
+          edits: { type: "array", items: { type: "object" } },
+          paths: { type: "array", items: { type: "string" } },
+          targetFiles: { type: "array", items: { type: "string" } },
+          safety: { type: "string", enum: ["plan", "apply"] },
+          output: {
+            type: "object",
+            properties: {
+              format: { type: "string", enum: ["summary", "standard"] },
+              maxTokens: { type: "number" }
+            }
+          },
+          trace: { type: "boolean" }
+        },
+        required: ["request"],
+        additionalProperties: DEFAULT_ADDITIONAL_PROPERTIES
+      }
+    },
+    {
       name: "understand",
       description: "Deeply analyzes code structure and architecture.",
       schemaVersion: SCHEMA_VERSION,
@@ -1054,6 +1088,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
             }
           },
           draftId: { type: "string" },
+          applyToken: { type: "string" },
           refinement: { type: "string" },
           repoScope: {
             type: "object",
@@ -1236,6 +1271,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
             }
           },
           draftId: { type: "string" },
+          applyToken: { type: "string" },
           refinement: { type: "string" },
           repoScope: {
             type: "object",
@@ -1347,6 +1383,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
               "test",
               "init",
               "doctor",
+              "schema",
               "sessions",
               "session",
               "session_complete",
@@ -1360,6 +1397,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
             ]
           },
           scope: { type: "string", enum: ["file", "transaction", "project", "config", "languages", "wasm", "host", "contracts", "parity", "capabilities"] },
+          tool: { type: "string" },
           target: { type: "string" },
           targetType: { type: "string", enum: ["artifact", "transaction", "patchRef"] },
           format: { type: "string", enum: ["unified_diff", "structured_edits", "both"] },
@@ -1388,6 +1426,7 @@ export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
               includeExpired: { type: "boolean" }
             }
           },
+          allowExternal: { type: "boolean" },
           mode: { type: "string", enum: ["plan", "apply"] },
           targets: { type: "array", items: { type: "string", enum: ["kairo", "vscode"] } },
           root: { type: "string" },

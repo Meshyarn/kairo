@@ -1,4 +1,4 @@
-import { describe, it, expect, jest } from "@jest/globals";
+import { describe, it, expect, jest, beforeEach, afterEach } from "@jest/globals";
 import { InternalToolRegistry } from "../../orchestration/InternalToolRegistry.js";
 import { OrchestrationContext } from "../../orchestration/OrchestrationContext.js";
 import { WritePillar } from "../../orchestration/pillars/WritePillar.js";
@@ -16,6 +16,20 @@ const makeIntent = (constraints: Record<string, any>) => ({
 jest.setTimeout(30000);
 
 describe("WritePillar", () => {
+  const originalMode = process.env.KAIRO_MODE;
+
+  beforeEach(() => {
+    process.env.KAIRO_MODE = "dev";
+  });
+
+  afterEach(() => {
+    if (originalMode === undefined) {
+      delete process.env.KAIRO_MODE;
+    } else {
+      process.env.KAIRO_MODE = originalMode;
+    }
+  });
+
   it("fails when targetPath is missing", async () => {
     const registry = new InternalToolRegistry();
     const pillar = new WritePillar(registry);
@@ -162,6 +176,32 @@ describe("WritePillar", () => {
     expect(result.success).toBe(true);
     expect(result.status).toBe("draft");
     expect(result.draftPack.phantomFiles[0].content).toBe("export const seed = 1;\n");
+  });
+
+  it("blocks apply when apply token is missing in mcp mode", async () => {
+    const originalMode = process.env.KAIRO_MODE;
+    process.env.KAIRO_MODE = "mcp";
+    try {
+      const registry = new InternalToolRegistry();
+      registry.setMetadata("flowArtifactManager", new FlowArtifactManager());
+      const pillar = new WritePillar(registry);
+      const context = new OrchestrationContext();
+
+      const result = await pillar.execute(
+        makeIntent({ targetPath: "src/app.ts", safety: "apply", draftId: "draft_missing_token" }) as any,
+        context
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.status).toBe("blocked");
+      expect(result.degradedReasons?.[0]?.type ?? result.degradedReasons?.[0]).toBe("apply_token_missing");
+    } finally {
+      if (originalMode === undefined) {
+        delete process.env.KAIRO_MODE;
+      } else {
+        process.env.KAIRO_MODE = originalMode;
+      }
+    }
   });
 
   it("parses generation intent helpers", () => {

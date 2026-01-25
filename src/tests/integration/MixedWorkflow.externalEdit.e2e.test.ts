@@ -14,8 +14,10 @@ const runTool = async (server: SmartContextServer, toolName: string, args: any) 
 describe("Mixed workflow external edit", () => {
     let server: SmartContextServer;
     let testRoot: string;
+    const originalMode = process.env.KAIRO_MODE;
 
     beforeEach(async () => {
+        process.env.KAIRO_MODE = "dev";
         testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "kairo-external-edit-"));
         fs.mkdirSync(path.join(testRoot, "src"), { recursive: true });
         fs.writeFileSync(path.join(testRoot, "src", "app.ts"), "export const value = 1;\n", "utf-8");
@@ -26,6 +28,11 @@ describe("Mixed workflow external edit", () => {
     afterEach(async () => {
         await server.shutdown();
         fs.rmSync(testRoot, { recursive: true, force: true });
+        if (originalMode === undefined) {
+            delete process.env.KAIRO_MODE;
+        } else {
+            process.env.KAIRO_MODE = originalMode;
+        }
     });
 
     it("detects drift after external edit and suggests reindex", async () => {

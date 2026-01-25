@@ -4,18 +4,20 @@ This directory contains a curated set of ADRs for `kairo`.
 
 The upstream project history includes many ADR documents. For OSS readability (and to avoid burying readers in 60+ files), we:
 
-- Keep ~10 “retouched” ADRs that capture the current architecture and why it exists.
+- Keep ~10–12 “retouched” ADRs that capture the current architecture and why it exists.
 - Provide an index that summarizes every other ADR as a short, searchable entry.
 
 If you only read one thing, start with:
 
 - `docs/adr/ADR-040-five-pillars-toolset.md` (public tool surface)
+- `docs/adr/ADR-084-mcp-autopilot-and-preset-layer.md` (promptless MCP defaults: `task` + presets + handshake)
 - `docs/adr/ADR-041-integrity-audit-and-guardrails.md` (safety model)
 - `docs/adr/ADR-050-writers-flow.md` (workflow contract; artifacts/session support in `0.2.x`)
 
 ## Retouched ADRs (canonical for OSS)
 
 - `docs/adr/ADR-040-five-pillars-toolset.md`
+- `docs/adr/ADR-084-mcp-autopilot-and-preset-layer.md`
 - `docs/adr/ADR-041-integrity-audit-and-guardrails.md`
 - `docs/adr/ADR-042-series-production-baseline.md`
 - `docs/adr/ADR-043-adaptive-context-architecture.md`
@@ -87,6 +89,7 @@ The entries below cover all ADRs from the project history. Items marked “retou
 - ADR-081 (summary): GraphRAG hybrid cluster retrieval → `docs/adr/ADR-081-graphrag-hybrid-cluster-retrieval.md`
 - ADR-082 (summary): Simulate → Reason → Execute (StrategySearch + MCTS) for Change reliability → `docs/adr/ADR-082-simulate-reason-execute-mcts.md`
 - ADR-083 (summary): Language-agnostic symbolic guards (portable semantic checks + optional solver) → `docs/adr/ADR-083-language-agnostic-symbolic-guards.md`
+- ADR-084 (retouched): MCP autopilot & preset layer (compact surface + `task` router + apply handshake) → `docs/adr/ADR-084-mcp-autopilot-and-preset-layer.md`
 - ADR-055-H: Adaptive trust policy (no curated summary)
 - ADR-055-L: Action guidance + Understand fallback graph (no curated summary)
 - ADR-033: “Six Pillars” precursor to ADR-040; introduced orchestration primitives and earlier public surface.

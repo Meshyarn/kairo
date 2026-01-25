@@ -110,5 +110,6 @@ async function attachDocSections(
 
 export function shouldSuggestDocs(constraints: any): boolean {
   if (constraints?.suggestDocs === true) return true;
+  if (constraints?.options?.suggestDocs === true) return true;
   return process.env.KAIRO_CHANGE_SUGGEST_DOCS === "true";
 }

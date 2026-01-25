@@ -11,8 +11,10 @@ const parsePayload = (response: any) => {
 
 describe("Tool schema contract", () => {
   it("exposes limits.maxTokens for explore/understand schemas", async () => {
+    const originalSurface = process.env.KAIRO_PUBLIC_SURFACE;
     const originalStorageMode = process.env.KAIRO_STORAGE_MODE;
     process.env.KAIRO_STORAGE_MODE = "memory";
+    process.env.KAIRO_PUBLIC_SURFACE = "pillars";
     const server = new SmartContextServer(process.cwd());
     const tools = (server as any).listIntentTools();
 
@@ -23,6 +25,11 @@ describe("Tool schema contract", () => {
     expect(understand?.inputSchema?.properties?.limits?.properties?.maxTokens).toBeDefined();
 
     await server.shutdown();
+    if (originalSurface === undefined) {
+      delete process.env.KAIRO_PUBLIC_SURFACE;
+    } else {
+      process.env.KAIRO_PUBLIC_SURFACE = originalSurface;
+    }
     if (originalStorageMode === undefined) {
       delete process.env.KAIRO_STORAGE_MODE;
     } else {

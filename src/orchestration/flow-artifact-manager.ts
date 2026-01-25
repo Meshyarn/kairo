@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import path from "path";
 import { LRUCache } from "lru-cache";
 import { NodeFileSystem, type IFileSystem } from "../platform/FileSystem.js";
@@ -5,6 +6,7 @@ import type {
     ArtifactId,
     ArtifactManagerStatus,
     ArtifactType,
+    ApplyTokenRecord,
     FlowArtifact,
     FlowSession,
     FlowSessionOutcome,
@@ -41,6 +43,13 @@ interface FlowArtifactIndex {
     artifacts: Record<string, FlowArtifactIndexEntry>;
     sessions: Record<string, FlowSessionIndexEntry>;
 }
+
+export type ApplyTokenValidationResult = {
+    valid: boolean;
+    reason?: "missing" | "expired" | "used" | "invalid";
+    issuedAt?: number;
+    expiresAt?: number;
+};
 
 export class FlowArtifactManager {
     private readonly cache: LRUCache<ArtifactId, FlowArtifact>;
@@ -128,7 +137,8 @@ export class FlowArtifactManager {
             style: rawCounts.style ?? 0,
             draft: rawCounts.draft ?? 0,
             review: rawCounts.review ?? 0,
-            graph: rawCounts.graph ?? 0
+            graph: rawCounts.graph ?? 0,
+            schema: rawCounts.schema ?? 0
         };
         const lastUpdatedAt = Math.max(
             session.updatedAt ?? session.startedAt,
@@ -140,7 +150,8 @@ export class FlowArtifactManager {
             style: session.artifacts.style,
             draft: session.artifacts.drafts.slice(-1)[0],
             review: session.artifacts.reviews.slice(-1)[0],
-            graph: session.artifacts.graphs?.slice(-1)[0]
+            graph: session.artifacts.graphs?.slice(-1)[0],
+            schema: undefined
         };
         return { session, summary: { counts, lastUpdatedAt, latestIds } };
     }
@@ -167,6 +178,89 @@ export class FlowArtifactManager {
         return Array.from(this.sessions.values())
             .sort((a, b) => (b.updatedAt ?? b.startedAt) - (a.updatedAt ?? a.startedAt))
             .slice(0, limit);
+    }
+
+    issueApplyToken(args: { sessionId: string; draftId: string; ttlMs?: number; now?: number }): { token: string; issuedAt: number; expiresAt: number } | undefined {
+        const session = this.sessions.get(args.sessionId);
+        if (!session || !args.draftId) return undefined;
+        const now = args.now ?? Date.now();
+        const ttlMs = args.ttlMs ?? this.options.defaultTTL ?? 30 * 60 * 1000;
+        const token = crypto.randomBytes(24).toString("hex");
+        const record: ApplyTokenRecord = {
+            draftId: args.draftId,
+            tokenHash: this.hashApplyToken(token),
+            issuedAt: now,
+            expiresAt: now + ttlMs
+        };
+        session.applyTokens = {
+            ...(session.applyTokens ?? {}),
+            [args.draftId]: record
+        };
+        session.updatedAt = now;
+        this.updateIndexForSession(session);
+        if (this.options.autoPersist) {
+            void this.persistSession(session);
+        }
+        return { token, issuedAt: record.issuedAt, expiresAt: record.expiresAt };
+    }
+
+    validateApplyToken(args: {
+        sessionId?: string;
+        draftId?: string;
+        token?: string;
+        now?: number;
+        oneTime?: boolean;
+        consume?: boolean;
+    }): ApplyTokenValidationResult {
+        if (!args.sessionId || !args.draftId || !args.token) {
+            return { valid: false, reason: "missing" };
+        }
+        const session = this.sessions.get(args.sessionId);
+        if (!session) {
+            return { valid: false, reason: "missing" };
+        }
+        const record = session.applyTokens?.[args.draftId];
+        if (!record) {
+            return { valid: false, reason: "missing" };
+        }
+        const now = args.now ?? Date.now();
+        if (record.expiresAt <= now) {
+            return { valid: false, reason: "expired", issuedAt: record.issuedAt, expiresAt: record.expiresAt };
+        }
+        const oneTime = args.oneTime !== false;
+        if (oneTime && record.usedAt) {
+            return { valid: false, reason: "used", issuedAt: record.issuedAt, expiresAt: record.expiresAt };
+        }
+        const tokenHash = this.hashApplyToken(args.token);
+        if (tokenHash !== record.tokenHash) {
+            return { valid: false, reason: "invalid", issuedAt: record.issuedAt, expiresAt: record.expiresAt };
+        }
+        if (args.consume && oneTime) {
+            record.usedAt = now;
+            session.updatedAt = now;
+            this.updateIndexForSession(session);
+            if (this.options.autoPersist) {
+                void this.persistSession(session);
+            }
+        }
+        return { valid: true, issuedAt: record.issuedAt, expiresAt: record.expiresAt };
+    }
+
+    invalidateApplyToken(sessionId: string, draftId: string, now?: number): boolean {
+        const session = this.sessions.get(sessionId);
+        if (!session?.applyTokens?.[draftId]) return false;
+        const record = session.applyTokens[draftId];
+        const timestamp = now ?? Date.now();
+        record.usedAt = timestamp;
+        if (record.expiresAt > timestamp) {
+            record.expiresAt = timestamp;
+        }
+        session.updatedAt = timestamp;
+        this.updateIndexForSession(session);
+        if (this.options.autoPersist) {
+            void this.persistSession(session);
+        }
+        return true;
     }
 
     completeSession(sessionId: string, outcome?: FlowSessionOutcome): FlowSession | undefined {
@@ -764,6 +858,10 @@ export class FlowArtifactManager {
     private generateSessionId(): string {
         const suffix = Math.random().toString(36).slice(2, 8);
         return `session_${Date.now().toString(36)}_${suffix}`;
+    }
+
+    private hashApplyToken(token: string): string {
+        return crypto.createHash("sha256").update(token).digest("hex");
     }
 
     private detachFromSession(sessionId: string, artifact: FlowArtifact): void {

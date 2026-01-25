@@ -30,12 +30,15 @@ const readErrorCode = (response: any): string | undefined => {
  */
 describe("Tool surface consistency", () => {
     it("Intent tools are stable, handled, and schemas are coherent", async () => {
+        const originalSurface = process.env.KAIRO_PUBLIC_SURFACE;
         const originalStorageMode = process.env.KAIRO_STORAGE_MODE;
+        process.env.KAIRO_PUBLIC_SURFACE = "pillars";
         process.env.KAIRO_STORAGE_MODE = "memory";
         const server = new SmartContextServer(process.cwd());
         const tools = (server as any).listIntentTools() as ListedTool[];
 
         const expectedIntentTools = [
+            "task",
             "understand",
             "explore",
             "change",
@@ -71,6 +74,11 @@ describe("Tool surface consistency", () => {
 
         }
         await server.shutdown();
+        if (originalSurface === undefined) {
+            delete process.env.KAIRO_PUBLIC_SURFACE;
+        } else {
+            process.env.KAIRO_PUBLIC_SURFACE = originalSurface;
+        }
         if (originalStorageMode === undefined) {
             delete process.env.KAIRO_STORAGE_MODE;
         } else {

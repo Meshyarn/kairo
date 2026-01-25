@@ -47,6 +47,8 @@ describe('UnderstandPillar integration', () => {
             metadata: { lineCount: 2 },
             structure: { symbols: [] }
         }) as any);
+        registry.register("relationship_analyze", async () => ({ nodes: [], edges: [] }) as any);
+        registry.register("hotspot_detect", async () => [] as any);
 
         const pillar = new UnderstandPillar(registry);
         const intent = buildIntent();
@@ -113,7 +115,9 @@ describe('UnderstandPillar integration', () => {
             originalIntent: 'Understand computeTotal and its call graph in detail',
             constraints: {
                 goal: 'Understand computeTotal and its call graph in detail',
-                include: { callGraph: true },
+                profile: "deep",
+                include: { callGraph: true, dependencies: false, pageRank: false, hotSpots: false },
+                limits: { maxTokens: 20000 },
                 trace: true,
                 sessionId: "new"
             },

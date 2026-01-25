@@ -23,7 +23,7 @@ describe("UnderstandDecisionEngine", () => {
       includeCalls: true,
       includeDependencies: true,
       includeHotSpots: true
-    })).toBe(false);
+    })).toBe(true);
 
     expect(resolveAllowGraphs({
       isDocument: false,

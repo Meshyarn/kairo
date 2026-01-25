@@ -14,8 +14,10 @@ const runJsonTool = async (server: SmartContextServer, toolName: string, args: a
 describe('Writers flow - legacy behavior regression', () => {
   let server: SmartContextServer;
   let testRoot: string;
+  const originalMode = process.env.KAIRO_MODE;
 
   beforeEach(async () => {
+    process.env.KAIRO_MODE = "dev";
     testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'kairo-writers-regression-'));
     fs.mkdirSync(path.join(testRoot, 'src'), { recursive: true });
     server = new SmartContextServer(testRoot);
@@ -25,6 +27,11 @@ describe('Writers flow - legacy behavior regression', () => {
   afterEach(async () => {
     await server.shutdown();
     fs.rmSync(testRoot, { recursive: true, force: true });
+    if (originalMode === undefined) {
+      delete process.env.KAIRO_MODE;
+    } else {
+      process.env.KAIRO_MODE = originalMode;
+    }
   });
 
   it('writes explicit content without requiring a session', async () => {

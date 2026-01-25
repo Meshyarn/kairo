@@ -1,4 +1,4 @@
-import { describe, it, expect, jest, beforeEach } from "@jest/globals";
+import { describe, it, expect, jest, beforeEach, afterEach } from "@jest/globals";
 import { promises as fs } from "fs";
 import os from "os";
 import path from "path";
@@ -11,12 +11,23 @@ describe("ChangePillar Branches", () => {
   let pillar: ChangePillar;
   let registry: InternalToolRegistry;
   let context: OrchestrationContext;
+  let originalSkipParity: string | undefined;
 
   beforeEach(() => {
+    originalSkipParity = process.env.KAIRO_SKIP_PARITY_CHECK;
+    process.env.KAIRO_SKIP_PARITY_CHECK = "true";
     jest.clearAllMocks();
     registry = new InternalToolRegistry();
     context = new OrchestrationContext();
     pillar = new ChangePillar(registry);
+  });
+
+  afterEach(() => {
+    if (originalSkipParity === undefined) {
+      delete process.env.KAIRO_SKIP_PARITY_CHECK;
+    } else {
+      process.env.KAIRO_SKIP_PARITY_CHECK = originalSkipParity;
+    }
   });
 
   it("covers budget allowLevenshtein=false branches", async () => {
@@ -29,8 +40,8 @@ describe("ChangePillar Branches", () => {
 
     const intent = {
       targets: ["large.ts"],
-      constraints: { dryRun: false, edits: [{ targetString: "too short for levenshtein" }] },
-      originalIntent: "edit"
+      constraints: { dryRun: true, edits: [{ targetString: "too short for levenshtein", replacementString: "replacement" }] },
+      originalIntent: "edit large.ts"
     };
 
     const result = await pillar.execute(intent as any, context);
@@ -108,6 +119,8 @@ describe("ChangePillar Branches", () => {
   });
 
   it("applies draftId when edits are missing", async () => {
+    const originalMode = process.env.KAIRO_MODE;
+    process.env.KAIRO_MODE = "dev";
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "kairo-change-draft-"));
     const filePath = path.join(tempDir, "demo.ts");
     try {
@@ -156,7 +169,41 @@ describe("ChangePillar Branches", () => {
       expect(result.success).toBe(true);
       expect(editCalls[0].edits[0].replacementString).toBe("export const value = 2;\n");
     } finally {
+      if (originalMode === undefined) {
+        delete process.env.KAIRO_MODE;
+      } else {
+        process.env.KAIRO_MODE = originalMode;
+      }
       await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks apply when apply token is missing in mcp mode", async () => {
+    const originalMode = process.env.KAIRO_MODE;
+    process.env.KAIRO_MODE = "mcp";
+    try {
+      const manager = new FlowArtifactManager();
+      registry.setMetadata("flowArtifactManager", manager);
+
+      const result = await pillar.execute({
+        targets: ["src/app.ts"],
+        constraints: {
+          safety: "apply",
+          draftId: "draft_missing_token",
+          edits: [{ targetString: "a", replacementString: "b" }]
+        },
+        originalIntent: "apply change"
+      } as any, context);
+
+      expect(result.success).toBe(false);
+      expect(result.status).toBe("blocked");
+      expect(result.degradedReasons?.[0]?.type ?? result.degradedReasons?.[0]).toBe("apply_token_missing");
+    } finally {
+      if (originalMode === undefined) {
+        delete process.env.KAIRO_MODE;
+      } else {
+        process.env.KAIRO_MODE = originalMode;
+      }
     }
   });
 });

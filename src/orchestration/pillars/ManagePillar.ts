@@ -5,6 +5,8 @@ import { ParsedIntent } from '../IntentRouter.js';
 import { buildDegradedReasons } from '../DegradedReasonMapper.js';
 import { TraceBuilder } from '../trace/TraceBuilder.js';
 import { AdaptiveLodController } from '../adaptive-flow/AdaptiveLodController.js';
+import { enforceManageResponseBudget } from '../budget/ResponseEnvelopeBudgeter.js';
+import { resolveEnvelopeMaxTokens } from '../policy/McpModePresetRegistry.js';
 
 
 export class ManagePillar {
@@ -36,6 +38,7 @@ export class ManagePillar {
     const policy = (constraints as any).policy;
     const policyMode = (constraints as any).policyMode;
     const paths = (constraints as any).paths;
+    const tool = (constraints as any).tool;
     const checkpointLimit = (constraints as any).checkpointLimit;
     const mode = (constraints as any).mode;
     const targetType = (constraints as any).targetType;
@@ -48,7 +51,9 @@ export class ManagePillar {
     const applyOptions = (constraints as any).applyOptions;
     const pruneOptions = (constraints as any).pruneOptions;
     const apply = (constraints as any).apply;
+    const allowExternal = (constraints as any).allowExternal;
     const adaptiveLod = this.registry.getMetadata<AdaptiveLodController>("adaptiveLodController");
+    const responseEnvelope = this.resolveEnvelopeBudget(constraints);
     const execute = async (command: string) => {
       const started = Date.now();
         const output = await this.registry.execute('project_manage', {
@@ -59,6 +64,8 @@ export class ManagePillar {
           paths,
           scope,
           detail,
+          tool,
+          allowExternal,
           checkpointLimit,
           artifactOptions,
           limit,
@@ -87,6 +94,8 @@ export class ManagePillar {
           paths,
           scope,
           detail,
+          tool,
+          allowExternal,
           checkpointLimit,
           artifactOptions,
           limit,
@@ -116,7 +125,7 @@ export class ManagePillar {
         scope,
         detail,
         traceBuilder
-      });
+      }, responseEnvelope);
     
     switch (action) {
       case 'undo':
@@ -143,6 +152,8 @@ export class ManagePillar {
         return wrap('init', await execute('init'));
       case 'doctor':
         return wrap('doctor', await execute('doctor'));
+      case 'schema':
+        return wrap('schema', await execute('schema'));
       case 'history':
         return wrap('history', await execute('history'));
       case 'test':
@@ -190,7 +201,11 @@ export class ManagePillar {
     }
   }
 
-  private wrapResponse(raw: any, trace?: { command?: string; scope?: string; detail?: string; traceBuilder?: TraceBuilder }) {
+  private wrapResponse(
+    raw: any,
+    trace?: { command?: string; scope?: string; detail?: string; traceBuilder?: TraceBuilder },
+    budget?: { maxTokens?: number; maxChars?: number }
+  ) {
     const indexStatus = raw?.status?.status ?? raw?.status ?? undefined;
     const projectState = indexStatus ? { indexStatus, pendingTransactions: raw?.history?.pendingTransactions?.length ?? 0, lastModified: new Date().toISOString() } : undefined;
     const reasons = Array.isArray(raw?.reasons)
@@ -204,6 +219,14 @@ export class ManagePillar {
       degraded,
       degradedReasons: buildDegradedReasons(reasons)
     };
+    if (budget?.maxTokens || budget?.maxChars) {
+      enforceManageResponseBudget({
+        response,
+        maxTokens: budget.maxTokens,
+        maxChars: budget.maxChars,
+        traceBuilder: trace?.traceBuilder
+      });
+    }
     if (trace?.traceBuilder) {
       return {
         ...response,
@@ -218,5 +241,20 @@ export class ManagePillar {
       };
     }
     return response;
+  }
+
+  private resolveEnvelopeBudget(constraints: any): { maxTokens?: number; maxChars?: number } {
+    const limits = constraints?.limits ?? {};
+    const policyMaxTokens = resolveEnvelopeMaxTokens("manage");
+    const maxTokens = Number.isFinite(limits.maxTokens) && limits.maxTokens > 0
+      ? limits.maxTokens
+      : policyMaxTokens;
+    const maxChars = Number.isFinite(limits.maxChars) && limits.maxChars > 0
+      ? limits.maxChars
+      : undefined;
+    return {
+      maxTokens: Number.isFinite(maxTokens) ? maxTokens : undefined,
+      maxChars: Number.isFinite(maxChars) ? maxChars : undefined
+    };
   }
 }
