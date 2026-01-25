@@ -16,6 +16,60 @@ export interface DiffResult {
   removed: number
 }
 export declare function diffUnified(oldText: string, newText: string, contextLines: number): DiffResult
+export interface NativeSearchCoreOptions {
+  writerMemoryMb?: number
+  kairoVersion?: string
+  repoId?: string
+}
+export interface NativeIndexDoc {
+  kind: string
+  repoId: string
+  path?: string
+  ext?: string
+  mtimeMs?: number
+  contentHash?: string
+  content?: string
+  symbols?: Array<string>
+  pathDepth?: number
+  callgraphRank?: number
+  chunkId?: string
+  docPath?: string
+  headingPath?: Array<string>
+  scope?: string
+  text?: string
+}
+export interface NativeDeleteTarget {
+  kind: string
+  repoId: string
+  path?: string
+  chunkId?: string
+}
+export interface NativeSearchQuery {
+  kind: string
+  query: string
+  repoIds?: Array<string>
+  limit: number
+  fileTypes?: Array<string>
+  scopes?: Array<string>
+  debug?: boolean
+}
+export interface NativeSearchHit {
+  kind: string
+  repoId: string
+  path: string
+  chunkId?: string
+  score: number
+  scope?: string
+  signals?: Array<string>
+  meta?: Record<string, string>
+}
+export interface NativeSearchStats {
+  docCount: number
+  segmentCount: number
+  indexVersion: number
+  schemaVersion: number
+  writeEnabled: boolean
+}
 export interface SymbolicSolverEvidence {
   snippet?: string
   note?: string
@@ -65,4 +119,15 @@ export declare function cosineScores(query: Float32Array, vectors: Array<Float32
 export declare class SmartChunker {
   constructor(modelPath: string)
   chunk(text: string, maxTokens: number, overlap: number): Array<ChunkResult>
+}
+export declare class NativeSearchCore {
+  constructor(indexDir: string, options?: NativeSearchCoreOptions | undefined | null)
+  upsert(doc: NativeIndexDoc): void
+  upsertMany(docs: Array<NativeIndexDoc>): void
+  deleteDoc(target: NativeDeleteTarget): void
+  commit(): void
+  reset(): void
+  search(query: NativeSearchQuery): Array<NativeSearchHit>
+  close(): void
+  stats(): NativeSearchStats
 }

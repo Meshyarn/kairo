@@ -334,12 +334,18 @@ To auto-migrate at startup when legacy embeddings exist, set `KAIRO_EMBEDDING_PA
 
 When `KAIRO_VECTOR_INDEX_REBUILD=manual`, use the CLI `kairo-build-vector-index`.
 
-## Trigram memory guard rails (P1)
+## Native search (ADR-085)
 
-| Variable | Purpose |
-|---|---|
-| `KAIRO_TRIGRAM_MAX_DOC_FREQ` | Drop trigrams above document frequency threshold (0-1). |
-| `KAIRO_TRIGRAM_MAX_TERMS_PER_FILE` | Per-file trigram cap to limit memory. |
+Kairo’s file/doc search is powered by Tantivy via the native module (`@kairo/core-rs`). The legacy Trigram index is removed.
+
+- ADR summary: `docs/adr/ADR-085-rust-native-search-core-tantivy.md`
+- Index directory: `${KAIRO_DIR}/data/index[/repos/<repoId>]/v2-tantivy`
+- Inspect health: `manage({ command: "status" })` → `nativeSearch.available`, `nativeSearch.stats.docCount`, `nativeSearch.stats.writeEnabled` (false when the index is opened read-only due to a writer lock)
+- Rebuild: `manage({ command: "reindex" })`
+
+| Variable | Purpose | Notes |
+|---|---|---|
+| `KAIRO_RUST_CORE_ENABLED` | Enable/disable the Rust core (includes native search). | Default `true`. |
 
 ## Large repo performance
 

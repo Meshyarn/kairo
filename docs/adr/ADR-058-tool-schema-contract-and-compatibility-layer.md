@@ -6,28 +6,28 @@
 
 ## Summary
 
-Tool 입력 계약을 ToolSpec Registry로 단일화하고, compat/strict 모드에서 alias/unknown 필드 처리와 검증을 표준화한다.
+Unify tool input contracts via the ToolSpec Registry, and standardize alias/unknown-field handling and validation in compat/strict modes.
 
 ## Decision (v1 Contract)
 
-- ListTools 스키마는 ToolSpec Registry가 단일 출처다.
-- 모든 호출은 `normalize → validate → execute` 파이프라인을 거친다.
-- alias/unknown/coercion은 `contract.findings`로 표준 경고를 남긴다.
-- strict 모드(`KAIRO_TOOL_SCHEMA_MODE=strict`)에서는 unknown 필드를 차단한다.
+- The ListTools schema has a single source of truth: the ToolSpec Registry.
+- All calls go through a `normalize → validate → execute` pipeline.
+- Alias/unknown/coercion issues emit standardized warnings under `contract.findings`.
+- In strict mode (`KAIRO_TOOL_SCHEMA_MODE=strict`), unknown fields are rejected.
 
 ## Implementation Notes
 
 - ToolSpec Registry: `src/server/tools/ToolSpecRegistry.ts`
 - Normalize/validate: `src/server/tools/ToolArgs.ts`
-- Server entrypoint 적용: `src/server/SmartContextServer.ts`
+- Server entrypoint wiring: `src/server/SmartContextServer.ts`
 
-## Implementation Status (현 코드 기준)
+## Implementation Status (as of current code)
 
-- [x] Phase A: ToolSpec Registry + `limits.maxTokens` 스키마 반영 (explore/understand)
-- [x] Phase B: compat alias (`file_read.raw → full`, `limits.max_tokens → limits.maxTokens`) + `contract.findings` 경고 표준화
-- [x] Phase C: schema/alias/strict 모드 회귀 테스트 추가
-- [x] 내부 도구 스키마 드리프트 보강: `file_search`/`file_scout`가 실제 지원하는 `keywords/basePath/excludeGlobs/wordBoundary/...`를 스키마에 반영(compat 드랍 방지)
+ - [x] Phase A: ToolSpec Registry + schema coverage for `limits.maxTokens` (explore/understand)
+ - [x] Phase B: compat aliases (`file_read.raw → full`, `limits.max_tokens → limits.maxTokens`) + standardized `contract.findings` warnings
+ - [x] Phase C: regression tests for schema/alias/strict mode
+- [x] Internal tool schema drift hardening: reflect the real supported args in schemas (e.g., `file_search`/`file_scout` support `keywords/basePath/excludeGlobs/wordBoundary/...`) to avoid compat drops.
 
 ## Testing
 
-- 스키마 필드 보장/alias/strict 모드 테스트: `src/tests/tool_schema_contract.test.ts`
+- Schema fields/alias/strict-mode tests: `src/tests/tool_schema_contract.test.ts`

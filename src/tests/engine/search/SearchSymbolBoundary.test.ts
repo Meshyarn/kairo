@@ -5,6 +5,7 @@ import path from "path";
 import { SearchEngine } from "../../../engine/Search.js";
 import { NodeFileSystem } from "../../../platform/FileSystem.js";
 import { PathManager } from "../../../utils/PathManager.js";
+import { NativeSearchCoreStub } from "../../utils/NativeSearchCoreStub.js";
 
 let tempDir: string;
 
@@ -23,8 +24,10 @@ afterEach(() => {
 describe("SearchEngine symbol intent boundaries", () => {
     it("prefers exact symbol matches for symbol intent queries", async () => {
         const fileSystem = new NodeFileSystem(tempDir);
-        const engine = new SearchEngine(tempDir, fileSystem);
-        await engine.warmup();
+        const core = new NativeSearchCoreStub();
+        const engine = new SearchEngine(tempDir, fileSystem, [], { nativeSearchCore: core, repoId: "default" });
+        await indexFile(core, tempDir, fileSystem, "src/foo.ts");
+        await indexFile(core, tempDir, fileSystem, "src/foobar.ts");
 
         const results = await engine.scout({
             query: "class Foo",
@@ -37,3 +40,16 @@ describe("SearchEngine symbol intent boundaries", () => {
         await engine.dispose();
     });
 });
+
+async function indexFile(core: NativeSearchCoreStub, rootPath: string, fileSystem: NodeFileSystem, relativePath: string) {
+    const absPath = path.join(rootPath, relativePath);
+    const content = await fileSystem.readFile(absPath);
+    core.upsert({
+        kind: "code_file",
+        repoId: "default",
+        path: relativePath,
+        content,
+        pathDepth: Math.max(0, relativePath.split("/").filter(Boolean).length - 1),
+        callgraphRank: 0
+    });
+}

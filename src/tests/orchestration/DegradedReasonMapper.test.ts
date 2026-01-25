@@ -39,4 +39,26 @@ describe("DegradedReasonMapper", () => {
       message: "unexpected_reason"
     });
   });
+
+  it("maps native core failures to capability guidance", () => {
+    const reasons = buildDegradedReasons(["CAP_NATIVE_SEARCH_UNAVAILABLE"]);
+
+    expect(reasons?.[0]).toMatchObject({
+      type: "degraded",
+      message: "Native search core is unavailable.",
+      actionId: "manage.doctor.capabilities",
+      actionToolCall: { tool: "manage", args: { command: "doctor", scope: "capabilities" } }
+    });
+  });
+
+  it("maps corrupted index to reindex guidance", () => {
+    const reasons = buildDegradedReasons(["INDEX_CORRUPTED"]);
+
+    expect(reasons?.[0]).toMatchObject({
+      type: "degraded",
+      message: expect.stringContaining("reindex"),
+      actionId: "manage.reindex",
+      actionToolCall: { tool: "manage", args: { command: "reindex" } }
+    });
+  });
 });

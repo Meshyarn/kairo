@@ -11,7 +11,6 @@ import type {
     NormalizationLevel
 } from "../../types.js";
 import { LineCounter } from "../LineCounter.js";
-import { TrigramIndex } from "../TrigramIndex.js";
 import {
     AmbiguousMatchError,
     HashMismatchError,
@@ -271,7 +270,21 @@ export class EditPlanner {
     }
 
     private trigramKeys(value: string): Set<string> {
-        return new Set(TrigramIndex.extractTrigramCounts(value).keys());
+        const normalized = this.normalizeTrigramQuery(value);
+        if (normalized.length < 3) return new Set();
+        const keys = new Set<string>();
+        for (let i = 0; i <= normalized.length - 3; i++) {
+            keys.add(normalized.substring(i, i + 3));
+        }
+        return keys;
+    }
+
+    private normalizeTrigramQuery(input: string): string {
+        return String(input ?? "")
+            .toLowerCase()
+            .replace(/[^\p{L}\p{N}]+/gu, " ")
+            .replace(/\s+/g, " ")
+            .trim();
     }
 
     private jaccardSimilarity(a: Set<string>, b: Set<string>): number {

@@ -150,7 +150,7 @@ Safe change flow:
 
 ## Troubleshooting (no prompts)
 
-- `manage({ command: "status" })` for drift, index health, and workflow status.
+- `manage({ command: "status" })` for drift, index health, and workflow status (including `nativeSearch`).
 - `manage({ command: "doctor", scope: "host" })` for host config checks.
 - `manage({ command: "artifacts" })` to list artifacts and `manage({ command: "artifact", target: "<id>" })` to read them.
 - If the root is wrong, always pass `--root` or `KAIRO_ROOT_PATH`.

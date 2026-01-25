@@ -7,9 +7,8 @@ import { SearchEngine } from '../engine/Search.js';
 import { CallSiteAnalyzer } from '../ast/analysis/CallSiteAnalyzer.js';
 import { AstManager } from '../ast/AstManager.js';
 import { NodeFileSystem } from '../platform/FileSystem.js';
-import { SymbolIndex } from '../ast/SymbolIndex.js';
-import { SkeletonGenerator } from '../ast/SkeletonGenerator.js';
 import { IndexDatabase } from '../indexing/IndexDatabase.js';
+import { NativeSearchCoreStub } from './utils/NativeSearchCoreStub.js';
 
 jest.setTimeout(30000);
 
@@ -18,25 +17,25 @@ describe('GhostInterfaceBuilder', () => {
     let tempDir: string;
     let astManager: AstManager;
     let searchEngine: SearchEngine;
-    let symbolIndex: SymbolIndex;
     let db: IndexDatabase;
+    let fileSystem: NodeFileSystem;
+    let nativeCore: NativeSearchCoreStub;
 
     beforeEach(async () => {
         tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ghost-interface-test-'));
-        const fileSystem = new NodeFileSystem(tempDir);
+        fileSystem = new NodeFileSystem(tempDir);
+        nativeCore = new NativeSearchCoreStub();
         
         AstManager.resetForTesting();
         astManager = AstManager.getInstance();
         await astManager.init({ mode: 'test', rootPath: tempDir });
 
-        const skeletonGen = new SkeletonGenerator();
         db = new IndexDatabase(tempDir);
-        symbolIndex = new SymbolIndex(tempDir, skeletonGen, [], db);
         
         searchEngine = new SearchEngine(tempDir, fileSystem, [], {
-            symbolIndex
+            nativeSearchCore: nativeCore,
+            repoId: "default"
         });
-        await searchEngine.warmup();
 
         builder = new GhostInterfaceBuilder(
             searchEngine,
@@ -48,7 +47,6 @@ describe('GhostInterfaceBuilder', () => {
     });
 
     afterEach(async () => {
-        await symbolIndex.dispose();
         await searchEngine.dispose();
         db.dispose();
         AstManager.resetForTesting();
@@ -68,7 +66,7 @@ describe('GhostInterfaceBuilder', () => {
             }
         `);
 
-        await searchEngine.rebuild();
+        await indexFile(nativeCore, tempDir, fileSystem, usageFile);
         const ghost = await builder.reconstruct('MissingService');
 
         expect(ghost).toBeDefined();
@@ -93,7 +91,7 @@ describe('GhostInterfaceBuilder', () => {
             }
         `);
 
-        await searchEngine.rebuild();
+        await indexFile(nativeCore, tempDir, fileSystem, usageFile);
         const ghost = await builder.reconstruct('MissingService');
 
         expect(ghost).toBeDefined();
@@ -121,7 +119,7 @@ describe('GhostInterfaceBuilder', () => {
             }
         `);
 
-        await searchEngine.rebuild();
+        await indexFile(nativeCore, tempDir, fileSystem, usageFile);
         const ghost = await builder.reconstruct('BrokenSvc');
 
         const fixMethod = ghost?.methods.find(m => m.name === 'fix');
@@ -134,3 +132,16 @@ describe('GhostInterfaceBuilder', () => {
         expect(ghost).toBeNull();
     });
 });
+
+async function indexFile(core: NativeSearchCoreStub, rootPath: string, fileSystem: NodeFileSystem, absPath: string) {
+    const content = await fileSystem.readFile(absPath);
+    const relative = path.relative(rootPath, absPath).replace(/\\/g, "/");
+    core.upsert({
+        kind: "code_file",
+        repoId: "default",
+        path: relative,
+        content,
+        pathDepth: Math.max(0, relative.split("/").filter(Boolean).length - 1),
+        callgraphRank: 0
+    });
+}

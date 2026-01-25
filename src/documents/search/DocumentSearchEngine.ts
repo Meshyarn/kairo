@@ -1,5 +1,4 @@
-import { BM25FRanking } from "../../engine/Ranking.js";
-import { SearchEngine } from "../../engine/Search.js";
+import { NativeSearchError, type NativeSearchCoreClient } from "../../engine/search/native/NativeSearchCore.js";
 import { DocumentChunkRepository, StoredDocumentChunk } from "../../indexing/DocumentChunkRepository.js";
 import { EmbeddingRepository } from "../../indexing/EmbeddingRepository.js";
 import { DocumentIndexer } from "../../indexing/DocumentIndexer.js";
@@ -14,18 +13,17 @@ import { VectorIndexManager } from "../../vector/VectorIndexManager.js";
 import type { DocumentSearchOptions, DocumentSearchResponse } from "./SearchTypes.js";
 import { buildStaleCheckItems, fillPreviewsFromSummaries, hydrateResponseFromPack, toStoredItems } from "./EvidencePackBuilder.js";
 import { normalizeSearchQuery, computePackId, mergeEmbeddingConfig } from "./QueryParsing.js";
-import { isMetricsPath } from "./SearchFilters.js";
+import { isMetricsPath, matchesDocScope } from "./SearchFilters.js";
 import { applyMmr, buildRankMap, computeSimilarity, quickMatchScore, tokenize } from "./ResultRanking.js";
 import { limitEvidence, toSearchSection } from "./SnippetExtractor.js";
-import { collectCandidateFiles, collectChunks } from "./DocumentSearchCandidates.js";
 import { collectAnnChunks, embedQuery, ensureEmbeddings, resolveEmbeddingProvider } from "./DocumentSearchEmbeddings.js";
 
 export class DocumentSearchEngine {
-    private readonly bm25 = new BM25FRanking();
     private readonly packCache: LRUCache<string, { response: DocumentSearchResponse; createdAt: number; expiresAt?: number; staleCheckItems: Array<{ chunkId: string; snapshot?: { contentHash?: string } }> }>;
+    private readonly nativeSearchCore: NativeSearchCoreClient;
+    private readonly repoId: string;
 
     constructor(
-        private readonly searchEngine: SearchEngine,
         private readonly documentIndexer: DocumentIndexer,
         private readonly chunkRepository: DocumentChunkRepository,
         private readonly embeddingRepository: EmbeddingRepository,
@@ -34,10 +32,17 @@ export class DocumentSearchEngine {
         private readonly symbolIndex?: { getSymbolsForFile(filePath: string): Promise<unknown> },
         private readonly evidencePacks?: EvidencePackRepository,
         private readonly vectorIndexManager?: VectorIndexManager,
-        private readonly indexDatabase?: IndexDatabase
+        private readonly indexDatabase?: IndexDatabase,
+        nativeSearchCore?: NativeSearchCoreClient,
+        repoId?: string
     ) {
         const max = Number.parseInt(process.env.KAIRO_EVIDENCE_PACK_CACHE_SIZE ?? "100", 10);
         this.packCache = new LRUCache({ max: Number.isFinite(max) && max > 0 ? max : 100 });
+        if (!nativeSearchCore) {
+            throw new Error("Native search core is required for document search.");
+        }
+        this.nativeSearchCore = nativeSearchCore;
+        this.repoId = repoId ?? "default";
     }
 
     public evictPackCache(packIds?: string[]): void {
@@ -178,24 +183,24 @@ export class DocumentSearchEngine {
         }
 
         metrics.inc("cache.docs_pack.miss_total");
-        const candidateFiles = await collectCandidateFiles(this.searchEngine, this.chunkRepository, {
-            query: normalizedQuery,
-            maxCandidates,
-            includeComments: options.includeComments === true,
+        let native: { chunks: StoredDocumentChunk[]; scoreMap: Map<string, number>; rankMap: Map<string, number>; rankedIds: string[] };
+        try {
+            native = await this.collectNativeChunks(normalizedQuery, {
+            maxCandidates: maxChunkCandidates,
             scope,
+            includeComments: options.includeComments === true,
             includeLogs,
             includeMetrics
-        });
-        metrics.gauge("docs.search.candidate_files", candidateFiles.length);
-        let chunks = await collectChunks({
-            filePaths: candidateFiles,
-            includeComments: options.includeComments === true,
-            rootPath: this.rootPath,
-            documentIndexer: this.documentIndexer,
-            chunkRepository: this.chunkRepository,
-            symbolIndex: this.symbolIndex
-        });
+            });
+        } catch (error) {
+            degradationReasons.push(error instanceof NativeSearchError ? error.code : "native_search_failed");
+            native = { chunks: [], scoreMap: new Map(), rankMap: new Map(), rankedIds: [] };
+        }
+        let chunks: StoredDocumentChunk[] = native.chunks;
         let candidateChunkCount = chunks.length;
+        let bm25ScoreMap = native.scoreMap;
+        let bm25RankMap = native.rankMap;
+        let lexicalRankedIds: string[] = native.rankedIds;
         metrics.gauge("docs.search.candidate_chunks", candidateChunkCount);
 
         if (chunks.length > maxChunkCandidates) {
@@ -210,15 +215,19 @@ export class DocumentSearchEngine {
                 .slice(0, maxChunkCandidates)
                 .map(entry => entry.chunk);
         }
+        let candidateFiles = uniqueCandidateFiles(chunks);
 
         if (chunks.length === 0) {
-        const response: DocumentSearchResponse = {
+            const uniqueReasons = Array.from(new Set(degradationReasons.filter(Boolean)));
+            const degradedAny = uniqueReasons.length > 0;
+            const reason = degradedAny ? uniqueReasons[0] : undefined;
+            const response: DocumentSearchResponse = {
                 query,
                 results: [],
                 evidence: includeEvidence ? [] : undefined,
-                degraded: false,
-                reason: undefined,
-                reasons: undefined,
+                degraded: degradedAny,
+                reason,
+                reasons: degradedAny ? uniqueReasons : undefined,
                 provider: null,
                 stats: {
                     candidateFiles: candidateFiles.length,
@@ -333,21 +342,22 @@ export class DocumentSearchEngine {
                 metrics.gauge("docs.search.candidate_chunks", candidateChunkCount);
             }
         }
-
-        const bm25Documents = chunks.map(chunk => ({
-            id: chunk.id,
-            text: chunk.text,
-            score: 0,
-            filePath: chunk.filePath
-        }));
-        const bm25Ranked = this.bm25.rank(bm25Documents, query);
-        const bm25ScoreMap = new Map(bm25Ranked.map(doc => [doc.id, doc.score ?? 0]));
-        const bm25RankMap = buildRankMap(bm25Ranked.map(doc => doc.id));
+        const limited = limitCandidateFiles(chunks, lexicalRankedIds, bm25ScoreMap, maxCandidates);
+        if (limited.trimmed) {
+            degradationReasons.push("budget_exceeded");
+            chunks = limited.chunks;
+            lexicalRankedIds = limited.lexicalRankedIds;
+            bm25ScoreMap = limited.bm25ScoreMap;
+            bm25RankMap = buildRankMap(lexicalRankedIds);
+            candidateChunkCount = chunks.length;
+            metrics.gauge("docs.search.candidate_chunks", candidateChunkCount);
+        }
+        candidateFiles = limited.candidateFiles;
 
         if (vectorEnabled) {
             const candidateMap = new Map<string, StoredDocumentChunk>();
-            for (const doc of bm25Ranked.slice(0, Math.min(maxVectorCandidates, bm25Ranked.length))) {
-                const chunk = chunks.find(entry => entry.id === doc.id);
+            for (const docId of lexicalRankedIds.slice(0, Math.min(maxVectorCandidates, lexicalRankedIds.length))) {
+                const chunk = chunks.find(entry => entry.id === docId);
                 if (chunk) candidateMap.set(chunk.id, chunk);
             }
             if (annChunks.length > 0) {
@@ -530,6 +540,41 @@ export class DocumentSearchEngine {
         }
     }
 
+    private async collectNativeChunks(
+        query: string,
+        options: { maxCandidates: number; scope: "docs" | "project" | "all"; includeComments: boolean; includeLogs: boolean; includeMetrics: boolean }
+    ): Promise<{ chunks: StoredDocumentChunk[]; scoreMap: Map<string, number>; rankMap: Map<string, number>; rankedIds: string[] }> {
+        const scopes = new Set<"docs" | "comments" | "logs" | "metrics">();
+        scopes.add("docs");
+        if (options.includeComments) scopes.add("comments");
+        if (options.includeLogs) scopes.add("logs");
+        if (options.includeMetrics) scopes.add("metrics");
+
+        const hits = this.nativeSearchCore.search({
+            kind: "doc_chunk",
+            query,
+            limit: options.maxCandidates,
+            scopes: Array.from(scopes),
+            repoIds: [this.repoId]
+        });
+
+        const chunks: StoredDocumentChunk[] = [];
+        const scoreMap = new Map<string, number>();
+        const rankedIds: string[] = [];
+        for (const hit of hits) {
+            if (!hit.chunkId) continue;
+            const chunk = this.chunkRepository.getChunkById(hit.chunkId);
+            if (!chunk) continue;
+            if (!matchesDocScope(chunk.filePath, options.scope, options.includeComments, options.includeLogs, options.includeMetrics)) {
+                continue;
+            }
+            chunks.push(chunk);
+            rankedIds.push(chunk.id);
+            scoreMap.set(chunk.id, hit.score);
+        }
+        return { chunks, scoreMap, rankMap: buildRankMap(rankedIds), rankedIds };
+    }
+
     private attachFileMeta(response: DocumentSearchResponse): DocumentSearchResponse {
         if (!this.indexDatabase) return response;
         const filePaths = new Set<string>();
@@ -589,4 +634,48 @@ function clampDocLimit(value: number, envKey: string): number {
     const parsed = Number(raw);
     if (!Number.isFinite(parsed) || parsed <= 0) return value;
     return Math.max(1, Math.min(value, Math.floor(parsed)));
+}
+
+function uniqueCandidateFiles(chunks: StoredDocumentChunk[]): string[] {
+    return Array.from(new Set(chunks.map(chunk => chunk.filePath)));
+}
+
+function limitCandidateFiles(
+    chunks: StoredDocumentChunk[],
+    lexicalRankedIds: string[],
+    bm25ScoreMap: Map<string, number>,
+    maxCandidates: number
+): { chunks: StoredDocumentChunk[]; lexicalRankedIds: string[]; bm25ScoreMap: Map<string, number>; candidateFiles: string[]; trimmed: boolean } {
+    const candidateFiles = uniqueCandidateFiles(chunks);
+    if (candidateFiles.length <= maxCandidates) {
+        return { chunks, lexicalRankedIds, bm25ScoreMap, candidateFiles, trimmed: false };
+    }
+    const chunkById = new Map(chunks.map(chunk => [chunk.id, chunk]));
+    const orderedFiles: string[] = [];
+    const seen = new Set<string>();
+    for (const chunkId of lexicalRankedIds) {
+        const chunk = chunkById.get(chunkId);
+        if (!chunk) continue;
+        const filePath = chunk.filePath;
+        if (seen.has(filePath)) continue;
+        seen.add(filePath);
+        orderedFiles.push(filePath);
+        if (orderedFiles.length >= maxCandidates) break;
+    }
+    if (orderedFiles.length === 0) {
+        return { chunks: [], lexicalRankedIds: [], bm25ScoreMap: new Map(), candidateFiles: [], trimmed: true };
+    }
+    const allowed = new Set(orderedFiles);
+    const filteredChunks = chunks.filter(chunk => allowed.has(chunk.filePath));
+    const filteredRankedIds = lexicalRankedIds.filter(id => allowed.has(chunkById.get(id)?.filePath ?? ""));
+    const filteredScores = new Map(
+        Array.from(bm25ScoreMap.entries()).filter(([id]) => allowed.has(chunkById.get(id)?.filePath ?? ""))
+    );
+    return {
+        chunks: filteredChunks,
+        lexicalRankedIds: filteredRankedIds,
+        bm25ScoreMap: filteredScores,
+        candidateFiles: uniqueCandidateFiles(filteredChunks),
+        trimmed: true
+    };
 }

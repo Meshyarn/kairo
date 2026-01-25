@@ -3,16 +3,27 @@ import * as path from "path";
 import { DocumentChunkRepository, type StoredDocumentChunk } from "./DocumentChunkRepository.js";
 import { IndexDatabase } from "./IndexDatabase.js";
 import type { SymbolInfo } from "../types.js";
+import { NativeSearchIndexer } from "../engine/search/native/NativeSearchIndexer.js";
 
 export class CommentIndexer {
     private readonly chunkRepo: DocumentChunkRepository;
+    private readonly nativeSearchIndexer?: NativeSearchIndexer;
+    private readonly repoId: string;
 
-    constructor(private readonly indexDb: IndexDatabase) {
+    constructor(
+        private readonly indexDb: IndexDatabase,
+        options?: { nativeSearchIndexer?: NativeSearchIndexer; repoId?: string }
+    ) {
         this.chunkRepo = new DocumentChunkRepository(indexDb);
+        this.nativeSearchIndexer = options?.nativeSearchIndexer;
+        this.repoId = options?.repoId ?? "default";
     }
 
     public upsertCommentChunksForFile(filePath: string, symbols: SymbolInfo[], content?: string): void {
         if (!filePath) return;
+        const previous = this.chunkRepo
+            .listChunksForFile(filePath)
+            .filter((chunk) => chunk.kind === "code_comment");
         const chunks: StoredDocumentChunk[] = [];
         const now = Date.now();
         for (const symbol of symbols ?? []) {
@@ -59,6 +70,16 @@ export class CommentIndexer {
 
         // Overwrite all comment chunks for this file in one transaction.
         this.chunkRepo.upsertChunksForFile(filePath, chunks);
+        if (this.nativeSearchIndexer) {
+            if (previous.length > 0) {
+                this.nativeSearchIndexer.deleteDocChunks(this.repoId, previous.map((chunk) => chunk.id));
+            }
+            this.nativeSearchIndexer.upsertDocChunks({
+                repoId: this.repoId,
+                filePath,
+                chunks
+            });
+        }
     }
 }
 

@@ -6,24 +6,25 @@ This runbook covers the OSS launch checklist and the post-launch iteration loop 
 
 1) Build + core tests
 - `npm run build`
-- `NODE_OPTIONS="--experimental-vm-modules --max-old-space-size=8196" npx jest McpHostCompatibility.e2e.test --runInBand`
+- `npm run build:core-rs` (if needed for your platform)
+- `npm run test:dist:single dist/tests/integration/McpHostCompatibility.e2e.test.js`
 
 2) SLO gates
-- `node scripts/adr-084-task-slo-gate.mjs`
-- `node scripts/adr-078-cost-slo-gate.mjs`
+- `npm run benchmark:adr-084-task-slo`
+- `npm run benchmark:adr-078-cost-slo`
+- `npm run benchmark:adr-085-search-slo`
 
-3) Beta telemetry smoke
-- `node scripts/adr-084-beta-log-smoke.mjs`
+3) Smoke tests
+- `npm run smoke:mcp-mock-client`
+- `npm run smoke:adr-084-beta-log`
+- `npm run smoke:adr-084-hardening`
 
-4) Hardening smoke
-- `node scripts/adr-084-hardening-smoke.mjs`
-
-5) Docs
+4) Docs
 - `docs/guides/getting-started.md`
 - `docs/guides/configuration.md`
 - `docs/guides/promptless-integration.md`
 
-6) Release hygiene
+5) Release hygiene
 - Ensure `LICENSE` and `README.md` are accurate
 - Confirm `.kairo/` is ignored in downstream repos
 

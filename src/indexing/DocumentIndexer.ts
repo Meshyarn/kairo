@@ -13,6 +13,7 @@ import { applyEmbeddingPrefix } from "../embeddings/EmbeddingText.js";
 import { VectorIndexManager } from "../vector/VectorIndexManager.js";
 import { DocumentContentLoader } from "../documents/DocumentContentLoader.js";
 import { hashContent } from "../utils/hash.js";
+import { NativeSearchIndexer } from "../engine/search/native/NativeSearchIndexer.js";
 
 const SUPPORTED_DOC_EXTENSIONS = new Set<string>([
     ".md",
@@ -56,6 +57,8 @@ export class DocumentIndexer {
             embeddingRepository?: EmbeddingRepository;
             embeddingProviderFactory?: EmbeddingProviderFactory;
             vectorIndexManager?: VectorIndexManager;
+            nativeSearchIndexer?: NativeSearchIndexer;
+            repoId?: string;
         }
     ) {
         this.chunkRepo = new DocumentChunkRepository(indexDatabase);
@@ -66,12 +69,16 @@ export class DocumentIndexer {
         this.embeddingRepository = options?.embeddingRepository;
         this.embeddingProviderFactory = options?.embeddingProviderFactory;
         this.vectorIndexManager = options?.vectorIndexManager;
+        this.nativeSearchIndexer = options?.nativeSearchIndexer;
+        this.repoId = options?.repoId ?? "default";
     }
 
     private outlineOptions: DocumentOutlineOptions;
     private readonly embeddingRepository?: EmbeddingRepository;
     private readonly embeddingProviderFactory?: EmbeddingProviderFactory;
     private readonly vectorIndexManager?: VectorIndexManager;
+    private readonly nativeSearchIndexer?: NativeSearchIndexer;
+    private readonly repoId: string;
 
     public updateIgnorePatterns(patterns: string[]): void {
         this.ignoreFilter = (ignore as unknown as () => any)().add(patterns ?? []);
@@ -122,7 +129,7 @@ export class DocumentIndexer {
         }
         const contentForChunking = extracted.contentForSearch;
 
-        const fileHash = hashContent(extracted.profileContent ?? extracted.contentForSearch ?? "");
+        const fileHash = hashContent(extracted.contentForSearch ?? extracted.profileContent ?? "");
         this.indexDatabase.updateFileMeta(relativePath, {
             lastModified: stats.mtime,
             language: extracted.kind,
@@ -132,6 +139,7 @@ export class DocumentIndexer {
         const previousChunks = this.chunkRepo.listChunksForFile(relativePath);
         if (previousChunks.length > 0) {
             this.vectorIndexManager?.removeChunks(previousChunks.map(chunk => chunk.id));
+            this.nativeSearchIndexer?.deleteDocChunks(this.repoId, previousChunks.map(chunk => chunk.id));
         }
         this.embeddingRepository?.deleteEmbeddingsForFile(relativePath);
         let stored: StoredDocumentChunk[];
@@ -153,6 +161,20 @@ export class DocumentIndexer {
         }
 
         this.chunkRepo.upsertChunksForFile(relativePath, stored);
+        this.nativeSearchIndexer?.upsertCodeFile({
+            repoId: this.repoId,
+            filePath: relativePath,
+            content: extracted.contentForSearch,
+            contentHash: fileHash,
+            mtimeMs: stats.mtime,
+            symbols: [],
+            callgraphRank: 0
+        });
+        this.nativeSearchIndexer?.upsertDocChunks({
+            repoId: this.repoId,
+            filePath: relativePath,
+            chunks: stored
+        });
         if (this.shouldEagerEmbed()) {
             await this.embedChunks(stored);
         }
@@ -164,7 +186,9 @@ export class DocumentIndexer {
         const previousChunks = this.chunkRepo.listChunksForFile(relativePath);
         if (previousChunks.length > 0) {
             this.vectorIndexManager?.removeChunks(previousChunks.map(chunk => chunk.id));
+            this.nativeSearchIndexer?.deleteDocChunks(this.repoId, previousChunks.map(chunk => chunk.id));
         }
+        this.nativeSearchIndexer?.deleteCodeFile(this.repoId, relativePath);
         this.chunkRepo.deleteChunksForFile(relativePath);
         this.indexDatabase.deleteFile(relativePath);
     }
@@ -180,6 +204,7 @@ export class DocumentIndexer {
                 // best-effort for now
             }
         }
+        this.nativeSearchIndexer?.flush();
     }
 
     private toRelative(filePath: string): string | null {

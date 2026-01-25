@@ -1,27 +1,14 @@
 import path from "path";
-import { exec } from 'child_process';
-import { promisify } from 'util';
-import * as fs from 'fs/promises';
 import { QueryTokenizer } from "./QueryTokenizer.js";
-import { BM25FRanking, BM25FConfig } from "./Ranking.js";
-import { FileSearchResult, Document, ResourceBudget, ResourceUsage, SearchOptions, SearchProjectResultEntry, SymbolIndex } from "../types.js";
-import { TrigramIndex, TrigramIndexOptions } from "./TrigramIndex.js";
+import { FileSearchResult, ResourceBudget, ResourceUsage, SearchOptions, SearchProjectResultEntry, SymbolIndex } from "../types.js";
 import { IFileSystem } from "../platform/FileSystem.js";
-import { CallGraphMetricsBuilder, CallGraphSignals } from "./CallGraphMetricsBuilder.js";
-import { CallGraphBuilder } from "../ast/CallGraphBuilder.js";
-import { HybridScorer } from './scoring/HybridScorer.js';
-import { CandidateCollector } from './search/CandidateCollector.js';
 import { ResultProcessor } from './search/ResultProcessor.js';
 import { FilenameScorer } from './scoring/FilenameScorer.js';
-import { CommentParser } from '../utils/CommentParser.js';
-import { DependencyGraph } from "../ast/DependencyGraph.js";
 import { QueryIntentDetector } from './search/QueryIntent.js';
 import { createLogger } from "../utils/StructuredLogger.js";
 import { metrics } from "../utils/MetricsCollector.js";
 import { SymbolEmbeddingIndex } from '../indexing/SymbolEmbeddingIndex.js';
-import { IntentToSymbolMapper } from './IntentToSymbolMapper.js';
-
-const execAsync = promisify(exec);
+import { NativeSearchError, type NativeSearchCoreClient, type NativeSearchStats } from "./search/native/NativeSearchCore.js";
 
 const BUILTIN_EXCLUDE_GLOBS = [
     "**/node_modules/**",
@@ -60,12 +47,10 @@ export interface ScoutArgs extends SearchOptions {
 export interface SearchEngineOptions {
     maxPreviewLength?: number;
     maxMatchesPerFile?: number;
-    trigram?: TrigramIndexOptions;
     symbolIndex?: SymbolIndex;
     symbolEmbeddingIndex?: SymbolEmbeddingIndex;
-    fieldWeights?: BM25FConfig["fieldWeights"];
-    callGraphBuilder?: CallGraphBuilder;
-    dependencyGraph?: DependencyGraph;
+    nativeSearchCore?: NativeSearchCoreClient;
+    repoId?: string;
 }
 
 interface KeywordConstraint {
@@ -77,125 +62,50 @@ interface KeywordConstraint {
 export class SearchEngine {
     private readonly rootPath: string;
     private readonly fileSystem: IFileSystem;
-    private readonly bm25Ranking: BM25FRanking;
     private defaultExcludeGlobs: string[];
-    private readonly trigramIndex: TrigramIndex;
     private readonly maxPreviewLength: number;
     private readonly maxMatchesPerFile: number;
-    private readonly symbolIndex?: SymbolIndex;
-    private readonly dependencyGraph?: DependencyGraph;
     private readonly queryTokenizer: QueryTokenizer;
-    private readonly callGraphMetricsBuilder?: CallGraphMetricsBuilder;
-    private callGraphSignals?: Map<string, CallGraphSignals>;
     private readonly logger = createLogger("Search");
+    private readonly nativeSearchCore: NativeSearchCoreClient;
+    private readonly repoId: string;
 
-    private hybridScorer: HybridScorer;
-    private candidateCollector: CandidateCollector;
     private resultProcessor: ResultProcessor;
     private filenameScorer: FilenameScorer;
-    private commentParser: CommentParser;
     private queryIntentDetector: QueryIntentDetector;
     private symbolEmbeddingIndex?: SymbolEmbeddingIndex;
-    private intentToSymbolMapper?: IntentToSymbolMapper;
 
     constructor(rootPath: string, fileSystem: IFileSystem, initialExcludeGlobs: string[] = [], options: SearchEngineOptions = {}) {
         this.rootPath = path.resolve(rootPath);
         this.fileSystem = fileSystem;
-        this.bm25Ranking = new BM25FRanking({ fieldWeights: options.fieldWeights });
         const combined = [...BUILTIN_EXCLUDE_GLOBS, ...initialExcludeGlobs];
         this.defaultExcludeGlobs = Array.from(new Set(combined));
         this.maxPreviewLength = options.maxPreviewLength ?? DEFAULT_PREVIEW_LENGTH;
         this.maxMatchesPerFile = options.maxMatchesPerFile ?? DEFAULT_MATCHES_PER_FILE;
-        this.symbolIndex = options.symbolIndex;
-        this.dependencyGraph = options.dependencyGraph;
-        this.callGraphMetricsBuilder = options.callGraphBuilder
-            ? new CallGraphMetricsBuilder(options.callGraphBuilder)
-            : undefined;
         this.queryTokenizer = new QueryTokenizer();
+        if (!options.nativeSearchCore) {
+            throw new NativeSearchError("CAP_NATIVE_SEARCH_UNAVAILABLE", "Native search core is required.");
+        }
+        this.nativeSearchCore = options.nativeSearchCore;
+        this.repoId = options.repoId ?? "default";
 
-        const trigramEnabledEnv = (process.env.KAIRO_TRIGRAM_ENABLED ?? '').trim().toLowerCase();
-        const trigramModeEnv = (process.env.KAIRO_TRIGRAM_INDEX ?? '').trim().toLowerCase();
-        const trigramEnabled = trigramModeEnv === 'disabled'
-            ? false
-            : (trigramEnabledEnv === 'false' ? false : true);
-
-        const trigramMaxFileBytesRaw = (process.env.KAIRO_TRIGRAM_MAX_FILE_BYTES ?? '').trim();
-        const trigramMaxFileBytes = trigramMaxFileBytesRaw.length > 0
-            ? Number.parseInt(trigramMaxFileBytesRaw, 10)
-            : undefined;
-
-        const trigramExtensionsRaw = (process.env.KAIRO_TRIGRAM_INCLUDE_EXTENSIONS ?? '').trim();
-        const trigramIncludeExtensions = trigramExtensionsRaw.length > 0
-            ? trigramExtensionsRaw.split(',').map(s => s.trim()).filter(Boolean)
-            : undefined;
-
-        const trigramMaxDocFreqRaw = (process.env.KAIRO_TRIGRAM_MAX_DOC_FREQ ?? '').trim();
-        const trigramMaxDocFreq = trigramMaxDocFreqRaw.length > 0
-            ? Number.parseFloat(trigramMaxDocFreqRaw)
-            : undefined;
-
-        const trigramMaxTermsRaw = (process.env.KAIRO_TRIGRAM_MAX_TERMS_PER_FILE ?? '').trim();
-        const trigramMaxTermsPerFile = trigramMaxTermsRaw.length > 0
-            ? Number.parseInt(trigramMaxTermsRaw, 10)
-            : undefined;
-
-        this.trigramIndex = new TrigramIndex(this.rootPath, this.fileSystem, {
-            ignoreGlobs: this.defaultExcludeGlobs,
-            enabled: trigramEnabled,
-            ...(Number.isFinite(trigramMaxFileBytes as any) && (trigramMaxFileBytes as number) > 0
-                ? { maxFileBytes: trigramMaxFileBytes as number }
-                : {}),
-            ...(Array.isArray(trigramIncludeExtensions) && trigramIncludeExtensions.length > 0
-                ? { includeExtensions: trigramIncludeExtensions }
-                : {}),
-            ...(Number.isFinite(trigramMaxDocFreq as any) && (trigramMaxDocFreq as number) > 0
-                ? { maxDocFreq: trigramMaxDocFreq as number }
-                : {}),
-            ...(Number.isFinite(trigramMaxTermsPerFile as any) && (trigramMaxTermsPerFile as number) > 0
-                ? { maxTermsPerFile: trigramMaxTermsPerFile as number }
-                : {}),
-            ...options.trigram
-        });
-
-        // Initialize extracted components
         this.filenameScorer = new FilenameScorer();
-        this.commentParser = new CommentParser();
         this.queryIntentDetector = new QueryIntentDetector();
-        
-        // Initialize symbol embedding components for Phase 1 Smart Fuzzy Match
         this.symbolEmbeddingIndex = options.symbolEmbeddingIndex;
         if (this.symbolEmbeddingIndex) {
-            this.intentToSymbolMapper = new IntentToSymbolMapper(this.symbolEmbeddingIndex);
             this.logger.info('[Search] Symbol embedding search enabled');
         }
-        
-        this.hybridScorer = new HybridScorer(
-            this.rootPath,
-            this.fileSystem,
-            this.trigramIndex,
-            this.bm25Ranking,
-            this.symbolIndex,
-            this.dependencyGraph
-        );
-        
-        this.candidateCollector = new CandidateCollector(
-            this.rootPath,
-            this.trigramIndex,
-            this.symbolIndex,
-            this.fileSystem
-        );
-        
+
         this.resultProcessor = new ResultProcessor();
     }
 
     public async dispose(): Promise<void> {
-        await this.trigramIndex.dispose();
+        // SearchEngine does not own the native core lifecycle.
     }
 
     public async updateExcludeGlobs(patterns: string[]): Promise<void> {
         const combined = [...BUILTIN_EXCLUDE_GLOBS, ...patterns];
         this.defaultExcludeGlobs = Array.from(new Set(combined));
-        await this.trigramIndex.updateIgnoreGlobs(this.defaultExcludeGlobs);
     }
 
     public getExcludeGlobs(): string[] {
@@ -203,38 +113,66 @@ export class SearchEngine {
     }
 
     public async warmup(): Promise<void> {
-        await this.trigramIndex.ensureReady();
+        try {
+            this.nativeSearchCore.stats();
+        } catch {
+            // best-effort warmup
+        }
     }
 
     public setSymbolEmbeddingIndex(index?: SymbolEmbeddingIndex): void {
         this.symbolEmbeddingIndex = index;
-        this.intentToSymbolMapper = index ? new IntentToSymbolMapper(index) : undefined;
         if (index) {
             this.logger.info('[Search] Symbol embedding search enabled');
         }
     }
 
     public isIndexReady(): boolean {
-        return this.trigramIndex.isReadyState();
+        try {
+            this.nativeSearchCore.stats();
+            return true;
+        } catch {
+            return false;
+        }
     }
 
     public isIndexBuilding(): boolean {
-        return this.trigramIndex.isBuildingState();
+        return false;
+    }
+
+    public getNativeStatus(): { available: boolean; stats?: NativeSearchStats; error?: string } {
+        try {
+            const stats = this.nativeSearchCore.stats();
+            return { available: true, stats };
+        } catch (error: any) {
+            return { available: false, error: error?.message ?? String(error) };
+        }
     }
 
     public async rebuild(options?: { logEvery?: number; logger?: (message: string) => void; logTotals?: boolean }): Promise<void> {
-        await this.trigramIndex.rebuild(options);
-        this.callGraphSignals = undefined;
+        if (typeof this.nativeSearchCore.reset === "function") {
+            this.nativeSearchCore.reset();
+        } else {
+            throw new NativeSearchError("CAP_NATIVE_SEARCH_UNAVAILABLE", "Native search reset not supported.");
+        }
     }
 
     public async invalidateFile(absPath: string): Promise<void> {
-        await this.trigramIndex.refreshFile(absPath);
-        this.callGraphSignals = undefined;
+        const relative = this.normalizeRelativePath(absPath, this.rootPath);
+        if (!relative) return;
+        try {
+            this.nativeSearchCore.deleteDoc({
+                kind: "code_file",
+                repoId: this.repoId,
+                path: relative.replace(/\\/g, "/")
+            });
+        } catch {
+            // best-effort (native index may be read-only / write-locked)
+        }
     }
 
     public async invalidateDirectory(absDir: string): Promise<void> {
-        await this.trigramIndex.refreshDirectory(absDir);
-        this.callGraphSignals = undefined;
+        void absDir;
     }
 
     public async runFileGrep(searchPattern: string, filePath: string): Promise<number[]> {
@@ -267,6 +205,10 @@ export class SearchEngine {
     }
 
     public async scout(args: ScoutArgs): Promise<FileSearchResult[]> {
+        return this.scoutNative(args);
+    }
+
+    private async scoutNative(args: ScoutArgs): Promise<FileSearchResult[]> {
         const stopTotal = metrics.startTimer("search.scout.total_ms");
         const { query, includeGlobs, excludeGlobs, basePath, patterns } = args;
         const budget = args.budget;
@@ -278,284 +220,294 @@ export class SearchEngine {
                 throw new Error("A query string, keyword, or pattern is required.");
             }
 
-        const smartCase = args.smartCase ?? true;
-        const caseSensitive = Boolean(args.caseSensitive);
-        let wordBoundary = Boolean(args.wordBoundary);
+            const smartCase = args.smartCase ?? true;
+            const caseSensitive = Boolean(args.caseSensitive);
+            let wordBoundary = Boolean(args.wordBoundary);
 
-        const keywordSource = query && query.trim().length > 0
-            ? this.queryTokenizer.tokenize(query)
-            : (args.keywords ?? []).filter((kw): kw is string => typeof kw === "string" && kw.trim().length > 0);
+            const keywordSource = query && query.trim().length > 0
+                ? this.queryTokenizer.tokenize(query)
+                : (args.keywords ?? []).filter((kw): kw is string => typeof kw === "string" && kw.trim().length > 0);
+            const keywordConstraints = this.buildKeywordConstraints(keywordSource, { caseSensitive, smartCase });
+            const keywordLabels = keywordConstraints.map(keyword => keyword.raw);
+            const effectiveQuery = query || keywordSource.join(' ');
+            const normalizedFileTypes = normalizeFileTypes(args.fileTypes);
+            const patternHints = extractPatternHintTokens(patterns);
+            const candidateQuery = buildCandidateQuery(this.queryTokenizer, effectiveQuery, patternHints);
+            const intent = this.queryIntentDetector.detect(effectiveQuery);
+            if (intent === "symbol" && args.wordBoundary === undefined) {
+                wordBoundary = true;
+            }
 
-        const keywordConstraints = this.buildKeywordConstraints(keywordSource, { caseSensitive, smartCase });
-        const normalizedKeywords = keywordConstraints.map(keyword => keyword.normalized);
-        const keywordLabels = keywordConstraints.map(keyword => keyword.raw);
+            this.logger.debug(`[Search] Native search for query: "${effectiveQuery}" (intent: ${intent}, keywords: ${keywordLabels.join(', ')})`);
 
-        const effectiveQuery = query || keywordSource.join(' ');
-        const normalizedQuery = effectiveQuery ? this.queryTokenizer.normalize(effectiveQuery) : '';
-        const intent = this.queryIntentDetector.detect(effectiveQuery);
-        if (intent === "symbol" && args.wordBoundary === undefined) {
-            wordBoundary = true;
-        }
+            const combinedExcludeGlobs = [...this.defaultExcludeGlobs, ...(excludeGlobs || [])];
+            const includeRegexes = includeGlobs && includeGlobs.length > 0
+                ? includeGlobs.map(glob => this.globToRegExp(glob))
+                : undefined;
+            const excludeRegexes = combinedExcludeGlobs.map(glob => this.globToRegExp(glob));
 
-        this.logger.debug(`[Search] Hybrid search for query: "${effectiveQuery}" (intent: ${intent}, keywords: ${keywordLabels.join(', ')})`);
+            const previewLength = this.normalizeSnippetLength(args.snippetLength);
+            const matchesPerFileLimit = args.matchesPerFile ?? this.maxMatchesPerFile;
 
-        const combinedExcludeGlobs = [...this.defaultExcludeGlobs, ...(excludeGlobs || [])];
-        const includeRegexes = includeGlobs && includeGlobs.length > 0
-            ? includeGlobs.map(glob => this.globToRegExp(glob))
-            : undefined;
-        const excludeRegexes = combinedExcludeGlobs.map(glob => this.globToRegExp(glob));
+            const maxResults = typeof args.maxResults === "number" && Number.isFinite(args.maxResults)
+                ? Math.max(1, Math.floor(args.maxResults))
+                : 50;
+            const nativeLimit = Math.min(500, Math.max(maxResults, budget?.maxCandidates ?? 200));
 
-        const previewLength = this.normalizeSnippetLength(args.snippetLength);
-        const matchesPerFileLimit = args.matchesPerFile ?? this.maxMatchesPerFile;
-
-        const stopCollectCandidates = metrics.startTimer("search.scout.collect_candidates_ms");
-        const trigramReady = this.trigramIndex.isReadyState();
-        let candidates = await this.candidateCollector.collectHybridCandidates(normalizedKeywords, {
-            waitForTrigram: trigramReady
-        });
-
-        // Phase 1 Smart Fuzzy Match: Symbol-based search for symbol queries
-        if (intent === "symbol" && args.semanticSymbols === true && this.intentToSymbolMapper && this.symbolEmbeddingIndex) {
+            let hits: Array<{ path: string; score: number }> = [];
+            let nativeSearchFailed = false;
+            const forceScan = candidateQuery.length === 0;
             try {
-                const stopSymbolSearch = metrics.startTimer("search.scout.symbol_search_ms");
-                const symbolResults = await this.intentToSymbolMapper.mapToSymbols(effectiveQuery, {
-                    maxResults: args.maxResults ?? 20,
-                    minConfidence: 0.3,
-                });
-                stopSymbolSearch();
-
-                if (symbolResults.length > 0) {
-                    this.logger.debug(`[Search] Symbol search found ${symbolResults.length} results, adding to candidates`);
-                    
-                    // Add symbol file locations to candidates
-                    for (const result of symbolResults) {
-                        const rawPath = result.symbol.filePath;
-                        const absolutePath = path.isAbsolute(rawPath)
-                            ? rawPath
-                            : path.join(this.rootPath, rawPath);
-                        const relativePath = path.relative(this.rootPath, absolutePath);
-                        candidates.add(relativePath);
-                    }
-                    
-                    // Log top symbol results for debugging
-                    symbolResults.slice(0, 3).forEach(r => {
-                        this.logger.debug(`  - ${r.symbol.name} (${r.symbol.type}) in ${r.symbol.filePath} [score: ${r.relevanceScore.toFixed(3)}]`);
+                if (!forceScan) {
+                    hits = this.nativeSearchCore.search({
+                        kind: "code_file",
+                        query: candidateQuery,
+                        limit: nativeLimit,
+                        fileTypes: normalizedFileTypes,
+                        repoIds: [this.repoId]
                     });
                 }
             } catch (error) {
-                this.logger.warn(`[Search] Symbol search failed, falling back to text search`, { 
-                    error: error instanceof Error ? error.message : String(error) 
-                });
+                nativeSearchFailed = true;
+                if (usage) {
+                    usage.degraded = true;
+                    usage.reason = usage.reason ?? (error instanceof NativeSearchError ? error.code : "native_search_failed");
+                }
             }
-        }
 
-        if (candidates.size === 0) {
-            const fallbackCandidates = await this.candidateCollector.collectFilesystemCandidates(
-                basePath ? path.resolve(basePath) : this.rootPath,
-                (relativePath) => this.shouldInclude(relativePath, includeRegexes, excludeRegexes)
-            );
-            if (fallbackCandidates.size > 0) {
-                candidates = fallbackCandidates;
-                this.logger.debug(`[Search] Added ${fallbackCandidates.size} fallback candidates via filesystem scan, total: ${candidates.size}`);
+            const keywordRegexes = buildKeywordRegexes(keywordConstraints, {
+                escape: (value) => this.escapeRegExp(value, { wordBoundary })
+            });
+            const patternRegexes = buildPatternRegexes(patterns, {
+                caseSensitive,
+                escape: (value) => this.escapeRegExp(value)
+            });
+            const regexes = [...keywordRegexes, ...patternRegexes];
+
+            if (nativeSearchFailed || hits.length === 0) {
+                let stats: NativeSearchStats | undefined;
+                if (!nativeSearchFailed && !forceScan) {
+                    try {
+                        stats = this.nativeSearchCore.stats();
+                    } catch {
+                        nativeSearchFailed = true;
+                    }
+                }
+                const shouldFallback = forceScan || nativeSearchFailed || (stats?.docCount ?? 0) === 0;
+                if (shouldFallback) {
+                    const reason = forceScan ? "scan_required" : (nativeSearchFailed ? "native_search_failed" : "native_search_empty");
+                    const fallbackResults = await this.scanForMatches({
+                        basePath: basePath ? path.resolve(basePath) : undefined,
+                        includeRegexes,
+                        excludeRegexes,
+                        regexes,
+                        keywordRegexes,
+                        patternRegexes,
+                        keywords: keywordLabels,
+                        previewLength,
+                        matchesPerFileLimit,
+                        maxResults,
+                        fileTypes: normalizedFileTypes,
+                        budget,
+                        usage,
+                        startedAt,
+                        reason
+                    });
+                    if (usage) {
+                        usage.parseTimeMs = Date.now() - startedAt;
+                    }
+                    return this.resultProcessor.postProcessResults(fallbackResults, {
+                        fileTypes: normalizedFileTypes,
+                        snippetLength: previewLength,
+                        groupByFile: args.groupByFile,
+                        deduplicateByContent: args.deduplicateByContent
+                    });
+                }
             }
-        }
-        stopCollectCandidates();
 
-        if (patterns && patterns.length > 0 && candidates.size < 1000) {
-            const allFiles = this.trigramIndex.listFiles();
-            for (const file of allFiles) candidates.add(file);
-        }
-
-        this.logger.debug(`[Search] Collected ${candidates.size} candidates`);
-
-        const documents: Document[] = [];
-        const candidateEntries: Array<{ absPath: string, relativeToBase: string }> = [];
-
-        // 1. Gather all document contents for collection-wide BM25 in parallel batches
-        if (usage) {
-            usage.candidates = candidates.size;
-        }
-        let candidateList = Array.from(candidates);
-        
-        // OPTIMIZATION: When index is not ready, limit candidate files for fast response
-        if (!trigramReady && candidateList.length > 5) {
-            candidateList = candidateList.slice(0, 5);
-            if (usage) {
-                usage.degraded = true;
-                usage.reason = usage.reason ?? 'index_not_ready';
-            }
-        }
-        
-        if (budget && candidates.size > budget.maxCandidates) {
-            if (usage) {
-                usage.degraded = true;
-                usage.reason = usage.reason ?? 'max_candidates';
-            }
-            candidateList = candidateList.slice(0, budget.maxCandidates);
-        }
-        const CHUNK_SIZE = 50;
-        let stop = false;
-        
-        const stopReadFiles = metrics.startTimer("search.scout.read_files_ms");
-        try {
-            for (let i = 0; i < candidateList.length; i += CHUNK_SIZE) {
+            const fileSearchResults: FileSearchResult[] = [];
+            for (const hit of hits) {
+                if (fileSearchResults.length >= maxResults) {
+                    break;
+                }
                 if (budget && usage) {
                     const elapsed = Date.now() - startedAt;
                     if (usage.filesRead >= budget.maxFilesRead || usage.bytesRead >= budget.maxBytesRead || elapsed >= budget.maxParseTimeMs) {
                         usage.degraded = true;
                         usage.reason = usage.reason ?? 'budget_exceeded';
-                        stop = true;
-                    }
-                }
-                if (stop) break;
-                const chunk = candidateList.slice(i, i + CHUNK_SIZE);
-                const chunkResults = await Promise.all(chunk.map(async (candidatePath) => {
-                    const absPath = path.isAbsolute(candidatePath)
-                        ? candidatePath
-                        : path.join(this.rootPath, candidatePath);
-
-                    const relativeToBase = this.normalizeRelativePath(absPath, basePath ? path.resolve(basePath) : this.rootPath);
-                    if (!relativeToBase || !this.shouldInclude(relativeToBase, includeRegexes, excludeRegexes)) {
-                        return null;
-                    }
-
-                    try {
-                        const content = await this.fileSystem.readFile(absPath);
-                        if (usage) {
-                            usage.filesRead += 1;
-                            usage.bytesRead += Buffer.byteLength(content, 'utf8');
-                        }
-                        return { absPath, relativeToBase, content };
-                    } catch {
-                        return null;
-                    }
-                }));
-
-                for (const res of chunkResults) {
-                    if (res) {
-                        documents.push({ id: res.absPath, text: res.content, filePath: res.relativeToBase, score: 0 });
-                        candidateEntries.push({ absPath: res.absPath, relativeToBase: res.relativeToBase });
-                    }
-                }
-            }
-        } finally {
-            stopReadFiles();
-        }
-
-        const stopRank = metrics.startTimer("search.scout.rank_bm25_ms");
-        const bm25Results = this.bm25Ranking.rank(documents, effectiveQuery);
-        stopRank();
-        const bm25ScoreMap = new Map(bm25Results.map(d => [d.id, d.scoreDetails?.contentScore ?? 0]));
-        const contentMap = new Map(documents.map(d => [d.id, d.text]));
-
-        const fileSearchResults: FileSearchResult[] = [];
-
-        // 3. Combine BM25 with other signals using HybridScorer in parallel batches
-        const stopHybrid = metrics.startTimer("search.scout.hybrid_score_ms");
-        try {
-            for (let i = 0; i < candidateEntries.length; i += CHUNK_SIZE) {
-                if (budget && usage) {
-                    const elapsed = Date.now() - startedAt;
-                    if (elapsed >= budget.maxParseTimeMs) {
-                        usage.degraded = true;
-                        usage.reason = usage.reason ?? 'budget_exceeded';
                         break;
                     }
                 }
-                const chunk = candidateEntries.slice(i, i + CHUNK_SIZE);
-                const chunkScores = await Promise.all(chunk.map(async ({ absPath, relativeToBase }) => {
-                    const content = contentMap.get(absPath) || "";
-                    const contentScoreRaw = bm25ScoreMap.get(absPath) || 0;
 
-                    try {
-                        const hybridScore = await this.hybridScorer.scoreFile(
-                            absPath,
-                            content,
-                            normalizedKeywords,
-                            normalizedQuery,
-                            contentScoreRaw,
-                            intent,
-                            patterns,
-                            { wordBoundary, caseSensitive }
-                        );
-                        return { relativeToBase, hybridScore };
-                    } catch {
-                        return null;
+                const relativePath = hit.path;
+                const absPath = path.isAbsolute(relativePath)
+                    ? relativePath
+                    : path.join(this.rootPath, relativePath);
+                const relativeToBase = this.normalizeRelativePath(absPath, basePath ? path.resolve(basePath) : this.rootPath);
+                if (!relativeToBase || !this.shouldInclude(relativeToBase, includeRegexes, excludeRegexes)) {
+                    continue;
+                }
+
+                let content = "";
+                try {
+                    content = await this.fileSystem.readFile(absPath);
+                    if (usage) {
+                        usage.filesRead += 1;
+                        usage.bytesRead += Buffer.byteLength(content, 'utf8');
                     }
-                }));
+                } catch {
+                    continue;
+                }
 
-                for (const res of chunkScores) {
-                    if (!res) continue;
-                    const { relativeToBase, hybridScore } = res;
+                const matches = findLineMatches(content, regexes, matchesPerFileLimit, previewLength);
+                if (matches.length === 0) {
+                    continue;
+                }
+                const matchStats = computeMatchStats(content, path.basename(relativeToBase), keywordLabels, keywordRegexes, patternRegexes);
 
-                    const CORE_SIGNALS = ['content', 'filename', 'symbol', 'comment', 'pattern'];
-                    const hasCoreSignal = hybridScore.signals.some(s => CORE_SIGNALS.includes(s));
-                    const hasExplicitMatch = hybridScore.matches.length > 0 || 
-                                           hybridScore.breakdown.filename > 0 || 
-                                           hybridScore.breakdown.symbol > 0;
-
-                    if (hybridScore.total > 0 && hasCoreSignal && hasExplicitMatch) {
-                        if (hybridScore.matches.length > 0) {
-                            const limitedMatches = hybridScore.matches.slice(0, matchesPerFileLimit);
-                            for (const match of limitedMatches) {
-                                fileSearchResults.push({
-                                    filePath: relativeToBase,
-                                    lineNumber: match.line,
-                                    preview: match.content.trim().slice(0, previewLength),
-                                    score: hybridScore.total,
-                                    scoreDetails: {
-                                        type: hybridScore.signals.join('+'),
-                                        details: Object.entries(hybridScore.breakdown).map(([type, score]) => ({ type, score: score as number })),
-                                        totalScore: hybridScore.total,
-                                        contentScore: hybridScore.breakdown.content,
-                                        filenameMultiplier: hybridScore.breakdown.filenameMatchType === 'exact' ? 10 : (hybridScore.breakdown.filenameMatchType === 'partial' ? 5 : 1),
-                                        depthMultiplier: 1,
-                                        fieldWeight: 1,
-                                        filenameMatchType: hybridScore.breakdown.filenameMatchType
-                                    }
-                                });
-                            }
-                        } else {
-                            fileSearchResults.push({
-                                filePath: relativeToBase,
-                                lineNumber: 0,
-                                preview: "",
-                                score: hybridScore.total,
-                                scoreDetails: {
-                                    type: hybridScore.signals.join('+'),
-                                    details: Object.entries(hybridScore.breakdown).map(([type, score]) => ({ type, score: score as number })),
-                                    totalScore: hybridScore.total,
-                                    contentScore: hybridScore.breakdown.content,
-                                    filenameMultiplier: hybridScore.breakdown.filenameMatchType === 'exact' ? 10 : (hybridScore.breakdown.filenameMatchType === 'partial' ? 5 : 1),
-                                    depthMultiplier: 1,
-                                    fieldWeight: 1,
-                                    filenameMatchType: hybridScore.breakdown.filenameMatchType
-                                }
-                            });
+                for (const match of matches) {
+                    fileSearchResults.push({
+                        filePath: relativeToBase,
+                        lineNumber: match.line,
+                        preview: match.preview,
+                        score: hit.score,
+                        scoreDetails: {
+                            type: "native",
+                            totalScore: hit.score,
+                            contentScore: matchStats.totalMatches,
+                            filenameMatchType: matchStats.filenameMatchType,
+                            filenameMultiplier: matchStats.filenameMultiplier,
+                            depthMultiplier: 1,
+                            fieldWeight: 1
                         }
+                    });
+                    if (fileSearchResults.length >= maxResults) {
+                        break;
                     }
                 }
             }
-        } finally {
-            stopHybrid();
-        }
 
-        fileSearchResults.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-        this.logger.debug(`[Search] Returning ${fileSearchResults.length} results`);
-        metrics.gauge("search.scout.results_count", fileSearchResults.length);
-        if (usage) {
-            usage.parseTimeMs = Date.now() - startedAt;
-        }
+            fileSearchResults.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+            metrics.gauge("search.scout.results_count", fileSearchResults.length);
+            if (usage) {
+                usage.parseTimeMs = Date.now() - startedAt;
+            }
 
-        return this.resultProcessor.postProcessResults(fileSearchResults, {
-            fileTypes: args.fileTypes,
-            snippetLength: previewLength,
-            groupByFile: args.groupByFile,
-            deduplicateByContent: args.deduplicateByContent
-        });
+            return this.resultProcessor.postProcessResults(fileSearchResults, {
+                fileTypes: normalizedFileTypes,
+                snippetLength: previewLength,
+                groupByFile: args.groupByFile,
+                deduplicateByContent: args.deduplicateByContent
+            });
         } finally {
             stopTotal();
         }
+    }
+
+    private async scanForMatches(args: {
+        basePath?: string;
+        includeRegexes?: RegExp[];
+        excludeRegexes: RegExp[];
+        regexes: RegExp[];
+        keywordRegexes: RegExp[];
+        patternRegexes: RegExp[];
+        keywords: string[];
+        previewLength: number;
+        matchesPerFileLimit: number;
+        maxResults: number;
+        fileTypes?: string[];
+        budget?: ResourceBudget;
+        usage?: ResourceUsage;
+        startedAt: number;
+        reason: string;
+    }): Promise<FileSearchResult[]> {
+        if (args.usage) {
+            args.usage.degraded = true;
+            args.usage.reason = args.usage.reason ?? args.reason;
+        }
+        const scanRoot = args.basePath ?? this.rootPath;
+        let files: string[];
+        try {
+            files = await this.fileSystem.listFiles(scanRoot);
+        } catch {
+            return [];
+        }
+
+        const normalizedTypes = Array.isArray(args.fileTypes) && args.fileTypes.length > 0
+            ? new Set(args.fileTypes.map((ext) => ext.replace(/^\./, "").toLowerCase()).filter(Boolean))
+            : null;
+        const results: FileSearchResult[] = [];
+
+        for (const absPath of files) {
+            if (args.budget && args.usage) {
+                const elapsed = Date.now() - args.startedAt;
+                if (
+                    args.usage.filesRead >= args.budget.maxFilesRead ||
+                    args.usage.bytesRead >= args.budget.maxBytesRead ||
+                    elapsed >= args.budget.maxParseTimeMs
+                ) {
+                    args.usage.degraded = true;
+                    args.usage.reason = args.usage.reason ?? "budget_exceeded";
+                    break;
+                }
+            }
+
+            const relativePath = this.normalizeRelativePath(absPath, scanRoot);
+            if (!relativePath || !this.shouldInclude(relativePath, args.includeRegexes, args.excludeRegexes)) {
+                continue;
+            }
+
+            if (normalizedTypes) {
+                const ext = path.extname(relativePath).replace(".", "").toLowerCase();
+                if (!normalizedTypes.has(ext)) {
+                    continue;
+                }
+            }
+
+            let content = "";
+            try {
+                content = await this.fileSystem.readFile(absPath);
+                if (args.usage) {
+                    args.usage.filesRead += 1;
+                    args.usage.bytesRead += Buffer.byteLength(content, "utf8");
+                }
+            } catch {
+                continue;
+            }
+
+            const matches = findLineMatches(content, args.regexes, args.matchesPerFileLimit, args.previewLength);
+            if (matches.length === 0) {
+                continue;
+            }
+            const matchStats = computeMatchStats(content, path.basename(relativePath), args.keywords, args.keywordRegexes, args.patternRegexes);
+            const score = matchStats.totalMatches * 10
+                + matchStats.filenameMultiplier
+                + (args.patternRegexes.length > 0 ? matchStats.patternMatches * 2 : 0);
+            for (const match of matches) {
+                results.push({
+                    filePath: relativePath,
+                    lineNumber: match.line,
+                    preview: match.preview,
+                    score,
+                    scoreDetails: {
+                        type: "scan",
+                        totalScore: score,
+                        contentScore: matchStats.totalMatches,
+                        filenameMatchType: matchStats.filenameMatchType,
+                        filenameMultiplier: matchStats.filenameMultiplier,
+                        depthMultiplier: 1,
+                        fieldWeight: 1
+                    }
+                });
+                if (results.length >= args.maxResults) {
+                    break;
+                }
+            }
+            if (results.length >= args.maxResults) {
+                break;
+            }
+        }
+        return results;
     }
 
     private normalizeSnippetLength(requested?: number): number {
@@ -683,4 +635,143 @@ export class SearchEngine {
                 };
             });
     }
+}
+
+function normalizeFileTypes(fileTypes: string[] | undefined): string[] | undefined {
+    if (!Array.isArray(fileTypes) || fileTypes.length === 0) return undefined;
+    const normalized = fileTypes
+        .map((ext) => String(ext ?? "").trim())
+        .map((ext) => ext.replace(/^\./, "").toLowerCase())
+        .filter(Boolean);
+    if (normalized.length === 0) return undefined;
+    return Array.from(new Set(normalized));
+}
+
+function extractPatternHintTokens(patterns: string[] | undefined): string[] {
+    if (!Array.isArray(patterns) || patterns.length === 0) return [];
+    const tokens = new Set<string>();
+    const matcher = /[\p{L}\p{N}_]{2,}/gu;
+    for (const pattern of patterns) {
+        const text = String(pattern ?? "");
+        for (const match of text.match(matcher) ?? []) {
+            tokens.add(match);
+        }
+    }
+    return Array.from(tokens);
+}
+
+function buildCandidateQuery(tokenizer: QueryTokenizer, query: string, patternHints: string[]): string {
+    const tokens = new Set<string>();
+    const normalizedQuery = tokenizer.normalize(query ?? "");
+    for (const token of normalizedQuery.split(/\s+/)) {
+        if (token) tokens.add(token);
+    }
+    for (const hint of patternHints ?? []) {
+        const normalizedHint = tokenizer.normalize(String(hint ?? ""));
+        for (const token of normalizedHint.split(/\s+/)) {
+            if (token) tokens.add(token);
+        }
+    }
+    return Array.from(tokens).slice(0, 40).join(" ");
+}
+
+function buildKeywordRegexes(
+    constraints: KeywordConstraint[],
+    options: { escape: (value: string) => string }
+): RegExp[] {
+    const regexes: RegExp[] = [];
+    for (const constraint of constraints) {
+        const escaped = options.escape(constraint.raw);
+        const flags = constraint.requiresCaseSensitive ? "g" : "gi";
+        regexes.push(new RegExp(escaped, flags));
+    }
+    return regexes;
+}
+
+function buildPatternRegexes(
+    patterns: string[] | undefined,
+    options: { caseSensitive: boolean; escape: (value: string) => string }
+): RegExp[] {
+    if (!Array.isArray(patterns) || patterns.length === 0) return [];
+    const flags = options.caseSensitive ? "g" : "gi";
+    return patterns.map((pattern) => {
+        try {
+            return new RegExp(pattern, flags);
+        } catch {
+            return new RegExp(options.escape(pattern), flags);
+        }
+    });
+}
+
+function findLineMatches(
+    content: string,
+    regexes: RegExp[],
+    limit: number,
+    previewLength: number
+): Array<{ line: number; preview: string }> {
+    const lines = content.split(/\r?\n/);
+    const matches: Array<{ line: number; preview: string }> = [];
+    for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index];
+        for (const regex of regexes) {
+            regex.lastIndex = 0;
+            if (regex.test(line)) {
+                const trimmed = line.trim();
+                const preview = previewLength > 0 ? trimmed.slice(0, Math.max(1, previewLength)) : "";
+                matches.push({ line: index + 1, preview });
+                break;
+            }
+        }
+        if (matches.length >= limit) break;
+    }
+    return matches;
+}
+
+function computeMatchStats(
+    content: string,
+    fileName: string,
+    keywords: string[],
+    keywordRegexes: RegExp[],
+    patternRegexes: RegExp[]
+): { totalMatches: number; patternMatches: number; filenameMatchType: "exact" | "partial" | "none"; filenameMultiplier: number } {
+    const normalizedFileName = fileName.toLowerCase();
+    const fileBaseName = normalizedFileName.replace(/\.[^/.]+$/, "");
+    let filenameMatchType: "exact" | "partial" | "none" = "none";
+    let filenameMultiplier = 1;
+
+    for (const keyword of keywords) {
+        const normalizedKeyword = keyword.toLowerCase();
+        if (!normalizedKeyword) continue;
+        if (fileBaseName === normalizedKeyword) {
+            filenameMatchType = "exact";
+            break;
+        }
+        if (normalizedFileName.includes(normalizedKeyword)) {
+            filenameMatchType = "partial";
+        }
+    }
+    if (filenameMatchType === "exact") {
+        filenameMultiplier = 10;
+    } else if (filenameMatchType === "partial") {
+        filenameMultiplier = 5;
+    }
+
+    const keywordMatches = countRegexOccurrences(content, keywordRegexes);
+    const patternMatches = countRegexOccurrences(content, patternRegexes);
+    return {
+        totalMatches: keywordMatches + patternMatches,
+        patternMatches,
+        filenameMatchType,
+        filenameMultiplier
+    };
+}
+
+function countRegexOccurrences(content: string, regexes: RegExp[]): number {
+    let count = 0;
+    for (const regex of regexes) {
+        const flags = regex.flags.includes("g") ? regex.flags : `${regex.flags}g`;
+        const globalRegex = new RegExp(regex.source, flags);
+        count += content.match(globalRegex)?.length ?? 0;
+    }
+    return count;
 }

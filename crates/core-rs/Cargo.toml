@@ -1,6 +1,6 @@
 [package]
 name = "core-rs"
-version = "0.1.0"
+version = "0.6.2"
 edition = "2021"
 build = "build.rs"
 
@@ -15,6 +15,13 @@ similar = "2.6.0"
 tree-sitter = "0.24.4"
 tree-sitter-javascript = "0.23.0"
 tree-sitter-typescript = "0.23.0"
+tantivy = "0.21.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+fs2 = "0.4.3"
 
 [build-dependencies]
 napi-build = "2.1.2"
+
+[patch.crates-io]
+zstd-safe = { path = "vendor/zstd-safe" }

@@ -1,31 +1,31 @@
-# ADR-071 (요약): IFileSystem 경계 확장 & 테스트 가능성 강화
+# ADR-071 (Summary): IFileSystem Boundary Expansion & Testability Hardening
 
 **Status:** Implemented (Phase A/B/C)
 
-## 의도
+## Intent
 
-- 코어 로직(오케스트레이션/핸들러)이 `fs`를 직접 호출하지 않고 `IFileSystem`을 통해 파일 I/O를 수행하도록 경계를 확장한다.
-- Memory-first 테스트를 통해 디스크 의존/플레이키/플랫폼 드리프트를 줄인다.
-- “fs 직접 import 금지”를 스크립트로 검증해 재유입을 방지한다.
+- Expand boundaries so core logic (orchestration/handlers) performs file I/O via `IFileSystem` instead of calling `fs` directly.
+- Reduce disk dependency/flakiness/platform drift via memory-first tests.
+- Prevent regressions by validating “no direct `fs` imports” with scripts.
 
-## 이번 반영(Phase A~C)
+## What shipped (Phase A–C)
 
-- `src/orchestration/**`, `src/handlers/**`에서 `fs` 직접 import 제거(플랫폼 어댑터는 예외).
-- `HandlerContext.fileSystem`을 `IFileSystem`으로 통일.
-- 오케스트레이션 구성요소들이 필요 시 `IFileSystem`을 주입받거나 `NodeFileSystem`을 내부 기본값으로 사용.
-- Drift guardrail 스크립트 추가로 Phase A 범위에서 `fs` import를 차단.
-- `src/indexing/**` 경계 확장(어댑터화 + persistence 테스트 보강).
-- `src/ast/**` 경계 확장(리졸버/그래프 포함) + 회귀 테스트 보강.
+- Remove direct `fs` imports from `src/orchestration/**` and `src/handlers/**` (platform adapters are exceptions).
+- Standardize `HandlerContext.fileSystem` as an `IFileSystem`.
+- Orchestration components receive an injected `IFileSystem` when needed, or use `NodeFileSystem` as an internal default.
+- Add drift guardrail scripts to block `fs` imports within the Phase A scope.
+- Expand the boundary for `src/indexing/**` (adapterization + improved persistence tests).
+- Expand the boundary for `src/ast/**` (including resolver/graph) + strengthen regression tests.
 
-## 검증/테스트
+## Verification / Testing
 
-- `npm run validate:fs`로 Phase A 경계 위반 검증(엄격 모드).
-- `npm run validate:fs:b`로 Phase B 경계 위반 검증(엄격 모드).
-- `npm run validate:fs:c`로 Phase C 경계 위반 검증(엄격 모드).
-- `UnifiedContextGraph` persistence 경로에 대해 `MemoryFileSystem` 기반 저장/로드 테스트 추가.
+- Verify Phase A boundary violations (strict mode): `npm run validate:fs`
+- Verify Phase B boundary violations (strict mode): `npm run validate:fs:b`
+- Verify Phase C boundary violations (strict mode): `npm run validate:fs:c`
+- Add `MemoryFileSystem`-based save/load tests for the `UnifiedContextGraph` persistence path.
 
-## 구현 상태
+## Implementation Status
 
-- [x] Phase A: orchestration/handlers 경계 고정 + MemoryFS 테스트 + 검증 스크립트
-- [x] Phase B: indexing 경계 확장(어댑터화 + 테스트)
-- [x] Phase C: ast 경계 확장(리졸버/그래프 + 테스트)
+- [x] Phase A: lock orchestration/handlers boundary + MemoryFS tests + validation scripts
+- [x] Phase B: expand indexing boundary (adapterization + tests)
+- [x] Phase C: expand AST boundary (resolver/graph + tests)

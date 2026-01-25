@@ -1,6 +1,6 @@
 {
   "name": "kairo",
-  "version": "0.6.0",
+  "version": "0.6.2",
   "type": "module",
   "bin": {
     "kairo": "dist/index.js",
@@ -32,8 +32,11 @@
     "benchmark:adr-072-metrics": "npm run build && node scripts/adr-072-decision-metrics.mjs",
     "benchmark:adr-078-cost-slo": "npm run build && node scripts/adr-078-cost-slo-gate.mjs",
     "benchmark:adr-084-task-slo": "npm run build && node scripts/adr-084-task-slo-gate.mjs",
+    "benchmark:adr-085-search-slo": "npm run build && node scripts/adr-085-search-slo-gate.mjs",
     "smoke:adr-084-beta-log": "npm run build && node scripts/adr-084-beta-log-smoke.mjs",
     "smoke:adr-084-hardening": "npm run build && node scripts/adr-084-hardening-smoke.mjs",
+    "smoke:mcp-mock-client": "npm run build && node scripts/mock-mcp-client.mjs",
+    "smoke:mcp-inprocess": "npm run build && node scripts/mock-mcp-inprocess.mjs",
     "test:coverage": "NODE_OPTIONS=\"--experimental-vm-modules --max-old-space-size=8196\" jest dist --coverage",
     "test:coverage:orchestration": "NODE_OPTIONS=\"--experimental-vm-modules --max-old-space-size=8196\" jest dist --runInBand --coverage --collectCoverageFrom=\"dist/orchestration/**/*.js\" --coveragePathIgnorePatterns=\"/dist/tests/\"",
     "test:markdown-wasm-cli": "node scripts/test-markdown-wasm-cli.mjs",

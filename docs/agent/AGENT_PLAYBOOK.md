@@ -66,7 +66,7 @@ await change({ ...plan, safety: "apply" })
 
 ### 1.2 StrategySearch (Best-of-N / MCTS)
 
-후보 패치를 2개 이상 “구체적인 edits”로 제공할 수 있다면, `strategySearch`로 **dry-run 기반 후보 비교 → 1개 선택**을 시킬 수 있다.
+If you can provide 2+ candidate patches as concrete `edits`, you can use `strategySearch` to compare candidates via dry-run and select one.
 
 ```typescript
 const plan = await change({
@@ -86,7 +86,7 @@ const plan = await change({
 })
 ```
 
-R3(MCTS)는 `children` 트리 + `mcts` 설정으로 제한 탐색을 수행한다. 자세한 스키마/출력은 `docs/agent/TOOL_REFERENCE.md`를 참고한다.
+R3 (MCTS) runs a bounded search using the `children` tree + `mcts` settings. For full schema/output details, see `docs/agent/TOOL_REFERENCE.md`.
 
 ### 1.5 Writer's Flow (best review quality)
 
@@ -123,6 +123,8 @@ explore({ query: "PaymentProcessor" })
 // Step 3: Full read (if needed)
 explore({ paths: ["src/payments/Processor.ts"], view: "full" })
 ```
+
+Tip: If results look empty or stale, use `manage({ command: "status" })` to check `nativeSearch`/`drift`, and run `manage({ command: "reindex" })` if needed.
 
 ---
 

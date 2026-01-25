@@ -1,12 +1,13 @@
 {
   "name": "@kairo/core-rs",
-  "version": "0.6.0",
+  "version": "0.6.2",
   "main": "index.js",
   "types": "index.d.ts",
   "files": [
     "index.js",
     "index.d.ts",
-    "core_rs.node"
+    "core_rs.node",
+    "index.node"
   ],
   "scripts": {
     "build": "napi build --release",

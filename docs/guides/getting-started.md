@@ -21,6 +21,23 @@ node dist/index.js --root /absolute/path/to/your/project
 
 Runtime data (indexes/caches/logs) is stored under `.kairo/` in the target project root by default.
 
+## Native core (search + performance)
+
+Kairo uses a native module (`@kairo/core-rs`) for Tantivy-backed search and other performance-critical paths.
+
+If you see `CAP_NATIVE_SEARCH_UNAVAILABLE` (or you are on an unsupported platform/arch), build it locally:
+
+```bash
+# requires a working Rust toolchain (cargo)
+npm run build:core-rs
+```
+
+Quick smoke (spawns `dist/index.js` and calls tools over stdio):
+
+```bash
+npm run smoke:mcp-mock-client
+```
+
 ## Prepare the local embedding model (offline)
 
 Kairo is offline-first by default. Runtime downloads are disabled unless you explicitly opt into `KAIRO_EMBEDDING_PROVIDER=remote`.

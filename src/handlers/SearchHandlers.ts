@@ -178,7 +178,7 @@ export class SearchHandlers extends BaseHandler {
                 matchCount: result.matchCount
             }));
 
-            if (usage?.degraded) {
+            if (usage?.degraded && results.length === 0) {
                 const fallbackResults: any[] = [];
                 try {
                     const filenameResults = await this.context.searchEngine.searchFilenames(query, { maxResults });

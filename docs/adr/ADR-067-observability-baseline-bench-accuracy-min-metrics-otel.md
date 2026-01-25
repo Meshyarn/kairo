@@ -6,22 +6,22 @@
 
 ## Summary
 
-벤치 정확도(경로/skip 처리)를 고정하고, 회귀 분해에 필요한 최소 메트릭 셋을 코드로 확정했다. 필요 시 JSONL/STDOUT/OTLP(옵션)로 메트릭을 export 할 수 있다.
+Lock down benchmark accuracy (paths/skip handling) and codify the minimal metric set needed for regression attribution. Metrics can be exported via JSONL/STDOUT/OTLP (optional) when needed.
 
 ## Decision
 
-- 벤치는 repo root/PathManager 기준으로 경로를 계산하고 report에 근거를 표기한다.
-- SKIP는 PASS 집계에서 제외하고 skip reason을 출력한다.
-- 최소 메트릭 셋을 catalog로 고정하고, cache/guardrails/override 카운터를 보강한다.
-- metrics exporter는 `stdout/jsonl/otel`을 선택적으로 활성화한다.
+- Benchmarks compute paths relative to repo root/PathManager and record the basis in the report.
+- SKIP is excluded from PASS counts, and skip reasons are printed.
+- Fix the minimal metric set as a catalog and add counters for cache/guardrails/overrides.
+- Enable metric exporters optionally via `stdout/jsonl/otel`.
 
 ## Implementation Notes
 
 - repo root resolver: `benchmarks/lib/repoRoot.ts`
-- bench 경로 정정 + report 보강: `benchmarks/main.ts`
-- SKIP 표준화: `benchmarks/phase2-performance.ts`
-- 최소 메트릭 catalog + coverage: `src/utils/MetricsCatalog.ts`, `src/handlers/ManageHandlers.ts`
-- cache/guardrails/override 카운터: `src/engine/ClusterSearch/ClusterCache.ts`, `src/documents/search/DocumentSearchEngine.ts`, `src/documents/search/EvidencePackBuilder.ts`, `src/orchestration/guardrails/IntegrityGuardrails.ts`, `src/utils/GuardrailsOverride.ts`
+- bench path correctness + report improvements: `benchmarks/main.ts`
+- SKIP standardization: `benchmarks/phase2-performance.ts`
+- Minimal metric catalog + coverage: `src/utils/MetricsCatalog.ts`, `src/handlers/ManageHandlers.ts`
+- cache/guardrails/override counters: `src/engine/ClusterSearch/ClusterCache.ts`, `src/documents/search/DocumentSearchEngine.ts`, `src/documents/search/EvidencePackBuilder.ts`, `src/orchestration/guardrails/IntegrityGuardrails.ts`, `src/utils/GuardrailsOverride.ts`
 - exporter + lifecycle: `src/utils/metrics/*`, `src/server/SmartContextServer.ts`
 
 ## Config (env)
@@ -33,5 +33,5 @@
 
 ## Testing
 
-- 벤치 경로 검증 및 skip 집계는 bench 실행 결과로 확인한다.
-- `project_manage metrics`에서 catalogCoverage가 최소 셋을 만족하는지 확인한다.
+- Verify bench path correctness and skip accounting via benchmark runs.
+- Check `project_manage metrics` for `catalogCoverage` meeting the minimal set.

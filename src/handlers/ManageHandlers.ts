@@ -423,6 +423,21 @@ export class ManageHandlers extends BaseHandler {
         };
     }
 
+    private buildNativeSearchStatus() {
+        const degraded: string[] = [];
+        const status = this.context.searchEngine.getNativeStatus();
+        if (!status.available) {
+            degraded.push("native_search_unavailable");
+        }
+        if (status.available && status.stats && status.stats.writeEnabled === false) {
+            degraded.push("index_write_locked");
+        }
+        return {
+            ...status,
+            degradedReasons: buildDegradedReasons(degraded)
+        };
+    }
+
     private buildCostSummary(fileCount?: number, snapshot?: ReturnType<typeof metrics.snapshot>) {
         const metricsSnapshot = snapshot ?? metrics.snapshot();
         const getHist = (name: string) => metricsSnapshot.histograms[name];
@@ -976,6 +991,7 @@ export class ManageHandlers extends BaseHandler {
                         });
                         const rolloutStatus = this.buildRolloutStatus(status?.global?.totalFiles);
                         const symbolIndexStatus = this.buildSymbolIndexStatus();
+                        const nativeSearchStatus = this.buildNativeSearchStatus();
                         const driftStatus = await this.buildWorkspaceDrift();
                         const metricsSnapshot = metrics.snapshot();
                         const costSummary = this.buildCostSummary(status?.global?.totalFiles, metricsSnapshot);
@@ -993,6 +1009,7 @@ export class ManageHandlers extends BaseHandler {
                                 capabilityDiagnostics,
                                 indexSnapshot,
                                 symbolIndex: symbolIndexStatus,
+                                nativeSearch: nativeSearchStatus,
                                 drift: driftStatus,
                                 cost: costSummary,
                                 telemetry: telemetrySummary,
@@ -1026,6 +1043,7 @@ export class ManageHandlers extends BaseHandler {
                             capabilityDiagnostics,
                             indexSnapshot,
                             symbolIndex: symbolIndexStatus,
+                            nativeSearch: nativeSearchStatus,
                             drift: driftStatus,
                             cost: costSummary,
                             telemetry: telemetrySummary,
@@ -1155,6 +1173,7 @@ export class ManageHandlers extends BaseHandler {
                     const budgetSnapshot = await this.buildBudgetSnapshot();
                     const embeddingDiagnostics = computeEmbeddingDiagnostics();
                     const embeddingFindings = this.buildEmbeddingFindings(embeddingDiagnostics);
+                    const nativeSearchStatus = this.buildNativeSearchStatus();
                     const rolloutStatus = this.buildRolloutStatus(fileCount);
                     const driftStatus = await this.buildWorkspaceDrift();
                     const costSummary = this.buildCostSummary(fileCount);
@@ -1164,6 +1183,7 @@ export class ManageHandlers extends BaseHandler {
                         output: "Config doctor completed.",
                         ...(capabilityDiagnostics ? { capabilityDiagnostics } : {}),
                         ...(capabilityHints && capabilityHints.length > 0 ? { capabilityHints } : {}),
+                        nativeSearch: nativeSearchStatus,
                         overridePolicy: {
                             enabled: overridePolicy.enabled,
                             maxTtlMinutes: overridePolicy.maxTtlMinutes,
@@ -1366,6 +1386,11 @@ export class ManageHandlers extends BaseHandler {
                         void (async () => {
                             try {
                                 await this.context.searchEngine.rebuild({ logEvery: 500 });
+                                if (this.context.incrementalIndexer) {
+                                    await this.context.incrementalIndexer.reindexAll();
+                                } else {
+                                    throw new Error("Incremental indexer unavailable for reindex.");
+                                }
                                 await this.context.dependencyGraph.build({ logEvery: 200 });
                                 if (this.context.documentIndexer) {
                                     await this.context.documentIndexer.rebuildAll();

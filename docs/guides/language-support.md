@@ -29,7 +29,7 @@ L2: C/C++, C#, Docs (Markdown and similar document formats)
 3) Provide a tree-sitter WASM at `wasm/tree-sitter-<languageId>.wasm` (or set `KAIRO_WASM_DIR`).
 4) Register support level and parity requirements in `src/config/LanguageParityMatrix.ts`.
 5) Run `npm run validate:languages`.
-6) Run `npm run validate:parity` and (recommended) `npm test -- LanguageParity`.
+6) Run `npm run validate:parity` and (recommended) `npm run test:dist:single dist/tests/languages/LanguageParity.test.js`.
 
 ## Promotion to L3
 

@@ -1,5 +1,7 @@
-import { describe, it, expect } from "@jest/globals";
+import { describe, it, expect, beforeEach, afterEach } from "@jest/globals";
 import { SmartContextServer } from "../index.js";
+import { NativeModuleLoader } from "../orchestration/capabilities/NativeModuleLoader.js";
+import { NativeSearchCoreStub } from "./utils/NativeSearchCoreStub.js";
 
 type ListedTool = {
     name: string;
@@ -29,6 +31,37 @@ const readErrorCode = (response: any): string | undefined => {
  *   (i.e. not succeed, and not `UnknownTool`).
  */
 describe("Tool surface consistency", () => {
+    beforeEach(() => {
+        NativeModuleLoader.setTestLoader(() => ({
+            SmartChunker: class {
+                constructor(_modelPath: string) {}
+                chunk(_text: string, _maxTokens: number, _overlap: number) { return []; }
+            },
+            diffUnified: (_oldText: string, _newText: string, _contextLines: number) => ({
+                diff: "",
+                added: 0,
+                removed: 0
+            }),
+            validateSyntax: (_language: string, _content: string) => [],
+            cosineScores: (_query: Float32Array, _vectors: Float32Array[]) => [],
+            NativeSearchCore: class {
+                private readonly core = new NativeSearchCoreStub();
+                upsert(doc: any) { return this.core.upsert(doc); }
+                upsertMany(docs: any[]) { return this.core.upsertMany(docs); }
+                deleteDoc(target: any) { return this.core.deleteDoc(target); }
+                commit() { return this.core.commit(); }
+                search(query: any) { return this.core.search(query); }
+                close() { return this.core.close(); }
+                stats() { return this.core.stats(); }
+                reset() { return this.core.reset(); }
+            }
+        }));
+    });
+
+    afterEach(() => {
+        NativeModuleLoader.resetForTesting();
+    });
+
     it("Intent tools are stable, handled, and schemas are coherent", async () => {
         const originalSurface = process.env.KAIRO_PUBLIC_SURFACE;
         const originalStorageMode = process.env.KAIRO_STORAGE_MODE;
