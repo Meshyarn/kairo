@@ -9,7 +9,7 @@ const activeMetric = ref<'cost' | 'accuracy' | 'time'>('cost')
 const data = computed(() => isKo.value ? {
   title: "실제 벤치마크 결과",
   subtitle: "고비용 모델 vs 라우팅 전략",
-  legend: "Mini(작은모델) + Kairo 라우팅이 Full(고성능모델) 기준선을 압도",
+  legend: "대표 실행에서, Mini+Kairo 라우팅은 성공률을 유지하면서 실지출을 크게 낮출 수 있었습니다(대신 토큰/시간 오버헤드 존재).",
   
   metrics: {
     cost: {
@@ -17,10 +17,10 @@ const data = computed(() => isKo.value ? {
       labelSuffix: "(📉 낮을수록 좋음)",
       unit: "USD",
       goal: "lower",
-      full: 2.0497,
-      routed: 0.5396,
-      delta: -1.5101,
-      percentage: -73.7,
+      full: 2.4937,
+      routed: 0.6977,
+      delta: -1.7961,
+      percentage: -72.0,
       highlight: true,
       icon: "💰"
     },
@@ -29,10 +29,10 @@ const data = computed(() => isKo.value ? {
       labelSuffix: "(📈 높을수록 좋음)",
       unit: "%",
       goal: "higher",
-      full: 87.5,
+      full: 100,
       routed: 100,
-      delta: 12.5,
-      percentage: 14.3,
+      delta: 0,
+      percentage: 0.0,
       highlight: true,
       icon: "🎯"
     },
@@ -41,10 +41,10 @@ const data = computed(() => isKo.value ? {
       labelSuffix: "(📉 낮을수록 좋음)",
       unit: "ms",
       goal: "lower",
-      full: 1042324,
-      routed: 1610173,
-      delta: 567849,
-      percentage: 54.5,
+      full: 1201427,
+      routed: 1534673,
+      delta: 333161,
+      percentage: 27.7,
       highlight: false,
       icon: "⏱️"
     }
@@ -53,24 +53,24 @@ const data = computed(() => isKo.value ? {
   systems: [
     {
       name: "Full Baseline",
-      desc: "최고 성능 모델 (GPT-5 Codex)",
+      desc: "상위 모델 baseline (GPT-5.1 Codex)",
       badge: "기준선",
-      cost: 2.0497,
-      pass: 87.5,
-      time: 1042,
-      tokens: 4065811,
+      cost: 2.4937,
+      pass: 100,
+      time: 1201,
+      tokens: 4198026,
       cases: 8,
-      failed: 1,
+      failed: 0,
       color: "var(--vp-c-danger)"
     },
     {
       name: "Routed Strategy",
-      desc: "작은 모델 + Kairo",
+      desc: "Mini baseline + (선별) Mini+Kairo",
       badge: "권장",
-      cost: 0.5396,
+      cost: 0.6977,
       pass: 100,
-      time: 1610,
-      tokens: 5842264,
+      time: 1535,
+      tokens: 6392174,
       cases: 8,
       failed: 0,
       color: "var(--vp-c-brand)"
@@ -81,16 +81,16 @@ const data = computed(() => isKo.value ? {
     title: "상세 분석",
     sections: [
       {
-        heading: "성공률이 중요한 이유",
-        text: "고성능 모델(GPT-5)도 8개 케이스 중 1개에서 파일 검증 단계를 실패했습니다. Kairo의 구조화된 워크플로우는 절차적 검증을 강제하므로 이러한 엣지 케이스를 완벽히 처리합니다."
+        heading: "핵심은 ‘실지출’",
+        text: "이번 실행에서는 토큰/시간이 늘었지만, Mini 단가(및 cached input 반영) 덕분에 달러 기준 실지출이 크게 내려갔습니다. 운영에서는 이 $ 차이가 누적됩니다."
       },
       {
-        heading: "시간 증가는 투자, 아닌 낭비",
-        text: "실행 시간이 54% 더 길지만, 이는 추가 검증과 구조적 안정성을 위한 것입니다. 사람이 한 번의 실패를 고쳐야 하는 시간(최소 10-20분)에 비하면, 자동화된 검증 몇 분은 무시할 수 있는 수준입니다."
+        heading: "절차적 작업에서의 가능성",
+        text: "CLI 플래그/문서 일관성처럼 ‘작지만 넓게 고쳐야 하는’ 작업은 구조화된 실행이 도움이 될 수 있습니다. 일부 케이스에서는 상위 모델 baseline과 비슷하거나 더 빠르게 끝나기도 합니다."
       },
       {
-        heading: "비용 절감은 구조적 필연",
-        text: "작은 모델을 메인으로 사용하고 복잡한 작업에만 큰 모델을 라우팅하는 아키텍처 자체가 비용을 낮춥니다. 이는 운이 아니라 설계의 승리입니다."
+        heading: "트레이드오프는 명시해야 함",
+        text: "라우팅은 대체로 ‘더 저렴하지만, 때로는 더 느리고 토큰이 더 듭니다’. 그래서 라우팅 임계값(files>=N, category)은 레포/워크로드에 맞춰 튜닝하는 것이 전제입니다."
       }
     ]
   },
@@ -100,16 +100,16 @@ const data = computed(() => isKo.value ? {
     note: "본 벤치마크는 대표 시나리오 기준 단일 실행(single-shot) 결과입니다.",
     items: [
       "테스트 케이스: 8개 (스키마, 기능, CLI, UX, 문서)",
-      "모델: GPT-5 Codex (Full) vs GPT-5 Codex (Mini)",
+      "모델: GPT-5.1 Codex (Full) vs GPT-5.1 Codex (Mini)",
       "타임아웃: 600초",
-      "라우팅 규칙: 복잡한 케이스(파일 5개 이상 or UX/CLI 카테고리) → Full 모델",
-      "가격: 2025년 1월 기준 공식 API 가격"
+      "라우팅 규칙: 복잡도 프록시(파일 5개 이상 or CLI 카테고리) → Mini+Kairo",
+      "가격: `benchmarks/agent/pricing.json` (snapshot: 2026-01-26)"
     ]
   }
 } : {
   title: "Real Benchmark Results",
   subtitle: "High-cost model vs Routing strategy",
-  legend: "Mini model + Kairo routing dominates Full model baseline across cost and accuracy",
+  legend: "In a representative run, Mini+Kairo routing maintained pass rate while materially reducing measured spend (with token/time trade-offs).",
   
   metrics: {
     cost: {
@@ -117,10 +117,10 @@ const data = computed(() => isKo.value ? {
       labelSuffix: "(📉 Lower is better)",
       unit: "USD",
       goal: "lower",
-      full: 2.0497,
-      routed: 0.5396,
-      delta: -1.5101,
-      percentage: -73.7,
+      full: 2.4937,
+      routed: 0.6977,
+      delta: -1.7961,
+      percentage: -72.0,
       highlight: true,
       icon: "💰"
     },
@@ -129,10 +129,10 @@ const data = computed(() => isKo.value ? {
       labelSuffix: "(📈 Higher is better)",
       unit: "%",
       goal: "higher",
-      full: 87.5,
+      full: 100,
       routed: 100,
-      delta: 12.5,
-      percentage: 14.3,
+      delta: 0,
+      percentage: 0.0,
       highlight: true,
       icon: "🎯"
     },
@@ -141,10 +141,10 @@ const data = computed(() => isKo.value ? {
       labelSuffix: "(📉 Lower is better)",
       unit: "ms",
       goal: "lower",
-      full: 1042324,
-      routed: 1610173,
-      delta: 567849,
-      percentage: 54.5,
+      full: 1201427,
+      routed: 1534673,
+      delta: 333161,
+      percentage: 27.7,
       highlight: false,
       icon: "⏱️"
     }
@@ -153,24 +153,24 @@ const data = computed(() => isKo.value ? {
   systems: [
     {
       name: "Full Baseline",
-      desc: "State-of-the-art model (GPT-5 Codex)",
+      desc: "Full-model baseline (GPT-5.1 Codex)",
       badge: "Baseline",
-      cost: 2.0497,
-      pass: 87.5,
-      time: 1042,
-      tokens: 4065811,
+      cost: 2.4937,
+      pass: 100,
+      time: 1201,
+      tokens: 4198026,
       cases: 8,
-      failed: 1,
+      failed: 0,
       color: "var(--vp-c-danger)"
     },
     {
       name: "Routed Strategy",
-      desc: "Mini model + Kairo",
+      desc: "Mini baseline + (selected) Mini+Kairo",
       badge: "Recommended",
-      cost: 0.5396,
+      cost: 0.6977,
       pass: 100,
-      time: 1610,
-      tokens: 5842264,
+      time: 1535,
+      tokens: 6392174,
       cases: 8,
       failed: 0,
       color: "var(--vp-c-brand)"
@@ -181,16 +181,16 @@ const data = computed(() => isKo.value ? {
     title: "Detailed Analysis",
     sections: [
       {
-        heading: "Why Success Rate Matters",
-        text: "Even the SOTA model (GPT-5) failed 1 out of 8 cases at the file validation step. Kairo's structured workflow enforces procedural validation, handling edge cases perfectly."
+        heading: "Focus on spend ($), not just tokens",
+        text: "In this run, tokens and wall time increased, but measured spend dropped materially due to Mini pricing (and cached-input accounting). In production, this dollar delta compounds."
       },
       {
-        heading: "Time Increase is Investment, Not Waste",
-        text: "54% longer execution is the cost of additional validation and structural reliability. Compare this to the 10-20 minutes humans spend debugging a single failure—a few extra minutes of automation is negligible."
+        heading: "Where routing can be competitive",
+        text: "Procedural tasks (CLI flags, doc consistency) often benefit from structured execution. Some cases can approach or even beat a full-model baseline on wall time, but outcomes vary by repo and workload."
       },
       {
-        heading: "Cost Reduction is Architectural",
-        text: "Using a smaller model as the default and routing complex tasks to larger models isn't luck—it's architectural design. This pattern scales reliably."
+        heading: "Be explicit about trade-offs",
+        text: "Routing tends to be cheaper but can be slower and use more tokens. Treat routing thresholds (files>=N, category) as knobs you tune per repo."
       }
     ]
   },
@@ -200,10 +200,10 @@ const data = computed(() => isKo.value ? {
     note: "This benchmark represents a single-shot run on representative scenarios.",
     items: [
       "Test cases: 8 (schema, feature, CLI, UX, docs)",
-      "Models: GPT-5 Codex (Full) vs GPT-5 Codex (Mini)",
+      "Models: GPT-5.1 Codex (Full) vs GPT-5.1 Codex (Mini)",
       "Timeout: 600 seconds",
-      "Routing rule: Complex cases (5+ files OR ux/cli category) → Full model",
-      "Pricing: Official API rates as of January 2025"
+      "Routing rule: Complexity proxy (5+ files OR cli category) → Mini+Kairo",
+      "Pricing: `benchmarks/agent/pricing.json` (snapshot: 2026-01-26)"
     ]
   }
 })
@@ -212,7 +212,7 @@ const data = computed(() => isKo.value ? {
 const isWinner = (metricKey: 'cost' | 'accuracy' | 'time', isRouted: boolean) => {
   const metric = data.value.metrics[metricKey]
   if (metricKey === 'cost') return isRouted // Lower cost (routed) wins
-  if (metricKey === 'accuracy') return isRouted // Higher accuracy (routed) wins
+  if (metricKey === 'accuracy') return false // Tie in this run
   if (metricKey === 'time') return !isRouted // Lower time (baseline) wins
   return false
 }
@@ -300,7 +300,7 @@ const formatPercent = (num: number) => `${num.toFixed(1)}%`
               <div
                 class="bar baseline"
                 :style="{
-                  width: activeMetric === 'cost' ? '100%' : activeMetric === 'accuracy' ? '87.5%' : '64.7%'
+                  width: activeMetric === 'cost' ? '100%' : activeMetric === 'accuracy' ? '100%' : '78.3%'
                 }"
               >
                 <span class="bar-value">
@@ -322,7 +322,7 @@ const formatPercent = (num: number) => `${num.toFixed(1)}%`
               <div
                 class="bar routed"
                 :style="{
-                  width: activeMetric === 'cost' ? '26.3%' : activeMetric === 'accuracy' ? '100%' : '100%'
+                  width: activeMetric === 'cost' ? '28.0%' : activeMetric === 'accuracy' ? '100%' : '100%'
                 }"
               >
                 <span class="bar-value">

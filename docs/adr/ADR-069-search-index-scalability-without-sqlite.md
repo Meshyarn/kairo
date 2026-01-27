@@ -18,7 +18,7 @@ Make baseline sync asynchronous/incremental so it does not block requests, and r
 - baseline async + caps: `src/ast/SymbolIndex.ts`, `src/indexing/IncrementalIndexer.ts`, `src/server/SmartContextServer.ts`
 - secondary index: `src/storage/index/IndexStore.ts`
 - budget metrics/doctor: `src/handlers/ManageHandlers.ts`, `src/utils/MetricsCatalog.ts`
-- benchmark: `benchmarks/symbol-search-scalability.ts`
+- benchmark: `benchmarks/adr/symbol-search-scalability.ts`
 
 ## Testing
 

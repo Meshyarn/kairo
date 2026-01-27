@@ -1,8 +1,8 @@
 # Benchmark Report: Routing Strategy
 
 **Date:** January 2026  
-**Model:** GPT-5 Codex  
-**Duration:** ~2.5 hours (single run)
+**Models:** GPT-5.1 Codex Mini + GPT-5.1 Codex  
+**Duration:** ~46 minutes total (single run; includes full-baseline comparison)
 
 ---
 
@@ -10,10 +10,12 @@
 
 This report compares two strategies for integrating cost-effective AI agents into high-reliability systems:
 
-1. **Full Baseline**: Always use the most capable model (GPT-5 Full)
-2. **Routed Strategy**: Default to budget model (Mini), escalate to Full for complex cases
+1. **Full Baseline**: Always use the full model (GPT-5.1 Codex)
+2. **Routed Strategy**: Default to budget model (Mini baseline), route selected cases to **Mini + Kairo** for stronger procedural execution
 
-**Key Finding:** Routed strategy achieves **100% success rate** while reducing costs by **73.7%**, at the cost of 54% longer execution time (acceptable due to procedural validation overhead).
+**Key Finding (this run):** Routed strategy matched **100% pass@1** while reducing **measured spend** by **72.0%**. The trade-off is **+27.7% wall time** and **+52.3% total tokens** (expected overhead from verification / procedure).
+
+> Note: In production you can also choose to route “complex” to a full model; this benchmark isolates the value of Kairo by keeping the model tier fixed (Mini) and changing the execution strategy.
 
 ---
 
@@ -22,34 +24,71 @@ This report compares two strategies for integrating cost-effective AI agents int
 ### Setup
 
 ```bash
-KAIRO_AGENT_MODEL_CMD="node scripts/run-codex-cli-agent.mjs" \
-node --import tsx benchmarks/agent/cascade.ts \
+node benchmarks/agent/launch.mjs --provider codex \
   --pipeline route \
   --suite benchmarks/agent/suite.kairo5.json \
   --mode live \
-  --provider codex \
-  --mini gpt-5-codex-mini \
-  --full gpt-5-codex \
+  --mini gpt-5.1-codex-mini \
+  --full gpt-5.1-codex \
   --timeout-ms 600000 \
   --kairo-budget low \
   --pricing benchmarks/agent/pricing.json \
+  --attempts 2 \
   --gate-files-min 5 \
-  --gate-category ux,cli
+  --gate-category cli
 ```
 
 ### Routing Logic
 
-- **Routed cases (5/8):** Complex scenarios (5+ files OR ux/cli category)
+- **Routed cases (4/8):** Complex scenarios (5+ files OR `cli` category)
   - `kc-reindex-status-001` (feature)
   - `kc-workspace-flag-001` (cli)
   - `kc-allow-cwd-root-flag-001` (cli)
   - `kc-kairo-dir-flag-001` (cli)
-  - `kc-warmup-empty-index-001` (ux)
 
-- **Non-routed cases (3/8):** Simple cases (schema, docs)
+- **Non-routed cases (4/8):** Simple / non-routed cases (schema, ux, docs)
   - `kc-tool-schema-001` (schema)
+  - `kc-warmup-empty-index-001` (ux)
   - `kc-compact-surface-rename-001` (docs)
   - `kc-adr-index-001` (docs)
+
+---
+
+## Test Suite Design (Why these cases)
+
+This benchmark suite is intentionally small (cost-aware) and biased toward tasks where Kairo’s strengths are most relevant: **procedural changes**, **multi-file consistency**, and **validator-driven correctness**.
+
+### What’s covered
+
+- **Schema**: tool surface / schema consistency (helps catch “spec drift”).
+- **CLI**: flag/alias additions that typically require changes across code + docs (procedural, multi-file).
+- **Feature**: a concrete behavior change that touches multiple layers (tool registry, handler logic, agent docs).
+- **UX**: “warmup / empty index” style workflow where environment + state handling matters.
+- **Docs**: controlled doc edits with explicit expected outputs (low ambiguity, easy to validate).
+
+### Why this mix
+
+- **Deterministic validation**: the cases are designed to be checked via local validators (files/content), reducing subjective scoring.
+- **Representative agent work**: in practice, many agent tasks are “small-but-wide” edits across CLI, docs, and configuration.
+- **Reproducible starting state**: the suite runs on a fixed fixture baseline, so results are less sensitive to repo drift between runs.
+- **Routing realism**: the routing rule (“complex=files>=N or category in …”) is a simple proxy for “procedural heaviness”; it’s meant to be tuned per repo.
+
+### Case catalog & validators
+
+All cases use local validators that assert **specific strings** are present (or absent) in specific files. This keeps scoring deterministic and cheap.
+
+| Case | Category | What it represents | Files | Checks |
+| --- | --- | --- | ---: | ---: |
+| `kc-tool-schema-001` | schema | Tool schema + docs stay in sync | 2 | 4 |
+| `kc-reindex-status-001` | feature | Multi-file feature + docs wiring | 5 | 10 |
+| `kc-workspace-flag-001` | cli | CLI alias + docs updates | 4 | 5 |
+| `kc-allow-cwd-root-flag-001` | cli | New flag + docs consistency | 4 | 5 |
+| `kc-kairo-dir-flag-001` | cli | Env/flag alias + docs consistency | 4 | 4 |
+| `kc-warmup-empty-index-001` | ux | State-aware UX + config docs | 2 | 7 |
+| `kc-compact-surface-rename-001` | docs | Doc rename with negative checks (excludes) | 3 | 6 |
+| `kc-adr-index-001` | docs | Targeted doc index edit | 1 | 2 |
+
+*“Checks” counts individual `contains_text(s)` / `excludes_text` assertions across all validator files.*
 
 ---
 
@@ -59,85 +98,82 @@ node --import tsx benchmarks/agent/cascade.ts \
 
 | System | Pass@1 | Pass@k | Input Tokens | Output Tokens | Total Tokens | Cost | Wall Time |
 |--------|--------|--------|-------------|--------------|-------------|------|-----------|
-| **Mini baseline** (non-routed) | 100.0% | 100.0% | 522,075 | 17,730 | 539,805 | $0.0645 | 230s |
-| **Mini kairo** (routed cases only) | 100.0% | 100.0% | 5,204,074 | 98,385 | 5,302,459 | $0.4752 | 1,380s |
-| **Routed selection** (baseline + kairo) | 100.0% | 100.0% | 5,726,149 | 116,115 | 5,842,264 | $0.5396 | 1,610s (27m) |
-| **Full baseline** (all cases with Full) | 87.5% | 87.5% | 4,002,915 | 62,896 | 4,065,811 | $2.0497 | 1,042s (17m) |
+| **Mini baseline** (non-routed) | 100.0% | 100.0% | 1,161,807 | 29,220 | 1,191,027 | $0.1721 | 371s |
+| **Mini kairo** (routed cases only) | 100.0% | 100.0% | 5,106,154 | 94,993 | 5,201,147 | $0.5256 | 1,164s |
+| **Routed selection** (baseline + kairo) | 100.0% | 100.0% | 6,267,961 | 124,213 | 6,392,174 | $0.6977 | 1,535s (25.6m) |
+| **Full baseline** (all cases with Full) | 100.0% | 100.0% | 4,109,544 | 88,482 | 4,198,026 | $2.4937 | 1,201s (20.0m) |
+
+**Cost note:** Costs are computed from `benchmarks/agent/pricing.json` (snapshot `2026-01-26`) and account for cached input tokens when available.
 
 ### Delta Analysis (Routed vs Full)
 
-| Metric | Delta | Percentage |
-|--------|-------|-----------|
-| **Pass@1** | +12.5pp | +14.3% ✅ |
-| **Pass@k** | +12.5pp | +14.3% ✅ |
-| **Input Tokens** | +1,723,234 | +43.0% |
-| **Output Tokens** | +53,219 | +84.6% |
-| **Total Tokens** | +1,776,453 | +43.7% |
-| **Cost** | -$1.5101 | -73.7% 💰 |
-| **Wall Time** | +567,758ms | +54.5% ⏱️ |
+| Metric | Delta |
+|--------|-------|
+| **Pass@1** | +0.0pp (+0.0%) |
+| **Pass@k** | +0.0pp (+0.0%) |
+| **Input Tokens** | +2,158,417 (+52.5%) |
+| **Output Tokens** | +35,731 (+40.4%) |
+| **Total Tokens** | +2,194,148 (+52.3%) |
+| **Cost** | -$1.7961 (-72.0%) 💰 |
+| **Wall Time** | +333,161ms (+27.7%) ⏱️ |
 
 ---
 
 ## Case-by-Case Breakdown
 
-### Failed Case: Full Baseline
+### Representative Cases (where routing can be competitive)
+
+These are not guarantees, but examples from this run that show where **Mini + Kairo** can be competitive even against a full-model baseline:
 
 **Case:** `kc-kairo-dir-flag-001` (CLI)
+- Full baseline: 368,698ms, $0.7219
+- Mini + Kairo: 243,492ms, $0.1525
 
-| System | Status | Time (ms) | Cost | Notes |
-|--------|--------|-----------|------|-------|
-| Full Baseline | ❌ FAILED (files) | 250,994 (4m) | High | File validation failed |
-| Routed (Full model) | ✅ PASSED | 305,366 (5m) | Lower (Mini defaulted simpler cases) | Structured validation succeeded |
+**Case:** `kc-allow-cwd-root-flag-001` (CLI)
+- Full baseline: 187,710ms, $0.3796
+- Mini + Kairo: 196,003ms, $0.0760
 
-**Analysis:**
-- The Full model's failure indicates that raw capability alone doesn't guarantee success.
-- The Kairo-routed execution succeeded because of **enforced procedural validation** and systematic step-by-step verification.
-- This single case demonstrates the value of structured workflows over pure LLM capability.
+Interpretation: for “procedural / flag + docs consistency” style tasks, Kairo’s structured execution can reduce wasted exploration and help the smaller model stay on-track. Results vary by repo, prompts, and routing thresholds.
 
 ---
 
 ## Key Insights
 
-### 1. Success Rate Is Non-Negotiable
+### 1. Success Rate Still Matters
 
-- **Full baseline:** 87.5% (1 failure in 8 cases)
-- **Routed strategy:** 100% (0 failures)
+- **Full baseline:** 100% (this run)
+- **Routed strategy:** 100% (this run)
 
-In production, a 12.5% failure rate means:
-- Every 8 agent tasks → 1 requires manual intervention
-- Manual debugging: 10-20 minutes per failure
-- Compounding: Cascading failures in agent loops
-
-The routed strategy's 100% success rate prevents these downstream costs entirely.
+In production, success-rate deltas are workload-dependent. The more your workload is dominated by procedural changes (small, multi-file, validator-heavy tasks), the more routing + structured execution tends to matter.
 
 ### 2. Cost Reduction Scales
 
-- **Per-task baseline:** $2.05
-- **Per-task routed:** $0.54
-- **Break-even point:** ~6 tasks (routed investment pays for itself)
+- **Per suite run (8 cases) full baseline:** $2.49
+- **Per suite run (8 cases) routed:** $0.70
+- **Average per case (this suite):** ~$0.31 → ~$0.09
 
 For 100 agent tasks:
-- Full baseline: $205
-- Routed: $54
-- Savings: $151 (74% reduction)
+- Full baseline: $249
+- Routed: $70
+- Savings: $179 (~72% reduction)
 
 ### 3. Time Trade-off Is Acceptable
 
-- **Additional time:** 568 seconds (9.5 minutes total)
-- **Per task:** +71s (negligible for agents)
-- **Compared to human recovery:** 1 failure recovery = 10-20 minutes
+- **Additional time:** ~333 seconds (5.6 minutes total)
+- **Per case (this suite):** ~+42s average
+- **Compared to human recovery:** even small success-rate improvements can be worth more than the wall-time overhead
 
-**ROI:** 54% time overhead prevents 100% of failures (valued at 10-20 min each).
+**ROI framing:** you can trade wall time for lower spend (and potentially higher reliability), depending on your workload.
 
 ### 4. Token Usage Pattern
 
-- **Full model tokens:** 4.1M
-- **Routed tokens:** 5.8M (+43%)
+- **Full model tokens:** 4.20M
+- **Routed tokens:** 6.39M (+52%)
 
 Why the increase?
-- Mini model requires more context for complex cases
-- Kairo adds verification steps (redundant but safe)
-- This is the **cost of reliability**
+- Mini can require more context for complex cases
+- Kairo adds verification / procedure steps (extra tokens, but cheaper dollars)
+- This is often the **cost of structured execution**
 
 ---
 
@@ -146,9 +182,9 @@ Why the increase?
 ### For Cost-Sensitive Workloads
 
 ✅ **Use routed strategy**
-- Default to Mini model (~$0.05 per task)
-- Escalate to Full for complex cases (~$0.50 per task)
-- Expected outcome: 100% success rate, 70%+ cost savings
+- Default to Mini baseline for most cases
+- Route selected categories/complexity bands to **Mini + Kairo**
+- Expected outcome: similar pass rates with materially lower spend (depending on routing thresholds)
 
 ### For Safety-Critical Systems
 
@@ -160,8 +196,8 @@ Why the increase?
 ### For High-Throughput Agent Loops
 
 ✅ **Use routed strategy**
-- Route 60-70% of tasks to Mini (cheap, fast)
-- Route 30-40% of complex tasks to Full
+- Route a majority of tasks to Mini baseline
+- Route a smaller band of procedural-heavy tasks to **Mini + Kairo**
 - Expected outcome: Optimal cost/performance ratio
 
 ### For Prototyping/Exploration
@@ -178,7 +214,7 @@ Why the increase?
 ### Single-Shot Execution
 
 This benchmark represents a **single run** on representative test cases. Due to LLM benchmark costs:
-- Full GPT-5 suite: ~$2.00 per run
+- Full GPT-5.1 suite: ~$2.50 per run
 - Large-scale statistical validation: cost-prohibitive
 - Instead, focus on: procedural rigor, transparent methodology, repeatable steps
 
@@ -191,7 +227,7 @@ This benchmark represents a **single run** on representative test cases. Due to 
 ### Limitations & Caveats
 
 - **N=1 execution:** Single run limits statistical power. Next steps: multi-run comparison for confidence intervals.
-- **Model versions:** Results specific to GPT-5 Codex (Jan 2025). Will vary with newer models.
+- **Model versions:** Results are model- and snapshot-specific; treat this as a data point, not a universal guarantee.
 - **Task distribution:** Test cases emphasize infrastructure/CLI tasks. Patterns may differ for pure code generation.
 
 ---
@@ -205,19 +241,18 @@ To run this benchmark yourself:
 npm install
 
 # Run the route benchmark
-KAIRO_AGENT_MODEL_CMD="node scripts/run-codex-cli-agent.mjs" \
-node --import tsx benchmarks/agent/cascade.ts \
+node benchmarks/agent/launch.mjs --provider codex \
   --pipeline route \
   --suite benchmarks/agent/suite.kairo5.json \
   --mode live \
-  --provider codex \
-  --mini gpt-5-codex-mini \
-  --full gpt-5-codex \
+  --mini gpt-5.1-codex-mini \
+  --full gpt-5.1-codex \
   --timeout-ms 600000 \
   --kairo-budget low \
   --pricing benchmarks/agent/pricing.json \
+  --attempts 2 \
   --gate-files-min 5 \
-  --gate-category ux,cli
+  --gate-category cli
 
 # View results
 cat benchmarks/reports/agent-route-*.md

@@ -20,7 +20,7 @@ const segments = computed(() => isKo.value ? [
   },
   {
     role: "토큰 효율성 중시 사용자",
-    benefit: "동일한 추론 작업에서 40-60%의 토큰을 절약합니다."
+    benefit: "토큰/시간 트레이드오프를 감수하더라도, 라우팅으로 실지출($)을 줄이는 전략이 가능합니다."
   }
 ] : [
   {
@@ -37,7 +37,7 @@ const segments = computed(() => isKo.value ? [
   },
   {
     role: "Token-Conscious Users",
-    benefit: "40-60% token savings for equivalent reasoning."
+    benefit: "Routing can reduce measured spend ($), even when tokens/time trade off."
   }
 ])
 </script>

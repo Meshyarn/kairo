@@ -36,5 +36,5 @@ The previous `maxChars`-based hard cut did not match actual model token usage (l
 - Explore: `src/orchestration/pillars/explore/ExplorePillar.ts`
 - Understand: `src/orchestration/pillars/UnderstandPillar.ts`
 - Read: `src/orchestration/pillars/ReadPillar.ts`
-- Bench: `benchmarks/token-compression.ts`
+- Bench: `benchmarks/adr/token-compression.ts`
 

@@ -17,7 +17,7 @@ Lock down benchmark accuracy (paths/skip handling) and codify the minimal metric
 
 - repo root resolver: `benchmarks/lib/repoRoot.ts`
 - bench path correctness + report improvements: `benchmarks/main.ts`
-- SKIP standardization: `benchmarks/phase2-performance.ts`
+- SKIP standardization: `benchmarks/adr/phase2-performance.ts`
 - Minimal metric catalog + coverage: `src/utils/MetricsCatalog.ts`, `src/handlers/ManageHandlers.ts`
 - cache/guardrails/override counters: `src/engine/ClusterSearch/ClusterCache.ts`, `src/documents/search/DocumentSearchEngine.ts`, `src/documents/search/EvidencePackBuilder.ts`, `src/orchestration/guardrails/IntegrityGuardrails.ts`, `src/utils/GuardrailsOverride.ts`
 - exporter + lifecycle: `src/utils/metrics/*`, `src/server/SmartContextServer.ts`

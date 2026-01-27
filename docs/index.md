@@ -20,7 +20,7 @@ hero:
 features:
   - icon: ⚡️
     title: "Focused Precision"
-    details: "Agents get exactly what they need—no more, no less. 40-60% fewer tokens for the same results."
+    details: "Agents get exactly what they need—no more, no less. Token-efficient evidence packs (often reduces wasted context vs raw file dumps)."
     
   - icon: 🔍
     title: "Evidence-First"

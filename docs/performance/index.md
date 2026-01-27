@@ -9,9 +9,9 @@ This section covers performance benchmarks, optimization strategies, and real-wo
 
 ## Quick Facts
 
-- ✅ **100% Success Rate** achieved with intelligent routing (vs 87.5% with SOTA models alone)
-- 💰 **73.7% Cost Reduction** by routing complex tasks intelligently
-- ⏱️ **54% Execution Overhead** offset by elimination of failure recovery costs
+- ✅ **Matched success rate** vs full baseline in a representative run (both 100% pass@1)
+- 💰 **~72% cost reduction** with routed Mini+Kairo execution (same suite)
+- ⏱️ **~28% wall-time overhead** (trade-off: cheaper, sometimes slower)
 
 ## What's Measured
 

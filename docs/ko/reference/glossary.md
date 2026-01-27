@@ -18,7 +18,7 @@ Kairo의 내부 파일 인덱스가 **실제 파일시스템과 다른 상태**�
 - 파일 삭제 또는 이름 변경
 - 호출 간 디스크 내용 변경
 
-Kairo는 drift가 감지되면 **위험한** 편집을 차단합니다. [혼합 워크플로우 탄력성 (ADR-077)](/ko/adr/ADR-077-mixed-workflow-resilience)과 [안전한 쓰기](/ko/concepts/safe-writes)를 참고하세요.
+Kairo는 drift가 감지되면 **위험한** 편집을 차단합니다. [혼합 워크플로우 탄력성 (ADR-077)](/adr/ADR-077-mixed-workflow-resilience)과 [안전한 쓰기](/ko/concepts/safe-writes)를 참고하세요.
 
 **Drift 검사**  
 Kairo의 워크스페이스 drift 감지 메커니즘입니다. `manage({ command: "status" })`로 확인: `status.drift.workspaceDrift`.
@@ -62,7 +62,7 @@ Kairo의 전략 평가에 사용되는 검색 알고리즘:
 - 예상 품질로 순위 지정
 - 완전 열거 없이 최고의 전략 선택
 
-`plan_change` 전략 선택에 내부적으로 사용. 설정: `strategySearch.mcts` ([ADR-080](/ko/adr/ADR-080-strategy-search-and-mcts) 참고).
+`plan_change` 전략 선택에 내부적으로 사용. 설정: `strategySearch.mcts` ([ADR-082](/adr/ADR-082-simulate-reason-execute-mcts) 참고).
 
 ## P
 

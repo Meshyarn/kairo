@@ -6,14 +6,14 @@ const { lang } = useData()
 const isKo = computed(() => (lang.value ?? "").toLowerCase().startsWith("ko"))
 
 const stats = computed(() => isKo.value ? [
-  { label: "40-60% 토큰 절감", desc: "동등한 작업 수행 시", icon: "📉" },
-  { label: "15-25% 성공률 증가", desc: "재시도 없는 첫 시도", icon: "🎯" },
-  { label: "100% 실수 방지", desc: "드리프트 감지 보장", icon: "🛡️" },
+  { label: "~72% 비용 절감(대표 실행)", desc: "라우팅(Mini+Kairo) vs 상위 모델 baseline", icon: "💰" },
+  { label: "결정적 채점", desc: "validator 기반(파일/문구) judge-free", icon: "✅" },
+  { label: "안전한 실행 계약", desc: "Plan → Review → Apply + drift 감지", icon: "🛡️" },
   { label: "외부 의존성 Zero", desc: "완전한 로컬/오프라인", icon: "✈️" }
 ] : [
-  { label: "40-60% Less Tokens", desc: "For equivalent tasks", icon: "📉" },
-  { label: "15-25% Higher Success", desc: "First-attempt rate", icon: "🎯" },
-  { label: "100% Drift Detection", desc: "Prevents accidental overwrites", icon: "🛡️" },
+  { label: "~72% Lower Spend (rep run)", desc: "Routed (Mini+Kairo) vs full baseline", icon: "💰" },
+  { label: "Deterministic Scoring", desc: "Validator-driven, judge-free", icon: "✅" },
+  { label: "Safe Execution Contract", desc: "Plan → Review → Apply + drift detection", icon: "🛡️" },
   { label: "Zero External Deps", desc: "Works entirely locally", icon: "✈️" }
 ])
 </script>

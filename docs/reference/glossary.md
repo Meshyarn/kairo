@@ -62,7 +62,7 @@ A search algorithm used in Kairo's strategy evaluation:
 - Ranks them by estimated quality.
 - Selects the best without exhaustive enumeration.
 
-Used internally for `plan_change` strategy selection. Configuration: `strategySearch.mcts` (see [ADR-080](/adr/ADR-080-strategy-search-and-mcts)).
+Used internally for `plan_change` strategy selection. Configuration: `strategySearch.mcts` (see [ADR-082](/adr/ADR-082-simulate-reason-execute-mcts)).
 
 ## P
 

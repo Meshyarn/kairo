@@ -20,7 +20,7 @@ hero:
 features:
   - icon: ⚡️
     title: "정확한 초점"
-    details: "에이전트가 필요한 것만 정확히 받습니다. 같은 결과에 40-60% 적은 토큰."
+    details: "에이전트가 필요한 것만 정확히 받습니다. 토큰 효율적인 evidence packs(원시 파일 덤프 대비 불필요한 컨텍스트를 줄이는 경향)."
     
   - icon: 🔍
     title: "증거 중심"

@@ -1,8 +1,8 @@
 # 벤치마크 리포트: 라우팅 전략
 
 **날짜:** 2026년 1월  
-**모델:** GPT-5 Codex  
-**소요 시간:** ~2.5시간 (단일 실행)
+**모델:** GPT-5.1 Codex Mini + GPT-5.1 Codex  
+**소요 시간:** 총 ~46분 (단일 실행; full-baseline 비교 포함)
 
 ---
 
@@ -10,10 +10,12 @@
 
 AI 에이전트를 고신뢰도 시스템에 통합하기 위한 두 가지 전략을 비교합니다:
 
-1. **Full Baseline**: 항상 가장 강력한 모델 사용 (GPT-5 Full)
-2. **Routed Strategy**: 기본은 저예산 모델(Mini), 복잡한 경우에만 Full로 에스컬레이션
+1. **Full Baseline**: 항상 상위 모델 사용 (GPT-5.1 Codex)
+2. **Routed Strategy**: 기본은 저예산 모델(Mini baseline), 일부 케이스를 **Mini + Kairo**로 라우팅하여 절차적 실행을 강화
 
-**핵심 발견:** 라우팅 전략은 **100% 성공률**을 달성하면서 비용을 **73.7% 절감**했습니다. 비용: 실행 시간이 54% 증가했지만, 이는 절차적 검증 오버헤드로 인해 수용 가능합니다.
+**핵심 발견(이번 실행):** 라우팅 전략은 **pass@1 100%를 유지**하면서 **실지출 기준 비용을 72.0% 절감**했습니다. 트레이드오프로 **wall time +27.7%**, **총 토큰 +52.3%**가 관측됩니다(검증/절차 오버헤드로 자연스러움).
+
+> 참고: 운영에서는 “complex → 상위 모델” 라우팅도 선택할 수 있습니다. 이 벤치마크는 **모델 티어를 Mini로 고정**하고, Kairo(절차적 실행)의 기여를 보기 위해 실행 전략만 바꿉니다.
 
 ---
 
@@ -22,34 +24,71 @@ AI 에이전트를 고신뢰도 시스템에 통합하기 위한 두 가지 전�
 ### 설정
 
 ```bash
-KAIRO_AGENT_MODEL_CMD="node scripts/run-codex-cli-agent.mjs" \
-node --import tsx benchmarks/agent/cascade.ts \
+node benchmarks/agent/launch.mjs --provider codex \
   --pipeline route \
   --suite benchmarks/agent/suite.kairo5.json \
   --mode live \
-  --provider codex \
-  --mini gpt-5-codex-mini \
-  --full gpt-5-codex \
+  --mini gpt-5.1-codex-mini \
+  --full gpt-5.1-codex \
   --timeout-ms 600000 \
   --kairo-budget low \
   --pricing benchmarks/agent/pricing.json \
+  --attempts 2 \
   --gate-files-min 5 \
-  --gate-category ux,cli
+  --gate-category cli
 ```
 
 ### 라우팅 로직
 
-- **라우팅된 케이스 (5/8):** 복잡한 시나리오 (5개 이상 파일 OR ux/cli 카테고리)
+- **라우팅된 케이스 (4/8):** 복잡한 시나리오 (5개 이상 파일 OR `cli` 카테고리)
   - `kc-reindex-status-001` (기능)
   - `kc-workspace-flag-001` (cli)
   - `kc-allow-cwd-root-flag-001` (cli)
   - `kc-kairo-dir-flag-001` (cli)
-  - `kc-warmup-empty-index-001` (ux)
 
-- **라우팅되지 않은 케이스 (3/8):** 간단한 케이스 (스키마, 문서)
+- **라우팅되지 않은 케이스 (4/8):** 간단/비라우팅 케이스 (스키마, ux, 문서)
   - `kc-tool-schema-001` (스키마)
+  - `kc-warmup-empty-index-001` (ux)
   - `kc-compact-surface-rename-001` (문서)
   - `kc-adr-index-001` (문서)
+
+---
+
+## 테스트 스위트 설계(왜 이런 케이스들인가)
+
+이 벤치마크 스위트는 비용을 고려해 **작게 유지**하면서, Kairo의 강점이 드러나기 쉬운 영역(절차적 변경, 다중 파일 일관성, validator 기반 정확성)에 일부러 비중을 둡니다.
+
+### 포함 범위
+
+- **Schema**: tool surface / schema 일관성(“스펙 드리프트” 감지에 유리).
+- **CLI**: flag/alias 추가처럼 코드+문서 동시 변경이 필요한 작업(절차적, multi-file).
+- **Feature**: 여러 레이어를 건드리는 구체적 기능 변경(tool registry, 핸들러 로직, 에이전트 문서 등).
+- **UX**: “warmup / empty index”처럼 환경/상태 처리가 중요한 워크플로우.
+- **Docs**: 기대 결과가 명확한 문서 변경(모호성 낮고 검증 용이).
+
+### 이 조합을 택한 이유
+
+- **결과 검증의 결정성**: 로컬 validator(files/content)로 체크 가능한 케이스 위주라, 주관적 채점이 줄어듭니다.
+- **실전 에이전트 작업과 유사**: 실제로는 “작지만 여기저기 손대는(코드/CLI/문서)” 유형이 많이 발생합니다.
+- **재현 가능한 시작 상태**: 고정된 fixture baseline에서 시작해, 레포 드리프트에 덜 민감합니다.
+- **라우팅 현실성**: “complex=files>=N or category in …”는 ‘절차적 무게’를 대략적으로 잡는 프록시이며, 레포별로 임계값 튜닝이 전제입니다.
+
+### 케이스 목록 & validator 요약
+
+모든 케이스는 로컬 validator로 **특정 파일에 특정 문자열이 포함/미포함**되는지를 검사합니다. 그래서 채점이 결정적이고 비용이 낮습니다.
+
+| 케이스 | 카테고리 | 대표하는 작업 유형 | 파일 수 | 체크 수 |
+| --- | --- | --- | ---: | ---: |
+| `kc-tool-schema-001` | schema | Tool schema + 문서 동기화 | 2 | 4 |
+| `kc-reindex-status-001` | feature | 다중 파일 기능 변경 + 문서 연동 | 5 | 10 |
+| `kc-workspace-flag-001` | cli | CLI alias + 문서 업데이트 | 4 | 5 |
+| `kc-allow-cwd-root-flag-001` | cli | 신규 플래그 + 문서 일관성 | 4 | 5 |
+| `kc-kairo-dir-flag-001` | cli | Env/flag alias + 문서 일관성 | 4 | 4 |
+| `kc-warmup-empty-index-001` | ux | 상태 기반 UX + 설정 문서 | 2 | 7 |
+| `kc-compact-surface-rename-001` | docs | 문서 용어 치환 + 미포함(excludes) 체크 | 3 | 6 |
+| `kc-adr-index-001` | docs | 문서 인덱스의 타겟 편집 | 1 | 2 |
+
+*“체크 수”는 `contains_text(s)` / `excludes_text` 단위의 개별 assertion 합계입니다.*
 
 ---
 
@@ -59,85 +98,82 @@ node --import tsx benchmarks/agent/cascade.ts \
 
 | 시스템 | Pass@1 | Pass@k | 입력 토큰 | 출력 토큰 | 총 토큰 | 비용 | 실행 시간 |
 |--------|--------|--------|-------------|--------------|-------------|------|-----------|
-| **Mini baseline** (라우팅 안 함) | 100.0% | 100.0% | 522,075 | 17,730 | 539,805 | $0.0645 | 230초 |
-| **Mini kairo** (라우팅된 케이스만) | 100.0% | 100.0% | 5,204,074 | 98,385 | 5,302,459 | $0.4752 | 1,380초 |
-| **Routed selection** (baseline + kairo) | 100.0% | 100.0% | 5,726,149 | 116,115 | 5,842,264 | $0.5396 | 1,610초 (27분) |
-| **Full baseline** (모든 케이스 Full 사용) | 87.5% | 87.5% | 4,002,915 | 62,896 | 4,065,811 | $2.0497 | 1,042초 (17분) |
+| **Mini baseline** (라우팅 안 함) | 100.0% | 100.0% | 1,161,807 | 29,220 | 1,191,027 | $0.1721 | 371초 |
+| **Mini kairo** (라우팅된 케이스만) | 100.0% | 100.0% | 5,106,154 | 94,993 | 5,201,147 | $0.5256 | 1,164초 |
+| **Routed selection** (baseline + kairo) | 100.0% | 100.0% | 6,267,961 | 124,213 | 6,392,174 | $0.6977 | 1,535초 (25.6분) |
+| **Full baseline** (모든 케이스 Full 사용) | 100.0% | 100.0% | 4,109,544 | 88,482 | 4,198,026 | $2.4937 | 1,201초 (20.0분) |
+
+**비용 참고:** 비용은 `benchmarks/agent/pricing.json`(snapshot `2026-01-26`)을 기준으로 계산되며, 가능한 경우 cached input 토큰을 반영합니다.
 
 ### Delta 분석 (Routed vs Full)
 
-| 지표 | 변화 | 백분율 |
-|--------|-------|-----------|
-| **Pass@1** | +12.5pp | +14.3% ✅ |
-| **Pass@k** | +12.5pp | +14.3% ✅ |
-| **입력 토큰** | +1,723,234 | +43.0% |
-| **출력 토큰** | +53,219 | +84.6% |
-| **총 토큰** | +1,776,453 | +43.7% |
-| **비용** | -$1.5101 | -73.7% 💰 |
-| **실행 시간** | +567,758ms | +54.5% ⏱️ |
+| 지표 | 변화 |
+|--------|-------|
+| **Pass@1** | +0.0pp (+0.0%) |
+| **Pass@k** | +0.0pp (+0.0%) |
+| **입력 토큰** | +2,158,417 (+52.5%) |
+| **출력 토큰** | +35,731 (+40.4%) |
+| **총 토큰** | +2,194,148 (+52.3%) |
+| **비용** | -$1.7961 (-72.0%) 💰 |
+| **실행 시간** | +333,161ms (+27.7%) ⏱️ |
 
 ---
 
 ## 케이스별 상세 분석
 
-### 실패한 케이스: Full Baseline
+### 대표 케이스(라우팅이 경쟁적으로 보일 수 있는 지점)
+
+확정적인 보장은 아니지만, 이번 실행에서 **Mini + Kairo**가 상위 모델 baseline 대비 경쟁적으로 보인 예시입니다:
 
 **케이스:** `kc-kairo-dir-flag-001` (CLI)
+- Full baseline: 368,698ms, $0.7219
+- Mini + Kairo: 243,492ms, $0.1525
 
-| 시스템 | 상태 | 시간 (ms) | 비용 | 비고 |
-|--------|--------|-----------|------|------|
-| Full Baseline | ❌ 실패 (파일) | 250,994 (4분) | 높음 | 파일 검증 실패 |
-| Routed (Full 모델) | ✅ 통과 | 305,366 (5분) | 낮음 (Mini가 간단한 케이스 처리) | 구조화된 검증 성공 |
+**케이스:** `kc-allow-cwd-root-flag-001` (CLI)
+- Full baseline: 187,710ms, $0.3796
+- Mini + Kairo: 196,003ms, $0.0760
 
-**분석:**
-- Full 모델의 실패는 순수 능력만으로는 성공을 보장하지 못함을 보여줍니다.
-- Kairo 라우팅된 실행이 성공한 이유는 **강제된 절차적 검증**과 체계적 단계별 검증 때문입니다.
-- 이 한 가지 케이스는 순수 LLM 능력보다 구조화된 워크플로우의 가치를 명확히 보여줍니다.
+해석: “절차/플래그 + 문서 일관성”류 작업에서는 Kairo의 구조화된 실행이 불필요한 탐색을 줄이고, 작은 모델이 궤도를 유지하도록 돕는 경향이 있을 수 있습니다. 결과는 레포/프롬프트 분포/라우팅 임계값에 따라 달라집니다.
 
 ---
 
 ## 핵심 인사이트
 
-### 1. 성공률은 협상 불가능
+### 1. 성공률은 여전히 중요
 
-- **Full baseline:** 87.5% (8개 중 1개 실패)
-- **Routed strategy:** 100% (0개 실패)
+- **Full baseline:** 100% (이번 실행)
+- **Routed strategy:** 100% (이번 실행)
 
-운영 환경에서 12.5% 실패율은:
-- 에이전트 작업 8개마다 → 1개가 수동 개입 필요
-- 수동 디버깅: 실패당 10-20분
-- 누적 효과: 에이전트 루프에서 연쇄 실패
-
-라우팅 전략의 100% 성공률은 이러한 모든 후속 비용을 완전히 제거합니다.
+운영 환경에서 성공률 차이는 워크로드에 따라 달라집니다. 특히 “작고 절차적인 변경(다중 파일, validator-heavy)” 비중이 높을수록 라우팅 + 구조화된 실행의 중요도가 커지는 경향이 있습니다.
 
 ### 2. 비용 절감이 확장됨
 
-- **작업당 baseline:** $2.05
-- **작업당 routed:** $0.54
-- **손익분기점:** ~6개 작업 (라우팅 투자가 회수됨)
+- **스위트 실행(8개 케이스) full baseline:** $2.49
+- **스위트 실행(8개 케이스) routed:** $0.70
+- **케이스 평균(이번 스위트):** ~$0.31 → ~$0.09
 
 100개의 에이전트 작업의 경우:
-- Full baseline: $205
-- Routed: $54
-- 절감: $151 (74% 감소)
+- Full baseline: $249
+- Routed: $70
+- 절감: $179 (~72% 감소)
 
 ### 3. 시간 트레이드오프는 수용 가능
 
-- **추가 시간:** 568초 (총 9.5분)
-- **작업당:** +71초 (에이전트의 경우 무시할 수 있음)
-- **인간 복구와 비교:** 1회 실패 복구 = 10-20분
+- **추가 시간:** ~333초 (총 5.6분)
+- **케이스 평균(이번 스위트):** ~+42초
+- **인간 복구와 비교:** 작은 성공률 개선이라도 wall-time 오버헤드보다 더 큰 가치를 가질 수 있음
 
-**ROI:** 54% 시간 오버헤드가 100%의 실패를 방지합니다 (10-20분의 가치).
+**ROI 프레이밍:** 워크로드에 따라 wall time을 지불하고 비용(및 잠재적 신뢰성)을 얻는 선택이 가능합니다.
 
 ### 4. 토큰 사용 패턴
 
-- **Full 모델 토큰:** 4.1M
-- **Routed 토큰:** 5.8M (+43%)
+- **Full 모델 토큰:** 4.20M
+- **Routed 토큰:** 6.39M (+52%)
 
 증가 이유:
-- Mini 모델은 복잡한 경우에 더 많은 컨텍스트 필요
-- Kairo는 검증 단계 추가 (중복이지만 안전)
-- 이것이 **신뢰성의 비용**입니다.
+- Mini는 복잡한 경우 더 많은 컨텍스트가 필요할 수 있음
+- Kairo는 검증/절차 단계를 추가함(토큰은 늘지만 달러는 더 저렴할 수 있음)
+- 이는 종종 **구조화된 실행의 비용**입니다.
 
 ---
 
@@ -146,9 +182,9 @@ node --import tsx benchmarks/agent/cascade.ts \
 ### 비용에 민감한 워크로드의 경우
 
 ✅ **라우팅 전략 사용**
-- Mini 모델을 기본으로 사용 (~작업당 $0.05)
-- 복잡한 경우에만 Full로 에스컬레이션 (~작업당 $0.50)
-- 예상 결과: 100% 성공률, 70% 이상 비용 절감
+- 대부분은 Mini baseline으로 처리
+- 일부 카테고리/복잡도 밴드는 **Mini + Kairo**로 라우팅
+- 예상 결과: 라우팅 임계값에 따라 pass@1을 유지하면서 실지출을 줄이는 방향
 
 ### 안전이 중요한 시스템
 
@@ -160,8 +196,8 @@ node --import tsx benchmarks/agent/cascade.ts \
 ### 높은 처리량의 에이전트 루프
 
 ✅ **라우팅 전략 사용**
-- 60-70%의 작업을 Mini로 라우팅 (저렴, 빠름)
-- 30-40%의 복잡한 작업을 Full로 라우팅
+- 다수의 작업을 Mini baseline으로 라우팅
+- 절차성이 강한 일부 밴드를 **Mini + Kairo**로 라우팅
 - 예상 결과: 최적의 비용/성능 비율
 
 ### 프로토타입/탐색
@@ -178,7 +214,7 @@ node --import tsx benchmarks/agent/cascade.ts \
 ### 단일 실행
 
 이 벤치마크는 대표 테스트 케이스에 대한 **단일 실행** 결과입니다. LLM 벤치마크 비용 때문에:
-- Full GPT-5 스위트: ~$2.00 / 실행
+- Full GPT-5.1 스위트: ~$2.50 / 실행
 - 대규모 통계 검증: 비용 구조적으로 불가능
 - 대신 초점: 절차적 엄격함, 투명한 방법론, 반복 가능한 단계
 
@@ -191,7 +227,7 @@ node --import tsx benchmarks/agent/cascade.ts \
 ### 한계 & 주의사항
 
 - **N=1 실행:** 단일 실행은 통계적 검정력 제한. 다음 단계: 신뢰 구간을 위한 다중 실행 비교.
-- **모델 버전:** 결과는 GPT-5 Codex (2025년 1월)에 한정. 새로운 모델에서 달라질 수 있음.
+- **모델 버전:** 결과는 모델/스냅샷에 종속적입니다. “보편적 보장”이 아니라 데이터 포인트로 봐주세요.
 - **작업 분포:** 테스트 케이스는 인프라/CLI 작업에 중점. 순수 코드 생성에서는 패턴이 다를 수 있음.
 
 ---
@@ -205,19 +241,18 @@ node --import tsx benchmarks/agent/cascade.ts \
 npm install
 
 # 라우팅 벤치마크 실행
-KAIRO_AGENT_MODEL_CMD="node scripts/run-codex-cli-agent.mjs" \
-node --import tsx benchmarks/agent/cascade.ts \
+node benchmarks/agent/launch.mjs --provider codex \
   --pipeline route \
   --suite benchmarks/agent/suite.kairo5.json \
   --mode live \
-  --provider codex \
-  --mini gpt-5-codex-mini \
-  --full gpt-5-codex \
+  --mini gpt-5.1-codex-mini \
+  --full gpt-5.1-codex \
   --timeout-ms 600000 \
   --kairo-budget low \
   --pricing benchmarks/agent/pricing.json \
+  --attempts 2 \
   --gate-files-min 5 \
-  --gate-category ux,cli
+  --gate-category cli
 
 # 결과 확인
 cat benchmarks/reports/agent-route-*.md

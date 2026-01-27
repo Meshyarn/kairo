@@ -16,37 +16,37 @@ When integrating AI agents into your workflow, you face a fundamental trade-off:
 
 Kairo enables a **hybrid strategy**: default to smaller, cost-effective models while routing complex scenarios to state-of-the-art models. This approach combines the best of both worlds.
 
-#### Real-World Results
+#### Real-World Results (Representative Run)
 
-A benchmark comparing pure full-model execution vs. routed strategy:
+A benchmark comparing pure full-model execution vs. routed strategy (single run, model/pricing snapshot specific):
 
-| Metric | Full Baseline (GPT-5 Codex) | Routed (Mini + Kairo) | Delta |
+| Metric | Full Baseline (GPT-5.1 Codex) | Routed (Mini baseline + Mini+Kairo) | Delta |
 |--------|--------|--------|--------|
-| **Success Rate** | 87.5% | 100% | +12.5pp ✅ |
-| **Cost per task** | $2.05 | $0.54 | -73.7% 💰 |
-| **Execution time** | 17.4 min | 26.8 min | +54% (acceptable) |
-| **Total tokens** | 4.1M | 5.8M | +43% (natural overhead) |
+| **Pass@1** | 100% | 100% | +0.0pp |
+| **Cost (8-case suite run)** | $2.49 | $0.70 | -72.0% 💰 |
+| **Execution time (wall)** | 20.0 min | 25.6 min | +27.7% |
+| **Total tokens** | 4.20M | 6.39M | +52.3% |
 
 **Interpretation:**
-- 🎯 Even SOTA models fail on complex cases; Kairo's structured approach catches what raw intelligence misses.
-- 💡 The failures (1/8 cases) highlight that **"intelligence" alone isn't enough**—procedural rigor matters.
-- ⏱️ The time cost (+9.5 mins) is negligible compared to the compounding cost of human debugging (~10-20 minutes per failure).
+- 💰 Routing can materially reduce spend even when pass rates are similar.
+- ⏱️ The wall-time and token overhead is expected from structured execution / verification; whether it’s acceptable depends on your workload.
+- 📌 Some procedural tasks (flags, multi-file consistency) can be competitive with a full-model baseline, but results vary across repos and prompts.
 
 #### Why This Works
 
 1. **Procedural Verification**: Kairo enforces validation steps (drift checks, file verification, syntax validation) that catch errors before they propagate.
-2. **Cost Efficiency**: Small models (GPT-5 Mini) are 4x cheaper and sufficient for 87.5% of tasks. Only complex scenarios use the full model.
+2. **Cost Efficiency**: Small models are typically much cheaper per token. Many procedural tasks can run on Mini baseline, while a smaller subset benefits from structured execution (Mini + Kairo) or (optionally) a full model.
 3. **Predictability**: Structured workflows are more predictable than raw LLM output, even from powerful models.
 
 #### When to Use Routing
 
 | Scenario | Recommendation |
 |----------|---|
-| Cost-sensitive operations | ✅ Use routing (default Mini, escalate as needed) |
+| Cost-sensitive operations | ✅ Use routing (default Mini baseline; route selected cases to Mini+Kairo) |
 | Safety-critical tasks | ✅ Use routing (verification steps protect against errors) |
 | High-throughput agent loops | ✅ Use routing (distribute load efficiently) |
-| Simple, well-defined tasks | ⚠️ Consider pure Mini (routing adds <5% overhead) |
-| Prototype/exploration phase | ⚠️ Consider pure Full (faster iteration, no routing logic) |
+| Simple, well-defined tasks | ⚠️ Consider pure Mini (routing can be unnecessary overhead) |
+| Prototype/exploration phase | ⚠️ Consider pure Full (faster iteration), then add routing for scale |
 
 ---
 
