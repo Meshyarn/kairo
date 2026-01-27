@@ -1,8 +1,9 @@
 import { defineConfig } from "vitepress";
 
 export default defineConfig({
+  base: "/kairo/",
   lastUpdated: true,
-  head: [['link', { rel: 'icon', href: '/logo.svg' }]],
+  head: [["link", { rel: "icon", href: "/kairo/logo.svg" }]],
   locales: {
     root: {
       label: "English",
