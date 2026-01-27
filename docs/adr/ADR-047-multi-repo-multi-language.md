@@ -3,8 +3,6 @@
 **Status:** Implemented (curated)  
 **Intent:** Support real-world workspaces where code spans multiple repos and multiple languages.
 
-## Summary
-
 Multi-repo support adds explicit repository boundaries and configuration so `kairo` can:
 
 - index multiple roots under one “workspace”

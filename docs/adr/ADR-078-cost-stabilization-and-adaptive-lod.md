@@ -1,4 +1,4 @@
-# ADR-078 (Summary): Cost Stabilization & Adaptive LOD (Lean-first)
+# ADR-078: Cost Stabilization & Adaptive LOD (Lean-first)
 
 ## Intent
 

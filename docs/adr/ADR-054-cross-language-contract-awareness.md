@@ -1,10 +1,8 @@
-# ADR-054: Cross-Language Contract Awareness (Summary)
+# ADR-054: Cross-Language Contract Awareness
 
 **Status:** Implemented (NAPI baseline)  
 **Date:** 2026-01-10  
 **Related:** `docs/adr/ADR-053-H-universal-hybrid-architecture.md`, `docs/adr/ADR-053-L-language-support-levels.md`, `docs/adr/ADR-053-C-managed-config-bootstrap.md`
-
-## Summary
 
 ADR-054 defines a **Boundary Adapter framework** for cross-language “contract awareness” (discovery → contract surface → manifest → diff → impact linking). The first implementation target is **NAPI (Rust ↔ TS/JS)** via `@kairo/core-rs`, with **field-level impact** and **degraded reason reporting** implemented. The architecture is intended to expand to other L2/L3 languages through additional adapters (IDL/OpenAPI, SQL schema/migrations, JNI/CGO/Python/PHP extensions).
 

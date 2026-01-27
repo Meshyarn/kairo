@@ -1,4 +1,4 @@
-# ADR-077 (Summary): Mixed-workflow Resilience (Interop/Drift/Reconcile + Checkpoints + Integrity UX)
+# ADR-077: Mixed-workflow Resilience (Interop/Drift/Reconcile + Checkpoints + Integrity UX)
 
 ## Intent
 

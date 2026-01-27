@@ -1,4 +1,4 @@
-# ADR-076 (Summary): Symbol Semantic Search E2E (Integrate or Deprecate)
+# ADR-076: Symbol Semantic Search E2E (Integrate or Deprecate)
 
 ## Intent
 

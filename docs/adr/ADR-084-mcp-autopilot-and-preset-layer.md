@@ -4,8 +4,6 @@
 **Date:** 2026-01-20  
 **Related:** `docs/adr/ADR-040-five-pillars-toolset.md`, `docs/adr/ADR-057-unified-degraded-reasons-and-action-guidance-v1.md`, `docs/adr/ADR-058-tool-schema-contract-and-compatibility-layer.md`, `docs/adr/ADR-077-mixed-workflow-resilience.md`, `docs/adr/ADR-078-cost-stabilization-and-adaptive-lod.md`, `docs/adr/ADR-080-response-envelope-token-budget-explore-understand.md`
 
-## Summary
-
 To address Kairo becoming a “powerful but heavy MCP server” (option explosion, response explosion, host-specific apply UX discontinuity), we introduce an **in-server Autopilot + Preset layer**.
 
 The goal is not “agents picking options smartly”, but making Kairo a **promptless, high-success-rate MCP server**.

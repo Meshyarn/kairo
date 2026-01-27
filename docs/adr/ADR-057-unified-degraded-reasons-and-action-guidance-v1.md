@@ -4,8 +4,6 @@
 **Date:** 2026-01-12  
 **Related:** `docs/adr/ADR-055-universal-parity-and-standardization.md`, `docs/adr/ADR-056-token-aware-dynamic-context-compression.md`
 
-## Summary
-
 Standardize Kairo’s “incompleteness” signals (`degraded`/`blocked`) via `degradedReasons[]`, and provide next actions via `actionToolCall`/`actionId` (not ad-hoc strings).
 
 ## Decision (v1 Contract)

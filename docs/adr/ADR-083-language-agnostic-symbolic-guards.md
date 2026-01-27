@@ -1,4 +1,4 @@
-# ADR-083 (Summary): Language-Agnostic Symbolic Guards (Portable Semantic Checks + Optional Solver)
+# ADR-083: Language-Agnostic Symbolic Guards (Portable Semantic Checks + Optional Solver)
 
 **Status:** Implemented (0.4.27+ baseline)  
 **Date:** 2026-01-18  

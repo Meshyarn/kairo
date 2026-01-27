@@ -3,8 +3,6 @@
 **Status:** Implemented (curated)  
 **Intent:** Make “safe changes” mean more than “the text patch applied” by validating cross-source constraints (docs/ADR/comments vs code).
 
-## Summary
-
 Kairo’s most expensive failure mode is not a failed edit—it’s a *successful* edit that violates:
 
 - architectural intent described elsewhere in the repo

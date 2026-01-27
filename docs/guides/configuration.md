@@ -1,23 +1,54 @@
-# Configuration (Minimal)
+# Configuration (All env vars)
 
 Kairo is configured via environment variables. Most users only need a few.
 
+If you want a split, easier-to-navigate reference, start here:
+
+- [Configuration (split reference)](/reference/configuration/)
+
 ## Common env vars
+
+### Project & Root
 
 | Variable | Purpose | Notes |
 |---|---|---|
 | `KAIRO_ROOT_PATH` | Project root to analyze. | Preferred over cwd; equivalent to `--root` CLI arg. |
 | `KAIRO_ROOT` | Project root to analyze. | Alias for `KAIRO_ROOT_PATH`. |
+
+### Operation Mode
+
+| Variable | Purpose | Notes |
+|---|---|---|
 | `KAIRO_MODE` | Policy mode. | `mcp` (default), `dev`, or `ci`. Set `dev` to opt out of MCP defaults. |
 | `KAIRO_PRESET` | MCP preset. | `mcp-lean` (default), `mcp-balanced`, `mcp-deep`. |
 | `KAIRO_PUBLIC_SURFACE` | Public tool surface. | `compact` (default in mcp; `task`+`manage` only) or `pillars` (Five Pillars). |
+
+### Storage & Persistence
+
+| Variable | Purpose | Notes |
+|---|---|---|
 | `KAIRO_DIR` | Data directory. | Defaults to `.kairo` (contains index/cache/history). |
-| `KAIRO_ALLOW_LEGACY_MCP_DIR` | Allow legacy `.mcp` paths for `KAIRO_DIR`. | Set to `true` to permit `.mcp`/`.mcp/kairo`; otherwise Kairo uses `.kairo`. |
+| `KAIRO_ALLOW_LEGACY_MCP_DIR` | Allow legacy `.mcp` paths for `KAIRO_DIR`. | (Deprecated) Set to `true` to permit `.mcp`; otherwise Kairo uses `.kairo`. |
+| `KAIRO_STORAGE_MODE` | Storage backend. | `file` (default) or `memory` (non-persistent). |
+
+### Search & Results
+
+| Variable | Purpose | Notes |
+|---|---|---|
 | `KAIRO_MAX_RESULTS` | Search result cap. | Lower for token-efficiency; raise for recall. |
-| `KAIRO_LOG_LEVEL` | Structured logging level. | `debug|info|warn|error`. |
+
+### Logging & Output
+
+| Variable | Purpose | Notes |
+|---|---|---|
+| `KAIRO_LOG_LEVEL` | Structured logging level. | `debug\|info\|warn\|error`. |
 | `KAIRO_LOG_TO_FILE` | Persist logs under `.kairo`. | Prefer this in MCP hosts (keeps stdout clean). |
 | `KAIRO_ALLOW_STDOUT_LOGS` | Allow stdout logs. | Avoid in MCP hosts; stdout is reserved for MCP frames. |
-| `KAIRO_STORAGE_MODE` | Storage backend. | `file` (default) or `memory` (non-persistent). |
+
+### Tool Schema & Exposure
+
+| Variable | Purpose | Notes |
+|---|---|---|
 | `KAIRO_TOOL_SCHEMA_MODE` | Tool schema mode (contract enforcement). | `compat` (default) drops unknown top-level fields; `strict` rejects them. |
 | `KAIRO_EXPOSE_INTERNAL_TOOLS` | Show internal tools in MCP `list_tools`. | Default `false`; internal tool names are unstable. |
 | `KAIRO_EXPOSE_FILE_TOOLS` | Show compat file tools in MCP `list_tools`. | Default `false`; prefer the Five Pillars. |
@@ -66,6 +97,7 @@ Timeouts are primarily controlled by your MCP host (per-request timeout). Some o
 | `KAIRO_STORAGE_PRUNE_INTERVAL_MS` | Background prune interval (ms). | `0`/unset disables background prune. |
 | `KAIRO_STORAGE_PRUNE_ON_START` | Run prune once on startup. | `true` to enable. |
 | `KAIRO_STORAGE_PRUNE_FLOW_ARTIFACTS` | Include flow artifacts in prune. | `true` to enable. |
+| `KAIRO_STORAGE_PRUNE_TEMP_FILES` | Include temp files in prune (`.kairo/tmp`, `.kairo/temp`). | `true` to enable. |
 | `KAIRO_STORAGE_PRUNE_COMPACT` | Run compact rewrite after prune. | `true` to enable. |
 | `KAIRO_TASK_EVIDENCE_TTL_MS` | Task evidence pack TTL (ms). | Default `1800000` (30 minutes). |
 | `KAIRO_EVIDENCE_PACK_MAX_COUNT` | Evidence pack max count cap. | Default ~300. |
@@ -73,6 +105,14 @@ Timeouts are primarily controlled by your MCP host (per-request timeout). Some o
 | `KAIRO_EVIDENCE_PACK_STALE_CHECK_MAX_ITEMS` | Evidence pack stale sampling limit. | Default 24 items. |
 | `KAIRO_CHUNK_SUMMARY_MAX_CHUNKS` | Chunk summary max chunk count. | Default 20k. |
 | `KAIRO_CHUNK_SUMMARY_MAX_BYTES` | Chunk summary byte cap. | Default 100MB. |
+| `KAIRO_TEMP_FILE_TTL_MS` | Temp file TTL (ms). | Default `604800000` (7 days). Used when pruning `temp_files`. |
+| `KAIRO_TEMP_FILE_MAX_COUNT` | Temp file max count cap. | Default `0` (no cap). Used when pruning `temp_files`. |
+
+## Raw content sources (ADR-089)
+
+| Variable | Purpose | Notes |
+|---|---|---|
+| `KAIRO_CONTENT_SOURCE_MAX_BYTES` | Max bytes allowed for `contentSource.kind="file"` reads. | Default `1048576` (1MB). |
 
 ## Project config files (OSS essentials)
 

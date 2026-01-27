@@ -4,8 +4,6 @@
 **Date:** 2026-01-13  
 **Related:** `docs/adr/ADR-047-multi-repo-multi-language.md`, `docs/adr/ADR-057-unified-degraded-reasons-and-action-guidance-v1.md`, `docs/adr/ADR-058-tool-schema-contract-and-compatibility-layer.md`
 
-## Summary
-
 In multi-repo workspaces, enforce two invariants across both the tool surface and runtime:
 1) results include repo boundary metadata, and
 2) edits are cross-repo **default deny**.

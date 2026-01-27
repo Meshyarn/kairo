@@ -1,4 +1,4 @@
-# ADR-081 (Summary): GraphRAG Hybrid Cluster Retrieval
+# ADR-081: GraphRAG Hybrid Cluster Retrieval
 
 **Status:** Implemented (0.4.27 baseline)  
 **Date:** 2026-01-18  

@@ -4,8 +4,6 @@
 **Date:** 2026-01-13  
 **Related:** `docs/adr/ADR-055-universal-parity-and-standardization.md`, `docs/adr/ADR-057-unified-degraded-reasons-and-action-guidance-v1.md`
 
-## Summary
-
 Unify L2/L3 language parity requirements under a single gate, and standardize missing query/wasm/validator signals as typed `degradedReasons` to eliminate silent-pass behavior. L3 apply is blocked on parity failure, while L2 keeps a degraded signal.
 
 ## Decision (v1 Contract)

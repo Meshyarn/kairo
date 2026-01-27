@@ -4,8 +4,6 @@
 **Date:** 2026-01-13  
 **Related:** `docs/adr/ADR-064-fileversion-handshake-read-apply.md`
 
-## Summary
-
 Lock `edit_apply` default behavior to request-level atomicity, allow partial apply only via explicit opt-in, and harden deletes by default-blocking them unless a confirmation hash is provided.
 
 ## Decision

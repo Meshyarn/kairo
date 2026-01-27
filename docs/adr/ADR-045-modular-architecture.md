@@ -3,8 +3,6 @@
 **Status:** Implemented (curated)  
 **Intent:** Keep the system maintainable by splitting oversized modules into testable, composable units.
 
-## Summary
-
 As features accumulated (docs ingestion, vector search, v2 editor, guardrails, multi-repo), several files became too large and responsibilities blurred.
 
 This ADR reorganizes the system into clearer modules:

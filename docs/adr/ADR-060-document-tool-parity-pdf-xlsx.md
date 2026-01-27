@@ -4,8 +4,6 @@
 **Date:** 2026-01-13  
 **Related:** `docs/adr/ADR-057-unified-degraded-reasons-and-action-guidance-v1.md`, `docs/adr/ADR-058-tool-schema-contract-and-compatibility-layer.md`, `docs/adr/ADR-059-evidence-pack-and-summaries-lifecycle-prune-compact.md`
 
-## Summary
-
 Align document indexing and document tools to use the same extraction/normalization pipeline, ensuring consistent results across PDF/XLSX/DOCX/plain-text formats.
 
 ## Decision (v1 Contract)

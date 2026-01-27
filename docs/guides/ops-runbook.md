@@ -28,7 +28,7 @@ This runbook covers the OSS launch checklist and the post-launch iteration loop 
 
 4) Docs
 - `docs/guides/getting-started.md`
-- `docs/guides/configuration.md`
+- `docs/reference/configuration/index.md`
 - `docs/guides/promptless-integration.md`
 
 5) Release hygiene

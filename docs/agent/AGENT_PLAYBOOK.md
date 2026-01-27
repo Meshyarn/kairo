@@ -11,25 +11,27 @@ When `KAIRO_MODE=mcp` (default), most hosts will see only `task` + `manage` (`KA
 Recommended flow:
 
 ```typescript
-// Ask / read-only
+// 1) Ask / read-only: Basic question answering
 task({ request: "Summarize the auth flow." })
 
-// Analyze (structure/relationships)
+// 2) Analyze: Understand structure and relationships (medium depth)
 task({ request: "Explain the architecture and key modules.", mode: "analyze", budget: "balanced" })
 
-// Deep evidence (compact surface)
+// 3) Deep evidence: Get full details + deep artifacts (expensive)
 const analysis = await task({ request: "Explain the architecture and key modules.", mode: "analyze", budget: "deep" })
+// Fetch the full artifact if present (second fetch, lazy-loaded)
 await manage({ command: "artifact", target: analysis.artifacts?.[0]?.id, detail: "full" })
 
-// Plan change (prep-only if edits are omitted)
+// 4) Plan change (prep-only): No edits provided → get template suggestions
 const prep = await task({ request: "Tighten JWT validation.", mode: "plan_change", targetFiles: ["src/auth/jwt.ts"] })
 
-// Plan change (real plan when edits are provided) → returns draftId + applyToken (MCP mode)
+// 5) Plan change (real plan): With edits → returns draftId + applyToken (MCP mode)
 const plan = await task({ request: "Tighten JWT validation.", mode: "plan_change", edits: prep.changePrep?.editsTemplate?.edits })
 
-// Apply requires draftId + applyToken
+// 6) Apply: Requires both draftId + applyToken (one-time, gated)
 await task({ request: "Apply the plan.", mode: "apply_change", draftId: plan.draftId, applyToken: plan.applyToken })
 ```
+
 
 Notes:
 - `mode="auto"` never applies changes (server-gated).
@@ -97,6 +99,15 @@ R3 (MCTS) runs a bounded search using the `children` tree + `mcts` settings. For
 
 ### 1.5 Writer's Flow (best review quality)
 
+**Why use Writer's Flow?**
+
+Standard workflows (ask → plan → apply) repeat expensive analysis on each call. Writer's Flow uses **sessions** to:
+- **Reuse** embeddings and clusters across multiple calls (faster)
+- **Surface gaps** via `workflowWarnings` (e.g., "GraphRAG required")
+- **Enable deep review** with cached artifacts (better quality)
+
+Use sessions when you expect multi-step workflows (explore → understand → refine → plan → apply).
+
 ```typescript
 // Step 0: Start a session
 const { sessionId } = await explore({ query: "auth flow", research: { sketch: true }, sessionId: "new" })
@@ -116,9 +127,11 @@ const plan = await change({ intent: "Tighten JWT validation", targetFiles: ["src
 await change({ ...plan, safety: "apply", sessionId })
 ```
 
-Tip: `workflowMeta` + `workflowWarnings` make missing session artifacts visible without breaking legacy calls.
-Tip: `analysis.clusters=true` requires GraphRAG to be enabled (`KAIRO_GRAPHRAG_ENABLED=true` or `.kairo/config/graphrag.json`).
-Tip: To make semantic findings block apply, set `reviewOptions.blockOn=["semantic"]` and enable symbolic guards via `.kairo/config/symbolic-guards.json` (ADR-083).
+Tips:
+- `workflowMeta` + `workflowWarnings` make missing session artifacts visible without breaking legacy calls.
+- `analysis.clusters=true` requires GraphRAG to be enabled (`KAIRO_GRAPHRAG_ENABLED=true` or `.kairo/config/graphrag.json`).
+- To make semantic findings block apply, set `reviewOptions.blockOn=["semantic"]` and enable symbolic guards via `.kairo/config/symbolic-guards.json` (ADR-083).
+
 
 ### 2. Search → Deep Dive
 ```typescript

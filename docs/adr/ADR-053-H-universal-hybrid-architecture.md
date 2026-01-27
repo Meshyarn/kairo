@@ -1,11 +1,9 @@
-# ADR-053-H: Universal Hybrid Architecture & Capability Registry (Summary)
+# ADR-053-H: Universal Hybrid Architecture & Capability Registry
 
 **Status:** Implemented
 **Date:** 2026-01-10
 **Base:** `docs/adr/ADR-052-pillar-option-profiles-and-session-policy.md`, `docs/adr/ADR-053-hybrid-rust-architecture-and-optimization.md`
 **Related:** `docs/adr/ADR-054-cross-language-contract-awareness.md` (separate scope)
-
-## Summary
 
 ADR-053-H replaces point-to-point native imports with a centralized capability registry. Call sites request a capability; the registry selects the best available provider (native > wasm > js) and exposes diagnostics. Native module loading is centralized and single-shot.
 

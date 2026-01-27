@@ -4,8 +4,6 @@
 **Date:** 2026-01-14  
 **Related:** `src/server/CacheInvalidationHub.ts`
 
-## Summary
-
 Reduce stale results by immediately wiring file change/delete/reindex events into cache invalidation. Surface stale-risk metrics in metrics/doctor, and block apply when index staleness is high (bypass only via override).
 
 ## Decision

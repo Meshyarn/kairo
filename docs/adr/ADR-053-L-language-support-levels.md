@@ -1,4 +1,4 @@
-# ADR-053-L (Summary): Language Support Levels (L2/L3)
+# ADR-053-L: Language Support Levels (L2/L3)
 
 **Status:** Implemented (2026-01-10)
 

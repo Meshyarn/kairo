@@ -1,4 +1,4 @@
-# ADR-075 (Summary): Adaptive Flow Rollout Plan (UCG/LOD profile gate)
+# ADR-075: Adaptive Flow Rollout Plan (UCG/LOD profile gate)
 
 **Status:** Implemented (Phase A/B/C; ops guide ready)
 

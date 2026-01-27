@@ -1,4 +1,4 @@
-# ADR-080 (Summary): Explore/Understand Response Envelope Token Budget
+# ADR-080: Explore/Understand Response Envelope Token Budget
 
 **Status:** Implemented (0.4.x baseline)  
 **Date:** 2026-01-18  

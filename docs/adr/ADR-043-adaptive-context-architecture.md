@@ -3,8 +3,6 @@
 **Status:** Partially implemented (curated)  
 **Intent:** Avoid the “parse everything or parse nothing” trap by promoting only the needed context to the needed depth.
 
-## Summary
-
 Adaptive Context Architecture introduces:
 
 1) **LOD (Level of Detail)** for file understanding:

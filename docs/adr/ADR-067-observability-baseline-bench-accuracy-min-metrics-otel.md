@@ -4,8 +4,6 @@
 **Date:** 2026-01-14  
 **Related:** `benchmarks/main.ts`, `src/utils/MetricsCollector.ts`
 
-## Summary
-
 Lock down benchmark accuracy (paths/skip handling) and codify the minimal metric set needed for regression attribution. Metrics can be exported via JSONL/STDOUT/OTLP (optional) when needed.
 
 ## Decision

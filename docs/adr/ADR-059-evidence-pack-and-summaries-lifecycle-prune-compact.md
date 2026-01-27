@@ -4,8 +4,6 @@
 **Date:** 2026-01-12  
 **Related:** `docs/adr/ADR-057-unified-degraded-reasons-and-action-guidance-v1.md`, `docs/adr/ADR-058-tool-schema-contract-and-compatibility-layer.md`
 
-## Summary
-
 Standardize prune/compact flows to prevent unbounded accumulation of EvidencePacks and chunk-summary caches, with plan/apply modes and background prune options.
 
 ## Decision (v1 Contract)

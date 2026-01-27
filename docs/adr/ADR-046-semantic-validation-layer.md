@@ -3,8 +3,6 @@
 **Status:** Deferred (curated)  
 **Intent:** Make “safe changes” mean more than “the patch applied” by adding optional semantic/syntax validation to edit flows.
 
-## Summary
-
 Text-based edits can succeed while still being wrong:
 
 - syntax errors (missing braces/imports)

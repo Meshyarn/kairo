@@ -3,8 +3,6 @@
 **Status:** Implemented (curated)  
 **Intent:** Reduce agent/tooling friction and token waste by collapsing “find + read” into a single pillar.
 
-## Summary
-
 Kairo exposes a small public tool surface (“Five Pillars”):
 
 - `explore` — find + read (preview/section/full) with progressive disclosure

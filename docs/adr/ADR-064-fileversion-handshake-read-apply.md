@@ -4,8 +4,6 @@
 **Date:** 2026-01-13  
 **Related:** `docs/adr/ADR-057-unified-degraded-reasons-and-action-guidance-v1.md`, `docs/adr/ADR-058-tool-schema-contract-and-compatibility-layer.md`
 
-## Summary
-
 Pass `versionInfo` from read results into apply calls to proactively block stale edits, and on mismatch return “current state + retry guidance” to shorten the loop.
 
 ## Decision

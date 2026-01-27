@@ -4,8 +4,6 @@
 **Date:** 2026-01-12  
 **Related:** `docs/adr/ADR-057-unified-degraded-reasons-and-action-guidance-v1.md`
 
-## Summary
-
 Unify tool input contracts via the ToolSpec Registry, and standardize alias/unknown-field handling and validation in compat/strict modes.
 
 ## Decision (v1 Contract)

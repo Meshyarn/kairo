@@ -1,10 +1,8 @@
-# ADR-085: Rust Native Search Core (Tantivy Integration) (Summary)
+# ADR-085: Rust Native Search Core (Tantivy Integration)
 
 **Status:** Implemented  
 **Date:** 2026-01-21  
 **Related:** `docs/adr/ADR-053-H-universal-hybrid-architecture.md`, `docs/adr/ADR-069-search-index-scalability-without-sqlite.md`, `docs/adr/ADR-084-mcp-autopilot-and-preset-layer.md`
-
-## Summary
 
 This is a curated summary of the upstream ADR-085 design document.
 

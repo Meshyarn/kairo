@@ -38,93 +38,12 @@ Quick smoke (spawns `dist/index.js` and calls tools over stdio):
 npm run smoke:mcp-mock-client
 ```
 
-## Prepare the local embedding model (offline)
+## Search & embeddings (offline-first)
 
-Kairo is offline-first by default. Runtime downloads are disabled unless you explicitly opt into `KAIRO_EMBEDDING_PROVIDER=remote`.
-Prepare a local model before bundling or running in a closed environment.
+Kairo supports lexical search (native core) and optional vector search (embeddings + index). The detailed offline workflow lives in:
 
-Recommended source: `Xenova/multilingual-e5-small` (ONNX + tokenizer files compatible with `@xenova/transformers`).
-
-```bash
-# On a machine with internet access (example using Hugging Face CLI)
-huggingface-cli download Xenova/multilingual-e5-small \
-  --local-dir /tmp/models/multilingual-e5-small \
-  --local-dir-use-symlinks false
-
-# Alternative (git-lfs)
-# git lfs clone https://huggingface.co/Xenova/multilingual-e5-small /tmp/models/multilingual-e5-small
-```
-
-Copy the folder to your offline machine. The model directory should look like:
-
-```
-models/
-  multilingual-e5-small/
-    config.json
-    tokenizer.json
-    tokenizer_config.json
-    special_tokens_map.json    (optional)
-    onnx/
-      model.onnx
-      model_quantized.onnx     (recommended)
-```
-
-- The folder name must match `KAIRO_EMBEDDING_MODEL` (default: `multilingual-e5-small`).
-- If you use a different model, ensure it ships ONNX + tokenizer assets compatible with `@xenova/transformers`.
-
-Offline baseline:
-- **Baseline-A (core)**: runs without network even if embeddings fall back to hash/disabled.
-- **Baseline-B (embeddings-ready)**: local model files are present so vector search works offline.
-
-## Bundle the offline embedding model (packaging)
-
-When creating a release artifact, bundle the local model into `dist/models`:
-
-```bash
-# Point to a local model folder (either the model root, or a parent containing it)
-KAIRO_MODEL_SOURCE=/path/to/models \
-KAIRO_EMBEDDING_MODEL=multilingual-e5-small \
-npm run bundle:models
-```
-
-- By default, bundling uses the **minimal** profile (required tokenizer/config + one ONNX file).  
-  Set `KAIRO_MODEL_BUNDLE_PROFILE=full` to include all ONNX variants.
-- `npm pack` / `npm publish` runs the bundling automatically via `prepack`.
-- Set `KAIRO_SKIP_MODEL_BUNDLE=true` to skip bundling (dev-only).
-- If you override `KAIRO_MODEL_DIR`, keep it inside `dist/models` so it ships with the package.
-
-## Build the vector index (P1 optional)
-
-When ANN is enabled and you want to avoid rebuild at startup, generate the vector index once:
-
-```bash
-KAIRO_VECTOR_INDEX=hnsw \
-KAIRO_VECTOR_INDEX_REBUILD=manual \
-kairo-build-vector-index
-```
-
-- For large repos, consider sharding: `KAIRO_VECTOR_INDEX_SHARDS=auto` (or a number like `4`).
-- Default `KAIRO_VECTOR_INDEX=auto` will fall back to brute-force if no index exists.
-- The index is stored under `.kairo/vector-index/<provider>/<model>/`.
-
-## Build the embeddings pack (P2 optional)
-
-For large repos, you can migrate legacy embedding persistence (`.kairo/storage/embeddings.json`) into a binary pack:
-
-```bash
-# float32 (safe default)
-KAIRO_EMBEDDING_PACK_FORMAT=float32 \
-kairo-migrate-embeddings-pack
-
-# or store both float32 + q8 (recommended for future scaling experiments)
-KAIRO_EMBEDDING_PACK_FORMAT=both \
-kairo-migrate-embeddings-pack
-```
-
-- Pass `--force` to overwrite an existing pack.
-- Pack files are stored under `.kairo/storage/v1/embeddings/<provider>/<model>/`.
-- For very large packs, set `KAIRO_EMBEDDING_PACK_INDEX=bin` to use the binary index.
-- To migrate automatically at startup, set `KAIRO_EMBEDDING_PACK_REBUILD=auto` (or `on_start` to force rebuild from legacy).
+- [Search & Embeddings](/guides/search-and-embeddings)
+- [Search & embeddings config](/reference/configuration/search-and-embeddings)
 
 ## Use as an MCP server (example config)
 
@@ -157,7 +76,7 @@ Prefer a read-first workflow:
 
 Some MCP hosts support allow/deny lists for tool names and shell commands. If yours does, start with read-only and expand gradually.
 
-## Mixed-workflow resilience (ADR-077)
+## Mixed-workflow resilience ([ADR-077](/adr/ADR-077-mixed-workflow-resilience))
 
 Kairo assumes external edits can happen at any time. When drift is detected, follow the repair ladder:
 
@@ -168,62 +87,115 @@ Kairo assumes external edits can happen at any time. When drift is detected, fol
 
 Use `manage({ command: "status" })` to check `drift`, and `manage({ command: "history" })` to see recent checkpoints.
 
-## First calls
+## First calls (learn by example)
 
-Compact surface (default):
+See [Quickstart → First calls](/quickstart/first-calls) for detailed examples with expected response structures:
 
-- `task({ request: "Find the entrypoint and summarize it." })`
-- `task({ request: "Explain the project architecture.", mode: "analyze" })`
-- `manage({ command: "status" })`
+- Sanity check: `manage({ command: "status" })`
+- Find entrypoint: `task({ request: "Find the program entrypoint", mode: "ask" })`
+- Explain architecture: `task({ request: "Explain architecture", mode: "analyze", budget: "balanced" })`
+- Fetch deep evidence: `manage({ command: "artifact", target: "...", detail: "full" })`
 
-Pillars surface (optional, set `KAIRO_PUBLIC_SURFACE=pillars`):
+For code edits, follow the two-phase pattern:
 
-- `explore({ query: "entrypoint" })`
-- `explore({ paths: ["README.md"], view: "preview" })`
-- `understand({ goal: "Explain the project architecture" })`
-- `change({ intent: "Update greeting", targetFiles: ["src/greeting.ts"], edits: [{ targetString: "\"hello\"", replacementString: "\"hi\"" }], safety: "plan" })`
+1. **Plan**: `task({ request: "Plan: ...", mode: "plan_change", targetFiles: [...] })`
+2. **Apply**: `task({ mode: "apply_change", draftId, applyToken })`
 
-## Writer's Flow (sessions) quickstart
+See [Enable safe writes](/quickstart/enable-writes) for full workflow.
 
-For the best review quality and iteration speed, use a session and build the core artifacts once:
+---
 
-1) `explore` (optional) with `research.sketch=true`
-2) `understand` with `vibe.extract=true` and `analysis.clusters=true`
-3) `write` / `change` in plan first, then apply
+## After Your First Call: Validation Checklist
 
-Note: cluster summaries require GraphRAG to be enabled (`KAIRO_GRAPHRAG_ENABLED=true` or `.kairo/config/graphrag.json`). See `docs/guides/configuration.md`.
+Once you've made your first successful call, validate your setup before going further:
 
-Example:
+### 1. Verify MCP connection
 
-```ts
-const exploreRes = await explore({ query: "auth flow", research: { sketch: true }, sessionId: "new" });
-const sessionId = exploreRes.sessionId;
+```bash
+# Check tool availability
+task({ request: "What tools are available?", mode: "ask" })
 
-await understand({
-  goal: "src/auth",
-  sessionId,
-  vibe: { extract: true, scope: "src/**/*.ts" },
-  analysis: { clusters: true }
-});
-
-const plan = await change({
-  intent: "Update greeting",
-  targetFiles: ["src/greeting.ts"],
-  edits: [{ targetString: "\"hello\"", replacementString: "\"hi\"" }],
-  safety: "plan",
-  sessionId
-});
-
-// Inspect: plan.workflowMeta + plan.workflowWarnings (if present)
-await change({ ...plan, safety: "apply", sessionId });
+# Expected: Response lists `task`, `manage`, and any available `guide` tools
 ```
 
-When sessions are used, `write`/`change` include `workflowMeta` and (if needed) `workflowWarnings` to make missing steps obvious.
+### 2. Check project indexing health
+
+```bash
+manage({ command: "status" })
+```
+
+Look for:
+- ✅ `indexHealth.state`: `"healthy"`
+- ✅ `languagesDetected`: Shows your project languages (TypeScript, Python, etc.)
+- ✅ `nativeCore.available`: `true` (lexical search enabled)
+
+### 3. Validate error handling
+
+Make an intentionally bad request to verify guidance:
+
+```bash
+task({ request: "foobar gibberish impossible request", mode: "auto" })
+```
+
+Expected response structure:
+
+```json
+{
+  "success": false,
+  "error": "No matching symbols found",
+  "guidance": [
+    "Refine your search terms",
+    "Try a broader query",
+    "Use 'ask' mode for natural language"
+  ]
+}
+```
+
+### 4. Quick performance baseline
+
+Run a typical query and note latency:
+
+```bash
+# Time this
+task({ request: "List all exported functions", mode: "auto" })
+
+# p50 (warm): should be 10-50ms
+# p95 (cold): should be 50-200ms
+```
+
+If significantly slower, check [Performance & Reliability](/concepts/performance-and-reliability).
+
+### 5. Logs are being captured
+
+Verify logging setup:
+
+```bash
+# Should exist and have recent entries
+tail -20 .kairo/kairo.log
+
+# Should show: timestamps, operation names, no sensitive data
+```
+
+### 6. Next: Initialize for your environment
+
+```bash
+manage({ command: "init" })
+```
+
+This pre-warms indexes and caches for faster subsequent queries.
+
+Then follow your deployment scenario:
+- **Development:** [Development scenario](/guides/deployment-scenarios#scenario-1-development-local-machine)
+- **Team:** [Team CI/CD scenario](/guides/deployment-scenarios#scenario-2-team-cicd-shared-containerb uild-system)
+- **Production:** [Production Agent scenario](/guides/deployment-scenarios#scenario-3-production-agent-high-throughput)
+
+---
+
 
 See `README.md` for the public overview.
 
 ## Next
 
-- Configuration: `docs/guides/configuration.md`
+- Configuration (split reference): `/reference/configuration/`
 - Promptless MCP setup: `docs/guides/promptless-integration.md`
 - Ops runbook: `docs/guides/ops-runbook.md`

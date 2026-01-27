@@ -1,4 +1,4 @@
-# ADR-082 (Summary): Simulate → Reason → Execute (StrategySearch + MCTS) for Change Reliability
+# ADR-082: Simulate → Reason → Execute (StrategySearch + MCTS) for Change Reliability
 
 **Status:** Implemented (0.4.28 baseline)  
 **Date:** 2026-01-19  

@@ -5,8 +5,6 @@
 **Full design (canonical):** `.archive/ADR-087-task-adaptive-lod-and-evidence-pack.md`  
 **Related:** `docs/adr/ADR-084-mcp-autopilot-and-preset-layer.md`, `docs/adr/ADR-086-task-compact-change-write-verify.md`, `docs/adr/ADR-080-response-envelope-token-budget-explore-understand.md`, `docs/adr/ADR-059-evidence-pack-and-summaries-lifecycle-prune-compact.md`, `docs/adr/ADR-064-fileversion-handshake-read-apply.md`, `docs/adr/ADR-057-unified-degraded-reasons-and-action-guidance-v1.md`
 
-## Summary
-
 In `publicSurface=compact`, hosts usually only expose `task` + `manage`. This is the right public surface, but real usage showed `task` often returned outputs that were **too shallow to be decision-sufficient**, causing agents to fall back to manual repo probing (rg/ls/cat) outside the Kairo tool surface.
 
 ADR-087 upgrades `task` into a budget-aware orchestration layer that:

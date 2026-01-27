@@ -4,8 +4,6 @@
 **Date:** 2026-01-13  
 **Related:** `docs/adr/ADR-057-unified-degraded-reasons-and-action-guidance-v1.md`, `docs/adr/ADR-058-tool-schema-contract-and-compatibility-layer.md`
 
-## Summary
-
 Standardize a “diagnostic snapshot” so operators can quickly inspect capability/provider status and unavailability reasons (e.g., Rust core load failure, missing tokenizers) via `manage`/`doctor`.
 
 ## Decision

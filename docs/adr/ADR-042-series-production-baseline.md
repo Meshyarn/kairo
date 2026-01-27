@@ -11,8 +11,6 @@ This document is a curated summary of:
 - ADR-042-004/005 (PH): change/write + editor overhaul
 - ADR-042-006: Layer 3 AI-enhanced features
 
-## Summary
-
 ### P0: Observability + Offline baseline
 
 - Run reliably without network and without native DB dependencies where possible

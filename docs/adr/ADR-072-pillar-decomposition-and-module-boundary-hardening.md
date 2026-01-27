@@ -1,4 +1,4 @@
-# ADR-072 (Summary): Pillar Decomposition & Module Boundary Hardening
+# ADR-072: Pillar Decomposition & Module Boundary Hardening
 
 **Status:** Implemented (Phase A/B/C)
 

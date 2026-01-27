@@ -1,4 +1,4 @@
-# ADR-056 (Summary): Token-Aware Dynamic Context Compression
+# ADR-056: Token-Aware Dynamic Context Compression
 
 **Status:** Implemented (0.4.3 baseline)
 **Date:** 2026-01-11

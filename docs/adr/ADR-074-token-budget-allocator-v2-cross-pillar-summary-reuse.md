@@ -1,4 +1,4 @@
-# ADR-074 (Summary): Token Budget Allocator v2 + Summary Reuse
+# ADR-074: Token Budget Allocator v2 + Summary Reuse
 
 **Status:** Implemented (Phase A/B/C)
 

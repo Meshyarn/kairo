@@ -1,10 +1,8 @@
-# ADR-053: Hybrid Rust Core (Summary)
+# ADR-053: Hybrid Rust Core
 
 **Status:** Implemented
 **Date:** 2026-01-10
 **Follow-up (implemented):** `docs/adr/ADR-053-H-universal-hybrid-architecture.md`
-
-## Summary
 
 ADR-053 introduced a hybrid Node.js + Rust architecture to move compute-heavy paths into a native core (`@kairo/core-rs`) while keeping orchestration in Node.js.
 

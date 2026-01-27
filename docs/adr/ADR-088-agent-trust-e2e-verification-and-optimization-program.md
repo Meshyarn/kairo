@@ -4,8 +4,6 @@
 **Date:** 2026-01-24  
 **Related:** `docs/adr/ADR-084-mcp-autopilot-and-preset-layer.md`, `docs/adr/ADR-086-task-compact-change-write-verify.md`, `docs/adr/ADR-087-task-adaptive-lod-and-evidence-pack.md`, `docs/adr/ADR-057-unified-degraded-reasons-and-action-guidance-v1.md`, `docs/adr/ADR-058-tool-schema-contract-and-compatibility-layer.md`, `docs/adr/ADR-064-fileversion-handshake-read-apply.md`, `docs/adr/ADR-067-observability-baseline-bench-accuracy-min-metrics-otel.md`
 
-## Summary
-
 Kairo’s success criteria is not “feature completeness”, but **agent trust**: real agents should reliably choose to call the MCP server (often), get useful answers, and close loops quickly (especially **plan → apply → verify**), without host-specific friction.
 
 ADR-088 defines and implements an E2E verification + optimization program for the real production path:

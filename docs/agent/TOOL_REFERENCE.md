@@ -17,26 +17,55 @@ Switch surfaces with `KAIRO_PUBLIC_SURFACE=compact|pillars`.
 
 High-level router for promptless workflows (ask/analyze/plan/apply).
 
+> **Promptless?** Workflows that use **structured parameters** instead of natural-language prompts. This eliminates ambiguity and delivers consistent results.
+
 **Parameters**
 
-| Field | Type | Required | Notes |
-|---|---|---:|---|
-| `request` | `string` | ✓ | Natural-language request. |
-| `mode` | `"auto" \| "ask" \| "analyze" \| "plan_change" \| "apply_change" \| "write" \| "verify"` |  | Default `auto`. `auto` never routes to apply. |
-| `budget` | `"lean" \| "balanced" \| "deep"` |  | Default `lean`. Controls preset budgets/timeboxes. |
-| `sessionId` | `string` |  | Flow session id (`"new"` to start). |
-| `paths` | `string[]` |  | Hint paths for reading/searching. |
-| `targetFiles` | `string[]` |  | Hint blast-radius for change planning/apply. |
-| `targetPath` | `string` |  | Alias for a single target path (compat; mapped to `targetFiles[0]`). |
-| `edits` | `object[]` |  | Optional pass-through edits. `plan_change` returns **prep** when omitted; returns a real DraftPack when provided. |
-| `draftId` | `string` |  | Required for `apply_change` when applying a prior draft. |
-| `applyToken` | `string` |  | Required for apply in `KAIRO_MODE=mcp` (minted during plan). |
-| `refinement` | `string` |  | Extra guidance when refining a prior draft. |
-| `safety` | `"plan" \| "apply"` |  | Hint only (used when `mode="auto"`). |
-| `output.format` | `"summary" \| "standard"` |  | Default is policy-driven (typically `summary` in MCP mode). |
-| `output.maxTokens` | `number` |  | Response envelope token cap for this call. |
-| `output.maxChars` | `number` |  | Response envelope character cap for this call. |
-| `trace` | `boolean` |  | Include `decisionTrace`/`effectiveOptions` when available. |
+**Required**
+
+| Field | Type | Notes |
+|---|---|---|
+| `request` | `string` | Natural-language request (e.g., "Find the entrypoint"). |
+
+**Flow Control** (optional but important)
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `mode` | `"auto" \| "ask" \| "analyze" \| "plan_change" \| "apply_change" \| "write" \| "verify"` | `auto` | `auto` never routes to apply. For workflow, use explicit mode. |
+| `safety` | `"plan" \| "apply"` | — | Hint only (used when `mode="auto"`). Explicit mode overrides. |
+| `draftId` | `string` | — | **Required** for `apply_change`. Returned from prior `plan_change`. |
+| `applyToken` | `string` | — | **Required** for `apply_change` in MCP mode. Minted during plan. |
+
+**Scope & Targeting** (optional)
+
+| Field | Type | Notes |
+|---|---|---|
+| `targetFiles` | `string[]` | Scope files for change planning/apply (blast radius). |
+| `paths` | `string[]` | Hint files for read/search. |
+| `edits` | `object[]` | For `plan_change`: omit for prep-only, include for real plan + draft. |
+
+**Quality & Limits** (optional)
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `budget` | `"lean" \| "balanced" \| "deep"` | `lean` | Preset for depth/timeouts/token budgets. |
+| `output.format` | `"summary" \| "standard"` | policy-driven | Response shape (usually `summary` in MCP). |
+| `output.maxTokens` | `number` | policy-driven | Hard cap on response tokens. Task downshifts LOD to fit. |
+| `output.maxChars` | `number` | policy-driven | Hard cap on response characters. |
+
+**Sessions & Refinement** (optional)
+
+| Field | Type | Notes |
+|---|---|---|
+| `sessionId` | `string` | Flow session id (`"new"` to start a new session). |
+| `refinement` | `string` | Extra guidance when refining a prior draft. |
+| `trace` | `boolean` | Return `decisionTrace` + `effectiveOptions` for debugging. |
+
+**Compat** (optional)
+
+| Field | Type | Notes |
+|---|---|---|
+| `targetPath` | `string` | Alias for `targetFiles[0]` (compat layer). |
 
 **Notes**
 
@@ -191,6 +220,10 @@ Plan/apply safe edits with impact analysis.
 | `target` | `string` |  | Optional hint (file/symbol). |
 | `targetFiles` | `string[]` |  | Constrain the blast radius. |
 | `edits` | `object[]` |  | Structured edits (advanced). |
+| `edits[].targetString` | `string` |  | Target text (legacy string transport; prefer `edits[].targetSource`). |
+| `edits[].replacementString` | `string` |  | Replacement text (legacy string transport; prefer `edits[].replacementSource`). |
+| `edits[].targetSource` | `object` |  | Raw text source for the edit target (ADR-089). Prefer this for quote-heavy templates. |
+| `edits[].replacementSource` | `object` |  | Raw text source for the edit replacement (ADR-089). |
 | `fileVersions` | `object` |  | Advanced stale-guard: `{ [relPath]: { expectedVersion?, expectedHash? } }` (typically from `DraftPack.fileVersions` or a prior read). |
 | `profile` | `"lean" \| "fast" \| "balanced" \| "deep"` |  | Preset for review/limits defaults. |
 | `safety` | `"plan" \| "apply"` |  | Maps to dry-run behavior (plan=true by default). |
@@ -232,6 +265,7 @@ Plan/apply safe edits with impact analysis.
 - In `KAIRO_MODE=mcp`, apply is server-gated by default: plan returns `applyToken`, and apply requires `draftId + applyToken`.
 - StrategySearch is opt-in: if `strategySearch` is omitted, no candidate evaluation runs (R0 baseline).
 - If `strategySearch.mode` is `auto` or `force` but no candidates are supplied, the engine falls back to R0 and returns a degraded reason.
+- For quote/escape-sensitive edits, use `edits[].targetSource`/`edits[].replacementSource` (see [Raw Content Sources](/guides/raw-content)).
 
 **StrategySearch candidates**
 
@@ -260,6 +294,7 @@ Plan/apply safe edits with impact analysis.
     "candidates": [
       {
         "id": "root",
+        "intent": "Apply root strategy",
         "edits": [{ "targetString": "ROOT", "replacementString": "ROOT1" }],
         "children": [
           { "id": "leaf_a", "edits": [{ "targetString": "A", "replacementString": "A1" }] },
@@ -334,7 +369,9 @@ Create or scaffold files.
 | `intent` | `string` | ✓ | What to create. |
 | `targetPath` | `string` |  | Where to create it. When applying an existing draft (`draftId`), the target may be inferred from the draft; if provided, it must match the draft target. |
 | `template` | `string` |  | Template name/path (if supported). |
-| `content` | `string` |  | Explicit content overrides generation. |
+| `content` | `string` |  | Explicit content overrides generation (legacy string transport; prefer `contentSource`). |
+| `contentSource` | `object` |  | Raw text source (ADR-089). Takes precedence over `content`. |
+| `contentBase64` | `string` |  | Base64-encoded UTF-8 content (deprecated legacy/stopgap; emits warnings). |
 | `fileVersions` | `object` |  | Advanced stale-guard: `{ [relPath]: { expectedVersion?, expectedHash? } }` (typically from `DraftPack.fileVersions` or a prior read). |
 | `profile` | `"lean" \| "fast" \| "balanced" \| "deep"` |  | Preset for review/limits defaults. |
 | `safety` | `"plan" \| "apply"` |  | Maps to dry-run behavior (plan=true by default). |
@@ -361,6 +398,8 @@ Create or scaffold files.
 
 - In `KAIRO_MODE=mcp`, `safety:"apply"` is server-gated by default: plan returns `applyToken`, and apply requires `draftId + applyToken`.
 - When applying a write draft, overriding the draft target path is blocked for safety.
+- When applying a write draft (`draftId`), content must come from the draft snapshot; overriding `content`/`contentSource` during apply is blocked (re-plan instead).
+- For quote/escape-sensitive text (Vue templates, JSON, regex-heavy code), prefer `contentSource` (see [Raw Content Sources](/guides/raw-content)).
 
 **Workflow output**
 

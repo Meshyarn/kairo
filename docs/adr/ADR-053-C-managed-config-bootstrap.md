@@ -1,10 +1,8 @@
-# ADR-053-C: Managed Config Bootstrap (Summary)
+# ADR-053-C: Managed Config Bootstrap
 
 **Status:** Implemented  
 **Date:** 2026-01-10  
 **Related:** `docs/adr/ADR-053-H-universal-hybrid-architecture.md`, `docs/adr/ADR-053-L-language-support-levels.md`, `docs/guides/configuration.md`
-
-## Summary
 
 ADR-053-C adds `manage init` and `manage doctor` to generate a workable config skeleton and diagnose gaps without forcing users to hand-author `.kairo/config/.mcp-config.json` and related files. The flow is scan → plan → optional apply, with host config changes presented as patch suggestions by default.
 

@@ -4,8 +4,6 @@
 **Date:** 2026-01-14  
 **Related:** `src/ast/SymbolIndex.ts`, `src/indexing/IncrementalIndexer.ts`, `src/storage/index/IndexStore.ts`, `src/handlers/ManageHandlers.ts`
 
-## Summary
-
 Make baseline sync asynchronous/incremental so it does not block requests, and reduce linear bottlenecks in symbol search via a secondary (trigram-based) index. Also surface storage/index budget signals in metrics/doctor.
 
 ## Decision

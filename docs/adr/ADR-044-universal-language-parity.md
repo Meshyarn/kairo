@@ -3,8 +3,6 @@
 **Status:** Partially implemented (curated)  
 **Intent:** Make “non-TypeScript” languages first-class by using a query-driven extraction pipeline instead of TS-specific logic.
 
-## Summary
-
 Universal language parity means:
 
 - imports/exports/symbols/skeleton extraction is driven by **tree-sitter query packs** (`.scm`)

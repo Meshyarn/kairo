@@ -1,4 +1,4 @@
-# ADR-073 (Summary): Option Trace Standardization
+# ADR-073: Option Trace Standardization
 
 **Status:** Implemented (Phase A/B/C)
 

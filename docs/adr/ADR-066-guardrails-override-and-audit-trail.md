@@ -4,8 +4,6 @@
 **Date:** 2026-01-14  
 **Related:** `docs/adr/ADR-065-change-execution-contract-atomic-apply-partial-opt-in-delete-policy.md`
 
-## Summary
-
 Guardrails relaxation is only allowed via the `override` object and must pass allowlist/TTL/scope validation. Override requests/denials/applications are recorded in an audit JSONL log and can be queried via `project_manage audit`.
 
 ## Decision

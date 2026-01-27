@@ -4,8 +4,6 @@
 **Date:** 2026-01-22  
 **Related:** `docs/adr/ADR-050-writers-flow.md`, `docs/adr/ADR-084-mcp-autopilot-and-preset-layer.md`, `docs/adr/ADR-057-unified-degraded-reasons-and-action-guidance-v1.md`, `docs/adr/ADR-064-fileversion-handshake-read-apply.md`, `docs/adr/ADR-058-tool-schema-contract-and-compatibility-layer.md`
 
-## Summary
-
 In `publicSurface=compact`, hosts typically only call `task` and `manage`.
 
 Before ADR-086, `task` could route `ask/analyze/plan_change/apply_change`, but `mode="write"` and `mode="verify"` were blocked. This prevented the Writer’s Flow loop (**plan → apply → verify**) from closing on the compact surface and caused “drafts are produced but cannot be applied” UX failures, especially when guidance suggested calling tools (`change`, `write`) that may not be exposed to the host.

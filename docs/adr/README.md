@@ -27,6 +27,7 @@ If you only read one thing, start with:
 - `docs/adr/ADR-047-multi-repo-multi-language.md`
 - `docs/adr/ADR-036-039-universal-documents-and-evidence.md`
 - `docs/adr/ADR-050-writers-flow.md`
+- `docs/adr/ADR-089-raw-content-sources-for-change-write.md`
 
 ## Rejected / Deferred decisions (important context)
 
@@ -56,13 +57,14 @@ The entries below cover all ADRs from the project history. Items marked “retou
 
 - ADR-040 (retouched): Five Pillars toolset consolidation → `docs/adr/ADR-040-five-pillars-toolset.md`
 - ADR-050 (retouched): Writer’s Flow contract → `docs/adr/ADR-050-writers-flow.md`
+- ADR-089 (retouched): Raw content sources for `change`/`write` (no quote/escape breakage) → `docs/adr/ADR-089-raw-content-sources-for-change-write.md`
 - ADR-051: Review quality + session UX → see `docs/agent/TOOL_REFERENCE.md` + `docs/guides/getting-started.md` + `docs/guides/configuration.md`
 - ADR-052: Pillar option profiles + session policy → `docs/adr/ADR-052-pillar-option-profiles-and-session-policy.md`
-- ADR-053-C (summary): Managed config bootstrap (`manage init/doctor`) → `docs/adr/ADR-053-C-managed-config-bootstrap.md`
-- ADR-054 (summary): Cross-language contract awareness (boundary adapters baseline) → `docs/adr/ADR-054-cross-language-contract-awareness.md`
-- ADR-054-H (summary): Contract hardening & bootstrap alignment (NAPI) → `docs/adr/ADR-054-H-contract-hardening-and-bootstrap.md`
-- ADR-055 (summary): Universal parity & standardization program → `docs/adr/ADR-055-universal-parity-and-standardization.md`
-- ADR-056 (summary): Token-aware dynamic context compression (maxTokens + distill) → `docs/adr/ADR-056-token-aware-dynamic-context-compression.md`
+- ADR-053-C: Managed config bootstrap (`manage init/doctor`) → `docs/adr/ADR-053-C-managed-config-bootstrap.md`
+- ADR-054: Cross-language contract awareness (boundary adapters baseline) → `docs/adr/ADR-054-cross-language-contract-awareness.md`
+- ADR-054-H: Contract hardening & bootstrap alignment (NAPI) → `docs/adr/ADR-054-H-contract-hardening-and-bootstrap.md`
+- ADR-055: Universal parity & standardization program → `docs/adr/ADR-055-universal-parity-and-standardization.md`
+- ADR-056: Token-aware dynamic context compression (maxTokens + distill) → `docs/adr/ADR-056-token-aware-dynamic-context-compression.md`
 - ADR-057: Unified degradedReasons + action guidance v1 → `docs/adr/ADR-057-unified-degraded-reasons-and-action-guidance-v1.md`
 - ADR-058: Tool schema contract + compatibility layer → `docs/adr/ADR-058-tool-schema-contract-and-compatibility-layer.md`
 - ADR-059: EvidencePack/Summaries lifecycle (prune/compact) → `docs/adr/ADR-059-evidence-pack-and-summaries-lifecycle-prune-compact.md`
@@ -83,17 +85,17 @@ The entries below cover all ADRs from the project history. Items marked “retou
 - ADR-075: Adaptive Flow rollout plan (profile/scale gate) → `docs/adr/ADR-075-adaptive-flow-rollout-plan-ucg-lod-profile-based-enable.md`
 - ADR-076: Symbol semantic search E2E (opt-in) → `docs/adr/ADR-076-symbol-semantic-search-e2e-integrate-or-deprecate.md`
 - ADR-077: Mixed-workflow resilience (drift + checkpoints) → `docs/adr/ADR-077-mixed-workflow-resilience.md`
-- ADR-078 (summary): Cost stabilization & adaptive LOD (Lean-first) → `docs/adr/ADR-078-cost-stabilization-and-adaptive-lod.md`
-- ADR-079 (summary): Workflow UX & style reliability v2 → `docs/adr/ADR-079-workflow-ux-and-style-reliability-v2.md`
-- ADR-080 (summary): Explore/Understand response envelope token budget → `docs/adr/ADR-080-response-envelope-token-budget-explore-understand.md`
-- ADR-081 (summary): GraphRAG hybrid cluster retrieval → `docs/adr/ADR-081-graphrag-hybrid-cluster-retrieval.md`
-- ADR-082 (summary): Simulate → Reason → Execute (StrategySearch + MCTS) for Change reliability → `docs/adr/ADR-082-simulate-reason-execute-mcts.md`
-- ADR-083 (summary): Language-agnostic symbolic guards (portable semantic checks + optional solver) → `docs/adr/ADR-083-language-agnostic-symbolic-guards.md`
+- ADR-078: Cost stabilization & adaptive LOD (Lean-first) → `docs/adr/ADR-078-cost-stabilization-and-adaptive-lod.md`
+- ADR-079: Workflow UX & style reliability v2 → `docs/adr/ADR-079-workflow-ux-and-style-reliability-v2.md`
+- ADR-080: Explore/Understand response envelope token budget → `docs/adr/ADR-080-response-envelope-token-budget-explore-understand.md`
+- ADR-081: GraphRAG hybrid cluster retrieval → `docs/adr/ADR-081-graphrag-hybrid-cluster-retrieval.md`
+- ADR-082: Simulate → Reason → Execute (StrategySearch + MCTS) for Change reliability → `docs/adr/ADR-082-simulate-reason-execute-mcts.md`
+- ADR-083: Language-agnostic symbolic guards (portable semantic checks + optional solver) → `docs/adr/ADR-083-language-agnostic-symbolic-guards.md`
 - ADR-084 (retouched): MCP autopilot & preset layer (compact surface + `task` router + apply handshake) → `docs/adr/ADR-084-mcp-autopilot-and-preset-layer.md`
-- ADR-086 (summary): Expand `task` to support `write`/`verify` in `publicSurface=compact` → `docs/adr/ADR-086-task-compact-change-write-verify.md`
-- ADR-087 (summary): Make `task` production-grade via adaptive LOD + evidence packs → `docs/adr/ADR-087-task-adaptive-lod-and-evidence-pack.md` (full: `.archive/ADR-087-task-adaptive-lod-and-evidence-pack.md`)
-- ADR-088 (summary): Agent trust E2E verification & optimization program (MCP stdio) → `docs/adr/ADR-088-agent-trust-e2e-verification-and-optimization-program.md`
-- ADR-085 (summary): Rust native search core (Tantivy integration) → `docs/adr/ADR-085-rust-native-search-core-tantivy.md`
+- ADR-086: Expand `task` to support `write`/`verify` in `publicSurface=compact` → `docs/adr/ADR-086-task-compact-change-write-verify.md`
+- ADR-087: Make `task` production-grade via adaptive LOD + evidence packs → `docs/adr/ADR-087-task-adaptive-lod-and-evidence-pack.md` (full: `.archive/ADR-087-task-adaptive-lod-and-evidence-pack.md`)
+- ADR-088: Agent trust E2E verification & optimization program (MCP stdio) → `docs/adr/ADR-088-agent-trust-e2e-verification-and-optimization-program.md`
+- ADR-085: Rust native search core (Tantivy integration) → `docs/adr/ADR-085-rust-native-search-core-tantivy.md`
 - ADR-055-H: Adaptive trust policy (no curated summary)
 - ADR-055-L: Action guidance + Understand fallback graph (no curated summary)
 - ADR-033: “Six Pillars” precursor to ADR-040; introduced orchestration primitives and earlier public surface.
@@ -120,20 +122,20 @@ The entries below cover all ADRs from the project history. Items marked “retou
 - ADR-042 series (retouched): P0–P2 baseline + PH editor + Layer 3 → `docs/adr/ADR-042-series-production-baseline.md`
 - ADR-053: Hybrid Rust core phases 1–4 → `docs/adr/ADR-053-hybrid-rust-architecture-and-optimization.md`
 - ADR-053-H: Universal hybrid architecture + multi-engine framework → `docs/adr/ADR-053-H-universal-hybrid-architecture.md`
-- ADR-053-L (summary): Language support levels (L2/L3) + target matrix → `docs/adr/ADR-053-L-language-support-levels.md`
+- ADR-053-L: Language support levels (L2/L3) + target matrix → `docs/adr/ADR-053-L-language-support-levels.md`
 - ADR-054 (NAPI baseline): Cross-language contract awareness (boundary adapters + field-level impact) → `docs/adr/ADR-054-cross-language-contract-awareness.md`
 - ADR-054-H: ADR-054 hardening (bootstrap + deep linking; NAPI Rust ↔ TS/JS)
-- ADR-055 (summary): Universal parity & standardization program (schemas + parity gates + adapter expansion) → `docs/adr/ADR-055-universal-parity-and-standardization.md`
+- ADR-055: Universal parity & standardization program (schemas + parity gates + adapter expansion) → `docs/adr/ADR-055-universal-parity-and-standardization.md`
 - ADR-055-H: Adaptive trust policy (archived; no curated summary)
 - ADR-055-L: Action guidance + Understand fallback graph (archived; no curated summary)
-- ADR-056 (summary): Token-aware dynamic context compression (maxTokens + distill) → `docs/adr/ADR-056-token-aware-dynamic-context-compression.md`
+- ADR-056: Token-aware dynamic context compression (maxTokens + distill) → `docs/adr/ADR-056-token-aware-dynamic-context-compression.md`
 - ADR-067: Observability baseline (bench accuracy + minimal metrics + optional OTel) → `docs/adr/ADR-067-observability-baseline-bench-accuracy-min-metrics-otel.md`
 - ADR-068: Index freshness & cache invalidation program → `docs/adr/ADR-068-index-freshness-cache-invalidation-program.md`
 - ADR-069: Search/index scalability without SQLite (baseline async, secondary index) → `docs/adr/ADR-069-search-index-scalability-without-sqlite.md`
 - ADR-070: Offline baseline policy (remote embeddings, model packaging) → `docs/adr/ADR-070-offline-baseline-policy-remote-embeddings-model-packaging.md`
 - ADR-071: IFileSystem boundary expansion & testability program → `docs/adr/ADR-071-ifilesystem-boundary-expansion-and-testability-program.md`
 - ADR-072: Pillar decomposition & module boundary hardening → `docs/adr/ADR-072-pillar-decomposition-and-module-boundary-hardening.md`
-- ADR-085 (summary): Rust native search core (Tantivy integration) → `docs/adr/ADR-085-rust-native-search-core-tantivy.md`
+- ADR-085: Rust native search core (Tantivy integration) → `docs/adr/ADR-085-rust-native-search-core-tantivy.md`
 - ADR-022: Scalable memory architecture (on-disk/lazy/streaming baseline ideas).
 - ADR-028: Performance + accuracy enhancements (historical deep dive).
 - ADR-029: Production readiness / system maturity (historical).
@@ -143,7 +145,7 @@ The entries below cover all ADRs from the project history. Items marked “retou
 
 - ADR-043 (retouched): Adaptive Context Architecture (LOD + UCG) → `docs/adr/ADR-043-adaptive-context-architecture.md`
 - ADR-069: Search/index scalability without SQLite (baseline async, secondary index) → `docs/adr/ADR-069-search-index-scalability-without-sqlite.md`
-- ADR-085 (summary): Rust native search core (Tantivy integration) → `docs/adr/ADR-085-rust-native-search-core-tantivy.md`
+- ADR-085: Rust native search core (Tantivy integration) → `docs/adr/ADR-085-rust-native-search-core-tantivy.md`
 - ADR-017/017-addendum: Context-aware clustered search; token control; caching refinements.
 - ADR-018: Consolidated clustered search (refinement / merged design).
 - ADR-014: Smart File Profile (token-efficient default reads, skeleton-first).
@@ -217,8 +219,8 @@ This list captures every ADR title from the project history and where it’s cov
 - ADR-045 TODO Tracking → summarized in this index
 - ADR-046: Semantic Validation Layer for Edit Operations → `docs/adr/ADR-046-semantic-validation-layer.md`
 - ADR-047: Multi-Repo & Multi-Language Expansion → `docs/adr/ADR-047-multi-repo-multi-language.md`
-- ADR-048: Sync Feedback Loop & Architectural Safety Guardrails → summarized in this index (see “Safety”)
-- ADR-049: Integrity Engine Defensive Hardening → summarized in this index (see “Safety”)
+- ADR-048: Sync Feedback Loop & Architectural Safety Guardrails → `docs/adr/ADR-048-sync-feedback-and-architectural-safety.md`
+- ADR-049: Integrity Engine Defensive Hardening → `docs/adr/ADR-049-integrity-engine-defensive-hardening.md`
 - ADR-050: Writer's Flow (Research → Analyze → Skeleton → Write → Review → Manage) → `docs/adr/ADR-050-writers-flow.md`
 - ADR-061: Language Parity Gates (L2/L3) & silent-pass removal → `docs/adr/ADR-061-language-parity-gates-and-silent-pass-removal.md`
 - ADR-064: FileVersion Handshake (read↔apply) → `docs/adr/ADR-064-fileversion-handshake-read-apply.md`
@@ -232,32 +234,32 @@ This list captures every ADR title from the project history and where it’s cov
 
 ### Archive ADRs (historical)
 
-- ADR-001: Kairo Server Architecture → summarized (see “Early foundations”)
-- ADR-002: Smart Engine Refactoring & Tool Separation → summarized (see “Early foundations”)
-- ADR-003: Advanced Algorithms Implementation → summarized (see “Early foundations”)
-- ADR-004: Agent-Driven Refactoring for Enhanced Safety, Accuracy, and Performance → summarized (see “Early foundations”)
-- ADR-006: Intelligent Orchestration Layer (IOL) → summarized (see “Early foundations”)
-- ADR-008 (v2): Final Blueprint for Pragmatic Reliability → summarized (see “Safety”)
-- ADR-009: EditorEngine String Matching & Performance Improvements (Revised) → summarized (see “Safety”)
-- ADR-009: EditorEngine String Matching Improvements → summarized (see “Safety”)
-- ADR-009: Memory-Bounded Architecture for Large Projects → summarized (see “Scaling”)
-- ADR-009: Persistent Index Layer for Scalable Monorepo Support → summarized (see “Scaling”)
-- ADR-010: Smart Semantic Analysis & Structural Navigation → summarized (see “Early foundations”)
-- ADR-011: Robustness, Format Flexibility, and Advanced Analysis (Revised) → summarized (see “Early foundations”)
-- ADR-012: Project Intelligence (Enhanced Static Analysis) → summarized (see “Early foundations”)
-- ADR-013: Serena Feature Analysis & Strategic Enhancement Plan → summarized (see “Early foundations”)
-- ADR-015: Agent Experience and Resilience Enhancements → summarized (see “Safety/UX”)
-- ADR-016: Impact Flow Analysis & Call Graph Visualization → summarized (see “Retrieval/Analysis”)
-- ADR 019: Toolset Consolidation Strategy → summarized (see “Public tool surface”)
-- ADR 020: Toolset Consolidation Strategy → summarized (see “Public tool surface”)
-- ADR 021: Enterprise-Grade Core Enhancements (Architecture & Algorithms) → summarized (see “Early foundations”)
-- ADR 021: Enterprise-Grade Core Enhancements → summarized (see “Early foundations”)
-- ADR-025: User Experience Enhancements for Edit Flexibility, Search Refinement, and Batch Operation Guidance → summarized (see “Safety/UX”)
-- ADR 027: Fix Indexing Synchronization Issues → summarized (see “Scaling”)
-- ADR 027: Implementation Details & Code-Based Design → summarized (see “Scaling”)
-- ADR-028: Performance and Accuracy Enhancements for Kairo → summarized (see “Scaling”)
-- ADR-029: System Maturity Enhancements for Production Readiness → summarized (see “Scaling”)
-- ADR-031: Unified Runtime and Testing Data Structure → summarized (see “Language/Multi-repo”)
-- ADR-034: Adaptive Resource Budgets for Navigate/Understand → summarized (see “Scaling”)
-- ADR-035: Adaptive Change Execution (Safe‑by‑Default) → summarized (see “Safety”)
+- ADR-001: Kairo Server Architecture → `docs/adr/ADR-001-smart-context-architecture.md`
+- ADR-002: Smart Engine Refactoring & Tool Separation → `docs/adr/ADR-002-smart-engine-refactoring.md`
+- ADR-003: Advanced Algorithms Implementation → `docs/adr/ADR-003-advanced-algorithms.md`
+- ADR-004: Agent-Driven Refactoring for Enhanced Safety, Accuracy, and Performance → `docs/adr/ADR-004-agent-driven-refactoring.md`
+- ADR-006: Intelligent Orchestration Layer (IOL) → `docs/adr/ADR-006-intelligent-orchestration-layer.md`
+- ADR-008 (v2): Final Blueprint for Pragmatic Reliability → `docs/adr/ADR-008-pragmatic-reliability-enhancements.md`
+- ADR-009: EditorEngine String Matching & Performance Improvements (Revised) → `docs/adr/ADR-009-editor-engine-improvements.md`
+- ADR-009: EditorEngine String Matching Improvements → `docs/adr/ADR-009-editor-engine-matching-improvements.md`
+- ADR-009: Memory-Bounded Architecture for Large Projects → `docs/adr/ADR-009-memory-bounded-architecture.md`
+- ADR-009: Persistent Index Layer for Scalable Monorepo Support → `docs/adr/ADR-009-persistent-index-layer.md`
+- ADR-010: Smart Semantic Analysis & Structural Navigation → `docs/adr/ADR-010-smart-semantic-analysis.md`
+- ADR-011: Robustness, Format Flexibility, and Advanced Analysis (Revised) → `docs/adr/ADR-011-robustness-and-advanced-analysis.md`
+- ADR-012: Project Intelligence (Enhanced Static Analysis) → `docs/adr/ADR-012-project-intelligence.md`
+- ADR-013: Serena Feature Analysis & Strategic Enhancement Plan → `docs/adr/ADR-013-serena-feature-analysis.md`
+- ADR-015: Agent Experience and Resilience Enhancements → `docs/adr/ADR-015-agent-experience-and-resilience.md`
+- ADR-016: Impact Flow Analysis & Call Graph Visualization → `docs/adr/ADR-016-impact-flow-analysis.md`
+- ADR 019: Toolset Consolidation Strategy → `docs/adr/ADR-019-toolset-consolidation-strategy.md`
+- ADR 020: Toolset Consolidation Strategy → `docs/adr/ADR-020-final-toolset-consolidation.md`
+- ADR 021: Enterprise-Grade Core Enhancements (Architecture & Algorithms) → `docs/adr/ADR-021-enterprise-grade-core-enhancements.md`
+- ADR 021: Enterprise-Grade Core Enhancements → `docs/adr/ADR-021-enterprise-core-enhancements.md`
+- ADR-025: User Experience Enhancements for Edit Flexibility, Search Refinement, and Batch Operation Guidance → `docs/adr/ADR-025-user-experience-enhancements.md`
+- ADR 027: Fix Indexing Synchronization Issues → `docs/adr/ADR-027-fix-indexing-synchronization.md`
+- ADR 027: Implementation Details & Code-Based Design → `docs/adr/ADR-027-implementation-details.md`
+- ADR-028: Performance and Accuracy Enhancements for Kairo → `docs/adr/ADR-028-performance-and-accuracy-enhancements.md`
+- ADR-029: System Maturity Enhancements for Production Readiness → `docs/adr/ADR-029-system-maturity-enhancements.md`
+- ADR-031: Unified Runtime and Testing Data Structure → `docs/adr/ADR-031-unified-data-structure.md`
+- ADR-034: Adaptive Resource Budgets for Navigate/Understand → `docs/adr/ADR-034-adaptive-resource-budgets-for-pillars.md`
+- ADR-035: Adaptive Change Execution (Safe‑by‑Default) → `docs/adr/ADR-035-adaptive-change-execution.md`
 - ADR-039: Universal Document Implementation Strategy → `docs/adr/ADR-036-039-universal-documents-and-evidence.md`

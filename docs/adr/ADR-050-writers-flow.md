@@ -3,8 +3,6 @@
 **Status:** Accepted (curated; workflow contract implemented, not enforced end-to-end)  
 **Intent:** Provide a repeatable “vibe coding” workflow on top of the Five Pillars without adding new public tools.
 
-## Summary
-
 In practice, teams don’t fail because they can’t call tools—they fail because they skip steps:
 
 - editing before understanding the module boundaries

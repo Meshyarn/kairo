@@ -10,8 +10,6 @@ This document summarizes:
 - ADR-038: Evidence packs & progressive disclosure
 - ADR-039: Implementation strategy for broader document formats
 
-## Summary
-
 Kairo treats code and docs as complementary context. The system supports:
 
 - structured document reading (TOC/sections/preview/full)

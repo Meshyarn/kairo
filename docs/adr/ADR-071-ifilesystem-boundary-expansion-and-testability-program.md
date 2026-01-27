@@ -1,4 +1,4 @@
-# ADR-071 (Summary): IFileSystem Boundary Expansion & Testability Hardening
+# ADR-071: IFileSystem Boundary Expansion & Testability Hardening
 
 **Status:** Implemented (Phase A/B/C)
 

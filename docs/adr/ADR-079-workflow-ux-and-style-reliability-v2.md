@@ -1,4 +1,4 @@
-# ADR-079 (Summary): Workflow UX & Style Reliability v2
+# ADR-079: Workflow UX & Style Reliability v2
 
 ## Intent
 

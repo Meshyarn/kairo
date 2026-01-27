@@ -41,6 +41,7 @@ For host config templates and troubleshooting, see `docs/guides/promptless-integ
 
 ## Docs
 
+- Docs website (VitePress, EN/KO): `npm --prefix docs install && npm --prefix docs run dev`
 - `docs/README.md`
 - `docs/agent/AGENT_PLAYBOOK.md`
 - `docs/agent/TOOL_REFERENCE.md`
