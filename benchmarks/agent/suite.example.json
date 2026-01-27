@@ -1,0 +1,66 @@
+{
+  "suite_id": "kairo-agent-bench-v1",
+  "version": "0.1.0",
+  "mode": "mock",
+  "attempts": 1,
+  "timeout_ms": 60000,
+  "output_dir": "benchmarks/runs",
+  "pricing": {
+    "snapshot": "2026-01-25",
+    "currency": "USD",
+    "input_per_1k": 0.0,
+    "output_per_1k": 0.0
+  },
+  "model": {
+    "provider": "mock",
+    "id": "mock-1",
+    "params": {
+      "temperature": 0,
+      "top_p": 1
+    }
+  },
+  "cases": [
+    {
+      "id": "json-eq-001",
+      "category": "analysis",
+      "description": "Return a deterministic JSON payload.",
+      "fixture": "benchmarks/agent/fixtures/json-eq",
+      "prompt": "Return ONLY JSON. Provide final_answer as JSON: {\"answer\":42}.",
+      "validators": [
+        {
+          "type": "json",
+          "source": "final_answer",
+          "expect": { "answer": 42 }
+        }
+      ],
+      "mock_output": {
+        "patch_unified_diff": null,
+        "final_answer": "{\"answer\":42}",
+        "notes": [],
+        "usage": { "input_tokens": 12, "output_tokens": 8 }
+      }
+    },
+    {
+      "id": "patch-hello-001",
+      "category": "bug-fix",
+      "description": "Fix the typo in greeting.txt.",
+      "fixture": "benchmarks/agent/fixtures/patch-hello",
+      "prompt": "Update greeting.txt so it contains exactly 'hello world' followed by a newline. Return ONLY JSON.",
+      "validators": [
+        { "type": "patch" },
+        {
+          "type": "files",
+          "files": [
+            { "path": "greeting.txt", "expect_text": "hello world\n" }
+          ]
+        }
+      ],
+      "mock_output": {
+        "patch_unified_diff": "--- greeting.txt\n+++ greeting.txt\n@@\n-hello wrld\n+hello world\n",
+        "final_answer": "patched",
+        "notes": [],
+        "usage": { "input_tokens": 20, "output_tokens": 15 }
+      }
+    }
+  ]
+}

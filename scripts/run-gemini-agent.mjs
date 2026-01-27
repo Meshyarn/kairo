@@ -1,4 +1,5 @@
 import { spawnSync } from "child_process";
+import path from "path";
 
 // Environment variables for configuration
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "";
@@ -6,8 +7,11 @@ const GEMINI_ACCESS_TOKEN = process.env.GEMINI_ACCESS_TOKEN || process.env.GOOGL
 const GEMINI_AUTH_CMD = process.env.GEMINI_AUTH_CMD || "";
 const GEMINI_BASE_URL = process.env.GEMINI_BASE_URL || ""; // e.g., https://us-central1-aiplatform.googleapis.com/v1
 
-const GEMINI_MODEL = process.env.GEMINI_MODEL || process.env.KAIRO_BENCH_MODEL || "gemini-1.5-pro";
-const GEMINI_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS || process.env.CODEX_TIMEOUT_MS || "60000");
+// Prefer the model selected by the benchmark harness (e.g., `--model`, `--mini`, `--full`).
+const GEMINI_MODEL = process.env.KAIRO_BENCH_MODEL || process.env.GEMINI_MODEL || "gemini-1.5-pro";
+const GEMINI_TIMEOUT_MS = Number(
+  process.env.GEMINI_TIMEOUT_MS || process.env.KAIRO_BENCH_TIMEOUT_MS || process.env.CODEX_TIMEOUT_MS || "60000"
+);
 const GEMINI_MAX_OUTPUT_TOKENS = process.env.GEMINI_MAX_OUTPUT_TOKENS
   ? Number(process.env.GEMINI_MAX_OUTPUT_TOKENS)
   : undefined;
@@ -15,6 +19,7 @@ const GEMINI_TEMPERATURE = process.env.GEMINI_TEMPERATURE ? Number(process.env.G
 
 const PROJECT_ID = process.env.PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT || "";
 const REGION = process.env.LOCATION || process.env.REGION || "us-central1";
+const GEMINI_DEBUG_FILES = process.env.GEMINI_DEBUG_FILES === "1" || process.env.KAIRO_BENCH_DEBUG_FILES === "1";
 
 function readStdin() {
   return new Promise((resolve, reject) => {
@@ -202,12 +207,16 @@ FINAL REMINDER: NO FUNCTIONS. NO TOOLS. ONLY JSON TEXT.
     const data = await response.json();
     const outputText = extractTextFromResponse(data);
 
-    // Debug: Write raw output
-    try {
-      const fs = await import("fs");
-      fs.writeFileSync("gemini_debug_output.txt", outputText || "(no output)");
-      fs.writeFileSync("gemini_debug_response.json", JSON.stringify(data, null, 2));
-    } catch (e) {}
+    // Debug: Write raw output (opt-in; avoid workspace drift by default).
+    if (GEMINI_DEBUG_FILES) {
+      try {
+        const fs = await import("fs");
+        const outDir = process.env.KAIRO_BENCH_LOG_DIR || process.cwd();
+        fs.mkdirSync(outDir, { recursive: true });
+        fs.writeFileSync(path.join(outDir, "gemini_debug_output.txt"), outputText || "(no output)");
+        fs.writeFileSync(path.join(outDir, "gemini_debug_response.json"), JSON.stringify(data, null, 2));
+      } catch (e) {}
+    }
 
     if (!outputText) {
       console.error("No output text found in response.");

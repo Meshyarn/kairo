@@ -1,0 +1,13 @@
+:root {
+  --color-primary: #4f46e5;
+  --color-muted: #9ca3af;
+}
+
+.button {
+  background: var(--color-primary);
+  color: white;
+}
+
+.button.secondary {
+  background: var(--color-muted);
+}

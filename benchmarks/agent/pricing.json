@@ -1,0 +1,38 @@
+{
+  "snapshot": "2026-01-26",
+  "currency": "USD",
+  "models": {
+    "codex/gpt-5-codex-mini": {
+      "input_per_1k": 0.00025,
+      "cached_input_per_1k": 0.000025,
+      "output_per_1k": 0.002
+    },
+    "codex/gpt-5-codex": {
+      "input_per_1k": 0.00125,
+      "cached_input_per_1k": 0.000125,
+      "output_per_1k": 0.01
+    },
+    "codex/gpt-5.1-codex-mini": {
+      "input_per_1k": 0.00025,
+      "cached_input_per_1k": 0.000025,
+      "output_per_1k": 0.002
+    },
+    "codex/gpt-5.1-codex": {
+      "input_per_1k": 0.00125,
+      "cached_input_per_1k": 0.000125,
+      "output_per_1k": 0.01
+    },
+    "gemini/gemini-3-flash-preview": {
+      "input_per_1k": 0.0,
+      "output_per_1k": 0.0
+    },
+    "gemini/gemini-3-pro-preview": {
+      "input_per_1k": 0.0,
+      "output_per_1k": 0.0
+    },
+    "default": {
+      "input_per_1k": 0.0,
+      "output_per_1k": 0.0
+    }
+  }
+}

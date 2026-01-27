@@ -1,0 +1,208 @@
+{
+  "suite_id": "kairo-agent-kairo5-v1",
+  "version": "1.1.0",
+  "mode": "live",
+  "attempts": 1,
+  "timeout_ms": 300000,
+  "output_dir": "benchmarks/runs",
+  "pricing": {
+    "snapshot": "2026-01-25",
+    "currency": "USD",
+    "input_per_1k": 0.0,
+    "output_per_1k": 0.0
+  },
+  "model": {
+    "provider": "codex",
+    "id": "gpt-5.1-codex",
+    "params": {
+      "temperature": 0,
+      "top_p": 1
+    }
+  },
+  "cases": [
+    {
+      "id": "kc-tool-schema-001",
+      "category": "schema",
+      "description": "Expose quiet/suppressLogs in project_manage tool schema.",
+      "fixture": "benchmarks/agent/fixtures/kairo5-base",
+      "prompt": "Update the `project_manage` tool inputSchema so it supports two optional boolean properties at the top-level: `quiet` and `suppressLogs`. Keep the existing style/formatting and do not change behavior.\n\nUpdate the `manage` parameters table in the tool reference docs to document `quiet` and `suppressLogs` as optional booleans used to suppress reindex logging.\n\nReturn ONLY JSON.",
+      "validators": [
+        {
+          "type": "files",
+          "files": [
+            {
+              "path": "src/server/tools/ToolSpecRegistry.ts",
+              "contains_texts": ["quiet: { type: \"boolean\" }", "suppressLogs: { type: \"boolean\" }"]
+            },
+            {
+              "path": "docs/agent/TOOL_REFERENCE.md",
+              "contains_texts": ["| `quiet` | `boolean` |", "| `suppressLogs` | `boolean` |"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kc-reindex-status-001",
+      "category": "feature",
+      "description": "Add a reindex_status project_manage command.",
+      "fixture": "benchmarks/agent/fixtures/kairo5-base",
+      "prompt": "Add a new `project_manage` command `reindex_status`.\n\n1) Update the `project_manage` command enum to include `reindex_status`.\n2) Implement `case 'reindex_status'` in the manage handler that returns exactly this shape (match strings exactly):\n\n{ success: true, output: \"Reindex status\", activity: { reindexInProgress: this.reindexInProgress, lastReindex: this.reindexLastResult } }\n\n3) Update the tool reference to mention `manage({ command: \"reindex_status\" })` and that it reports `reindexInProgress` and `lastReindex`.\n4) Update the agent playbook tip about reindexing and the getting-started reindex guidance to mention `manage({ command: \"reindex_status\" })` as the way to check progress.\n\nDo not add other fields. Return ONLY JSON.",
+      "validators": [
+        {
+          "type": "files",
+          "files": [
+            {
+              "path": "src/server/tools/ToolSpecRegistry.ts",
+              "contains_text": "\"reindex_status\""
+            },
+            {
+              "path": "src/handlers/ManageHandlers.ts",
+              "contains_texts": [
+                "case 'reindex_status':",
+                "output: \"Reindex status\"",
+                "reindexInProgress: this.reindexInProgress",
+                "lastReindex: this.reindexLastResult"
+              ]
+            },
+            {
+              "path": "docs/agent/TOOL_REFERENCE.md",
+              "contains_texts": ["reindex_status", "reindexInProgress", "lastReindex"]
+            },
+            {
+              "path": "docs/agent/AGENT_PLAYBOOK.md",
+              "contains_text": "manage({ command: \"reindex_status\" })"
+            },
+            {
+              "path": "docs/guides/getting-started.md",
+              "contains_text": "manage({ command: \"reindex_status\" })"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kc-workspace-flag-001",
+      "category": "cli",
+      "description": "Add a --workspace alias for --root and document it.",
+      "fixture": "benchmarks/agent/fixtures/kairo5-base",
+      "prompt": "Add support for a `--workspace` flag as an alias for `--root`. It must support both `--workspace /path` and `--workspace=/path`.\n\nUpdate the main README Quickstart to show the new `--workspace` example next to the existing `--root` example.\nUpdate the getting-started guide “Run from this repo” block to include the same `--workspace` example on its own line right after the `--root` line.\nUpdate the configuration guide’s Project & Root table to mention the `--workspace` CLI alias.\n\nReturn ONLY JSON.",
+      "validators": [
+        {
+          "type": "files",
+          "files": [
+            { "path": "src/index.ts", "contains_text": "\"--workspace\"" },
+            { "path": "README.md", "contains_texts": ["--workspace /absolute/path/to/your/project", "--root /absolute/path/to/your/project"] },
+            { "path": "docs/guides/getting-started.md", "contains_text": "node dist/index.js --workspace /absolute/path/to/your/project" },
+            { "path": "docs/guides/configuration.md", "contains_text": "--workspace" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kc-allow-cwd-root-flag-001",
+      "category": "cli",
+      "description": "Add a --allow-cwd-root flag for broad-root startup and document it.",
+      "fixture": "benchmarks/agent/fixtures/kairo5-base",
+      "prompt": "Add support for a `--allow-cwd-root` flag that acts as a CLI alias for `KAIRO_ALLOW_CWD_ROOT=true`.\n\nRequirements:\n- It must support all of:\n  - `--allow-cwd-root` (implies true)\n  - `--allow-cwd-root=true|false`\n  - `--allow-cwd-root true|false`\n- If the flag is provided, it must override the `KAIRO_ALLOW_CWD_ROOT` env var.\n- Do not change existing behavior when the flag is not provided.\n\nDocs:\n- Update README Quickstart to mention `--allow-cwd-root` as the override when Kairo refuses to start due to a broad root.\n- Update the getting-started “Run from this repo” block to include an example line using `--allow-cwd-root`.\n- Update the configuration guide Common env vars table to include `KAIRO_ALLOW_CWD_ROOT` and mention the `--allow-cwd-root` CLI alias.\n\nReturn ONLY JSON.",
+      "validators": [
+        {
+          "type": "files",
+          "files": [
+            { "path": "src/index.ts", "contains_text": "\"--allow-cwd-root\"" },
+            { "path": "README.md", "contains_text": "--allow-cwd-root" },
+            { "path": "docs/guides/getting-started.md", "contains_text": "--allow-cwd-root" },
+            { "path": "docs/guides/configuration.md", "contains_texts": ["KAIRO_ALLOW_CWD_ROOT", "--allow-cwd-root"] }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kc-kairo-dir-flag-001",
+      "category": "cli",
+      "description": "Add a --kairo-dir alias for KAIRO_DIR and document it.",
+      "fixture": "benchmarks/agent/fixtures/kairo5-base",
+      "prompt": "Add support for a `--kairo-dir` flag that acts as a CLI alias for the `KAIRO_DIR` env var.\n\nRequirements:\n- It must support both `--kairo-dir /path` and `--kairo-dir=/path`.\n- If the flag is provided, it must override the `KAIRO_DIR` env var.\n- Do not change behavior when the flag is not provided.\n\nDocs:\n- Update README to document `--kairo-dir` as a CLI alternative for setting the data directory.\n- Update the getting-started “Run from this repo” block to include a `--kairo-dir .kairo` example.\n- Update the configuration guide Common env vars table row for `KAIRO_DIR` to mention the `--kairo-dir` CLI alias.\n\nReturn ONLY JSON.",
+      "validators": [
+        {
+          "type": "files",
+          "files": [
+            { "path": "src/index.ts", "contains_text": "\"--kairo-dir\"" },
+            { "path": "README.md", "contains_text": "--kairo-dir" },
+            { "path": "docs/guides/getting-started.md", "contains_text": "--kairo-dir" },
+            { "path": "docs/guides/configuration.md", "contains_text": "--kairo-dir" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kc-warmup-empty-index-001",
+      "category": "ux",
+      "description": "Warn when warmup is skipped due to an empty index.",
+      "fixture": "benchmarks/agent/fixtures/kairo5-base",
+      "prompt": "Improve observability for warmup behavior.\n\nIn `shouldWarmupSearchIndex()`, when `indexedFiles === 0` and warmup is skipped because `KAIRO_WARMUP_ON_EMPTY_INDEX` is not enabled, emit a single `console.warn(...)` explaining that warmup was skipped due to an empty index and that the user can set `KAIRO_WARMUP_ON_EMPTY_INDEX=true` or reindex first.\n\nUpdate the configuration guide to document warmup-related env vars in the Search & Results area by adding a small table that includes `KAIRO_WARMUP_ENABLED`, `KAIRO_WARMUP_MAX_FILES`, and `KAIRO_WARMUP_ON_EMPTY_INDEX` with short descriptions.\n\nDo not change the return values/logic beyond adding this warning. Return ONLY JSON.",
+      "validators": [
+        {
+          "type": "files",
+          "files": [
+            {
+              "path": "src/server/SmartContextServer.ts",
+              "contains_texts": ["console.warn", "warmup", "index is empty", "KAIRO_WARMUP_ON_EMPTY_INDEX=true"]
+            },
+            {
+              "path": "docs/guides/configuration.md",
+              "contains_texts": ["KAIRO_WARMUP_ENABLED", "KAIRO_WARMUP_MAX_FILES", "KAIRO_WARMUP_ON_EMPTY_INDEX"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kc-compact-surface-rename-001",
+      "category": "docs",
+      "description": "Rename compact surface phrasing across docs.",
+      "fixture": "benchmarks/agent/fixtures/kairo5-base",
+      "prompt": "Standardize wording by replacing the phrase \"compact surface\" with \"compact tool surface\" in the docs. Update only the relevant occurrences (keep the meaning and formatting intact).\n\nReturn ONLY JSON.",
+      "validators": [
+        {
+          "type": "files",
+          "files": [
+            {
+              "path": "docs/agent/TOOL_REFERENCE.md",
+              "contains_text": "compact tool surface",
+              "excludes_text": "compact surface"
+            },
+            {
+              "path": "docs/agent/AGENT_PLAYBOOK.md",
+              "contains_text": "compact tool surface",
+              "excludes_text": "compact surface"
+            },
+            {
+              "path": "docs/guides/getting-started.md",
+              "contains_text": "compact tool surface",
+              "excludes_text": "compact surface"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "kc-adr-index-001",
+      "category": "docs",
+      "description": "Add ADR-063 to docs/adr/index.md quick list.",
+      "fixture": "benchmarks/agent/fixtures/kairo5-base",
+      "prompt": "In docs/adr/index.md, add ADR-063 to the short list. Add a new bullet that matches the existing style:\n\n- [ADR-063 — Capability diagnostics & provider policy integration](/adr/ADR-063-capability-diagnostics-and-provider-policy-integration)\n\nPlace it logically with the existing list (don’t reorder other items). Return ONLY JSON.",
+      "validators": [
+        {
+          "type": "files",
+          "files": [
+            {
+              "path": "docs/adr/index.md",
+              "contains_texts": ["ADR-063", "/adr/ADR-063-capability-diagnostics-and-provider-policy-integration"]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+# Service Config
+
+Example:
+```json
+{
+  "cacheTTL": 120,
+  "endpoint": "https://api.example.com",
+  "retries": 2
+}
+```

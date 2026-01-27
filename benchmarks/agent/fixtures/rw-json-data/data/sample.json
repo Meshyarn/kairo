@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "items": [
+    { "id": "a1", "status": "new" },
+    { "id": "b2", "status": "processing" }
+  ]
+}
