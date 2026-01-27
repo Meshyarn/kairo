@@ -17,4 +17,26 @@ dist
 models
 
 # benchmark files
-benchmarks
+benchmarks/reports/
+benchmarks/runs/
+benchmarks/scripts/
+
+# rust build output
+target
+crates/core-rs/target
+
+# core-rs alternate build output
+core_rs.node
+crates/core-rs/core_rs.node
+
+# local doc scratchpads
+.archive
+.backup
+
+# local runtime artifacts
+.smart-context
+tmp
+
+# vitepress
+docs/.vitepress/cache
+docs/.vitepress/.temp
