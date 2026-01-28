@@ -15,6 +15,29 @@ import * as url from "url";
 import * as crypto from "crypto";
 import util from "util";
 import * as os from "os";
+import { createRequire } from "module";
+
+const require = createRequire(import.meta.url);
+
+const resolvePackageVersion = (): string => {
+    try {
+        const pkg = require("../../package.json");
+        const version = typeof pkg?.version === "string" ? pkg.version.trim() : "";
+        if (version.length > 0) {
+            return version;
+        }
+    } catch {
+        // ignore
+    }
+
+    const envVersion = (process.env.npm_package_version ?? "").trim();
+    if (envVersion.length > 0) {
+        return envVersion;
+    }
+    return "unknown";
+};
+
+const SERVER_VERSION = resolvePackageVersion();
 
 // Engine Imports
 import { SearchEngine } from "../engine/Search.js";
@@ -196,7 +219,7 @@ export class SmartContextServer {
     constructor(rootPath: string) {
         this.server = new Server({
             name: "kairo",
-            version: "4.0.0",
+            version: SERVER_VERSION,
         }, {
             capabilities: { tools: {} },
         });
