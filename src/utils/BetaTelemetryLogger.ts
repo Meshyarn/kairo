@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { PathManager } from "./PathManager.js";
 
 export type BetaTelemetryEvent = {
     ts?: string;
@@ -33,7 +34,7 @@ export class BetaTelemetryLogger {
         const enabled = process.env.KAIRO_BETA_LOG_ENABLED === "true"
             || typeof process.env.KAIRO_BETA_LOG_PATH === "string";
         if (!enabled) return undefined;
-        const logDir = process.env.KAIRO_LOG_DIR ?? path.join(rootPath, ".kairo", "logs");
+        const logDir = process.env.KAIRO_LOG_DIR ?? PathManager.resolveForRoot(rootPath, "logs");
         const logPath = process.env.KAIRO_BETA_LOG_PATH ?? path.join(logDir, "beta.ndjson");
         const hostName = process.env.KAIRO_HOST_NAME;
         return new BetaTelemetryLogger(logPath, hostName);

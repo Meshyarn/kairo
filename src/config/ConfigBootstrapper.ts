@@ -10,6 +10,7 @@ import { getSupportForLanguageId, SupportLevel } from "./LanguageSupportLevels.j
 import { LANGUAGE_PARITY_MATRIX, resolveRequiredQueries } from "./LanguageParityMatrix.js";
 import { ContractManifestLoader } from "../contracts/ContractManifestLoader.js";
 import { ContractManifestGenerator } from "../contracts/ContractManifestGenerator.js";
+import { PathManager } from "../utils/PathManager.js";
 
 export type BootstrapMode = "plan" | "apply";
 export type BootstrapTarget = "kairo" | "vscode";
@@ -104,9 +105,22 @@ export type ManageBootstrapResult = {
     applied?: BootstrapApplyResult[];
 };
 
-const DEFAULT_IGNORE_DIRS = [".git", "node_modules", ".mcp", ".kairo", ".kairo-index", "dist", "coverage"];
+const DEFAULT_IGNORE_DIRS_BASE = [".git", "node_modules", ".mcp", ".kairo", ".kairo-index", "dist", "coverage"];
 const DEFAULT_EXCLUDE_PATTERNS = ["dist/**", "coverage/**"];
 const DEFAULT_MAX_FILES = 20000;
+
+function getDefaultIgnoreDirs(): string[] {
+    const dirs = new Set(DEFAULT_IGNORE_DIRS_BASE);
+    const baseDir = PathManager.getBaseDir()
+        .replace(/\\/g, "/")
+        .replace(/\/+$/, "")
+        .replace(/^\.\//, "");
+    if (baseDir && !path.isAbsolute(baseDir)) {
+        const root = baseDir.split("/")[0];
+        if (root) dirs.add(root);
+    }
+    return Array.from(dirs);
+}
 
 export class ConfigBootstrapper {
     private readonly rootPath: string;
@@ -130,8 +144,7 @@ export class ConfigBootstrapper {
         const mode = this.resolveMode(args);
         const targets = this.resolveTargets(args);
         const rootPath = this.resolveRootPath((args as ManageInitArgs).root);
-        const baseDir = resolveBaseDir();
-        const configDir = path.join(rootPath, baseDir, "config");
+        const configDir = PathManager.resolveForRoot(rootPath, "config");
         const mcpPolicyPath = path.join(configDir, "mcp.json");
         const mcpConfigPath = path.join(configDir, ".mcp-config.json");
         const legacyConfigDirMcpPath = path.join(configDir, "mcp-config.json");
@@ -480,7 +493,8 @@ export class ConfigBootstrapper {
     private buildIgnoreFilter(rootPath: string) {
         const ig = (ignore as unknown as () => any)();
         const patterns = this.loadIgnorePatterns(rootPath);
-        const defaults = DEFAULT_IGNORE_DIRS.map((dir) => `${dir}/**`);
+        const defaultDirs = getDefaultIgnoreDirs();
+        const defaults = defaultDirs.map((dir) => `${dir}/**`);
         ig.add([...defaults, ...patterns]);
         return ig;
     }
@@ -507,6 +521,7 @@ export class ConfigBootstrapper {
 
     private collectIgnoreFiles(rootPath: string): string[] {
         const ignoreFiles: string[] = [];
+        const ignoreDirs = new Set(getDefaultIgnoreDirs());
         const stack = [rootPath];
         while (stack.length > 0) {
             const current = stack.pop()!;
@@ -520,7 +535,7 @@ export class ConfigBootstrapper {
                 if (entry.isSymbolicLink()) continue;
                 const entryPath = path.join(current, entry.name);
                 if (entry.isDirectory()) {
-                    if (DEFAULT_IGNORE_DIRS.includes(entry.name)) {
+                    if (ignoreDirs.has(entry.name)) {
                         continue;
                     }
                     stack.push(entryPath);
@@ -1319,6 +1334,12 @@ export class ConfigBootstrapper {
 
     private isPlanInScope(scope: ManageDoctorArgs["scope"], filePath: string): boolean {
         if (!scope) return true;
+        const baseDir = PathManager.getBaseDir()
+            .replace(/\\/g, "/")
+            .replace(/\/+$/, "")
+            .replace(/^\.\//, "");
+        const configPrefix = path.posix.join(baseDir, "config");
+        const contractsPrefix = path.posix.join(baseDir, "contracts");
         if (scope === "host") {
             return filePath.replace(/\\\\/g, "/").endsWith("/.vscode/mcp.json");
         }
@@ -1329,22 +1350,22 @@ export class ConfigBootstrapper {
             return false;
         }
         if (scope === "languages") {
-            return filePath.replace(/\\\\/g, "/").endsWith("/.kairo/config/languages.json");
+            return filePath.replace(/\\\\/g, "/").endsWith(path.posix.join(configPrefix, "languages.json"));
         }
         if (scope === "config") {
             const normalized = filePath.replace(/\\\\/g, "/");
             return normalized.endsWith("/.mcp-config.json")
-                || normalized.endsWith("/.kairo/config/mcp-config.json")
-                || normalized.endsWith("/.kairo/config/mcp.json")
-                || normalized.endsWith("/.kairo/config/languages.json")
-                || normalized.endsWith("/.kairo/config/graphrag.json");
+                || normalized.endsWith(path.posix.join(configPrefix, "mcp-config.json"))
+                || normalized.endsWith(path.posix.join(configPrefix, "mcp.json"))
+                || normalized.endsWith(path.posix.join(configPrefix, "languages.json"))
+                || normalized.endsWith(path.posix.join(configPrefix, "graphrag.json"));
         }
         if (scope === "contracts") {
-            return filePath.replace(/\\\\/g, "/").includes("/.kairo/contracts");
+            return filePath.replace(/\\\\/g, "/").includes(contractsPrefix);
         }
         if (scope === "parity") {
             const normalized = filePath.replace(/\\\\/g, "/");
-            return normalized.endsWith("/.kairo/config/languages.json")
+            return normalized.endsWith(path.posix.join(configPrefix, "languages.json"))
                 || normalized.includes("/wasm/");
         }
         return true;
@@ -1352,6 +1373,12 @@ export class ConfigBootstrapper {
 
     private isHintInScope(scope: ManageDoctorArgs["scope"], hint: string): boolean {
         if (!scope) return true;
+        const baseDir = PathManager.getBaseDir()
+            .replace(/\\/g, "/")
+            .replace(/\/+$/, "")
+            .replace(/^\.\//, "");
+        const configPrefix = path.posix.join(baseDir, "config");
+        const contractsPrefix = path.posix.join(baseDir, "contracts");
         if (scope === "wasm") {
             return hint.includes("KAIRO_WASM_DIR");
         }
@@ -1365,10 +1392,10 @@ export class ConfigBootstrapper {
             return hint.includes(".vscode");
         }
         if (scope === "config") {
-            return hint.includes(".mcp-config") || hint.includes(".kairo/config");
+            return hint.includes(".mcp-config") || hint.includes(configPrefix) || hint.includes("<KAIRO_DIR>/config");
         }
         if (scope === "contracts") {
-            return hint.includes(".kairo/contracts") || hint.includes("contracts");
+            return hint.includes(contractsPrefix) || hint.includes("<KAIRO_DIR>/contracts") || hint.includes("contracts");
         }
         if (scope === "parity") {
             const normalized = hint.toLowerCase();
@@ -1380,12 +1407,12 @@ export class ConfigBootstrapper {
     private buildContractFindings(rootPath: string, repos: RepoSummary[]): { findings: ConfigFinding[]; hints: string[] } {
         const findings: ConfigFinding[] = [];
         const hints: string[] = [];
-        const contractsDir = path.join(rootPath, ".kairo", "contracts");
+        const contractsDir = PathManager.resolveForRoot(rootPath, "contracts");
         if (!fs.existsSync(contractsDir)) {
             findings.push({
                 code: "CONTRACTS_DIR_MISSING",
                 severity: "warn",
-                message: "Contracts directory is missing (.kairo/contracts).",
+                message: "Contracts directory is missing (<KAIRO_DIR>/contracts).",
                 action: "init_contracts",
                 evidence: { path: contractsDir }
             });
@@ -1501,7 +1528,7 @@ export class ConfigBootstrapper {
 
     private buildContractPlan(rootPath: string, repos: RepoSummary[]): ConfigWriteOp[] {
         const plan: ConfigWriteOp[] = [];
-        const contractsDir = path.join(rootPath, ".kairo", "contracts");
+        const contractsDir = PathManager.resolveForRoot(rootPath, "contracts");
         const napiDir = path.join(contractsDir, "ffi_napi");
         if (!fs.existsSync(contractsDir)) {
             plan.push({
@@ -1688,20 +1715,3 @@ export class ConfigBootstrapper {
     }
 }
 
-function resolveBaseDir(): string {
-    const raw = (process.env.KAIRO_DIR || "").trim();
-    if (!raw) {
-        return ".kairo";
-    }
-    const normalized = raw.replace(/\\/g, "/").replace(/\/+$/g, "");
-    const allowLegacy = process.env.KAIRO_ALLOW_LEGACY_MCP_DIR === "true";
-    if (!allowLegacy) {
-        if (normalized === ".mcp" || normalized === ".mcp/kairo") {
-            return ".kairo";
-        }
-        if (normalized.includes("/.mcp/")) {
-            return ".kairo";
-        }
-    }
-    return raw;
-}

@@ -19,6 +19,7 @@ import { FeatureFlags } from '../../../config/FeatureFlags.js';
 import type { StylePack, WorkflowMeta } from '../../../types/flow-artifacts.js';
 import { AuditLog } from "../../../utils/AuditLog.js";
 import type { OverrideTrace } from "../../../utils/GuardrailsOverride.js";
+import { PathManager } from "../../../utils/PathManager.js";
 
 import { 
     toImpactReport, 
@@ -545,7 +546,7 @@ export class ChangePillar {
         const reason = guard.blockedReason ?? "cross_repo_edit_blocked";
         const degradedReasons = buildDegradedReasons([reason]);
         const guidanceMessage = reason === "cross_repo_edit_blocked"
-          ? "Set allowCrossRepoEdits=true in .kairo/config/.mcp-config.json for involved repos, then rerun with allowCrossRepoEdits:true."
+          ? "Set allowCrossRepoEdits=true in <KAIRO_DIR>/config/.mcp-config.json for involved repos, then rerun with allowCrossRepoEdits:true."
           : "Adjust repoScope to include the target repository or use the default repo.";
         if (traceBuilder) {
           traceBuilder.recordSkip("repo_scope", "policy_disabled", reason);
@@ -3205,9 +3206,16 @@ export class ChangePillar {
         String.raw`(?:from\s+["']${this.escapeRegExp(packageName)}["']|require\(\s*["']${this.escapeRegExp(packageName)}["']\s*\)|import\(\s*["']${this.escapeRegExp(packageName)}["']\s*\))`
       );
       const fileSystem = this.resolveFileSystem();
+      const baseDir = PathManager.getBaseDir()
+        .replace(/\\/g, "/")
+        .replace(/\/+$/, "")
+        .replace(/^\.\//, "");
+      const hasCustomBase = baseDir && !path.isAbsolute(baseDir);
       for (const filePath of paths) {
         if (!filePath || filePath === entryPath) continue;
-        if (filePath.includes("/.kairo/") || filePath.includes("/node_modules/")) continue;
+        const normalized = filePath.replace(/\\/g, "/");
+        if (normalized.includes("/.kairo/") || normalized.includes("/node_modules/")) continue;
+        if (hasCustomBase && normalized.includes(`/${baseDir}/`)) continue;
         if (!/\.(ts|tsx|js|jsx)$/.test(filePath)) continue;
         try {
           const content = await fileSystem.readFile(filePath);

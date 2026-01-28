@@ -1,5 +1,5 @@
 import * as fs from "fs";
-import * as path from "path";
+import { PathManager } from "../utils/PathManager.js";
 
 export interface LanguageMapping {
     languageId: string;
@@ -90,34 +90,13 @@ export class LanguageConfigLoader {
         this.watcher?.close();
     }
 
-    private resolveBaseDir(): string {
-        const raw = (process.env.KAIRO_DIR || "").trim();
-        if (!raw) {
-            return ".kairo";
-        }
-
-        const normalized = raw.replace(/\\/g, "/").replace(/\/+$/, "");
-        const allowLegacy = process.env.KAIRO_ALLOW_LEGACY_MCP_DIR === "true";
-        if (!allowLegacy) {
-            if (normalized === ".mcp" || normalized === ".mcp/kairo") {
-                return ".kairo";
-            }
-            if (normalized.includes("/.mcp/")) {
-                return ".kairo";
-            }
-        }
-
-        return raw;
-    }
-
     private resolveConfigPath(): string {
-        const baseDir = this.resolveBaseDir();
-        const primary = path.join(this.rootPath, baseDir, "config", "languages.json");
+        const primary = PathManager.resolveForRoot(this.rootPath, "config", "languages.json");
         if (fs.existsSync(primary)) {
             return primary;
         }
 
-        const legacy = path.join(this.rootPath, baseDir, "languages.json");
+        const legacy = PathManager.resolveForRoot(this.rootPath, "languages.json");
         if (fs.existsSync(legacy)) {
             return legacy;
         }

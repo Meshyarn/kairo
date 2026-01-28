@@ -233,8 +233,8 @@ export class SmartContextServer {
         this.alertDispatcher = new AlertDispatcher({
             rootPath: this.rootPath,
             logDir: process.env.KAIRO_ALERT_LOG_DIR
-                ?? process.env.KAIRO_METRICS_DIR
-                ?? path.join(this.rootPath, ".kairo", "logs"),
+                ?? process.env.KAIRO_LOG_DIR
+                ?? PathManager.resolve("logs"),
             webhookUrl: process.env.KAIRO_ALERT_WEBHOOK,
             command: process.env.KAIRO_ALERT_COMMAND,
             pagerDutyRoutingKey: process.env.KAIRO_PAGERDUTY_ROUTING_KEY,
@@ -599,7 +599,7 @@ export class SmartContextServer {
         if (!enabled) return;
         const singleFilePath = process.env.KAIRO_LOG_FILE;
         const logDir = process.env.KAIRO_LOG_DIR
-            || path.join(this.rootPath, ".kairo", "logs");
+            || PathManager.resolve("logs");
         try {
             if (singleFilePath) {
                 fs.mkdirSync(path.dirname(singleFilePath), { recursive: true });
@@ -830,7 +830,7 @@ export class SmartContextServer {
         const reporter = new AdaptiveFlowReporter({
             rootPath: this.rootPath,
             exportDir: process.env.KAIRO_METRICS_DIR
-                ?? path.join(this.rootPath, ".kairo", "logs"),
+                ?? PathManager.getMetricsDir(),
             exportIntervalMs: this.parseNumberEnv(process.env.KAIRO_METRICS_INTERVAL_MS, 60_000),
             alertThresholds: {
                 topologySuccessRate: this.parseNumberEnv(process.env.KAIRO_TOPOLOGY_SUCCESS_MIN, 0.95),

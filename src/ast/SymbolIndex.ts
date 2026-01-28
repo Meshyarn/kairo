@@ -7,6 +7,7 @@ import { IndexDatabase } from '../indexing/IndexDatabase.js';
 import { CommentIndexer } from '../indexing/CommentIndexer.js';
 import { NodeFileSystem, type IFileSystem, type FileStats } from '../platform/FileSystem.js';
 import { NativeSearchIndexer } from "../engine/search/native/NativeSearchIndexer.js";
+import { PathManager } from "../utils/PathManager.js";
 
 const SUPPORTED_EXTENSIONS = new Set<string>(['.ts', '.tsx', '.js', '.jsx', '.py']);
 const HOT_CACHE_SIZE = 50;
@@ -630,7 +631,18 @@ export class SymbolIndex {
 
     private createIgnoreFilter(patterns: string[]) {
         const filter = ignore.default().add(patterns);
-        filter.add(['.git', 'node_modules', '.mcp', '.kairo', 'dist', 'coverage', '.DS_Store']);
+        const defaults = ['.git', 'node_modules', '.mcp', '.kairo', 'dist', 'coverage', '.DS_Store'];
+        const baseDir = PathManager.getBaseDir()
+            .replace(/\\/g, "/")
+            .replace(/\/+$/, "")
+            .replace(/^\.\//, "");
+        if (baseDir && !path.isAbsolute(baseDir)) {
+            const root = baseDir.split("/")[0];
+            if (root) {
+                defaults.push(root);
+            }
+        }
+        filter.add(Array.from(new Set(defaults)));
         return filter;
     }
 }

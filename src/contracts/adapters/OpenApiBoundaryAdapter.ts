@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import type { RepoRegistry } from "../../config/RepoRegistry.js";
 import type { BoundaryAdapter, BoundaryInstance, ContractLoadResult, ContractManifest } from "../boundaries/types.js";
+import { PathManager } from "../../utils/PathManager.js";
 import {
   buildIgnoreFilter,
   buildEvidence,
@@ -56,7 +57,7 @@ export class OpenApiBoundaryAdapter implements BoundaryAdapter {
   }
 
   async loadOrGenerate(instance: BoundaryInstance): Promise<ContractLoadResult> {
-    const manifestPath = path.join(this.rootPath, ".kairo", "contracts", this.kind, `${instance.id}.json`);
+    const manifestPath = PathManager.resolveForRoot(this.rootPath, "contracts", this.kind, `${instance.id}.json`);
     if (fs.existsSync(manifestPath)) {
       try {
         const raw = fs.readFileSync(manifestPath, "utf-8");

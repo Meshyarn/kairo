@@ -9,8 +9,9 @@ import { createLogger } from "../utils/StructuredLogger.js";
 import { metrics } from "../utils/MetricsCollector.js";
 import { SymbolEmbeddingIndex } from '../indexing/SymbolEmbeddingIndex.js';
 import { NativeSearchError, type NativeSearchCoreClient, type NativeSearchStats } from "./search/native/NativeSearchCore.js";
+import { PathManager } from "../utils/PathManager.js";
 
-const BUILTIN_EXCLUDE_GLOBS = [
+const BASE_EXCLUDE_GLOBS = [
     "**/node_modules/**",
     "**/.git/**",
     "**/.mcp/**",
@@ -21,6 +22,18 @@ const BUILTIN_EXCLUDE_GLOBS = [
     "**/*.test.*",
     "**/*.spec.*"
 ];
+
+const getBuiltinExcludeGlobs = (): string[] => {
+    const patterns = [...BASE_EXCLUDE_GLOBS];
+    const baseDir = PathManager.getBaseDir()
+        .replace(/\\/g, "/")
+        .replace(/\/+$/, "")
+        .replace(/^\.\//, "");
+    if (baseDir && !path.isAbsolute(baseDir)) {
+        patterns.push(`**/${baseDir}/**`, `${baseDir}/**`);
+    }
+    return Array.from(new Set(patterns));
+};
 
 const DEFAULT_PREVIEW_LENGTH = 240;
 const DEFAULT_MATCHES_PER_FILE = 5;
@@ -78,7 +91,7 @@ export class SearchEngine {
     constructor(rootPath: string, fileSystem: IFileSystem, initialExcludeGlobs: string[] = [], options: SearchEngineOptions = {}) {
         this.rootPath = path.resolve(rootPath);
         this.fileSystem = fileSystem;
-        const combined = [...BUILTIN_EXCLUDE_GLOBS, ...initialExcludeGlobs];
+        const combined = [...getBuiltinExcludeGlobs(), ...initialExcludeGlobs];
         this.defaultExcludeGlobs = Array.from(new Set(combined));
         this.maxPreviewLength = options.maxPreviewLength ?? DEFAULT_PREVIEW_LENGTH;
         this.maxMatchesPerFile = options.maxMatchesPerFile ?? DEFAULT_MATCHES_PER_FILE;
@@ -104,7 +117,7 @@ export class SearchEngine {
     }
 
     public async updateExcludeGlobs(patterns: string[]): Promise<void> {
-        const combined = [...BUILTIN_EXCLUDE_GLOBS, ...patterns];
+        const combined = [...getBuiltinExcludeGlobs(), ...patterns];
         this.defaultExcludeGlobs = Array.from(new Set(combined));
     }
 
