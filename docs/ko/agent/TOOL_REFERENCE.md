@@ -442,10 +442,10 @@ impact 분석을 포함한 안전한 편집을 plan/apply 합니다.
 
 | 필드 | 타입 | 필수 | 비고 |
 |---|---|---:|---|
-| `command` | `"status" \| "undo" \| "redo" \| "reindex" \| "rebuild" \| "history" \| "test" \| "init" \| "doctor" \| "schema" \| "sessions" \| "session" \| "session_complete" \| "session_update" \| "artifacts" \| "artifact" \| "discard" \| "prune" \| "export" \| "import"` | ✓ | `rebuild`는 `reindex`로 매핑됩니다. |
-| `scope` | `"file" \| "transaction" \| "project" \| "config" \| "languages" \| "wasm" \| "host" \| "contracts" \| "parity" \| "capabilities"` |  | `test`/`doctor`에서 사용. |
+| `command` | `"status" \| "undo" \| "redo" \| "reindex" \| "rebuild" \| "history" \| "init" \| "doctor" \| "schema" \| "sessions" \| "session" \| "session_complete" \| "session_update" \| "artifacts" \| "artifact" \| "discard" \| "prune" \| "export" \| "import"` | ✓ | `rebuild`는 `reindex`로 매핑됩니다. |
+| `scope` | `"file" \| "transaction" \| "project" \| "config" \| "languages" \| "wasm" \| "host" \| "contracts" \| "parity" \| "capabilities"` |  | `doctor`에서 사용. |
 | `tool` | `string` |  | tool name(`schema`에서 사용). |
-| `target` | `string` |  | 주로 `test`에서 사용. |
+| `target` | `string` |  | 특정 대상에 동작하는 커맨드에서 사용(예: `artifact`). |
 | `paths` | `string[]` |  | 증분/path-scoped refresh를 위한 `reindex`에서 사용(지원 시). |
 | `targetType` | `"artifact" \| "transaction" \| "patchRef"` |  | `export` 대상 타입. |
 | `allowExternal` | `boolean` |  | `.kairo` 밖에서 `import` 허용. |
