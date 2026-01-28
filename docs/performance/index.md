@@ -5,7 +5,8 @@ This section covers performance benchmarks, optimization strategies, and real-wo
 ## Key Topics
 
 - **[Benchmark Report](/performance/benchmarks)** – Real-world comparison of routing vs. full-model strategies
-- **[Performance & Reliability](/concepts/performance-and-reliability)** – Latency baselines, memory usage, and SLOs
+- **[Performance Baselines](/performance/baselines)** – Latency + memory receipts from repo benchmarks
+- **[Performance & Reliability](/concepts/performance-and-reliability)** – High-signal diagnostics + current tuning knobs
 
 ## Quick Facts
 
@@ -24,6 +25,6 @@ This section covers performance benchmarks, optimization strategies, and real-wo
 
 ## Next Steps
 
-1. **Understand routing strategy:** [Agent Routing Strategy](/concepts/performance-and-reliability#agent-routing-strategy)
+1. **See representative numbers:** [Performance Baselines](/performance/baselines)
 2. **Review benchmark details:** [Full Benchmark Report](/performance/benchmarks)
 3. **Deploy to your environment:** [Deployment Scenarios](/guides/deployment-scenarios)
