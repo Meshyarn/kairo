@@ -1559,20 +1559,6 @@ export class ManageHandlers extends BaseHandler {
                             : {})
                     };
                 }
-            case 'test':
-                {
-                    const target = args?.target;
-                    if (!target && scope !== 'project') {
-                        return { success: false, output: "Missing target for test command." };
-                    }
-                    const absPath = target ? this.resolveAbsolutePath(target) : undefined;
-                    const report = absPath ? await this.context.impactAnalyzer.analyzeImpact(absPath, []) : null;
-                    return {
-                        success: true,
-                        output: "Suggested tests generated.",
-                        suggestedTests: report?.suggestedTests ?? []
-                    };
-                }
             case 'sessions':
                 {
                     const options = args?.artifactOptions ?? {};
