@@ -124,9 +124,10 @@ manage({ command: "status" })
 ```
 
 확인 항목:
-- ✅ `indexHealth.state`: `"healthy"`
-- ✅ `languagesDetected`: 프로젝트 언어 (TypeScript, Python 등)
-- ✅ `nativeCore.available`: `true` (렉시컬 검색 활성화)
+- ✅ `status.global.totalFiles` / `status.global.indexedFiles`가 저장소 규모에 맞는 값인지
+- ✅ `nativeSearch.available: true` (렉시컬 검색 활성화)
+- ✅ `indexSnapshot.coverageRatio`가 `manage({ command: "reindex" })` 이후 `1`에 가까운지
+- ✅ `drift.workspaceDrift: "clean"` (첫 인덱싱 전에는 `"unknown"`일 수 있음)
 
 ### 3. 에러 처리 검증
 
@@ -170,7 +171,8 @@ task({ request: "List all exported functions", mode: "auto" })
 
 ```bash
 # 존재하고 최근 항목이 있어야 함
-tail -20 .kairo/kairo.log
+tail -20 .kairo/logs/console.log
+# (또는 `KAIRO_LOG_FILE=/absolute/path/to/kairo.log`로 단일 파일 로그 사용)
 
 # 표시되는 것: 타임스탬프, 작업 이름, 민감한 데이터 없음
 ```
@@ -185,7 +187,7 @@ manage({ command: "init" })
 
 그 다음 배포 시나리오를 따릅니다:
 - **개발:** [개발 시나리오](/ko/guides/deployment-scenarios#시나리오-1-개발-로컬-머신)
-- **팀:** [팀 CI/CD 시나리오](/ko/guides/deployment-scenarios#시나리오-2-팀-cicd-공유-컨테이너빌드-시스템)
+- **팀:** [팀 CI/CD 시나리오](/ko/guides/deployment-scenarios#시나리오-2-팀-cicd-공유-컨테이너--빌드-시스템)
 - **프로덕션:** [프로덕션 에이전트 시나리오](/ko/guides/deployment-scenarios#시나리오-3-프로덕션-에이전트-높은-처리량)
 
 ---

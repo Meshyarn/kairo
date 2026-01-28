@@ -42,26 +42,11 @@ The built entry point will be at `dist/index.js`.
 
 ## Step 2: Verify installation
 
-### Quick smoke test
+Kairo is a **stdio MCP server**, not an interactive CLI. The supported argv surface is intentionally small:
 
-```bash
-# If installed globally or via npm scripts:
-npx kairo --help
+- `--root <path>` (or `KAIRO_ROOT_PATH` / `KAIRO_ROOT`)
 
-# Or from repo:
-node dist/index.js --help
-```
-
-You should see:
-
-```
-Options:
-  --root <path>        Project root (default: cwd)
-  --mode <mode>        mcp | server (default: mcp)
-  --port <port>        Port (if mode=server)
-```
-
-### Run a smoke test (optional)
+### Smoke test (from this repo)
 
 Test that Kairo can communicate over stdio:
 
@@ -71,6 +56,16 @@ npm run smoke:mcp-mock-client
 ```
 
 This spawns Kairo and makes a few sample calls. If it exits with code 0, you're good.
+
+### Verify via your MCP host (from npm or repo)
+
+After wiring your MCP host (next section), run:
+
+```bash
+manage({ command: "status" })
+```
+
+If you get a JSON response with `success: true`, your host integration is working.
 
 ---
 

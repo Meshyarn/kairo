@@ -1,10 +1,16 @@
-# 설정(전체 환경 변수)
+# 설정(레거시: 전체 환경 변수)
 
 Kairo는 환경 변수로 설정합니다. 대부분의 사용자는 몇 가지만 필요합니다.
 
 읽기 쉬운 “분할 레퍼런스”는 여기서 시작하세요:
 
 - [설정(Configuration) — 분할 레퍼런스](/ko/reference/configuration/)
+
+::: warning 레거시 문서
+이 문서는 레거시 링크/검색을 위한 단일 “전체 환경 변수” 페이지입니다. 최신 문서는 위의 분할 레퍼런스를 기준으로 합니다.
+
+`.kairo/config/*` 설정 파일이 필요하다면: [프로젝트 설정 파일](/ko/reference/configuration/project-files)
+:::
 
 ## 공통 환경 변수
 
@@ -21,6 +27,8 @@ Kairo는 환경 변수로 설정합니다. 대부분의 사용자는 몇 가지�
 | `KAIRO_LOG_LEVEL` | 구조화 로그 레벨. | `debug|info|warn|error`. |
 | `KAIRO_LOG_TO_FILE` | `.kairo` 아래에 로그를 파일로 저장. | MCP 호스트에서는 권장(stdout를 깨끗하게 유지). |
 | `KAIRO_ALLOW_STDOUT_LOGS` | stdout 로그 허용. | MCP 호스트에서는 피하세요(stdout는 MCP 프레임 전용). |
+| `KAIRO_LOG_DIR` | 로그 디렉터리 오버라이드. | 기본값 `<KAIRO_DIR>/logs`. |
+| `KAIRO_LOG_FILE` | 로그 파일 경로 오버라이드. | 설정 시 모든 로그를 단일 파일로 기록. |
 | `KAIRO_STORAGE_MODE` | 스토리지 백엔드. | `file`(기본) 또는 `memory`(비영속). |
 | `KAIRO_TOOL_SCHEMA_MODE` | 도구 스키마 모드(계약 enforcement). | `compat`(기본)은 알 수 없는 top-level 필드를 제거; `strict`는 거부. |
 | `KAIRO_EXPOSE_INTERNAL_TOOLS` | MCP `list_tools`에 내부 도구를 노출. | 기본 `false`; 내부 도구 이름은 불안정. |
@@ -87,159 +95,18 @@ Kairo는 환경 변수로 설정합니다. 대부분의 사용자는 몇 가지�
 |---|---|---|
 | `KAIRO_CONTENT_SOURCE_MAX_BYTES` | `contentSource.kind="file"` 읽기 최대 바이트. | 기본 `1048576`(1MB). |
 
-## 프로젝트 설정 파일(OSS 핵심)
+## 프로젝트 설정 파일(권장)
 
-이 파일들은 **대상 프로젝트 루트**의 `.kairo/` 아래에 존재합니다.
+프로젝트 로컬 설정은 대상 프로젝트 루트의 `.kairo/config/*` 아래에 위치합니다.
 
-### MCP 모드 설정(선택)
+이 레거시 문서는 env 변수 중심이며, 파일 기반 설정의 최신 문서는 분할 레퍼런스를 기준으로 합니다:
 
-호스트 환경 변수 난립을 피하고 MCP 기본값을 프로젝트 로컬로 고정하려면 `.kairo/config/mcp.json`을 생성하세요:
+- [프로젝트 설정 파일](/ko/reference/configuration/project-files)
+- [로깅 & 텔레메트리](/ko/reference/configuration/logging-and-telemetry)
+- [검색 & 임베딩](/ko/reference/configuration/search-and-embeddings)
+- [change/write & drift](/ko/reference/configuration/change-write-and-drift)
 
-```json
-{
-  "version": 1,
-  "mode": "mcp",
-  "preset": "mcp-lean",
-  "publicSurface": "compact",
-  "applyHandshake": {
-    "required": true,
-    "tokenTtlMs": 1800000,
-    "oneTime": true,
-    "invalidateOnDrift": true
-  },
-  "autopilot": {
-    "autoModeNeverApplies": true,
-    "defaultOutputFormat": "summary",
-    "maxAutoRepairAttempts": 1,
-    "allowAutoReindex": false
-  },
-  "budgets": {
-    "profile": "lean",
-    "envelopeMaxTokens": { "explore": 4000, "understand": 5000, "change": 4000, "write": 4000, "manage": 6000 }
-  },
-  "timeboxMs": { "total": 15000, "perStep": 3000 }
-}
-```
-
-- 이 파일은 **mode/preset/surface** 및 router/autopilot 기본값을 제어합니다( `docs/adr/ADR-084-mcp-autopilot-and-preset-layer.md` 참고).
-- `budgets`/`timeboxMs`는 응답을 작게 유지하고 호스트 타임아웃을 피하기 위한 best-effort 서버 측 상한입니다.
-- `.kairo/config/.mcp-config.json`(멀티 레포 레지스트리; 아래 참고)과는 별개입니다.
-- 우선순위: tool call overrides → `.kairo/config/mcp.json` → env vars → built-in preset defaults.
-
-### 멀티 레포 설정(선택)
-
-`.kairo/config/.mcp-config.json`을 생성하세요:
-
-```json
-{
-  "version": "1.0",
-  "repositories": {
-    "main": {
-      "path": ".",
-      "name": "Main Repo",
-      "type": "primary",
-      "languages": ["typescript"],
-      "allowCrossRepoEdits": false
-    }
-  },
-  "defaultRepo": "main"
-}
-```
-
-- 이미 존재한다면 레거시 위치: `.kairo/config/mcp-config.json` 또는 프로젝트 루트의 `.mcp-config.json`.
-- 마이그레이션 헬퍼: `npm run migrate:mcp-config`
-- cross-repo 편집을 허용하려면 레포별로 `allowCrossRepoEdits`를 명시적으로 `true`로 설정해야 합니다(tool 입력에서도 `allowCrossRepoEdits: true`를 함께 설정해야 함).
-
-### 언어 매핑(선택)
-
-기본 내장 매핑을 확장/오버라이드하려면 `.kairo/config/languages.json`을 생성하세요:
-
-```json
-{
-  "version": 1,
-  "mappings": {
-    ".py": { "languageId": "python", "parserBackend": "web-tree-sitter", "fallbackStrategy": "regex" }
-  }
-}
-```
-
-### GraphRAG 정책(선택)
-
-GraphRAG 기본값과 seed 정책을 조정하려면 `.kairo/config/graphrag.json`을 생성하세요:
-
-```json
-{
-  "version": 1,
-  "enabled": false,
-  "seedPolicy": {
-    "default": "lexical_default",
-    "policies": {
-      "path_first": { "weights": { "path": 1.0, "lexical": 0.6, "semantic": 0.2 } },
-      "symbol_semantic": { "weights": { "semantic": 1.0, "lexical": 0.5, "path": 0.2 } },
-      "lexical_default": { "weights": { "lexical": 1.0, "semantic": 0.3, "path": 0.3 } }
-    }
-  },
-  "tuning": { "primaryGoal": "followup_calls", "secondaryGoal": "token_usage" },
-  "crossBoundary": {
-    "allowlist": ["ffi_napi", "idl_proto", "http_openapi", "db_sql_schema"],
-    "caps": { "maxDepth": 1, "maxFiles": 8, "maxSymbols": 20, "maxTokens": 800 },
-    "autoScale": true
-  }
-}
-```
-
-- `KAIRO_GRAPHRAG_ENABLED=true`는 GraphRAG를 강제로 켭니다(config 오버라이드).
-- config 경로는 `KAIRO_DIR` 아래에서 해석됩니다(기본: `.kairo/config/graphrag.json`), 레거시 폴백은 `KAIRO_DIR/graphrag.json`.
-- cross-repo 클러스터 확장은 편집과 동일한 안전 모델을 따릅니다: 레포 config가 허용(`allowCrossRepoEdits: true`)해야 하고, tool call도 `allowCrossRepoEdits: true`를 전달해야 합니다.
-
-### Symbolic guards 정책(선택)
-
-이식 가능한 semantic checks(ADR-083)를 활성화하려면 `.kairo/config/symbolic-guards.json`을 생성하세요:
-
-```json
-{
-  "version": 1,
-  "enabled": false,
-  "mode": "warn",
-  "timeoutMs": 1200,
-  "maxDiagnostics": 12,
-  "maxPaths": 64,
-  "maxConstraints": 400,
-  "rules": {
-    "index_bounds": { "enabled": true, "severity": "high" },
-    "division_by_zero": { "enabled": true, "severity": "high" },
-    "null_deref_without_guard": { "enabled": true, "severity": "warn" }
-  },
-  "contractGuard": {
-    "mode": "spec_only",
-    "consumerScan": { "enabled": false, "maxFiles": 200 }
-  },
-  "solver": { "enabled": false, "providerOrder": ["rust"], "timeSliceMs": 200 }
-}
-```
-
-- config 경로는 `KAIRO_DIR` 아래에서 해석됩니다(기본: `.kairo/config/symbolic-guards.json`), 레거시 폴백은 `KAIRO_DIR/symbolic-guards.json`.
-- Env overrides:
-  - `KAIRO_SYMBOLIC_GUARDS_ENABLED=true|false`
-  - `KAIRO_SYMBOLIC_GUARDS_MODE=off|warn|block_high|strict`
-  - `KAIRO_SYMBOLIC_GUARDS_TIMEOUT_MS`, `KAIRO_SYMBOLIC_GUARDS_MAX_DIAGNOSTICS`, `KAIRO_SYMBOLIC_GUARDS_MAX_PATHS`, `KAIRO_SYMBOLIC_GUARDS_MAX_CONSTRAINTS`
-- solver는 `mode=strict` + `solver.enabled=true`일 때만 시도되며, Rust capability가 필요합니다(`KAIRO_RUST_CORE_ENABLED` + `KAIRO_RUST_SYMBOLIC_SOLVER_ENABLED`).
-
-### 설정 부트스트랩(manage init/doctor)
-
-`manage` 도구로 starter config skeleton을 생성할 수 있습니다:
-
-- `manage({ command: "init", mode: "plan" })` → 계획만 반환(파일을 쓰지 않음)
-- `manage({ command: "init", mode: "apply" })` → `.kairo/config/*`를 작성( `.kairo/config/mcp.json` 및 `.kairo/config/.mcp-config.json` 포함)
-- `manage({ command: "doctor" })` → 누락/오배치 설정을 진단하고 수정 제안
-
-자주 쓰는 `doctor` scopes:
-
-- `manage({ command: "doctor", scope: "languages" })` → 확장자/languageId 매핑 이슈
-- `manage({ command: "doctor", scope: "parity" })` → query packs + WASM grammar 가용성(정책 인지)
-- `manage({ command: "doctor", scope: "contracts" })` → `.kairo/contracts` 헬스(누락/무효/스테일)
-
-기본적으로 `init`은 Kairo 설정 파일만 타겟합니다. `targets: ["vscode"]`를 전달하면 `.vscode/mcp.json` 패치를 제안합니다.
+팁: `manage({ command: "init", mode: "apply" })`로 starter skeleton을 생성할 수 있습니다.
 
 ## 문서 / 파서
 

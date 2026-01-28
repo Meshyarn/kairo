@@ -1,451 +1,134 @@
 # Initialization & Performance Tuning
 
-After connecting to your MCP host, Kairo needs to initialize your project and optionally configure performance features.
+After connecting to your MCP host, Kairo can run immediately, but performance improves once indexes and optional config files are in place.
 
-**Time:** 15-30 min | **Difficulty:** Intermediate
-
----
-
-## Part A: Project Initialization
-
-### Why initialize?
-
-Initialization (via `manage({ command: "init" })`) does several important things:
-
-1. **Creates `.kairo/` directory** with proper structure
-2. **Generates language configuration** (if needed)
-3. **Builds initial indexes** for lexical search
-4. **Sets up storage for embeddings/caches**
-5. **Validates your project structure** and reports issues
-
-If you skip this, Kairo will still work, but:
-- First calls will be much slower (on-demand indexing)
-- Language detection might be inaccurate
-- Embedding caching won't be available
-
-### Running initialization
-
-#### From your MCP host
-
-```bash
-# In Claude CLI, Cline, or another agent:
-manage({ command: "init" })
-```
-
-Response (on success):
-
-```json
-{
-  "success": true,
-  "message": "Kairo initialized for /path/to/project",
-  "details": {
-    "languagesDetected": ["typescript", "python", "json"],
-    "projectStructure": {
-      "sourceFiles": 1234,
-      "configFiles": 45,
-      "testFiles": 89
-    },
-    "indexingStatus": "complete",
-    "nextSteps": [
-      "Configure embeddings (optional): KAIRO_EMBEDDING_PROVIDER=local",
-      "Run performance profiling: manage({ command: 'status' })"
-    ]
-  }
-}
-```
-
-#### From CLI (development)
-
-```bash
-# If running Kairo locally
-node dist/index.js --root /path/to/project
-
-# Then send over stdio:
-echo '{"command":"manage","payload":{"command":"init"}}' | node dist/index.js --root /path/to/project
-```
-
-### What gets created
-
-```
-.kairo/
-├── .kairo.lock          # Project lock file (prevents concurrent access)
-├── kairo.log            # Main log file
-├── storage/
-│   ├── v1/
-│   │   ├── index/       # Lexical search indexes
-│   │   ├── embeddings/  # Vector embeddings (if enabled)
-│   │   └── metadata/    # Index metadata
-│   └── cache/           # Query result caches
-├── .mcp.json            # MCP configuration (auto-created or manual)
-├── language.json        # Language configuration
-└── state/               # Session and transaction state
-```
+**Time:** 10–30 min | **Difficulty:** Intermediate
 
 ---
 
-## Part B: Performance Configuration
+## Part A: Bootstrap project config (recommended)
 
-After initialization, you can configure performance features:
+Kairo’s project-local config lives under `.kairo/config/` in the **target project root**.
 
-### 1. MCP Configuration (`.mcp.json`)
-
-Kairo auto-generates `.kairo/.mcp.json` during init, but you can customize it:
-
-```json
-{
-  "version": "1.0",
-  "profile": "balanced",
-  "features": {
-    "lexicalSearch": {
-      "enabled": true,
-      "provider": "tantivy"
-    },
-    "vectorSearch": {
-      "enabled": true,
-      "provider": "local",
-      "model": "multilingual-e5-small"
-    },
-    "graphRAG": {
-      "enabled": false,
-      "depth": "standard"
-    },
-    "caching": {
-      "enabled": true,
-      "ttl": 3600
-    }
-  },
-  "performance": {
-    "maxConcurrency": 4,
-    "timeoutMs": 300000,
-    "budget": "balanced"
-  },
-  "logging": {
-    "level": "info",
-    "toFile": true,
-    "toStdout": false
-  }
-}
-```
-
-**Update strategy:**
+Generate a starter skeleton with the `manage` tool:
 
 ```bash
-# 1. Check current config
-manage({ command: "status" })
+# Plan only (no files written)
+manage({ command: "init", mode: "plan" })
 
-# 2. Modify .kairo/.mcp.json (text editor)
-
-# 3. Reload configuration
-manage({ command: "reindex" })
+# Write `.kairo/config/*`
+manage({ command: "init", mode: "apply" })
 ```
 
-### 2. Language Configuration (`language.json`)
+Most teams should prefer config files over lots of host env vars.
 
-Kairo auto-detects languages during init and creates `.kairo/language.json`:
+See: [Project config files](/reference/configuration/project-files)
 
-```json
-{
-  "version": "1.0",
-  "languages": [
-    {
-      "name": "typescript",
-      "extensions": [".ts", ".tsx"],
-      "parserOptions": {
-        "parseComments": true,
-        "extractSymbols": true
-      }
-    },
-    {
-      "name": "python",
-      "extensions": [".py"],
-      "parserOptions": {
-        "parseDocstrings": true,
-        "extractSymbols": true
-      }
-    }
-  ],
-  "fallback": "json"
-}
-```
+---
 
-**Customize for your project:**
+## Part B: Build indexes (recommended)
 
-```bash
-# Generate from scratch
-kairo-gen-languages --root /path/to/project > .kairo/language.json
-
-# Or edit manually and verify
-manage({ 
-  command: "status",
-  detail: "full"
-})
-```
-
-Common customizations:
-
-| Scenario | Change |
-|----------|--------|
-| Large TypeScript mono-repo | Add `"maxDepth": 3` to parser options |
-| Python + C extensions | Add both parsers; ensure `.pyx` extensions are recognized |
-| Restricted parsing | Set `"parseComments": false` for speed |
-| Custom file types | Add to `languages[]` with closest parser |
-
-### 3. GraphRAG Embeddings Setup
-
-For semantic search and better understanding of cross-file dependencies:
-
-#### Prerequisites
-
-- **HuggingFace model** (local or remote)
-- **Embedding provider** configured (see [Search & Embeddings](/guides/search-and-embeddings))
-
-#### Enable GraphRAG
-
-Edit `.kairo/.mcp.json`:
-
-```json
-{
-  "features": {
-    "graphRAG": {
-      "enabled": true,
-      "depth": "standard",
-      "modelUrl": "Xenova/multilingual-e5-small"
-    }
-  }
-}
-```
-
-Then rebuild indexes:
+Run a full reindex once after wiring the host:
 
 ```bash
 manage({ command: "reindex" })
 ```
 
-This will:
-1. Compute embeddings for each symbol/file
-2. Build a vector index (HNSW or brute-force)
-3. Link related symbols across files
-4. Cache embeddings for faster queries
-
-**Monitor progress:**
+For drift repairs or large monorepos, prefer targeted reindex when you can:
 
 ```bash
-# Watch logs in real-time
-tail -f .kairo/kairo.log | grep "graphrag\|embedding\|index"
-
-# Or check status
-manage({ command: "status" })
+manage({ command: "reindex", paths: ["src/index.ts", "packages/app/"] })
 ```
-
-### 4. Rebuild & Reindex
-
-After configuration changes, always reindex:
-
-```bash
-# Full rebuild (slowest; clears all caches)
-manage({ command: "reindex" })
-
-# Incremental reindex (faster; only changes)
-manage({ command: "reindex", options: { mode: "incremental" } })
-
-# Rebuild specific language
-manage({ command: "reindex", options: { language: "typescript" } })
-```
-
-**Expected times:**
-
-| Repo size | Lexical only | + GraphRAG |
-|-----------|--------------|-----------|
-| < 100 files | 5-10s | 15-30s |
-| 100-1000 files | 30-60s | 2-5 min |
-| 1000-5000 files | 2-10 min | 10-30 min |
-| 5000+ files | 15-60 min | 45-180 min |
 
 ---
 
-## Part C: Validation & Performance Check
+## Part C: Validate your setup
 
-After initialization, validate your setup:
-
-### 1. Check project structure
+Run:
 
 ```bash
-manage({
-  command: "status",
-  detail: "full"
-})
+manage({ command: "status", detail: "summary" })
 ```
 
-Look for:
+What to look for:
 
-```json
-{
-  "indexHealth": {
-    "state": "healthy",
-    "fileCount": 1234,
-    "lastIndexTime": "2026-01-24T12:34:56Z",
-    "staleness": "0s"
-  },
-  "languages": {
-    "typescript": { "count": 800, "status": "indexed" },
-    "python": { "count": 100, "status": "indexed" }
-  },
-  "features": {
-    "lexicalSearch": "available",
-    "vectorSearch": "available",
-    "graphRAG": "ready"
-  },
-  "nativeCore": {
-    "available": true,
-    "version": "0.7.0"
-  }
-}
-```
-
-### 2. Run a test search
-
-```bash
-task({
-  request: "Find all authentication functions in the codebase",
-  mode: "auto"
-})
-```
-
-Verify:
-- Response time (p50 < 100ms for cached, < 1s for cold)
-- Result relevance (top 5 results are actually relevant)
-- No errors in logs
-
-### 3. Monitor resource usage
-
-Check memory and CPU during operations:
-
-```bash
-# Terminal 1: watch logs
-tail -f .kairo/kairo.log
-
-# Terminal 2: run a heavy query
-task({
-  request: "Analyze cross-file dependencies",
-  mode: "auto",
-  budget: "deep"
-})
-
-# Terminal 3: monitor process
-ps aux | grep node | grep kairo
-```
-
-Healthy baseline:
-- RSS memory: < 500 MB (small project) to < 2 GB (large)
-- CPU: spikes during indexing, then idle
-- File descriptors: < 256 (indicates no handle leaks)
+- `nativeSearch.available: true` (lexical search enabled)
+- `status.global.totalFiles` / `status.global.indexedFiles` look reasonable
+- `indexSnapshot.coverageRatio` close to `1` after a successful `reindex`
+- `drift.workspaceDrift: "clean"` (or `"unknown"` before first index)
+- If `symbolIndex.degradedReasons` includes `symbol_embeddings_not_built`, build embeddings/indexes per your embedding settings
 
 ---
 
-## Quick Configuration Profiles
+## Part D: Common tuning knobs (current)
 
-Use these as starting points:
+### Preset & surface (recommended)
 
-### Profile: Development (fast iteration)
+Prefer `.kairo/config/mcp.json` for defaults like `preset`, `publicSurface`, `budgets`, and `timeboxMs`.
 
-```bash
-export KAIRO_MODE=mcp
-export KAIRO_BUDGET=lean
-export KAIRO_EMBEDDING_PROVIDER=hash
-export KAIRO_ALLOW_STDOUT_LOGS=false
-```
+See:
+- [MCP mode config](/reference/configuration/project-files)
+- [Budgets](/reference/configuration/budgets)
 
-Then initialize:
+### Embeddings & vector index (optional)
 
-```bash
-manage({ command: "init" })
-```
+Key env vars (see the reference pages for details):
 
-**Characteristics:** Fastest startup, indexing on-demand, no semantic search.
+- `KAIRO_EMBEDDING_PROVIDER=auto|local|remote|disabled` (offline-first: use `local` or `disabled`)
+- `KAIRO_EMBEDDING_MODEL`, `KAIRO_EMBEDDING_PACK_FORMAT`, `KAIRO_VECTOR_INDEX`, `KAIRO_VECTOR_INDEX_REBUILD`, `KAIRO_VECTOR_INDEX_SHARDS`
 
-### Profile: Team CI/CD (stable, cacheable)
+See:
+- [Search & embeddings](/reference/configuration/search-and-embeddings)
 
-```bash
-export KAIRO_MODE=mcp
-export KAIRO_BUDGET=balanced
-export KAIRO_EMBEDDING_PROVIDER=local
-export KAIRO_EMBEDDING_MODEL=multilingual-e5-small
-export KAIRO_VECTOR_INDEX=hnsw
-export KAIRO_LOG_TO_FILE=true
-```
+### Storage paths (recommended)
 
-Then initialize and rebuild:
+- `KAIRO_DIR` controls where runtime data lives (default: `.kairo` under the target project root).
+- `KAIRO_STORAGE_MODE=file|memory` controls persistence.
 
-```bash
-manage({ command: "init" })
-manage({ command: "reindex" })
-```
+See:
+- [Storage](/reference/configuration/storage)
 
-**Characteristics:** Predictable performance, full caching, semantic search ready.
+### Logging (strongly recommended in MCP)
 
-### Profile: Production Agent (high throughput)
+Keep stdout clean (MCP framing) and log to files:
 
-```bash
-export KAIRO_MODE=mcp
-export KAIRO_BUDGET=deep
-export KAIRO_EMBEDDING_PROVIDER=local
-export KAIRO_EMBEDDING_PACK_FORMAT=float32
-export KAIRO_VECTOR_INDEX=hnsw
-export KAIRO_VECTOR_INDEX_REBUILD=manual
-export NODE_OPTIONS="--max-old-space-size=8192"
-```
+- `KAIRO_LOG_TO_FILE=true`
+- `KAIRO_LOG_DIR` / `KAIRO_LOG_FILE` for path control
+- `KAIRO_ALLOW_STDOUT_LOGS=false`
 
-Then initialize, rebuild, and validate:
-
-```bash
-manage({ command: "init" })
-manage({ command: "reindex" })
-manage({ command: "status", detail: "full" })
-```
-
-**Characteristics:** Deep analysis, persistent caches, optimized for agent loops.
+See:
+- [Logging & telemetry](/reference/configuration/logging-and-telemetry)
 
 ---
 
-## Troubleshooting
+## Troubleshooting (high-signal)
 
-### "Init failed: cannot write to .kairo/"
+### Native search unavailable
 
-```bash
-# Check permissions
-ls -la .kairo/
-
-# Fix (if needed)
-chmod 755 .kairo/
-chmod 644 .kairo/*
-
-# Retry
-manage({ command: "init" })
-```
-
-### "Index build took too long"
-
-- Increase timeout in MCP config: `timeout: 600000`
-- Or split by language: `manage({ command: "reindex", options: { language: "typescript" } })`
-- Or switch to incremental mode
-
-### "graphRAG failed to initialize"
-
-Check `.kairo/kairo.log`:
+If `nativeSearch.available` is false, build the native module:
 
 ```bash
-tail -50 .kairo/kairo.log | grep -i "graphrag\|embedding"
+npm run build:core-rs
 ```
 
-Common issues:
-- Model not found: verify `KAIRO_EMBEDDING_MODEL` path
-- Out of memory: increase `NODE_OPTIONS` heap size
-- Missing language config: regenerate `language.json`
+### Indexing is slow or times out
+
+- Increase timeout in your MCP host config (host-specific).
+- Prefer `manage({ command: "reindex", paths: [...] })` for incremental repairs.
+- If embeddings are enabled, tune `KAIRO_EMBEDDING_*` and `KAIRO_VECTOR_INDEX_*` to match your hardware.
+
+### Host JSON framing errors
+
+Ensure:
+
+- `KAIRO_ALLOW_STDOUT_LOGS=false`
+- `KAIRO_LOG_TO_FILE=true`
 
 ---
 
-## Next steps
+## Next
 
-1. **Ready for first calls:** [First Calls](/quickstart/first-calls)
-2. **Want deeper performance tuning:** See your scenario in [Deployment Scenarios](/guides/deployment-scenarios)
-3. **Need help with embeddings:** [Search & Embeddings](/guides/search-and-embeddings)
+- [Deployment scenarios](/guides/deployment-scenarios)
+- [Getting started](/guides/getting-started)
+- [Search & embeddings](/guides/search-and-embeddings)
+

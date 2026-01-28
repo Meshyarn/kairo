@@ -5,7 +5,8 @@
 ## 주요 주제
 
 - **[벤치마크 리포트](/ko/performance/benchmarks)** – 라우팅 vs. 풀 모델 전략의 실제 비교
-- **[성능 & 신뢰성](/ko/concepts/performance-and-reliability)** – 지연 시간 기준, 메모리 사용량, SLO
+- **[성능 기준(대표값)](/ko/performance/baselines)** – 레포 벤치마크 기반 지연/메모리 “실측 값”
+- **[성능 & 신뢰성](/ko/concepts/performance-and-reliability)** – 고신호 진단 + 최신 튜닝 포인트
 
 ## 빠른 사실
 
@@ -24,6 +25,6 @@
 
 ## 다음 단계
 
-1. **라우팅 전략 이해:** [에이전트 라우팅 전략](/ko/concepts/performance-and-reliability#에이전트-라우팅-전략)
+1. **대표 수치 확인:** [성능 기준(대표값)](/ko/performance/baselines)
 2. **벤치마크 세부사항 검토:** [전체 벤치마크 리포트](/ko/performance/benchmarks)
 3. **자신의 환경에 배포:** [배포 시나리오](/ko/guides/deployment-scenarios)

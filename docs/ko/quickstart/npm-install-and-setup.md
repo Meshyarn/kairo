@@ -42,26 +42,11 @@ npm run build
 
 ## 2단계: 설치 확인
 
-### 빠른 테스트
+Kairo는 “대화형 CLI”가 아니라 **stdio 기반 MCP 서버**입니다. argv는 의도적으로 최소만 지원합니다:
 
-```bash
-# npm 스크립트로 설치한 경우:
-npx kairo --help
+- `--root <path>` (또는 `KAIRO_ROOT_PATH` / `KAIRO_ROOT`)
 
-# 저장소에서:
-node dist/index.js --help
-```
-
-다음과 같이 출력되어야 합니다:
-
-```
-Options:
-  --root <path>        Project root (default: cwd)
-  --mode <mode>        mcp | server (default: mcp)
-  --port <port>        Port (if mode=server)
-```
-
-### 스모크 테스트 (선택사항)
+### 스모크 테스트 (이 레포에서)
 
 Kairo의 stdio 통신 확인:
 
@@ -71,6 +56,16 @@ npm run smoke:mcp-mock-client
 ```
 
 종료 코드 0이면 정상입니다.
+
+### MCP 호스트에서 검증 (npm 또는 레포)
+
+호스트 설정(다음 섹션)을 완료한 뒤 아래를 실행하세요:
+
+```bash
+manage({ command: "status" })
+```
+
+`success: true`가 포함된 JSON 응답이 오면 호스트 연동이 정상입니다.
 
 ---
 
