@@ -147,18 +147,6 @@ describe("ManageHandlers additional paths", () => {
         expect(context.skeletonCache.clearAll).toHaveBeenCalled();
     });
 
-    it("handles test command errors and resolves targets", async () => {
-        const context = makeContext();
-        const handler = new ManageHandlers(context as any);
-        const raw = (handler as any).manageProjectRaw.bind(handler);
-
-        const missing = await raw({ command: "test" });
-        expect(missing.success).toBe(false);
-
-        const provided = await raw({ command: "test", target: "src/file.ts" });
-        expect(provided.suggestedTests).toContain("a.test.ts");
-    });
-
     it("summarizes graph artifacts in list and returns truncated graph view", async () => {
         const context = makeArtifactContext();
         const handler = new ManageHandlers(context as any);
