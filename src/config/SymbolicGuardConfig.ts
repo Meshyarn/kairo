@@ -1,5 +1,5 @@
 import fs from "fs";
-import path from "path";
+import { PathManager } from "../utils/PathManager.js";
 
 export type SymbolicGuardMode = "off" | "warn" | "block_high" | "strict";
 export type SymbolicGuardRuleSeverity = "warn" | "high";
@@ -72,28 +72,10 @@ const parseNumberEnv = (raw: string | undefined, fallback: number): number => {
     return Number.isFinite(value) ? value : fallback;
 };
 
-const resolveBaseDir = (): string => {
-    const raw = (process.env.KAIRO_DIR || "").trim();
-    if (!raw) return ".kairo";
-    const normalized = raw.replace(/\\/g, "/").replace(/\/+$/, "");
-    const allowLegacy = process.env.KAIRO_ALLOW_LEGACY_MCP_DIR === "true";
-    if (!allowLegacy) {
-        if (normalized === ".mcp" || normalized === ".mcp/kairo") {
-            return ".kairo";
-        }
-        if (normalized.includes("/.mcp/")) {
-            return ".kairo";
-        }
-    }
-    return raw;
-};
-
 const resolveConfigPath = (rootPath: string): string => {
-    const baseDir = resolveBaseDir();
-    const baseSegments = path.isAbsolute(baseDir) ? [baseDir] : [rootPath, baseDir];
-    const primary = path.join(...baseSegments, "config", "symbolic-guards.json");
+    const primary = PathManager.resolveForRoot(rootPath, "config", "symbolic-guards.json");
     if (fs.existsSync(primary)) return primary;
-    const legacy = path.join(...baseSegments, "symbolic-guards.json");
+    const legacy = PathManager.resolveForRoot(rootPath, "symbolic-guards.json");
     if (fs.existsSync(legacy)) return legacy;
     return primary;
 };

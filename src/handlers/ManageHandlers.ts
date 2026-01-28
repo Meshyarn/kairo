@@ -131,7 +131,7 @@ export class ManageHandlers extends BaseHandler {
                 reasonCodes,
                 metrics: {
                     enabled: process.env.KAIRO_METRICS_ENABLED !== "false",
-                    dir: process.env.KAIRO_METRICS_DIR ?? path.join(this.context.rootPath, ".kairo", "logs"),
+                    dir: process.env.KAIRO_METRICS_DIR ?? PathManager.getMetricsDir(),
                     intervalMs: Number(process.env.KAIRO_METRICS_INTERVAL_MS ?? 60_000)
                 },
                 alertThresholds: {
@@ -185,8 +185,18 @@ export class ManageHandlers extends BaseHandler {
         const shouldIgnoreRelative = (relativePath: string) => {
             if (!relativePath || relativePath.startsWith("..")) return true;
             const normalized = relativePath.split(path.sep).join("/");
-            const ignoredRoots = [".mcp", ".kairo", ".kairo-index"];
-            if (ignoredRoots.some(root => normalized === root || normalized.startsWith(`${root}/`))) {
+            const ignoredRoots = new Set([".mcp", ".kairo", ".kairo-index"]);
+            const baseDir = PathManager.getBaseDir()
+                .replace(/\\/g, "/")
+                .replace(/\/+$/, "")
+                .replace(/^\.\//, "");
+            if (baseDir && !path.isAbsolute(baseDir)) {
+                const root = baseDir.split("/")[0];
+                if (root) {
+                    ignoredRoots.add(root);
+                }
+            }
+            if (Array.from(ignoredRoots).some(root => normalized === root || normalized.startsWith(`${root}/`))) {
                 return true;
             }
             return this.context.symbolIndex.shouldIgnore(relativePath);

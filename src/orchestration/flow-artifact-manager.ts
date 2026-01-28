@@ -2,6 +2,7 @@ import crypto from "crypto";
 import path from "path";
 import { LRUCache } from "lru-cache";
 import { NodeFileSystem, type IFileSystem } from "../platform/FileSystem.js";
+import { PathManager } from "../utils/PathManager.js";
 import type {
     ArtifactId,
     ArtifactManagerStatus,
@@ -65,7 +66,7 @@ export class FlowArtifactManager {
             ttl: options.defaultTTL ?? 30 * 60 * 1000
         });
         this.fileSystem = options.fileSystem ?? new NodeFileSystem(process.cwd());
-        this.persistPath = options.persistPath ?? path.resolve(process.cwd(), ".kairo", "flow-artifacts");
+        this.persistPath = options.persistPath ?? PathManager.resolve("flow-artifacts");
         this.indexPath = path.join(this.persistPath, "index.json");
         this.sessions = new Map<string, FlowSession>();
         this.index = {

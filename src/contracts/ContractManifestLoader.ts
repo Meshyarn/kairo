@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import type { ContractManifest } from "../types/contract-manifest.js";
 import { ContractManifestGenerator } from "./ContractManifestGenerator.js";
+import { PathManager } from "../utils/PathManager.js";
 
 export type ContractManifestLoadResult = {
   manifest?: ContractManifest;
@@ -63,7 +64,7 @@ export class ContractManifestLoader {
 
   public resolveManifestPath(packageName: string, kind: string = "ffi_napi"): string {
     const encoded = normalizePackageName(packageName);
-    return path.join(this.rootPath, ".kairo", "contracts", kind, `${encoded}.json`);
+    return PathManager.resolveForRoot(this.rootPath, "contracts", kind, `${encoded}.json`);
   }
 
   private isStale(packageName: string, manifestPath: string, generatedAt?: number): boolean {

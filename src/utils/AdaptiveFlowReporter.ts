@@ -1,5 +1,6 @@
 import * as path from 'path';
 import { AdaptiveFlowMetrics } from './AdaptiveFlowMetrics.js';
+import { PathManager } from './PathManager.js';
 
 export type AdaptiveFlowAlertType = 'topology-success-rate' | 'ucg-memory' | 'l3-promotion-ratio';
 
@@ -82,7 +83,7 @@ export class AdaptiveFlowReporter {
     private resolveExportPath(date: Date): string {
         const dir = this.options.exportDir
             ?? process.env.KAIRO_METRICS_DIR
-            ?? path.join(this.options.rootPath, '.kairo', 'logs');
+            ?? PathManager.resolveForRoot(this.options.rootPath, "data", "metrics");
         const stamp = this.buildDateStamp(date);
         return path.join(dir, `adaptive-flow-${stamp}.json`);
     }

@@ -3,6 +3,7 @@ import path from "path";
 import type { RepoRegistry } from "../../config/RepoRegistry.js";
 import type { BoundaryAdapter, BoundaryInstance, ContractLoadResult, ContractManifest } from "../boundaries/types.js";
 import { normalizeManifestId } from "./AdapterUtils.js";
+import { PathManager } from "../../utils/PathManager.js";
 
 export class FfiNapiBoundaryAdapter implements BoundaryAdapter {
   readonly kind = "ffi_napi" as const;
@@ -13,7 +14,7 @@ export class FfiNapiBoundaryAdapter implements BoundaryAdapter {
     const instances: BoundaryInstance[] = [];
     const repo = repoRegistry.getDefaultRepo();
     const repoId = repo?.id ?? "default";
-    const manifestDir = path.join(root, ".kairo", "contracts", this.kind);
+    const manifestDir = PathManager.resolveForRoot(root, "contracts", this.kind);
     if (!fs.existsSync(manifestDir)) {
       return instances;
     }
@@ -36,7 +37,7 @@ export class FfiNapiBoundaryAdapter implements BoundaryAdapter {
   }
 
   async loadOrGenerate(instance: BoundaryInstance): Promise<ContractLoadResult> {
-    const manifestPath = path.join(this.rootPath, ".kairo", "contracts", this.kind, `${instance.id}.json`);
+    const manifestPath = PathManager.resolveForRoot(this.rootPath, "contracts", this.kind, `${instance.id}.json`);
     if (!fs.existsSync(manifestPath)) {
       return { degraded: true, reasons: ["contract_manifest_missing"] };
     }

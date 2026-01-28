@@ -1,5 +1,5 @@
 import * as fs from "fs";
-import * as path from "path";
+import { PathManager } from "../utils/PathManager.js";
 
 export type GraphRagSeedPolicyName = "path_first" | "symbol_semantic" | "lexical_default" | "doc_first";
 export type GraphRagSeedSource = "semantic" | "lexical" | "path" | "doc";
@@ -172,34 +172,13 @@ export class GraphRagConfigLoader {
         this.watcher?.close();
     }
 
-    private resolveBaseDir(): string {
-        const raw = (process.env.KAIRO_DIR || "").trim();
-        if (!raw) {
-            return ".kairo";
-        }
-
-        const normalized = raw.replace(/\\/g, "/").replace(/\/+$/, "");
-        const allowLegacy = process.env.KAIRO_ALLOW_LEGACY_MCP_DIR === "true";
-        if (!allowLegacy) {
-            if (normalized === ".mcp" || normalized === ".mcp/kairo") {
-                return ".kairo";
-            }
-            if (normalized.includes("/.mcp/")) {
-                return ".kairo";
-            }
-        }
-
-        return raw;
-    }
-
     private resolveConfigPath(): string {
-        const baseDir = this.resolveBaseDir();
-        const primary = path.join(this.rootPath, baseDir, "config", "graphrag.json");
+        const primary = PathManager.resolveForRoot(this.rootPath, "config", "graphrag.json");
         if (fs.existsSync(primary)) {
             return primary;
         }
 
-        const legacy = path.join(this.rootPath, baseDir, "graphrag.json");
+        const legacy = PathManager.resolveForRoot(this.rootPath, "graphrag.json");
         if (fs.existsSync(legacy)) {
             return legacy;
         }

@@ -100,9 +100,18 @@ const installNativeSearchStub = () => {
   NativeModuleLoader.setTestLoader(createMockRustCore);
 };
 
+const shouldPreserveKairoDir = process.env.KAIRO_TEST_PRESERVE_KAIRO_DIR === "true";
+const resetKairoDir = () => {
+  if (shouldPreserveKairoDir) return;
+  delete process.env.KAIRO_DIR;
+  delete process.env.KAIRO_ALLOW_LEGACY_MCP_DIR;
+};
+
+resetKairoDir();
 installNativeSearchStub();
 
 beforeEach(() => {
+  resetKairoDir();
   installNativeSearchStub();
 });
 

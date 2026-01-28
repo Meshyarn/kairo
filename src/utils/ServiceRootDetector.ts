@@ -1,6 +1,7 @@
 import * as path from "path";
 import type { IndexDatabase } from "../indexing/IndexDatabase.js";
 import type { IFileSystem } from "../platform/FileSystem.js";
+import { PathManager } from "./PathManager.js";
 
 type ServiceRootConfidence = "high" | "medium" | "low";
 
@@ -68,7 +69,7 @@ type ManualScopesFileV1 = {
 };
 
 async function loadManualServiceRoots(args: { rootPath: string; fileSystem: IFileSystem }): Promise<ServiceRootSignal[]> {
-    const configPath = ".kairo/config/scopes.json";
+    const configPath = PathManager.resolveForRoot(args.rootPath, "config", "scopes.json");
     try {
         const raw = await args.fileSystem.readFile(configPath);
         const parsed = JSON.parse(raw) as ManualScopesFileV1;

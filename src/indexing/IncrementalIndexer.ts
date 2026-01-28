@@ -844,8 +844,18 @@ export class IncrementalIndexer {
         
         // HardcodedMCP ignore
         const normalized = relative.split(path.sep).join('/');
-        const ignoredRoots = ['.mcp', '.kairo', '.kairo-index'];
-        if (ignoredRoots.some(root => normalized === root || normalized.startsWith(`${root}/`))) {
+        const ignoredRoots = new Set(['.mcp', '.kairo', '.kairo-index']);
+        const baseDir = PathManager.getBaseDir()
+            .replace(/\\/g, "/")
+            .replace(/\/+$/, "")
+            .replace(/^\.\//, "");
+        if (baseDir && !path.isAbsolute(baseDir)) {
+            const root = baseDir.split("/")[0];
+            if (root) {
+                ignoredRoots.add(root);
+            }
+        }
+        if (Array.from(ignoredRoots).some(root => normalized === root || normalized.startsWith(`${root}/`))) {
             return true;
         }
 

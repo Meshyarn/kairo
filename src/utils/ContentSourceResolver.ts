@@ -7,6 +7,7 @@ import type { PathNormalizer } from "./PathNormalizer.js";
 import type { IFileSystem } from "../platform/FileSystem.js";
 import type { FlowArtifactManager } from "../orchestration/flow-artifact-manager.js";
 import { metrics } from "./MetricsCollector.js";
+import { PathManager } from "./PathManager.js";
 
 export type ContentSourceResolveError = {
   errorCode: string;
@@ -110,7 +111,7 @@ async function resolveFileSource(
   if (!isTemp && isInternalIgnoredPath(workspacePath, rootPath)) {
     return buildError(
       "CONTENT_SOURCE_BLOCKED",
-      `contentSource file is under an internal directory (${workspacePath}). Use .kairo/tmp for raw content.`,
+      `contentSource file is under an internal directory (${workspacePath}). Use <KAIRO_DIR>/tmp for raw content.`,
       "blocked",
       "content_source_internal_blocked",
       { path: workspacePath }
@@ -120,7 +121,7 @@ async function resolveFileSource(
   if (!isTemp && ignoreMatcher?.ignores?.(workspacePath)) {
     return buildError(
       "CONTENT_SOURCE_BLOCKED",
-      `contentSource file is ignored by project rules (${workspacePath}). Use .kairo/tmp for raw content.`,
+      `contentSource file is ignored by project rules (${workspacePath}). Use <KAIRO_DIR>/tmp for raw content.`,
       "blocked",
       "content_source_ignored",
       { path: workspacePath }
@@ -434,27 +435,14 @@ function isWithinPath(parent: string, child: string): boolean {
 }
 
 function resolveTempDirs(rootPath: string): string[] {
-  const baseDir = resolveKairoBaseDir();
+  const baseDir = PathManager.getBaseDir();
   const baseAbs = path.isAbsolute(baseDir) ? path.normalize(baseDir) : path.resolve(rootPath, baseDir);
   return [path.join(baseAbs, "tmp"), path.join(baseAbs, "temp")];
 }
 
-function resolveKairoBaseDir(): string {
-  const raw = (process.env.KAIRO_DIR || "").trim();
-  if (!raw) return ".kairo";
-  const normalized = raw.replace(/\\/g, "/").replace(/\/+$/, "");
-  const allowLegacy = process.env.KAIRO_ALLOW_LEGACY_MCP_DIR === "true";
-  if (!allowLegacy) {
-    if (normalized === ".mcp" || normalized === ".mcp/kairo" || normalized.includes("/.mcp/")) {
-      return ".kairo";
-    }
-  }
-  return raw;
-}
-
 function isInternalIgnoredPath(workspacePath: string, rootPath: string): boolean {
   const normalized = workspacePath.replace(/\\/g, "/");
-  const baseDir = resolveKairoBaseDir();
+  const baseDir = PathManager.getBaseDir();
   const baseAbs = path.isAbsolute(baseDir) ? path.normalize(baseDir) : path.resolve(rootPath, baseDir);
   const baseRel = toWorkspacePath(rootPath, baseAbs)?.replace(/\\/g, "/");
   const internalRoots = new Set([".mcp", ".kairo", ".kairo-index"]);

@@ -31,7 +31,7 @@ const WATCH_FILES = [
     "package.json"
 ];
 const IGNORE_FILES = [".gitignore", ".mcpignore"];
-const IGNORE_SCAN_EXCLUDES = new Set([
+const IGNORE_SCAN_EXCLUDES_BASE = new Set([
     ".git",
     "node_modules",
     ".mcp",
@@ -40,6 +40,19 @@ const IGNORE_SCAN_EXCLUDES = new Set([
     "dist",
     "coverage"
 ]);
+
+const getIgnoreScanExcludes = (): Set<string> => {
+    const excludes = new Set(IGNORE_SCAN_EXCLUDES_BASE);
+    const baseDir = PathManager.getBaseDir()
+        .replace(/\\/g, "/")
+        .replace(/\/+$/, "")
+        .replace(/^\.\//, "");
+    if (baseDir && !path.isAbsolute(baseDir)) {
+        const root = baseDir.split("/")[0];
+        if (root) excludes.add(root);
+    }
+    return excludes;
+};
 
 export class ConfigurationManager extends EventEmitter {
     private readonly watcher?: chokidar.FSWatcher;
@@ -149,6 +162,7 @@ export class ConfigurationManager extends EventEmitter {
 
     private collectIgnoreFiles(): string[] {
         const ignoreFiles: string[] = [];
+        const ignoreScanExcludes = getIgnoreScanExcludes();
         const stack = [this.rootPath];
         while (stack.length > 0) {
             const current = stack.pop()!;
@@ -164,7 +178,7 @@ export class ConfigurationManager extends EventEmitter {
                 }
                 const entryPath = path.join(current, entry.name);
                 if (entry.isDirectory()) {
-                    if (IGNORE_SCAN_EXCLUDES.has(entry.name)) {
+                    if (ignoreScanExcludes.has(entry.name)) {
                         continue;
                     }
                     stack.push(entryPath);

@@ -4,6 +4,7 @@ import * as http from 'http';
 import * as https from 'https';
 import { spawn } from 'child_process';
 import { AdaptiveFlowAlertPayload } from './AdaptiveFlowReporter.js';
+import { PathManager } from './PathManager.js';
 
 export interface AlertDispatcherOptions {
     rootPath: string;
@@ -20,7 +21,7 @@ export class AlertDispatcher {
     private readonly logDir: string;
 
     constructor(private readonly options: AlertDispatcherOptions) {
-        this.logDir = options.logDir ?? path.join(options.rootPath, '.kairo', 'logs');
+        this.logDir = options.logDir ?? PathManager.resolveForRoot(options.rootPath, "logs");
     }
 
     async dispatch(payload: AdaptiveFlowAlertPayload): Promise<void> {

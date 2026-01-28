@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import ts from "typescript";
 import type { ContractManifest } from "../types/contract-manifest.js";
+import { PathManager } from "../utils/PathManager.js";
 
 type GeneratorOptions = {
   sourceRepo: string;
@@ -85,7 +86,7 @@ export class ContractManifestGenerator {
     if (!ContractManifestGenerator.validateManifest(manifest)) {
       throw new Error("Invalid contract manifest schema.");
     }
-    const outDir = path.join(rootPath, ".kairo", "contracts", kind);
+    const outDir = PathManager.resolveForRoot(rootPath, "contracts", kind);
     fs.mkdirSync(outDir, { recursive: true });
     const fileName = `${manifest.header.id}.json`;
     const outputPath = path.join(outDir, fileName);

@@ -38,6 +38,7 @@ import { FeatureFlags } from "../../config/FeatureFlags.js";
 import { metrics } from "../../utils/MetricsCollector.js";
 import type { ToolProfile } from '../options/OptionResolver.js';
 import { AdaptiveLodController } from "../adaptive-flow/AdaptiveLodController.js";
+import { PathManager } from "../../utils/PathManager.js";
 import {
   computeAdaptiveFlowGate,
   recordAdaptiveFlowGateTrace,
@@ -1118,8 +1119,14 @@ export class UnderstandPillar {
       const rawPath = typeof entry?.path === "string" ? entry.path : "";
       if (!rawPath) return false;
       const normalized = rawPath.replace(/\\/g, "/");
+      const baseDir = PathManager.getBaseDir()
+        .replace(/\\/g, "/")
+        .replace(/\/+$/, "")
+        .replace(/^\.\//, "");
+      const hasCustomBase = baseDir && !path.isAbsolute(baseDir);
       return !normalized.includes("/.kairo/")
         && !normalized.startsWith(".kairo/")
+        && !(hasCustomBase && (normalized.includes(`/${baseDir}/`) || normalized.startsWith(`${baseDir}/`)))
         && !normalized.includes("/.mcp/")
         && !normalized.startsWith(".mcp/")
         && !normalized.includes("/node_modules/")
