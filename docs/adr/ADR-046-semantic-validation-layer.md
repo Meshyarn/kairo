@@ -26,7 +26,7 @@ The challenge is that “semantic correctness” varies by language and typicall
 1) Keep semantic validation **optional** and **best-effort**.
 2) Prefer **portable** validation signals first:
    - tree-sitter parsing (syntax-level sanity)
-   - project-local commands (tests/build) invoked explicitly by the user/agent via `manage({ command: "test" })` or repo scripts
+   - project-local commands (tests/build) invoked explicitly by the user/agent via repo scripts
 3) Integrate validation as a **mode inside existing pillars** (primarily `change`/`write`), not as a new public tool.
 
 ## Rejected alternatives (for now)
@@ -66,4 +66,4 @@ Additionally, a lightweight semantic review surface is implemented:
   - contract guard diagnostics for boundary surface changes
 - See `docs/adr/ADR-083-language-agnostic-symbolic-guards.md` for the concrete shipped shape and configuration.
 
-Practical “semantic validation” (typecheck/build/test) is still performed as an explicit final gate (via `manage({ command: "test" })` or repo scripts).
+Practical “semantic validation” (typecheck/build/test) is still performed as an explicit final gate (via repo scripts).

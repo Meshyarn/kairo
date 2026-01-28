@@ -16,7 +16,7 @@ Writer’s Flow is a **workflow contract** that sequences existing pillars:
 3) Skeleton (structured outline + style/pattern signals)
 4) Write (`write` / `change`, starting with dry-run)
 5) Review (guardrails + validation + tests)
-6) Manage (`manage`: undo/redo/history/reindex/test)
+6) Manage (`manage`: undo/redo/history/reindex)
 
 ## Decision
 
@@ -53,4 +53,4 @@ Planned/iterative (to make the contract explicit end-to-end, without new public 
   - `explore` small, expand as needed
   - `understand` before `change`
   - dry-run → apply
-  - use `manage({ command: "test" })` or your repo’s tests as the final gate
+  - use your repo’s tests as the final gate
