@@ -8,6 +8,8 @@ import { CommentIndexer } from '../indexing/CommentIndexer.js';
 import { NodeFileSystem, type IFileSystem, type FileStats } from '../platform/FileSystem.js';
 import { NativeSearchIndexer } from "../engine/search/native/NativeSearchIndexer.js";
 import { PathManager } from "../utils/PathManager.js";
+import { scanFiles, scanFilesAsync } from "./SymbolIndexScan.js";
+import { fuzzySearch, searchAllSymbolsLinear, shouldRunFuzzySearch } from "./SymbolIndexSearch.js";
 
 const SUPPORTED_EXTENSIONS = new Set<string>(['.ts', '.tsx', '.js', '.jsx', '.py']);
 const HOT_CACHE_SIZE = 50;
@@ -40,8 +42,6 @@ export class SymbolIndex {
     private updateDebounceTimer?: NodeJS.Timeout;
     private disposed = false;
     private incrementalUpdatePromise: Promise<void> | null = null;
-
-
     constructor(
         rootPath: string,
         skeletonGenerator: SkeletonGenerator,
@@ -125,14 +125,14 @@ export class SymbolIndex {
         if (results.length > 0) {
             return results;
         }
-        const fallback = this.searchAllSymbolsLinear(query, 100);
+        const fallback = searchAllSymbolsLinear(this.db, query, 100);
         if (fallback.length > 0) {
             return fallback;
         }
-        if (!this.shouldRunFuzzySearch()) {
+        if (!shouldRunFuzzySearch(this.db)) {
             return [];
         }
-        return this.fuzzySearch(query, { maxEditDistance: 2 });
+        return fuzzySearch(this.db, query, { maxEditDistance: 2 });
     }
 
     public async findFilesBySymbolName(keywords: string[]): Promise<string[]> {
@@ -233,8 +233,6 @@ export class SymbolIndex {
         const relativePath = this.toRelative(filePath);
         this.cache.set(relativePath, { mtime, symbols });
     }
-
-
     private async extractSymbols(filePath: string, content: string): Promise<SymbolInfo[]> {
         try {
             const structure = await this.skeletonGenerator.generateStructureJson(filePath, content);
@@ -291,7 +289,13 @@ export class SymbolIndex {
     private async syncWithDisk(): Promise<void> {
         const records = this.db.listFiles();
         const recordMap = new Map(records.map(record => [record.path, record]));
-        const files = this.scanFiles(this.rootPath);
+        const files = scanFiles({
+            dir: this.rootPath,
+            rootPath: this.rootPath,
+            fileSystem: this.fileSystem,
+            shouldIgnore: (relativePath) => this.shouldIgnore(relativePath),
+            isSupported: (filePath) => this.isSupported(filePath)
+        });
         const seen = new Set<string>();
 
         for (const filePath of files) {
@@ -323,7 +327,13 @@ export class SymbolIndex {
     private async syncWithDiskAsync(): Promise<void> {
         const records = this.db.listFiles();
         const recordMap = new Map(records.map(record => [record.path, record]));
-        const files = await this.scanFilesAsync(this.rootPath);
+        const files = await scanFilesAsync({
+            dir: this.rootPath,
+            rootPath: this.rootPath,
+            fileSystem: this.fileSystem,
+            shouldIgnore: (relativePath) => this.shouldIgnore(relativePath),
+            isSupported: (filePath) => this.isSupported(filePath)
+        });
         const seen = new Set<string>();
 
         for (const filePath of files) {
@@ -349,71 +359,6 @@ export class SymbolIndex {
         }
     }
 
-    private scanFiles(dir: string): string[] {
-        let results: string[] = [];
-        let list: string[] = [];
-        try {
-            list = this.fileSystem.readDirSync?.(dir) ?? [];
-        } catch {
-            return [];
-        }
-        for (const entry of list) {
-            const absPath = path.join(dir, entry);
-            const relPath = path.relative(this.rootPath, absPath);
-            if (relPath && this.shouldIgnore(relPath)) {
-                continue;
-            }
-            try {
-                const stat = this.fileSystem.statSync?.(absPath);
-                if (stat?.isDirectory()) {
-                    results = results.concat(this.scanFiles(absPath));
-                } else if (this.isSupported(absPath)) {
-                    results.push(absPath);
-                }
-            } catch {
-                continue;
-            }
-        }
-        return results;
-    }
-
-    private async scanFilesAsync(dir: string): Promise<string[]> {
-        const results: string[] = [];
-        const stack: string[] = [dir];
-        while (stack.length > 0) {
-            const current = stack.pop()!;
-            let list: string[] = [];
-            try {
-                list = await this.fileSystem.readDir(current);
-            } catch {
-                continue;
-            }
-            for (const entry of list) {
-                const absPath = path.join(current, entry);
-                const relPath = path.relative(this.rootPath, absPath);
-                if (relPath && this.shouldIgnore(relPath)) {
-                    continue;
-                }
-                try {
-                    const stat = await this.fileSystem.stat(absPath);
-                    if (stat.isDirectory()) {
-                        stack.push(absPath);
-                    } else if (this.isSupported(absPath)) {
-                        results.push(absPath);
-                    }
-                } catch {
-                    continue;
-                }
-            }
-            await this.yieldToEventLoop();
-        }
-        return results;
-    }
-
-    private async yieldToEventLoop(): Promise<void> {
-        await new Promise<void>(resolve => setTimeout(resolve, 0));
-    }
-
     private resolveBaselineWaitMode(): boolean {
         const raw = (process.env.KAIRO_BASELINE_BLOCKING ?? "").trim().toLowerCase();
         if (raw === "true" || raw === "1") return true;
@@ -421,107 +366,11 @@ export class SymbolIndex {
         return process.env.NODE_ENV === "test" || process.env.JEST_WORKER_ID !== undefined;
     }
 
-    private shouldRunFuzzySearch(): boolean {
-        const mode = (process.env.KAIRO_SYMBOL_FUZZY_SEARCH ?? "auto").trim().toLowerCase();
-        if (mode === "off" || mode === "false") return false;
-        if (mode === "on" || mode === "true") return true;
-        const maxFilesRaw = Number.parseInt(process.env.KAIRO_SYMBOL_FUZZY_MAX_FILES ?? "2000", 10);
-        const maxFiles = Number.isFinite(maxFilesRaw) ? maxFilesRaw : 2000;
-        return this.db.listFiles().length <= maxFiles;
-    }
-
-    private searchAllSymbolsLinear(query: string, limit: number): SymbolSearchResult[] {
-        const normalizedQuery = query.trim().toLowerCase();
-        if (!normalizedQuery) {
-            return [];
-        }
-        const results: SymbolSearchResult[] = [];
-        const symbolMap = this.db.streamAllSymbols();
-        for (const [filePath, symbols] of symbolMap) {
-            for (const symbol of symbols) {
-                const name = symbol?.name;
-                if (typeof name !== "string") continue;
-                if (!name.toLowerCase().includes(normalizedQuery)) continue;
-                results.push({ filePath, symbol });
-                if (results.length >= limit) {
-                    return results;
-                }
-            }
-        }
-        return results;
-    }
-
     public fuzzySearch(
         query: string,
         options: { maxEditDistance: number; scoreThreshold?: number }
     ): SymbolSearchResult[] {
-        const symbolMap = this.db.streamAllSymbols();
-        const candidates: { result: SymbolSearchResult; distance: number; score: number }[] = [];
-
-        for (const [filePath, symbols] of symbolMap) {
-            for (const symbol of symbols) {
-                const distance = this.levenshteinDistance(query.toLowerCase(), symbol.name.toLowerCase());
-                const score = this.calculateFuzzyScore(query, symbol.name);
-                
-                if (distance <= options.maxEditDistance && (!options.scoreThreshold || score >= options.scoreThreshold)) {
-                    candidates.push({
-                        result: { filePath, symbol },
-                        distance,
-                        score
-                    });
-                }
-            }
-        }
-
-        return candidates
-            .sort((a, b) => b.score - a.score)
-            .slice(0, 100)
-            .map(c => c.result);
-    }
-
-    private calculateFuzzyScore(query: string, symbolName: string): number {
-        const distance = this.levenshteinDistance(
-            query.toLowerCase(),
-            symbolName.toLowerCase()
-        );
-        const maxLength = Math.max(query.length, symbolName.length);
-        const similarity = 1 - (distance / maxLength);
-
-        // Boost score for prefix matches
-        const prefixBoost = symbolName.toLowerCase().startsWith(query.toLowerCase()) ? 0.2 : 0;
-
-        // Boost score for case-insensitive exact matches
-        const exactBoost = query.toLowerCase() === symbolName.toLowerCase() ? 0.3 : 0;
-
-        return Math.min(1.0, similarity + prefixBoost + exactBoost);
-    }
-
-    private levenshteinDistance(a: string, b: string): number {
-        const matrix: number[][] = [];
-
-        for (let i = 0; i <= b.length; i++) {
-            matrix[i] = [i];
-        }
-
-        for (let j = 0; j <= a.length; j++) {
-            matrix[0][j] = j;
-        }
-
-        for (let i = 1; i <= b.length; i++) {
-            for (let j = 1; j <= a.length; j++) {
-                if (b.charAt(i - 1) === a.charAt(j - 1)) {
-                    matrix[i][j] = matrix[i - 1][j - 1];
-                } else {
-                    matrix[i][j] = Math.min(
-                        matrix[i - 1][j - 1] + 1, // substitution
-                        matrix[i][j - 1] + 1,     // insertion
-                        matrix[i - 1][j] + 1      // deletion
-                    );
-                }
-            }
-        }
-
-        return matrix[b.length][a.length];
+        return fuzzySearch(this.db, query, options);
     }
 
     public async dispose(): Promise<void> {

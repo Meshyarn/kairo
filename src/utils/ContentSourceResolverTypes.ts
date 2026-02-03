@@ -1,0 +1,31 @@
+import type { RepoRegistry } from "../config/RepoRegistry.js";
+import type { NormalizedRepoScope } from "./RepoScope.js";
+import type { PathNormalizer } from "./PathNormalizer.js";
+import type { IFileSystem } from "../platform/FileSystem.js";
+import type { FlowArtifactManager } from "../orchestration/flow-artifact-manager.js";
+
+export type ContentSourceResolveError = {
+  errorCode: string;
+  message: string;
+  status: "blocked" | "failure";
+  blockedReason?: string;
+  details?: Record<string, unknown>;
+};
+
+export type ContentSourceResolveResult =
+  | { ok: true; content: string; meta: { kind: string; resolvedPath?: string; bytes?: number } }
+  | { ok: false; error: ContentSourceResolveError };
+
+export type ContentSourceResolveOptions = {
+  rootPath: string;
+  fileSystem: IFileSystem;
+  repoRegistry?: RepoRegistry;
+  repoScope?: NormalizedRepoScope;
+  pathNormalizer?: PathNormalizer;
+  artifactManager?: FlowArtifactManager;
+  ignoreGlobs?: string[];
+  ignoreMatcher?: { ignores: (filePath: string) => boolean };
+  maxBytes?: number;
+};
+
+export type RepoRoot = { id: string; rootPath: string; kind: "repo" | "workspace" };

@@ -1,1186 +1,85 @@
-import * as crypto from "crypto";
-import { createRequire } from "module";
-import levenshtein from "fast-levenshtein";
-import type {
-    ContextFuzziness,
-    Edit,
-    LineRange,
-    MatchConfidence,
-    MatchDiagnostics,
-    NormalizationConfig,
-    NormalizationLevel
-} from "../../types.js";
+import type { Edit, MatchDiagnostics } from "../../types.js";
 import { LineCounter } from "../LineCounter.js";
 import {
-    AmbiguousMatchError,
     HashMismatchError,
-    Match,
     MatchNotFoundError,
-    PlannedMatch
+    type Match,
+    type PlannedMatch
 } from "./EditTypes.js";
-const require = createRequire(import.meta.url);
-let importedXxhash: any = null;
-try {
-    importedXxhash = require('xxhashjs');
-} catch {
-    importedXxhash = null;
-}
-const XXH: any = importedXxhash ? ((importedXxhash as any).default ?? importedXxhash) : null;
+import {
+    normalizeReplacementString,
+    decodeEscapeSequences,
+    encodeEscapeSequences,
+    decodeStructuralEscapeSequences,
+    escapeRegExp
+} from "./EditPlanningEscapes.js";
+import { createExactRegex, createFuzzyRegex, isBoundaryPosition } from "./EditPlanningRegex.js";
+import { planInsertOperation, findAllMatches } from "./EditPlanningPlanner.js";
+import { findMatchWithEscapeVariants, resolveAmbiguousMatches } from "./EditPlanningMatchFinder.js";
+import { computeHash, validateExpectedHash } from "./EditPlanningHash.js";
+import { getNormalizationAttempts, normalizeString } from "./EditPlanningNormalization.js";
+import { computeMatchConfidence } from "./EditPlanningConfidence.js";
+import { trigramKeys, jaccardSimilarity } from "./EditPlanningFuzzy.js";
 
 export class EditPlanner {
-
-    private escapeRegExp(value: string): string {
-        return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    public decodeEscapeSequences(value: string): string {
+        return decodeEscapeSequences(value);
     }
 
-    private normalizeReplacementString(value: string | undefined): string {
-        if (!value || !value.includes("\\")) {
-            return value ?? "";
-        }
-
-        let normalized = value;
-        const quoteChars: Array<'"' | "'" | "`"> = ['"', "'", "`"];
-
-        for (const quote of quoteChars) {
-            if (this.containsUnescapedQuote(normalized, quote)) {
-                continue;
-            }
-
-            if (!normalized.includes(`\\${quote}`)) {
-                continue;
-            }
-
-            normalized = this.stripEscapedQuotes(normalized, quote);
-        }
-
-        return this.decodeStructuralEscapeSequences(normalized);
+    public encodeEscapeSequences(value: string): string {
+        return encodeEscapeSequences(value);
     }
 
-    private containsUnescapedQuote(value: string, quote: '"' | "'" | "`"): boolean {
-        for (let i = 0; i < value.length; i++) {
-            if (value[i] !== quote) {
-                continue;
-            }
-
-            if (!this.isEscapedCharacter(value, i)) {
-                return true;
-            }
-        }
-
-        return false;
+    public decodeStructuralEscapeSequences(value: string): string {
+        return decodeStructuralEscapeSequences(value);
     }
 
-    private stripEscapedQuotes(value: string, quote: '"' | "'" | "`"): string {
-        let result = "";
-
-        for (let i = 0; i < value.length; i++) {
-            const char = value[i];
-
-            if (char === "\\" && value[i + 1] === quote) {
-                if (!this.isEscapedCharacter(value, i)) {
-                    result += quote;
-                    i++; // skip the quote we just consumed
-                    continue;
-                }
-            }
-
-            result += char;
-        }
-
-        return result;
+    public escapeRegExp(value: string): string {
+        return escapeRegExp(value);
     }
 
-    private decodeStructuralEscapeSequences(value: string): string {
-        if (!value.includes("\\n") && !value.includes("\\r") && !value.includes("\\t")) {
-            return value;
-        }
-
-        let result = "";
-        let activeQuote: '"' | "'" | "`" | null = null;
-
-        for (let i = 0; i < value.length; i++) {
-            const char = value[i];
-
-            if (char === "\\" && i < value.length - 1) {
-                const next = value[i + 1];
-                if (!activeQuote) {
-                    if (next === "n") {
-                        result += "\n";
-                        i++;
-                        continue;
-                    }
-                    if (next === "r") {
-                        result += "\r";
-                        i++;
-                        continue;
-                    }
-                    if (next === "t") {
-                        result += "\t";
-                        i++;
-                        continue;
-                    }
-                }
-
-                result += char;
-                continue;
-            }
-
-            if (char === '"' || char === "'" || char === "`") {
-                const escaped = this.isEscapedCharacter(value, i);
-                if (!escaped) {
-                    if (activeQuote === char) {
-                        activeQuote = null;
-                    } else if (!activeQuote) {
-                        activeQuote = char as '"' | "'" | "`";
-                    }
-                }
-                result += char;
-                continue;
-            }
-
-            result += char;
-        }
-
-        return result;
-    }
-
-    private isEscapedCharacter(value: string, index: number): boolean {
-        let backslashCount = 0;
-        for (let i = index - 1; i >= 0 && value[i] === "\\"; i--) {
-            backslashCount++;
-        }
-        return backslashCount % 2 === 1;
-    }
-
-    private decodeEscapeSequences(value: string): string {
-        if (!value.includes("\\")) {
-            return value;
-        }
-        let result = "";
-        for (let i = 0; i < value.length; i++) {
-            const char = value[i];
-            if (char !== "\\" || i === value.length - 1) {
-                result += char;
-                continue;
-            }
-            const next = value[i + 1];
-            switch (next) {
-                case "n":
-                    result += "\n";
-                    i++;
-                    break;
-                case "r":
-                    result += "\r";
-                    i++;
-                    break;
-                case "t":
-                    result += "\t";
-                    i++;
-                    break;
-                case "0":
-                    result += "\0";
-                    i++;
-                    break;
-                case "b":
-                    result += "\b";
-                    i++;
-                    break;
-                case "f":
-                    result += "\f";
-                    i++;
-                    break;
-                case "v":
-                    result += "\v";
-                    i++;
-                    break;
-                case "\\":
-                    result += "\\";
-                    i++;
-                    break;
-                case "\"":
-                    result += "\"";
-                    i++;
-                    break;
-                case "'":
-                    result += "'";
-                    i++;
-                    break;
-                case "`":
-                    result += "`";
-                    i++;
-                    break;
-                case "u": {
-                    const hex = value.substring(i + 2, i + 6);
-                    if (/^[0-9a-fA-F]{4}$/.test(hex)) {
-                        result += String.fromCharCode(parseInt(hex, 16));
-                        i += 5;
-                        break;
-                    }
-                    result += "\\" + next;
-                    i++;
-                    break;
-                }
-                case "x": {
-                    const hex = value.substring(i + 2, i + 4);
-                    if (/^[0-9a-fA-F]{2}$/.test(hex)) {
-                        result += String.fromCharCode(parseInt(hex, 16));
-                        i += 3;
-                        break;
-                    }
-                    result += "\\" + next;
-                    i++;
-                    break;
-                }
-                default:
-                    result += "\\" + next;
-                    i++;
-                    break;
-            }
-        }
-        return result;
-    }
-
-    private encodeEscapeSequences(value: string): string {
-        let changed = false;
-        let result = "";
-        for (const char of value) {
-            switch (char) {
-                case "\n":
-                    result += "\\n";
-                    changed = true;
-                    break;
-                case "\r":
-                    result += "\\r";
-                    changed = true;
-                    break;
-                case "\t":
-                    result += "\\t";
-                    changed = true;
-                    break;
-                case "\0":
-                    result += "\\0";
-                    changed = true;
-                    break;
-                default:
-                    result += char;
-                    break;
-            }
-        }
-        return changed ? result : value;
-    }
-
-    private trigramKeys(value: string): Set<string> {
-        const normalized = this.normalizeTrigramQuery(value);
-        if (normalized.length < 3) return new Set();
-        const keys = new Set<string>();
-        for (let i = 0; i <= normalized.length - 3; i++) {
-            keys.add(normalized.substring(i, i + 3));
-        }
-        return keys;
-    }
-
-    private normalizeTrigramQuery(input: string): string {
-        return String(input ?? "")
-            .toLowerCase()
-            .replace(/[^\p{L}\p{N}]+/gu, " ")
-            .replace(/\s+/g, " ")
-            .trim();
-    }
-
-    private jaccardSimilarity(a: Set<string>, b: Set<string>): number {
-        if (a.size === 0 && b.size === 0) {
-            return 1;
-        }
-        let intersection = 0;
-        for (const token of a) {
-            if (b.has(token)) {
-                intersection++;
-            }
-        }
-        const union = a.size + b.size - intersection;
-        if (union === 0) {
-            return 0;
-        }
-        return intersection / union;
-    }
-
-    private normalizeString(str: string, level: NormalizationLevel, config?: NormalizationConfig): string {
-        if (level === "exact") return str;
-
-        const tabWidth = Math.max(1, config?.tabWidth ?? 4);
-        const preserveIndentation = config?.preserveIndentation ?? true;
-
-        switch (level) {
-            case "line-endings":
-                return str.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-            case "trailing":
-                return str
-                    .replace(/\r\n/g, "\n")
-                    .replace(/\r/g, "\n")
-                    .split("\n")
-                    .map(line => line.replace(/\s+$/g, ""))
-                    .join("\n");
-            case "indentation":
-                return str
-                    .replace(/\r\n/g, "\n")
-                    .replace(/\r/g, "\n")
-                    .split("\n")
-                    .map(line => {
-                        const match = line.match(/^(\s*)(.*)$/);
-                        if (!match) return line;
-                        const [, indent, content] = match;
-                        const normalizedIndent = indent.replace(/\t/g, " ".repeat(tabWidth));
-                        return normalizedIndent + content.replace(/\s+$/g, "");
-                    })
-                    .join("\n");
-            case "whitespace":
-                return str
-                    .replace(/\r\n/g, "\n")
-                    .replace(/\r/g, "\n")
-                    .split("\n")
-                    .map(line => {
-                        const match = line.match(/^(\s*)(.*)$/);
-                        if (!match) return line.trim();
-                        const [, indent, content] = match;
-                        const normalizedIndent = preserveIndentation
-                            ? indent.replace(/\t/g, " ".repeat(tabWidth))
-                            : "";
-                        const normalizedContent = content.replace(/\s+/g, " ").trim();
-                        const combined = `${normalizedIndent}${normalizedContent}`;
-                        return combined.trimEnd();
-                    })
-                    .join("\n");
-            case "structural":
-                return str
-                    .replace(/\r\n/g, "\n")
-                    .replace(/\r/g, "\n")
-                    .split("\n")
-                    .map(line => line.trim())
-                    .filter(line => line.length > 0)
-                    .join("\n")
-                    .replace(/\s+/g, " ");
-            default:
-                return str;
-        }
-    }
-
-    private getNormalizationAttempts(level?: NormalizationLevel): NormalizationLevel[] {
-        const hierarchy: NormalizationLevel[] = [
-            "exact",
-            "line-endings",
-            "trailing",
-            "indentation",
-            "whitespace",
-            "structural"
-        ];
-
-        // If no level specified, try all levels in hierarchy
-        if (!level) {
-            return hierarchy;
-        }
-
-        const maxIndex = hierarchy.indexOf(level);
-        if (maxIndex === -1) {
-            return ["exact"];
-        }
-        return hierarchy.slice(0, maxIndex + 1);
-    }
-
-    private createExactRegex(
-        target: string,
-        normalization: NormalizationLevel = "exact",
-        config?: NormalizationConfig
+    public createExactRegex(
+        targetString: string,
+        mode: Parameters<typeof createExactRegex>[1],
+        normalization?: Parameters<typeof createExactRegex>[2]
     ): RegExp {
-        const normalizedTarget = this.normalizeString(target, normalization, config);
-
-        switch (normalization) {
-            case "exact":
-                return new RegExp(this.escapeRegExp(normalizedTarget), "g");
-            case "line-endings": {
-                // Split by newlines, escape each part, then rejoin with flexible line ending pattern
-                const parts = normalizedTarget.split("\n").map(part => this.escapeRegExp(part));
-                const pattern = parts.join("(\\r\\n|\\r|\\n)");
-                return new RegExp(pattern, "g");
-            }
-            case "trailing": {
-                // Split by newlines, escape each part, allow trailing whitespace after each line
-                const parts = normalizedTarget.split("\n").map(part => this.escapeRegExp(part));
-                const pattern = parts.join("\\s*(\\r\\n|\\r|\\n)\\s*");
-                return new RegExp(`${pattern}\\s*`, "g");
-            }
-            case "indentation": {
-                const lines = normalizedTarget.split("\n");
-                const pattern = lines
-                    .map(line => {
-                        if (!line.length) return "";
-                        const match = line.match(/^(\s*)(.*)$/);
-                        const content = match ? match[2] : line;
-                        const escapedContent = this.escapeRegExp(content);
-                        const indentPattern = match && match[1].length > 0 ? "\\s*" : "";
-                        return `${indentPattern}${escapedContent}`;
-                    })
-                    .join("\\s*(\\r\\n|\\r|\\n)");
-                return new RegExp(pattern, "g");
-            }
-            case "whitespace": {
-                const parts = normalizedTarget
-                    .split("\n")
-                    .map(line => {
-                        // Escape the line, then convert spaces to flexible whitespace pattern
-                        const escaped = this.escapeRegExp(line.trim());
-                        // Replace single spaces with \s+ to match one or more spaces
-                        return escaped.replace(/ /g, "\\s+");
-                    });
-                const pattern = parts.join("\\s*(\\r\\n|\\r|\\n)\\s*");
-                return new RegExp(pattern, "g");
-            }
-            case "structural":
-            default: {
-                const tokens = normalizedTarget.replace(/([^a-zA-Z0-9_])/g, " $1 ").split(/\s+/).filter(t => t.length > 0);
-                const pattern = tokens
-                    .map(token => {
-                        if (token === '"' || token === "'" || token === "`") {
-                            return "[\"'`]";
-                        }
-                        return this.escapeRegExp(token);
-                    })
-                    .join("\\s*");
-                return new RegExp(pattern, "g");
-            }
-        }
+        return createExactRegex(targetString, mode, normalization);
     }
 
-    private createFuzzyRegex(target: string): RegExp {
-        // Normalize target whitespace first
-        const normalized = target.trim().replace(/\s+/g, ' ');
-        const escaped = this.escapeRegExp(normalized);
-        const words = escaped.split(/\s/).filter((word) => word.length > 0);
-        
-        if (words.length === 0) {
-             // If target is only whitespace, match any whitespace sequence
-            return /\s+/g;
-        }
-
-        // Allow flexible whitespace: \s* for optional, \s+ for required
-        const corePattern = words.join("\\s+");
-        
-        const needsStart = /^[a-zA-Z0-9_]/.test(words[0]);
-        const needsEnd = /[a-zA-Z0-9_]$/.test(words[words.length - 1]);
-        const supportsLookbehind = (() => { try { new RegExp('(?<=a)'); return true; } catch { return false; } })();
-        
-        let finalPattern = corePattern;
-        if (needsStart) {
-             finalPattern = supportsLookbehind ? `(?<![a-zA-Z0-9_])${finalPattern}` : `\\b${finalPattern}`;
-        }
-        if (needsEnd) {
-            finalPattern = `${finalPattern}(?![a-zA-Z0-9_])`;
-        }
-        
-        return new RegExp(finalPattern, "g");
+    public createFuzzyRegex(targetString: string): RegExp {
+        return createFuzzyRegex(targetString);
     }
 
-    private isBoundaryPosition(content: string, index: number): boolean {
-        if (index === 0) return true;
-        if (index >= content.length) return false;
-        
-        const prev = content[index - 1];
-        const curr = content[index];
-        
-        // Word boundaries: whitespace or punctuation to alphanumeric
-        const isWordBoundary = (
-            /\s/.test(prev) && !/\s/.test(curr)
-        ) || (
-            /[^\w]/.test(prev) && /\w/.test(curr)
-        );
-        
-        return isWordBoundary;
+    public getNormalizationAttempts(level?: Parameters<typeof getNormalizationAttempts>[0]) {
+        return getNormalizationAttempts(level);
     }
 
-    private findLevenshteinCandidates(
-        content: string, 
-        target: string, 
-        replacement: string,
-        lineCounter: LineCounter,
-        lineRange?: LineRange
-    ): Match[] {
-        const targetLen = target.length;
-        const targetHasNewline = /[\r\n]/.test(target.replace(/\r?\n$/, ""));
-        
-        if (targetLen >= 256) {
-            throw new Error(
-                `Levenshtein fuzzy matching works best with strings under 256 characters.\n` +
-                `Your target is ${targetLen} characters.\n` +
-                `Suggestions:\n` +
-                `- Break into smaller edits\n` +
-                `- Use fuzzyMode: "whitespace" instead\n` +
-                `- Use indexRange for precise character-based replacement`
-            );
-        }
-
-        const tolerance = targetLen < 10 
-            ? Math.max(1, Math.floor(targetLen * 0.2))
-            : Math.floor(targetLen * 0.3);
-
-        const timeoutMs = 5000;
-        const deadline = Date.now() + timeoutMs;
-        const targetTrigrams = this.trigramKeys(target);
-        const { start: searchStart, end: searchEnd } = lineRange
-            ? this.getCharRangeForLineRange(lineRange, lineCounter, content.length)
-            : { start: 0, end: content.length };
-
-        const lines = content.split(/\r?\n/);
-        const strongCandidates: Array<{ lineNumber: number; similarity: number }> = [];
-        const allCandidates: Array<{ lineNumber: number; similarity: number }> = [];
-
-        for (let i = 0; i < lines.length; i++) {
-            const lineNumber = i + 1;
-            if (lineRange && (lineNumber < lineRange.start || lineNumber > lineRange.end)) {
-                continue;
-            }
-            const lineTrigrams = this.trigramKeys(lines[i]);
-            const similarity = this.jaccardSimilarity(targetTrigrams, lineTrigrams);
-            const entry = { lineNumber, similarity };
-            allCandidates.push(entry);
-            if (similarity >= 0.3) {
-                strongCandidates.push(entry);
-            }
-        }
-
-        if (allCandidates.length === 0) {
-            const fallbackLine = Math.min(
-                Math.max(1, lineRange?.start ?? 1),
-                Math.max(1, lineCounter.lineCount)
-            );
-            allCandidates.push({ lineNumber: fallbackLine, similarity: 0 });
-        }
-
-        let candidates = strongCandidates.length > 0 ? strongCandidates : allCandidates;
-        candidates = [...candidates]
-            .sort((a, b) => b.similarity - a.similarity)
-            .slice(0, 50);
-
-        const matches: { start: number; end: number; distance: number; original: string }[] = [];
-        const MAX_OPS = 100000;
-        let ops = 0;
-        const minLen = Math.max(1, targetLen - tolerance);
-        const maxWindow = targetLen + tolerance;
-
-        for (const candidate of candidates) {
-            const lineStart = lineCounter.getCharIndexForLine(candidate.lineNumber);
-            const lineEnd = this.getLineEndIndex(candidate.lineNumber, content.length, lineCounter);
-            let windowStart = Math.max(searchStart, Math.max(0, lineStart - maxWindow));
-            let windowEnd = Math.min(searchEnd, Math.min(content.length, lineStart + maxWindow * 2));
-
-            if (!targetHasNewline) {
-                windowStart = Math.max(searchStart, lineStart);
-                windowEnd = Math.min(searchEnd, lineEnd);
-            }
-
-            if (windowEnd <= windowStart) {
-                continue;
-            }
-
-            for (let position = windowStart; position <= windowEnd - minLen; position++) {
-                if (!this.isBoundaryPosition(content, position)) continue;
-
-                const maxCandidateEnd = Math.min(windowEnd, position + maxWindow);
-                const usableLength = maxCandidateEnd - position;
-                const maxLen = Math.min(usableLength, targetLen + tolerance);
-
-                for (let len = minLen; len <= maxLen; len++) {
-                    if (Date.now() > deadline) {
-                        throw new Error(
-                            `Fuzzy match exceeded ${timeoutMs}ms timeout.\n` +
-                            `Suggestions:\n` +
-                            `- Narrow the search scope with lineRange\n` +
-                            `- Use more specific targetString\n` +
-                            `- Try fuzzyMode: "whitespace" instead`
-                        );
-                    }
-
-                    ops++;
-                    if (ops > MAX_OPS) {
-                        throw new Error(
-                            `Fuzzy search exceeded computational limit.\n` +
-                            `Suggestions:\n` +
-                            `- Add lineRange to narrow search scope\n` +
-                            `- Use more specific targetString\n` +
-                            `- Try fuzzyMode: "whitespace" instead`
-                        );
-                    }
-
-                    const candidateStr = content.substring(position, position + len);
-                    if (!candidateStr) {
-                        continue;
-                    }
-
-                    const localTrigrams = this.trigramKeys(candidateStr);
-                    const similarity = this.jaccardSimilarity(targetTrigrams, localTrigrams);
-                    if (similarity < 0.2) {
-                        continue;
-                    }
-
-                    const distance = levenshtein.get(target, candidateStr);
-                    if (distance <= tolerance) {
-                        matches.push({
-                            start: position,
-                            end: position + len,
-                            distance,
-                            original: candidateStr
-                        });
-                    }
-                }
-            }
-        }
-
-        matches.sort((a, b) => a.distance - b.distance || a.start - b.start);
-        const uniqueMatches: Match[] = [];
-        
-        for (const cand of matches) {
-            const isOverlapping = uniqueMatches.some(m => 
-                (cand.start >= m.start && cand.start < m.end) || 
-                (cand.end > m.start && cand.end <= m.end)
-            );
-            
-            if (!isOverlapping) {
-                const lineNumber = lineCounter.getLineNumber(cand.start);
-                uniqueMatches.push({
-                    start: cand.start,
-                    end: cand.end,
-                    replacement,
-                    original: cand.original,
-                    lineNumber,
-                    matchType: 'levenshtein',
-                    normalizationLevel: 'exact' as NormalizationLevel
-                });
-            }
-        }
-
-        return uniqueMatches;
+    public normalizeString(
+        value: Parameters<typeof normalizeString>[0],
+        level: Parameters<typeof normalizeString>[1],
+        config?: Parameters<typeof normalizeString>[2]
+    ) {
+        return normalizeString(value, level, config);
     }
 
-    private computeMatchConfidence(
-        match: Match,
-        edit: Edit,
-        normalizationLevel: NormalizationLevel = 'exact'
-    ): MatchConfidence {
-        let baseScore = 0.5;
-
-        switch (match.matchType) {
-            case 'exact':
-                baseScore = 1.0;
-                break;
-            case 'normalization': {
-                const levelWeights: Record<NormalizationLevel, number> = {
-                    exact: 1.0,
-                    "line-endings": 0.95,
-                    trailing: 0.9,
-                    indentation: 0.87,
-                    whitespace: 0.82,
-                    structural: 0.75
-                };
-                baseScore = levelWeights[normalizationLevel] ?? 0.7;
-                break;
-            }
-            case 'whitespace-fuzzy':
-                baseScore = 0.8;
-                break;
-            case 'levenshtein': {
-                const distance = levenshtein.get(edit.targetString, match.original);
-                const maxAllowed = Math.floor(edit.targetString.length * 0.3) || 1;
-                baseScore = 0.5 + 0.5 * Math.max(0, 1 - distance / maxAllowed);
-                break;
-            }
-        }
-
-        let contextBoost = 0;
-        if (edit.beforeContext) contextBoost += 0.1;
-        if (edit.afterContext) contextBoost += 0.1;
-        const lineRangeBoost = edit.lineRange ? 0.1 : 0;
-        const indexRangeBoost = edit.indexRange ? 0.15 : 0;
-
-        const finalScore = Math.min(1, baseScore + contextBoost + lineRangeBoost + indexRangeBoost);
-
-        return {
-            score: finalScore,
-            matchType: match.matchType,
-            normalizationLevel: normalizationLevel,
-            contextBoost,
-            lineRangeBoost,
-            indexRangeBoost,
-            reason: this.getConfidenceReason(finalScore, match.matchType)
-        };
+    public computeMatchConfidence(
+        match: Parameters<typeof computeMatchConfidence>[0],
+        edit: Parameters<typeof computeMatchConfidence>[1],
+        normalizationLevel?: Parameters<typeof computeMatchConfidence>[2]
+    ) {
+        return computeMatchConfidence(match, edit, normalizationLevel);
     }
 
-    private getConfidenceReason(score: number, matchType: Match['matchType']): string {
-        if (score >= 0.95 && matchType === 'exact') {
-            return 'Exact match with high certainty';
-        }
-        if (score >= 0.85) {
-            return 'High confidence after constraints';
-        }
-        if (score >= 0.7) {
-            return 'Likely match after normalization';
-        }
-        if (score >= 0.5) {
-            return 'Possible match, review suggested';
-        }
-        return 'Low confidence match';
+    public trigramKeys(value: string): Set<string> {
+        return trigramKeys(value);
     }
 
-    private generateMatchFailureDiagnostics(
-        edit: Edit,
-        matches: Match[],
-        filteredMatches: Match[],
-        options?: { normalizationAttempts?: { level: NormalizationLevel; matchCount: number; }[] }
-    ): string {
-        const diagnostics: string[] = [];
-        diagnostics.push(`Target not found: "${edit.targetString}"`);
-        diagnostics.push(`\nDiagnostics:`);
-        diagnostics.push(`- Matching mode: ${edit.fuzzyMode ?? 'exact'}`);
-
-        if (options?.normalizationAttempts?.length) {
-            diagnostics.push(`- Normalization attempts:`);
-            for (const attempt of options.normalizationAttempts) {
-                diagnostics.push(`  • ${attempt.level}: ${attempt.matchCount} candidate(s)`);
-            }
-        }
-
-        if (matches.length === 0) {
-            diagnostics.push(`- No candidates found at any normalization level.`);
-        } else {
-            diagnostics.push(`- Found ${matches.length} candidate(s) before filtering.`);
-            diagnostics.push(`- Candidates after context filters: ${filteredMatches.length}`);
-
-            const scored = matches.map(match => ({
-                match,
-                confidence: this.computeMatchConfidence(match, edit, match.normalizationLevel ?? 'exact')
-            })).sort((a, b) => b.confidence.score - a.confidence.score);
-
-            diagnostics.push(`\nTop candidates:`);
-            for (const entry of scored.slice(0, 3)) {
-                const line = entry.match.lineNumber;
-                diagnostics.push(
-                    `  • Line ${line}: ${(entry.confidence.score * 100).toFixed(0)}% (${entry.confidence.reason})`
-                );
-            }
-        }
-
-        diagnostics.push(`\nSuggestions:`);
-        diagnostics.push(`- Add beforeContext/afterContext to disambiguate.`);
-        diagnostics.push(`- Provide lineRange or indexRange if you know the region.`);
-        diagnostics.push(`- Relax normalization (e.g., normalization: "whitespace") or enable fuzzy modes.`);
-
-        return diagnostics.join('\n');
+    public jaccardSimilarity(a: Set<string>, b: Set<string>): number {
+        return jaccardSimilarity(a, b);
     }
 
-    private generateAmbiguousMatchError(
-        content: string,
-        edit: Edit,
-        matches: Match[]
-    ): AmbiguousMatchError {
-        const scoredMatches = matches.map(m => ({
-            ...m,
-            confidence: this.computeMatchConfidence(m, edit, m.normalizationLevel ?? 'exact')
-        })).sort((a, b) => (b.confidence?.score ?? 0) - (a.confidence?.score ?? 0));
-        
-        const lines = content.split('\n');
-        
-        const contextSnippets = scoredMatches.map(m => {
-            const line = lines[m.lineNumber - 1];
-            const confidencePct = m.confidence ? (m.confidence.score * 100).toFixed(0) : '??';
-            return `Line ${m.lineNumber} (confidence: ${confidencePct}%): "${line.trim().substring(0, 80)}..."`;
-        });
-        
-        const message = [
-            `Ambiguous match for "${edit.targetString}". Found ${matches.length} occurrences:`,
-            '',
-            ...contextSnippets.slice(0, 5), // Show top 5
-            matches.length > 5 ? `... and ${matches.length - 5} more.` : '',
-            '',
-            `Best match appears to be line ${scoredMatches[0].lineNumber}.`,
-            `Resolution strategies:`,
-            `1. Add lineRange: { start: ${scoredMatches[0].lineNumber}, end: ${scoredMatches[0].lineNumber} }`,
-            `2. Add beforeContext/afterContext`
-        ].join('\n');
-        
-        return new AmbiguousMatchError(message, { 
-            conflictingLines: matches.map(m => m.lineNumber)
-        });
-    }
-
-    private findMatchWithEscapeVariants(content: string, edit: Edit, lineCounter: LineCounter): Match {
-        const escapeMode = edit.escapeMode ?? 'auto';
-        if (escapeMode === 'interpreted' || escapeMode === 'literal') {
-            const effectiveEdit = { ...edit };
-            if (escapeMode === 'interpreted') {
-                effectiveEdit.targetString = this.decodeEscapeSequences(edit.targetString);
-                if (effectiveEdit.replacementString) {
-                    effectiveEdit.replacementString = this.decodeEscapeSequences(effectiveEdit.replacementString);
-                }
-            }
-            return this.findMatch(content, effectiveEdit, lineCounter);
-        }
-
-        const variants = this.buildEscapeAwareVariants(edit);
-        const attemptedModes: string[] = [];
-        let primaryError: MatchNotFoundError | undefined;
-        let lastError: MatchNotFoundError | undefined;
-
-        for (const variant of variants) {
-            attemptedModes.push(variant.mode);
-            try {
-                return this.findMatch(content, variant.edit, lineCounter);
-            } catch (error) {
-                if (error instanceof MatchNotFoundError) {
-                    if (!primaryError) {
-                        primaryError = error;
-                    }
-                    lastError = error;
-                    continue;
-                }
-                throw error;
-            }
-        }
-
-        const failure = primaryError ?? lastError;
-        if (failure) {
-            const suffix = `\n\nTried escape-aware variants (modes: ${attemptedModes.join(", ")}), but none matched the target string.`;
-            throw new MatchNotFoundError(`${failure.message}${suffix}`);
-        }
-
-        throw new MatchNotFoundError(
-            `Unable to locate target "${edit.targetString}" even after trying escape-aware variants.`
-        );
-    }
-
-    private buildEscapeAwareVariants(edit: Edit): Array<{ edit: Edit; mode: string }> {
-        const variants: Array<{ edit: Edit; mode: string }> = [{ edit, mode: "raw" }];
-
-        const decodedTarget = this.decodeEscapeSequences(edit.targetString);
-        const decodedBefore = typeof edit.beforeContext === "string"
-            ? this.decodeEscapeSequences(edit.beforeContext)
-            : undefined;
-        const decodedAfter = typeof edit.afterContext === "string"
-            ? this.decodeEscapeSequences(edit.afterContext)
-            : undefined;
-
-        if (
-            decodedTarget !== edit.targetString ||
-            decodedBefore !== edit.beforeContext ||
-            decodedAfter !== edit.afterContext
-        ) {
-            variants.push({
-                edit: {
-                    ...edit,
-                    targetString: decodedTarget,
-                    beforeContext: decodedBefore,
-                    afterContext: decodedAfter
-                },
-                mode: "decoded"
-            });
-        }
-
-        const encodedTarget = this.encodeEscapeSequences(edit.targetString);
-        const encodedBefore = typeof edit.beforeContext === "string"
-            ? this.encodeEscapeSequences(edit.beforeContext)
-            : undefined;
-        const encodedAfter = typeof edit.afterContext === "string"
-            ? this.encodeEscapeSequences(edit.afterContext)
-            : undefined;
-
-        if (
-            encodedTarget !== edit.targetString ||
-            encodedBefore !== edit.beforeContext ||
-            encodedAfter !== edit.afterContext
-        ) {
-            variants.push({
-                edit: {
-                    ...edit,
-                    targetString: encodedTarget,
-                    beforeContext: encodedBefore,
-                    afterContext: encodedAfter
-                },
-                mode: "encoded"
-            });
-        }
-
-        return variants;
-    }
-
-    private findMatch(content: string, edit: Edit, lineCounter: LineCounter): Match {
-        let matches: Match[] = [];
-        const normalizationDiagnostics: { level: NormalizationLevel; matchCount: number }[] = [];
-
-        if (edit.fuzzyMode === "levenshtein") {
-            // Try exact match first
-            const exactRegex = this.createExactRegex(edit.targetString, "exact", edit.normalizationConfig);
-            const exactMatches = [...content.matchAll(exactRegex)].map(m => ({
-                start: m.index!,
-                end: m.index! + m[0].length,
-                replacement: edit.replacementString,
-                original: m[0],
-                lineNumber: lineCounter.getLineNumber(m.index!),
-                matchType: 'exact' as const,
-                normalizationLevel: 'exact' as NormalizationLevel
-            }));
-
-            if (exactMatches.length > 0) {
-                matches = exactMatches;
-            } else {
-                matches = this.findLevenshteinCandidates(content, edit.targetString, edit.replacementString, lineCounter, edit.lineRange);
-            }
-        } else if (edit.fuzzyMode === "whitespace") {
-            const regex = this.createFuzzyRegex(edit.targetString);
-            matches = [...content.matchAll(regex)].map(m => ({
-                start: m.index!,
-                end: m.index! + m[0].length,
-                replacement: edit.replacementString,
-                original: m[0],
-                lineNumber: lineCounter.getLineNumber(m.index!),
-                matchType: 'whitespace-fuzzy' as const,
-                normalizationLevel: 'whitespace' as NormalizationLevel
-            }));
-        } else {
-            const attempts = this.getNormalizationAttempts(edit.normalization);
-            for (const level of attempts) {
-                const regex = this.createExactRegex(edit.targetString, level, edit.normalizationConfig);
-                const matchType: Match['matchType'] = level === 'exact' ? 'exact' : 'normalization';
-                const attemptMatches = [...content.matchAll(regex)].map(m => ({
-                    start: m.index!,
-                    end: m.index! + m[0].length,
-                    replacement: edit.replacementString,
-                    original: m[0],
-                    lineNumber: lineCounter.getLineNumber(m.index!),
-                    matchType,
-                    normalizationLevel: level
-                }));
-                normalizationDiagnostics.push({ level, matchCount: attemptMatches.length });
-                if (attemptMatches.length > 0) {
-                    matches = attemptMatches;
-                    break;
-                }
-            }
-        }
-
-        const filteredMatches = matches.filter(match => {
-            if (edit.lineRange) {
-                if (match.lineNumber < edit.lineRange.start || match.lineNumber > edit.lineRange.end) return false;
-            }
-
-            if (edit.beforeContext) {
-                const searchStart = edit.anchorSearchRange?.chars
-                    ? Math.max(0, match.start - edit.anchorSearchRange.chars)
-                    : 0;
-                const preceding = content.substring(searchStart, match.start);
-                const contextFuzziness = edit.contextFuzziness ?? "normal";
-                if (!this.matchesContext(edit.beforeContext, preceding, contextFuzziness, edit.normalizationConfig)) {
-                    return false;
-                }
-            }
-
-            if (edit.afterContext) {
-                const searchEnd = edit.anchorSearchRange?.chars
-                    ? Math.min(content.length, match.end + edit.anchorSearchRange.chars)
-                    : content.length;
-                const following = content.substring(match.end, searchEnd);
-                const contextFuzziness = edit.contextFuzziness ?? "normal";
-                if (!this.matchesContext(edit.afterContext, following, contextFuzziness, edit.normalizationConfig)) {
-                    return false;
-                }
-            }
-            return true;
-        });
-
-        for (const match of filteredMatches) {
-            match.confidence = this.computeMatchConfidence(
-                match,
-                edit,
-                match.normalizationLevel ?? 'exact'
-            );
-        }
-
-        if (filteredMatches.length === 0) {
-            throw new MatchNotFoundError(
-                this.generateMatchFailureDiagnostics(edit, matches, filteredMatches, {
-                    normalizationAttempts: normalizationDiagnostics
-                })
-            );
-        }
-        if (filteredMatches.length > 1) {
-            const resolved = this.resolveAmbiguousMatches(filteredMatches, edit);
-            if (!resolved) {
-                throw this.generateAmbiguousMatchError(content, edit, filteredMatches);
-            }
-            return resolved;
-        }
-
-        return filteredMatches[0];
-    }
-
-    private matchesContext(
-        expectedContext: string,
-        actualContext: string,
-        fuzziness: ContextFuzziness,
-        normalizationConfig?: NormalizationConfig
-    ): boolean {
-        switch (fuzziness) {
-            case "strict":
-                return actualContext.includes(expectedContext);
-            case "normal": {
-                const normalizeWhitespace = (value: string) =>
-                    value.replace(/\s+/g, " ").trim();
-                return normalizeWhitespace(actualContext).includes(normalizeWhitespace(expectedContext));
-            }
-            case "loose": {
-                const normalizedActual = this.normalizeString(actualContext, "structural", normalizationConfig);
-                const normalizedExpected = this.normalizeString(expectedContext, "structural", normalizationConfig);
-                return normalizedActual.includes(normalizedExpected);
-            }
-            default:
-                return actualContext.includes(expectedContext);
-        }
-    }
-
-    private resolveAmbiguousMatches(matches: Match[], edit: Edit): Match | undefined {
-        const scoredMatches = matches.map(match => ({
-            match,
-            confidence: this.computeMatchConfidence(match, edit, match.normalizationLevel ?? 'exact')
-        })).sort((a, b) => b.confidence.score - a.confidence.score);
-
-        if (scoredMatches.length < 2) {
-            return scoredMatches[0]?.match;
-        }
-
-        const best = scoredMatches[0];
-        const second = scoredMatches[1];
-
-        if (best.confidence.score >= 0.85 && (best.confidence.score - second.confidence.score) >= 0.15) {
-            if (process.env.KAIRO_DEBUG === 'true') {
-                console.debug(
-                    `[EditorEngine] Auto-selected ambiguous match at line ${best.match.lineNumber} ` +
-                    `(score ${(best.confidence.score * 100).toFixed(1)}%, second ${(second.confidence.score * 100).toFixed(1)}%)`
-                );
-            }
-            return best.match;
-        }
-
-        return undefined;
-    }
-
-    private planInsertOperation(content: string, edit: Edit, lineCounter: LineCounter): Match {
-        const replacement = edit.replacementString ?? "";
-        if (edit.insertMode === "at") {
-            const lineNumber = edit.insertLineRange?.start ?? 1;
-            if (lineNumber < 1 || lineNumber > lineCounter.lineCount + 1) {
-                throw new Error(
-                    `insertMode "at" requires insertLineRange.start between 1 and ${lineCounter.lineCount + 1}.`
-                );
-            }
-            const insertIndex = lineNumber > lineCounter.lineCount
-                ? content.length
-                : lineCounter.getCharIndexForLine(lineNumber);
-            return {
-                start: insertIndex,
-                end: insertIndex,
-                replacement,
-                original: "",
-                lineNumber,
-                matchType: 'exact'
-            };
-        }
-
-        if (!edit.targetString) {
-            throw new Error(`insertMode "${edit.insertMode}" requires 'targetString' as an anchor.`);
-        }
-
-        const anchorEdit: Edit = {
-            targetString: edit.targetString,
-            replacementString: edit.targetString,
-            lineRange: edit.lineRange,
-            beforeContext: edit.beforeContext,
-            afterContext: edit.afterContext,
-            fuzzyMode: edit.fuzzyMode,
-            anchorSearchRange: edit.anchorSearchRange,
-            indexRange: edit.indexRange,
-            normalization: edit.normalization,
-            normalizationConfig: edit.normalizationConfig,
-            expectedHash: edit.expectedHash,
-            contextFuzziness: edit.contextFuzziness
-        };
-
-        const anchorMatch = this.findMatchWithEscapeVariants(content, anchorEdit, lineCounter);
-        const anchorLine = anchorMatch.lineNumber;
-        let insertIndex: number;
-        let lineNumber = anchorLine;
-
-        if (edit.insertMode === "before") {
-            insertIndex = lineCounter.getCharIndexForLine(anchorLine);
-        } else {
-            insertIndex = this.getLineEndIndex(anchorLine, content.length, lineCounter);
-            lineNumber = Math.min(lineCounter.lineCount + 1, anchorLine + 1);
-        }
-
-        return {
-            start: insertIndex,
-            end: insertIndex,
-            replacement,
-            original: "",
-            lineNumber,
-            matchType: 'exact'
-        };
-    }
-
-    private getLineEndIndex(lineNumber: number, contentLength: number, lineCounter: LineCounter): number {
-        if (lineNumber >= lineCounter.lineCount) {
-            return contentLength;
-        }
-        const nextLine = lineNumber + 1;
-        if (nextLine > lineCounter.lineCount) {
-            return contentLength;
-        }
-        return lineCounter.getCharIndexForLine(nextLine);
-    }
-
-    private getCharRangeForLineRange(lineRange: LineRange, lineCounter: LineCounter, contentLength: number): { start: number; end: number } {
-        const startIndex = lineCounter.getCharIndexForLine(lineRange.start);
-        const endIndex = lineRange.end >= lineCounter.lineCount
-            ? contentLength
-            : lineCounter.getCharIndexForLine(lineRange.end + 1);
-        return { start: startIndex, end: endIndex };
-    }
-
-    private computeHash(value: string, algorithm: 'sha256' | 'xxhash'): string {
-        if (algorithm === 'xxhash' && XXH) {
-            return XXH.h64(0xABCD).update(value).digest().toString(16);
-        }
-        return crypto.createHash('sha256').update(value).digest('hex');
-    }
-
-    private validateExpectedHash(
-        edit: Edit,
-        content: string,
-        match: Match,
-        lineCounter: LineCounter
-    ): void {
-        if (!edit.expectedHash) return;
-
-        const { algorithm, value } = edit.expectedHash;
-        const range = edit.lineRange
-            ? this.getCharRangeForLineRange(edit.lineRange, lineCounter, content.length)
-            : { start: match.start, end: match.end };
-
-        const slice = content.substring(range.start, range.end);
-        const computed = this.computeHash(slice, algorithm);
-
-        if (computed !== value) {
-            const err = new HashMismatchError(
-                `Hash mismatch detected for ${edit.lineRange ? `lines ${edit.lineRange.start}-${edit.lineRange.end}` : `target "${edit.targetString}"`}. ` +
-                `Expected ${value}, computed ${computed}.`
-            );
-            (err as any).edit = edit;
-            throw err;
-        }
+    public isBoundaryPosition(content: string, index: number): boolean {
+        return isBoundaryPosition(content, index);
     }
 
     public applyEditsInternal(originalContent: string, edits: Edit[]): Match[] {
@@ -1188,7 +87,7 @@ export class EditPlanner {
         const plannedMatches: Match[] = [];
 
         for (const edit of edits) {
-            edit.replacementString = this.normalizeReplacementString(edit.replacementString);
+            edit.replacementString = normalizeReplacementString(edit.replacementString);
 
             if (edit.indexRange) {
                 const { start, end } = edit.indexRange;
@@ -1207,7 +106,7 @@ export class EditPlanner {
                 }
 
                 if (edit.expectedHash) {
-                    const computed = this.computeHash(existing, edit.expectedHash.algorithm);
+                    const computed = computeHash(existing, edit.expectedHash.algorithm);
                     if (computed !== edit.expectedHash.value) {
                         const err = new HashMismatchError(
                             `Hash mismatch detected for index range [${start}, ${end}). Expected ${edit.expectedHash.value}, computed ${computed}.`
@@ -1227,7 +126,7 @@ export class EditPlanner {
                 });
             } else if (edit.insertMode) {
                 try {
-                    const insertMatch = this.planInsertOperation(originalContent, edit, lineCounter);
+                    const insertMatch = planInsertOperation(originalContent, edit, lineCounter);
                     plannedMatches.push(insertMatch);
                 } catch (error) {
                     (error as any).edit = edit;
@@ -1235,8 +134,8 @@ export class EditPlanner {
                 }
             } else {
                 try {
-                    const match = this.findMatchWithEscapeVariants(originalContent, edit, lineCounter);
-                    this.validateExpectedHash(edit, originalContent, match, lineCounter);
+                    const match = findMatchWithEscapeVariants(originalContent, edit, lineCounter);
+                    validateExpectedHash(edit, originalContent, match, lineCounter);
                     plannedMatches.push(match);
                 } catch (error) {
                     (error as any).edit = edit;
@@ -1288,7 +187,7 @@ export class EditPlanner {
         });
 
         // Attempt 2: Whitespace
-        const wsRegex = this.createExactRegex(edit.targetString, "whitespace", edit.normalizationConfig);
+        const wsRegex = createExactRegex(edit.targetString, "whitespace", edit.normalizationConfig);
         const wsCandidates: { line: number; snippet: string }[] = [];
         let match;
         while ((match = wsRegex.exec(content)) !== null) {
@@ -1303,7 +202,7 @@ export class EditPlanner {
             failureReason: wsCandidates.length === 0 ? "No whitespace-tolerant matches found" : "Matches found but not selected (ambiguous?)"
         });
 
-        const structuralRegex = this.createExactRegex(edit.targetString, "structural", edit.normalizationConfig);
+        const structuralRegex = createExactRegex(edit.targetString, "structural", edit.normalizationConfig);
         const structuralCandidates: { line: number; snippet: string }[] = [];
         let structuralMatch;
         while ((structuralMatch = structuralRegex.exec(content)) !== null) {
@@ -1365,7 +264,7 @@ export class EditPlanner {
 
                 // For insert operations
                 if (edit.insertMode) {
-                    const insertMatch = this.planInsertOperation(content, edit, lineCounter);
+                    const insertMatch = planInsertOperation(content, edit, lineCounter);
                     results.push({
                         match: insertMatch,
                         candidateCount: 1
@@ -1374,8 +273,8 @@ export class EditPlanner {
                 }
 
                 // For string-based matching, find all candidates
-                const allMatches = this.findAllMatches(content, edit, lineCounter);
-                
+                const allMatches = findAllMatches(content, edit, lineCounter);
+
                 if (allMatches.length === 0) {
                     throw new MatchNotFoundError(`No match found for target: "${edit.targetString}"`);
                 }
@@ -1391,7 +290,7 @@ export class EditPlanner {
                 // Multiple candidates - resolve or return all
                 const allowAutoPick = opts?.allowAmbiguousAutoPick ?? true;
                 if (allowAutoPick) {
-                    const resolved = this.resolveAmbiguousMatches(allMatches, edit);
+                    const resolved = resolveAmbiguousMatches(allMatches, edit);
                     if (resolved) {
                         results.push({
                             match: resolved,
@@ -1417,103 +316,6 @@ export class EditPlanner {
         }
 
         return results;
-    }
-
-    /**
-     * Helper: Find all matches without filtering by ambiguity rules
-     */
-    private findAllMatches(content: string, edit: Edit, lineCounter: LineCounter): Match[] {
-        let matches: Match[] = [];
-
-        if (edit.fuzzyMode === "levenshtein") {
-            const exactRegex = this.createExactRegex(edit.targetString, "exact", edit.normalizationConfig);
-            const exactMatches = [...content.matchAll(exactRegex)].map(m => ({
-                start: m.index!,
-                end: m.index! + m[0].length,
-                replacement: edit.replacementString,
-                original: m[0],
-                lineNumber: lineCounter.getLineNumber(m.index!),
-                matchType: 'exact' as const,
-                normalizationLevel: 'exact' as NormalizationLevel
-            }));
-
-            if (exactMatches.length > 0) {
-                matches = exactMatches;
-            } else {
-                matches = this.findLevenshteinCandidates(content, edit.targetString, edit.replacementString, lineCounter, edit.lineRange);
-            }
-        } else if (edit.fuzzyMode === "whitespace") {
-            const regex = this.createFuzzyRegex(edit.targetString);
-            matches = [...content.matchAll(regex)].map(m => ({
-                start: m.index!,
-                end: m.index! + m[0].length,
-                replacement: edit.replacementString,
-                original: m[0],
-                lineNumber: lineCounter.getLineNumber(m.index!),
-                matchType: 'whitespace-fuzzy' as const,
-                normalizationLevel: 'whitespace' as NormalizationLevel
-            }));
-        } else {
-            const attempts = this.getNormalizationAttempts(edit.normalization);
-            for (const level of attempts) {
-                const regex = this.createExactRegex(edit.targetString, level, edit.normalizationConfig);
-                const matchType: Match['matchType'] = level === 'exact' ? 'exact' : 'normalization';
-                const attemptMatches = [...content.matchAll(regex)].map(m => ({
-                    start: m.index!,
-                    end: m.index! + m[0].length,
-                    replacement: edit.replacementString,
-                    original: m[0],
-                    lineNumber: lineCounter.getLineNumber(m.index!),
-                    matchType,
-                    normalizationLevel: level
-                }));
-                if (attemptMatches.length > 0) {
-                    matches = attemptMatches;
-                    break;
-                }
-            }
-        }
-
-        // Apply filters
-        const filteredMatches = matches.filter(match => {
-            if (edit.lineRange) {
-                if (match.lineNumber < edit.lineRange.start || match.lineNumber > edit.lineRange.end) return false;
-            }
-
-            if (edit.beforeContext) {
-                const searchStart = edit.anchorSearchRange?.chars
-                    ? Math.max(0, match.start - edit.anchorSearchRange.chars)
-                    : 0;
-                const preceding = content.substring(searchStart, match.start);
-                const contextFuzziness = edit.contextFuzziness ?? "normal";
-                if (!this.matchesContext(edit.beforeContext, preceding, contextFuzziness, edit.normalizationConfig)) {
-                    return false;
-                }
-            }
-
-            if (edit.afterContext) {
-                const searchEnd = edit.anchorSearchRange?.chars
-                    ? Math.min(content.length, match.end + edit.anchorSearchRange.chars)
-                    : content.length;
-                const following = content.substring(match.end, searchEnd);
-                const contextFuzziness = edit.contextFuzziness ?? "normal";
-                if (!this.matchesContext(edit.afterContext, following, contextFuzziness, edit.normalizationConfig)) {
-                    return false;
-                }
-            }
-            return true;
-        });
-
-        // Compute confidence for all
-        for (const match of filteredMatches) {
-            match.confidence = this.computeMatchConfidence(
-                match,
-                edit,
-                match.normalizationLevel ?? 'exact'
-            );
-        }
-
-        return filteredMatches;
     }
 
 }

@@ -10,6 +10,7 @@ import { ReverseImportIndex } from './ReverseImportIndex.js';
 import { normalizePath, toRelativePath } from '../utils/PathHelpers.js';
 import { FeatureFlags } from '../config/FeatureFlags.js';
 import { NodeFileSystem, type IFileSystem } from '../platform/FileSystem.js';
+import { detectMonorepo } from './DependencyGraphUtils.js';
 
 export interface DependencyEdge {
     from: string;
@@ -67,6 +68,10 @@ export class DependencyGraph {
 
     public setLoggingEnabled(enabled: boolean): void {
         this.loggingEnabled = enabled;
+    }
+
+    public detectMonorepo(): boolean {
+        return detectMonorepo(this.rootPath, this.fileSystem);
     }
 
     private log(level: 'log' | 'info' | 'warn' | 'error', ...args: any[]): void {
@@ -341,7 +346,7 @@ export class DependencyGraph {
                 resolutionErrors,
                 lastRebuiltAt: new Date(this.lastRebuiltAt || Date.now()).toISOString(),
                 confidence,
-                isMonorepo: this.detectMonorepo()
+                isMonorepo: detectMonorepo(this.rootPath, this.fileSystem)
             },
             ...(perFile ? { perFile } : {})
         };
@@ -487,28 +492,4 @@ export class DependencyGraph {
         }
     }
 
-    private detectMonorepo(): boolean {
-        const indicatorFiles = ['lerna.json', 'pnpm-workspace.yaml', 'turbo.json', 'nx.json'];
-        if (indicatorFiles.some(file => this.fileSystem.existsSync?.(path.join(this.rootPath, file)))) {
-            return true;
-        }
-
-        const candidateDirs = ['packages', 'apps', 'services', 'libs'];
-        for (const dir of candidateDirs) {
-            const rootDir = path.join(this.rootPath, dir);
-            if (!this.fileSystem.existsSync?.(rootDir) || !this.fileSystem.statSync?.(rootDir)?.isDirectory()) continue;
-            const subdirs = (this.fileSystem.readDirSync?.(rootDir) ?? []).filter(entry => {
-                const full = path.join(rootDir, entry);
-                try {
-                    return this.fileSystem.statSync?.(full)?.isDirectory() && this.fileSystem.existsSync?.(path.join(full, 'package.json'));
-                } catch {
-                    return false;
-                }
-            });
-            if (subdirs.length > 0) {
-                return true;
-            }
-        }
-        return false;
-    }
 }
