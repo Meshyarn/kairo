@@ -106,7 +106,11 @@ export async function handleAnalyze(state: TaskExecutionState): Promise<any> {
         summary.bullets.push("Decision gate: insufficient evidence; add explicit paths/targets or retry with follow-up guidance.");
     }
     const guidance = rewriteGuidanceForCompact({
-        guidance: buildGuidance(response?.guidance, combinedNextCalls.length > 0 ? combinedNextCalls : undefined),
+        guidance: buildGuidance(
+            response?.guidance,
+            combinedNextCalls.length > 0 ? combinedNextCalls : undefined,
+            packDegradedReasons
+        ),
         request: state.request,
         budget: state.budget,
         output: state.outputPayload,

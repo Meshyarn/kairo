@@ -116,7 +116,9 @@ const PARITY_REASON_MAP: Record<string, {
   budget_exceeded: {
     type: "budget_exceeded",
     message: "Token or time budget exceeded; results may be partial.",
-    severity: "warning"
+    severity: "warning",
+    actionToolCall: { tool: "task", args: { mode: "analyze", budget: "deep" } },
+    actionId: "task.analyze.deep"
   },
   insufficient_evidence: {
     type: "degraded",
@@ -126,7 +128,9 @@ const PARITY_REASON_MAP: Record<string, {
   doc_search_skipped: {
     type: "doc_search_skipped",
     message: "Documentation search was skipped; results may be incomplete.",
-    severity: "warning"
+    severity: "warning",
+    actionToolCall: CAPABILITY_ACTION_TOOLCALL,
+    actionId: CAPABILITY_ACTION_ID
   },
   unsupported_language: {
     type: "unsupported_language",
@@ -169,37 +173,51 @@ const PARITY_REASON_MAP: Record<string, {
   symbol_index_unavailable: {
     type: "symbol_index_unavailable",
     message: "Symbol index is unavailable; symbol-based analysis is degraded.",
-    severity: "warning"
+    severity: "warning",
+    actionToolCall: { tool: "manage", args: { command: "status" } },
+    actionId: "manage.status"
   },
   cross_repo_scope_mismatch: {
     type: "cross_repo_scope_mismatch",
     message: "Requested repo scope does not include matching files.",
-    severity: "warning"
+    severity: "warning",
+    actionToolCall: { tool: "manage", args: { command: "doctor", scope: "config" } },
+    actionId: "manage.doctor.config"
   },
   cross_repo_edit_blocked: {
     type: "cross_repo_edit_blocked",
     message: "Cross-repo edits are blocked by policy.",
-    severity: "critical"
+    severity: "critical",
+    actionToolCall: { tool: "manage", args: { command: "doctor", scope: "config" } },
+    actionId: "manage.doctor.config"
   },
   apply_token_missing: {
     type: "apply_token_missing",
     message: "Apply token is missing; re-plan before applying.",
-    severity: "critical"
+    severity: "critical",
+    actionToolCall: { tool: "task", args: { mode: "plan_change" } },
+    actionId: "task.plan_change"
   },
   apply_token_expired: {
     type: "apply_token_expired",
     message: "Apply token has expired; re-plan to get a new token.",
-    severity: "critical"
+    severity: "critical",
+    actionToolCall: { tool: "task", args: { mode: "plan_change" } },
+    actionId: "task.plan_change"
   },
   apply_token_used: {
     type: "apply_token_used",
     message: "Apply token has already been used; re-plan to get a new token.",
-    severity: "critical"
+    severity: "critical",
+    actionToolCall: { tool: "task", args: { mode: "plan_change" } },
+    actionId: "task.plan_change"
   },
   apply_token_invalid: {
     type: "apply_token_invalid",
     message: "Apply token is invalid; re-plan to get a new token.",
-    severity: "critical"
+    severity: "critical",
+    actionToolCall: { tool: "task", args: { mode: "plan_change" } },
+    actionId: "task.plan_change"
   },
   language_parser_unavailable: {
     type: "missing_wasm_grammar",

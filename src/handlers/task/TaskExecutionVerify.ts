@@ -17,7 +17,7 @@ export async function handleVerify(state: TaskExecutionState): Promise<any> {
     const status = reasons.length === 0 ? "success" : (isBlocked ? "blocked" : "partial_success");
     const summary = buildVerifySummary({ request: state.request, verification });
     const guidance = rewriteGuidanceForCompact({
-        guidance: buildGuidance(undefined, state.nextCalls),
+        guidance: buildGuidance(undefined, state.nextCalls, degradedReasons),
         request: state.request,
         budget: state.budget,
         output: state.outputPayload,

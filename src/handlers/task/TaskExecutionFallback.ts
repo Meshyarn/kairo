@@ -108,7 +108,11 @@ export async function handleFallback(state: TaskExecutionState): Promise<any> {
     );
     const decisionInsufficient = decisionGate.insufficient || analyzeDecisionGate?.insufficient;
     const guidance = rewriteGuidanceForCompact({
-        guidance: buildGuidance(response?.guidance, combinedNextCalls.length > 0 ? combinedNextCalls : undefined),
+        guidance: buildGuidance(
+            response?.guidance,
+            combinedNextCalls.length > 0 ? combinedNextCalls : undefined,
+            degradedReasons
+        ),
         request: state.request,
         budget: state.budget,
         output: state.outputPayload,
