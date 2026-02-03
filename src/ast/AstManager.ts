@@ -2,11 +2,8 @@ import * as path from 'path';
 import { createHash } from 'crypto';
 import { performance } from 'perf_hooks';
 import { AstBackend, AstDocument } from './AstBackend.js';
-import { WebTreeSitterBackend } from './WebTreeSitterBackend.js';
-import { JsAstBackend } from './JsAstBackend.js';
-import { SnapshotBackend } from './SnapshotBackend.js';
 import { EngineConfig, LOD_LEVEL, AnalysisRequest, LODResult, LODPromotionStats, SymbolInfo } from '../types.js';
-import { LanguageConfigLoader, BUILTIN_LANGUAGE_MAPPINGS } from '../config/LanguageConfig.js';
+import { LanguageConfigLoader } from '../config/LanguageConfig.js';
 import { AdaptiveAstManager } from './AdaptiveAstManager.js';
 import { FeatureFlags } from '../config/FeatureFlags.js';
 import { AdaptiveFlowMetrics } from '../utils/AdaptiveFlowMetrics.js';
@@ -20,6 +17,13 @@ import { UniversalSymbolExtractor } from './extraction/UniversalSymbolExtractor.
 import { UniversalImportExtractor } from './extraction/UniversalImportExtractor.js';
 import { UniversalExportExtractor } from './extraction/UniversalExportExtractor.js';
 import { NodeFileSystem, type IFileSystem } from '../platform/FileSystem.js';
+import {
+    getLanguageMapping,
+    instantiateBackend,
+    initializeBackend,
+    resolveConfig,
+    resolveLanguageId
+} from './AstManagerConfig.js';
 
 export class AstManager implements AdaptiveAstManager {
     private static instance: AstManager | undefined;
@@ -58,8 +62,8 @@ export class AstManager implements AdaptiveAstManager {
 
     private constructor() {
         this.fileSystem = new NodeFileSystem(process.cwd());
-        this.backend = new WebTreeSitterBackend({ fileSystem: this.fileSystem } as any);
         this.engineConfig = { mode: 'prod', parserBackend: 'auto' };
+        this.backend = instantiateBackend('wasm', this.engineConfig);
         
         this.queryProvider = new QueryProvider(undefined, this.fileSystem);
         this.unifiedExtractor = new UnifiedExtractor(this.queryProvider);
@@ -117,7 +121,7 @@ export class AstManager implements AdaptiveAstManager {
     }
 
     public async init(config?: EngineConfig): Promise<void> {
-        const resolved = this.resolveConfig(config);
+        const resolved = resolveConfig(config, this.engineConfig);
         this.engineConfig = resolved;
         const root = resolved.rootPath ?? process.cwd();
         this.fileSystem = new NodeFileSystem(root);
@@ -142,7 +146,11 @@ export class AstManager implements AdaptiveAstManager {
             return;
         }
 
-        await this.initializeBackend();
+        await initializeBackend(this.engineConfig, this.backend, ({ backend, activeBackend }) => {
+            this.backend = backend;
+            this.activeBackend = activeBackend;
+            this.initialized = true;
+        });
     }
 
     public async warmup(languages: string[] = ['tsx', 'python', 'json']): Promise<void> {
@@ -176,7 +184,7 @@ export class AstManager implements AdaptiveAstManager {
 
     public async getLanguageForFile(filePath: string): Promise<any> {
         if (!this.initialized) await this.init();
-        const languageId = this.resolveLanguageId(filePath);
+        const languageId = resolveLanguageId(filePath, this.languageConfig);
         if (languageId === "plain_text") {
             return null;
         }
@@ -184,7 +192,7 @@ export class AstManager implements AdaptiveAstManager {
     }
 
     public getLanguageId(filePath: string): string {
-        return this.resolveLanguageId(filePath);
+        return resolveLanguageId(filePath, this.languageConfig);
     }
 
     public getQueryProvider(): QueryProvider {
@@ -430,91 +438,8 @@ export class AstManager implements AdaptiveAstManager {
         return this.backend.capabilities.supportsQueries;
     }
 
-    private resolveConfig(overrides?: EngineConfig): EngineConfig {
-        const envMode = process.env.KAIRO_ENGINE_MODE as EngineConfig['mode'] | undefined;
-        const envBackend = process.env.KAIRO_PARSER_BACKEND as EngineConfig['parserBackend'] | undefined;
-        const envSnapshot = process.env.KAIRO_SNAPSHOT_DIR;
-        const envRoot = process.env.KAIRO_ROOT_PATH || process.env.KAIRO_ROOT;
-
-        return {
-            mode: overrides?.mode ?? envMode ?? this.engineConfig.mode ?? 'prod',
-            parserBackend: overrides?.parserBackend ?? envBackend ?? this.engineConfig.parserBackend ?? 'auto',
-            snapshotDir: overrides?.snapshotDir ?? envSnapshot ?? this.engineConfig.snapshotDir,
-            rootPath: overrides?.rootPath ?? this.engineConfig.rootPath ?? envRoot ?? process.cwd()
-        };
-    }
-
-    private getBackendPriority(): Array<NonNullable<EngineConfig['parserBackend']>> {
-        const mode = this.engineConfig.mode ?? 'prod';
-        const requested = this.engineConfig.parserBackend ?? 'auto';
-
-        if (requested !== 'auto') {
-            return [requested];
-        }
-
-        switch (mode) {
-            case 'test':
-                return ['snapshot', 'wasm', 'js'];
-            case 'ci':
-                return ['wasm', 'js'];
-            case 'prod':
-            default:
-                return ['wasm', 'js'];
-        }
-    }
-
-    private instantiateBackend(kind: string): AstBackend {
-        switch (kind) {
-            case 'wasm':
-                return new WebTreeSitterBackend();
-            case 'js':
-                return new JsAstBackend();
-            case 'snapshot':
-                if (!this.engineConfig.snapshotDir || !this.engineConfig.rootPath) {
-                    throw new Error('Snapshot backend requires snapshotDir and rootPath');
-                }
-                return new SnapshotBackend({
-                    snapshotDir: this.engineConfig.snapshotDir,
-                    rootPath: this.engineConfig.rootPath
-                });
-            default:
-                throw new Error(`Unknown parser backend: ${kind}`);
-        }
-    }
-
-    private async initializeBackend(): Promise<void> {
-        const candidates = this.getBackendPriority();
-        const errors: string[] = [];
-
-        for (const candidate of candidates) {
-            try {
-                const backend = this.instantiateBackend(candidate);
-                await backend.initialize();
-                const previousBackend = this.backend;
-                this.backend = backend;
-                (previousBackend as any)?.dispose?.();
-                this.initialized = true;
-                this.activeBackend = candidate;
-                return;
-            } catch (error: any) {
-                errors.push(`${candidate}: ${error.message}`);
-            }
-        }
-
-        throw new Error(`Failed to initialize AST backend. Attempts: ${errors.join('; ')}`);
-    }
-
-    private resolveLanguageId(filePath: string): string {
-        const mapping = this.getLanguageMapping(filePath);
-        if (mapping?.languageId) {
-            return mapping.languageId;
-        }
-        return "plain_text";
-    }
-
     private getLanguageMapping(filePath: string) {
-        const ext = path.extname(filePath).toLowerCase();
-        return this.languageConfig?.getLanguageMapping(ext) ?? BUILTIN_LANGUAGE_MAPPINGS[ext];
+        return getLanguageMapping(filePath, this.languageConfig);
     }
 
     public async dispose(): Promise<void> {
