@@ -10,6 +10,9 @@ import { metrics } from "../utils/MetricsCollector.js";
 import { SymbolEmbeddingIndex } from '../indexing/SymbolEmbeddingIndex.js';
 import { NativeSearchError, type NativeSearchCoreClient, type NativeSearchStats } from "./search/native/NativeSearchCore.js";
 import { getBuiltinExcludeGlobs, globToRegExp, normalizeRelativePath, shouldInclude } from "./search/SearchGlobs.js";
+import { EngineManager } from "../orchestration/capabilities/EngineManager.js";
+import { CAP_FILE_SCAN } from "../orchestration/capabilities/CapabilityIds.js";
+import type { IFileScanProvider } from "../orchestration/capabilities/FileScan.js";
 import {
     buildKeywordConstraints,
     normalizeSnippetLength,
@@ -21,7 +24,6 @@ import {
     findLineMatches,
     normalizeFileTypes
 } from "./search/SearchUtils.js";
-import { scanForMatches } from "./search/SearchScanner.js";
 
 const DEFAULT_PREVIEW_LENGTH = 240;
 const DEFAULT_MATCHES_PER_FILE = 5;
@@ -416,7 +418,7 @@ export class SearchEngine {
         startedAt: number;
         reason: string;
     }): Promise<FileSearchResult[]> {
-        return scanForMatches({
+        const request = {
             fileSystem: this.fileSystem,
             rootPath: this.rootPath,
             basePath: args.basePath,
@@ -436,7 +438,31 @@ export class SearchEngine {
             reason: args.reason,
             normalizeRelativePath,
             shouldInclude
-        });
+        };
+        const provider = EngineManager.getProvider<IFileScanProvider>(CAP_FILE_SCAN);
+        if (!provider) {
+            return [];
+        }
+        try {
+            return await provider.scanForMatches(request);
+        } catch (error) {
+            metrics.inc("search.scan.provider_error");
+            this.logger.warn("[Search] Scan provider failed; falling back to JS scan.", {
+                error: error instanceof Error ? error.message : String(error)
+            });
+            const fallback = EngineManager.getProvider<IFileScanProvider>(CAP_FILE_SCAN, { preferredTier: "js" });
+            if (fallback && fallback !== provider) {
+                try {
+                    return await fallback.scanForMatches(request);
+                } catch (fallbackError) {
+                    metrics.inc("search.scan.provider_fallback_error");
+                    this.logger.warn("[Search] JS scan fallback failed.", {
+                        error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+                    });
+                }
+            }
+            return [];
+        }
     }
 
     public async searchFilenames(

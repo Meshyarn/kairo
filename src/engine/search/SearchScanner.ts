@@ -1,29 +1,9 @@
 import path from "path";
-import type { FileSearchResult, ResourceBudget, ResourceUsage } from "../../types.js";
-import type { IFileSystem } from "../../platform/FileSystem.js";
+import type { FileSearchResult } from "../../types.js";
 import { computeMatchStats, findLineMatches } from "./SearchUtils.js";
+import type { FileScanRequest } from "../../orchestration/capabilities/FileScan.js";
 
-export const scanForMatches = async (args: {
-  fileSystem: IFileSystem;
-  rootPath: string;
-  basePath?: string;
-  includeRegexes?: RegExp[];
-  excludeRegexes: RegExp[];
-  regexes: RegExp[];
-  keywordRegexes: RegExp[];
-  patternRegexes: RegExp[];
-  keywords: string[];
-  previewLength: number;
-  matchesPerFileLimit: number;
-  maxResults: number;
-  fileTypes?: string[];
-  budget?: ResourceBudget;
-  usage?: ResourceUsage;
-  startedAt: number;
-  reason: string;
-  normalizeRelativePath: (filePath: string, basePath: string) => string | null;
-  shouldInclude: (relativePath: string, includeRegexes?: RegExp[], excludeRegexes?: RegExp[]) => boolean;
-}): Promise<FileSearchResult[]> => {
+export const scanForMatches = async (args: FileScanRequest): Promise<FileSearchResult[]> => {
   if (args.usage) {
     args.usage.degraded = true;
     args.usage.reason = args.usage.reason ?? args.reason;
