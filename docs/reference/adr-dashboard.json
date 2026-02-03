@@ -1,0 +1,908 @@
+{
+  "generatedAt": "2026-02-03T14:27:25.129Z",
+  "totals": {
+    "count": 109,
+    "curatedCount": 105,
+    "archivedOnlyCount": 4,
+    "byStatus": {
+      "Proposed": 37,
+      "unknown": 25,
+      "Accepted (Phases 1–5 implemented as of 2025-12-09)": 1,
+      "Fully Implemented": 1,
+      "Proposed → **Approved**": 1,
+      "✅ **Implemented**": 1,
+      "Accepted": 4,
+      "✅ **Implemented** (2026-01-03)": 2,
+      "✅ **Phase 0-1 Implemented**": 1,
+      "✅ **Phase A3, B2 Implemented**": 1,
+      "✅ **Complete**": 1,
+      "Implemented": 16,
+      "In Progress": 2,
+      "Draft (validated against `0.4.0` implementation)": 1,
+      "Implemented (0.4.0)": 1,
+      "Proposed (program) — baseline partially implemented in `0.4.0`": 1,
+      "Implemented (0.4.3 baseline)": 1,
+      "Implemented (Phase A/B/C)": 6,
+      "Implemented (Phase A/B/C; ops guide ready)": 1,
+      "Implemented (0.4.28 baseline)": 1,
+      "Implemented (0.4.27+ baseline)": 1,
+      "Proposed (design complete; implement in `0.5.x`)": 1,
+      "Proposed (design complete; implement as a single big‑bang migration)": 1,
+      "Implemented (2026-01-22)": 1
+    }
+  },
+  "entries": [
+    {
+      "id": "ADR-001",
+      "title": "ADR-001: Kairo Server Architecture",
+      "status": "Proposed",
+      "date": "2025-12-06",
+      "archiveFile": ".archive/ADR-001-smart-context-architecture.md",
+      "curatedFile": "docs/adr/ADR-001-smart-context-architecture.md"
+    },
+    {
+      "id": "ADR-002",
+      "title": "ADR-002: Smart Engine Refactoring & Tool Separation",
+      "status": "unknown",
+      "date": "unknown",
+      "archiveFile": ".archive/ADR-002-smart-engine-refactoring.md",
+      "curatedFile": "docs/adr/ADR-002-smart-engine-refactoring.md"
+    },
+    {
+      "id": "ADR-003",
+      "title": "ADR-003: Advanced Algorithms Implementation",
+      "status": "unknown",
+      "date": "unknown",
+      "archiveFile": ".archive/ADR-003-advanced-algorithms.md",
+      "curatedFile": "docs/adr/ADR-003-advanced-algorithms.md"
+    },
+    {
+      "id": "ADR-004",
+      "title": "ADR-004: Agent-Driven Refactoring for Enhanced Safety, Accuracy, and Performance",
+      "status": "unknown",
+      "date": "unknown",
+      "archiveFile": ".archive/ADR-004-agent-driven-refactoring.md",
+      "curatedFile": "docs/adr/ADR-004-agent-driven-refactoring.md"
+    },
+    {
+      "id": "ADR-005",
+      "title": "ADR-005: Reliability and Transactional Editing",
+      "status": "unknown",
+      "date": "unknown",
+      "archiveFile": ".archive/ADR-005-Reliability-and-Transactions.md",
+      "curatedFile": "docs/adr/ADR-005-reliability-and-transactions.md"
+    },
+    {
+      "id": "ADR-006",
+      "title": "ADR-006: Intelligent Orchestration Layer (IOL)",
+      "status": "unknown",
+      "date": "unknown",
+      "archiveFile": ".archive/ADR-006-intelligent-orchestration-layer.md",
+      "curatedFile": "docs/adr/ADR-006-intelligent-orchestration-layer.md"
+    },
+    {
+      "id": "ADR-008",
+      "title": "ADR-008 (v2): Final Blueprint for Pragmatic Reliability",
+      "status": "unknown",
+      "date": "unknown",
+      "archiveFile": ".archive/ADR-008-Pragmatic-Reliability-Enhancements.md",
+      "curatedFile": "docs/adr/ADR-008-pragmatic-reliability-enhancements.md"
+    },
+    {
+      "id": "ADR-009",
+      "title": "ADR-009: EditorEngine String Matching & Performance Improvements (Revised)",
+      "status": "Proposed",
+      "date": "2024-12-07",
+      "archiveFile": ".archive/ADR-009-editor-engine-improvements.md",
+      "curatedFile": "docs/adr/ADR-009-persistent-index-layer.md"
+    },
+    {
+      "id": "ADR-009",
+      "title": "ADR-001: EditorEngine String Matching Improvements",
+      "status": "Proposed",
+      "date": "2024-12-06",
+      "archiveFile": ".archive/ADR-009-editor-engine-matching-improvements.md",
+      "curatedFile": "docs/adr/ADR-009-persistent-index-layer.md"
+    },
+    {
+      "id": "ADR-009",
+      "title": "ADR-009: Memory-Bounded Architecture for Large Projects",
+      "status": "unknown",
+      "date": "unknown",
+      "archiveFile": ".archive/ADR-009-memory-bounded-architecture.md",
+      "curatedFile": "docs/adr/ADR-009-persistent-index-layer.md"
+    },
+    {
+      "id": "ADR-009",
+      "title": "ADR-009: Persistent Index Layer for Scalable Monorepo Support",
+      "status": "unknown",
+      "date": "unknown",
+      "archiveFile": ".archive/ADR-009-persistent-index-layer.md",
+      "curatedFile": "docs/adr/ADR-009-persistent-index-layer.md"
+    },
+    {
+      "id": "ADR-010",
+      "title": "ADR-010: Smart Semantic Analysis & Structural Navigation",
+      "status": "unknown",
+      "date": "unknown",
+      "archiveFile": ".archive/ADR-010-smart-semantic-analysis.md",
+      "curatedFile": "docs/adr/ADR-010-smart-semantic-analysis.md"
+    },
+    {
+      "id": "ADR-011",
+      "title": "ADR-011: Robustness, Format Flexibility, and Advanced Analysis (Revised)",
+      "status": "Proposed",
+      "date": "2024-12-07",
+      "archiveFile": ".archive/ADR-011-robustness-and-advanced-analysis.md",
+      "curatedFile": "docs/adr/ADR-011-robustness-and-advanced-analysis.md"
+    },
+    {
+      "id": "ADR-012",
+      "title": "ADR-012: Project Intelligence (Enhanced Static Analysis)",
+      "status": "unknown",
+      "date": "unknown",
+      "archiveFile": ".archive/ADR-012-project-intelligence.md",
+      "curatedFile": "docs/adr/ADR-012-project-intelligence.md"
+    },
+    {
+      "id": "ADR-013",
+      "title": "ADR-013: Serena Feature Analysis & Strategic Enhancement Plan",
+      "status": "Proposed",
+      "date": "2024-12-08",
+      "archiveFile": ".archive/ADR-013-serena-feature-analysis.md",
+      "curatedFile": "docs/adr/ADR-013-serena-feature-analysis.md"
+    },
+    {
+      "id": "ADR-014",
+      "title": "ADR-014: Smart File Profile - Token-Efficient Default File Reading",
+      "status": "Proposed",
+      "date": "2025-12-09",
+      "archiveFile": ".archive/ADR-014-smart-file-profile.md",
+      "curatedFile": "docs/adr/ADR-014-smart-file-profile.md"
+    },
+    {
+      "id": "ADR-015",
+      "title": "ADR-015: Agent Experience and Resilience Enhancements",
+      "status": "Accepted (Phases 1–5 implemented as of 2025-12-09)",
+      "date": "2025-12-09",
+      "archiveFile": ".archive/ADR-015-agent-experience-and-resilience.md",
+      "curatedFile": "docs/adr/ADR-015-agent-experience-and-resilience.md"
+    },
+    {
+      "id": "ADR-016",
+      "title": "ADR-016: Impact Flow Analysis & Call Graph Visualization",
+      "status": "unknown",
+      "date": "unknown",
+      "archiveFile": ".archive/ADR-016-impact-flow-analysis.md",
+      "curatedFile": "docs/adr/ADR-016-impact-flow-analysis.md"
+    },
+    {
+      "id": "ADR-017",
+      "title": "ADR-017 Addendum: Lazy Expansion, Token Control & Caching Refinements",
+      "status": "unknown",
+      "date": "unknown",
+      "archiveFile": ".archive/ADR-017-addendum-refinements.md",
+      "curatedFile": "docs/adr/ADR-017-context-aware-clustered-search.md"
+    },
+    {
+      "id": "ADR-017",
+      "title": "ADR-017: Context-Aware Clustered Search for AI Agents",
+      "status": "unknown",
+      "date": "unknown",
+      "archiveFile": ".archive/ADR-017-context-aware-clustered-search.md",
+      "curatedFile": "docs/adr/ADR-017-context-aware-clustered-search.md"
+    },
+    {
+      "id": "ADR-018",
+      "title": "ADR-018: Context-Aware Clustered Search for AI Agents (Consolidated)",
+      "status": "unknown",
+      "date": "unknown",
+      "archiveFile": ".archive/ADR-018-consolidated-cluster-search.md",
+      "curatedFile": "docs/adr/ADR-018-consolidated-cluster-search.md"
+    },
+    {
+      "id": "ADR-019",
+      "title": "ADR 019: Toolset Consolidation Strategy",
+      "status": "unknown",
+      "date": "unknown",
+      "archiveFile": ".archive/ADR-019-toolset-consolidation-strategy.md",
+      "curatedFile": "docs/adr/ADR-019-toolset-consolidation.md"
+    },
+    {
+      "id": "ADR-019",
+      "title": "ADR 019: Toolset Consolidation Strategy",
+      "status": "unknown",
+      "date": "unknown",
+      "archiveFile": ".archive/ADR-019-toolset-consolidation.md",
+      "curatedFile": "docs/adr/ADR-019-toolset-consolidation.md"
+    },
+    {
+      "id": "ADR-020",
+      "title": "ADR 020: Toolset Consolidation Strategy",
+      "status": "unknown",
+      "date": "unknown",
+      "archiveFile": ".archive/ADR-020-final-toolset-consolidation.md",
+      "curatedFile": "docs/adr/ADR-020-final-toolset-consolidation.md"
+    },
+    {
+      "id": "ADR-021",
+      "title": "ADR 021: Enterprise-Grade Core Enhancements (Architecture & Algorithms)",
+      "status": "unknown",
+      "date": "unknown",
+      "archiveFile": ".archive/ADR-021-Enterprise-Grade-Core-Enhancements.md",
+      "curatedFile": "docs/adr/ADR-021-enterprise-grade-core-enhancements.md"
+    },
+    {
+      "id": "ADR-021",
+      "title": "ADR 021: Enterprise-Grade Core Enhancements",
+      "status": "Proposed",
+      "date": "2024-12-11",
+      "archiveFile": ".archive/ADR-021-enterprise-core-enhancements.md",
+      "curatedFile": "docs/adr/ADR-021-enterprise-grade-core-enhancements.md"
+    },
+    {
+      "id": "ADR-022",
+      "title": "ADR-022: Scalable Memory Architecture (On-Disk, Lazy, Streaming)",
+      "status": "unknown",
+      "date": "unknown",
+      "archiveFile": ".archive/ADR-022-scalable-architecture.md",
+      "curatedFile": "docs/adr/ADR-022-scalable-architecture.md"
+    },
+    {
+      "id": "ADR-023",
+      "title": "ADR-023 Enhanced: Architectural Gap Remediation Strategy",
+      "status": "unknown",
+      "date": "unknown",
+      "archiveFile": ".archive/ADR-023-Enhanced-Architectural-Gap-Remediation.md",
+      "curatedFile": "docs/adr/ADR-023-architectural-gap-remediation.md"
+    },
+    {
+      "id": "ADR-024",
+      "title": "ADR-024: Enhanced Edit Flexibility and Safety",
+      "status": "Proposed",
+      "date": "2025-12-13",
+      "archiveFile": ".archive/ADR-024-enhanced-edit-flexibility-and-safety.md",
+      "curatedFile": "docs/adr/ADR-024-enhanced-edit-flexibility-and-safety.md"
+    },
+    {
+      "id": "ADR-025",
+      "title": "ADR-025: User Experience Enhancements for Edit Flexibility, Search Refinement, and Batch Operation Guidance",
+      "status": "Proposed",
+      "date": "2025-12-13",
+      "archiveFile": ".archive/ADR-025-User-Experience-Enhancements.md",
+      "curatedFile": "docs/adr/ADR-025-user-experience-enhancements.md"
+    },
+    {
+      "id": "ADR-026",
+      "title": "ADR-026: Symbol Resolution Reliability & AI Agent Workflow Guidance",
+      "status": "Proposed",
+      "date": "2025-12-14",
+      "archiveFile": ".archive/ADR-026-Symbol-Resolution-And-Workflow-Guidance.md",
+      "curatedFile": "docs/adr/ADR-026-symbol-resolution-and-workflow-guidance.md"
+    },
+    {
+      "id": "ADR-027",
+      "title": "ADR 027: Fix Indexing Synchronization Issues",
+      "status": "unknown",
+      "date": "unknown",
+      "archiveFile": ".archive/ADR-027-Fix-Indexing-Synchronization.md",
+      "curatedFile": "docs/adr/ADR-027-implementation-details.md"
+    },
+    {
+      "id": "ADR-027",
+      "title": "ADR 027: Implementation Details & Code-Based Design",
+      "status": "unknown",
+      "date": "unknown",
+      "archiveFile": ".archive/ADR-027-Implementation-Details.md",
+      "curatedFile": "docs/adr/ADR-027-implementation-details.md"
+    },
+    {
+      "id": "ADR-028",
+      "title": "ADR-028: Performance and Accuracy Enhancements for Kairo",
+      "status": "Proposed",
+      "date": "2025-12-16",
+      "archiveFile": ".archive/ADR-028-Performance-And-Accuracy-Enhancements.md",
+      "curatedFile": "docs/adr/ADR-028-performance-and-accuracy-enhancements.md"
+    },
+    {
+      "id": "ADR-029",
+      "title": "ADR-029: System Maturity Enhancements for Production Readiness",
+      "status": "Proposed",
+      "date": "2025-12-17",
+      "archiveFile": ".archive/ADR-029-System-Maturity-Enhancements.md",
+      "curatedFile": "docs/adr/ADR-029-system-maturity-enhancements.md"
+    },
+    {
+      "id": "ADR-030",
+      "title": "ADR-030: Agent-Centric Adaptive Intelligence and Resilience",
+      "status": "Fully Implemented",
+      "date": "2025-12-19",
+      "archiveFile": ".archive/ADR-030-Agent-Centric-Intelligence-And-Resilience.md",
+      "curatedFile": "docs/adr/ADR-030-agent-centric-intelligence-and-resilience.md"
+    },
+    {
+      "id": "ADR-031",
+      "title": "ADR-031: Unified Runtime and Testing Data Structure",
+      "status": "Proposed",
+      "date": "2025-12-18",
+      "archiveFile": ".archive/ADR-031-Unified-Data-Structure.md",
+      "curatedFile": "docs/adr/ADR-031-unified-data-structure.md"
+    },
+    {
+      "id": "ADR-032",
+      "title": "ADR-032: Edit Code Reliability and State Synchronization",
+      "status": "Proposed",
+      "date": "2025-12-19",
+      "archiveFile": ".archive/ADR-032-edit-code-reliability-and-state-synchronization.md",
+      "curatedFile": "docs/adr/ADR-032-edit-code-reliability-and-state-synchronization.md"
+    },
+    {
+      "id": "ADR-033",
+      "title": "ADR-033: Intelligent Orchestration Layer - Six Pillars Architecture",
+      "status": "Proposed → **Approved**",
+      "date": "2025-12-19",
+      "archiveFile": ".archive/ADR-033-Six-Pillars-Architecture.md",
+      "curatedFile": "docs/adr/ADR-033-six-pillars-architecture.md"
+    },
+    {
+      "id": "ADR-034",
+      "title": "ADR-034: Adaptive Resource Budgets for Navigate/Understand",
+      "status": "Proposed",
+      "date": "2025-12-25",
+      "archiveFile": ".archive/ADR-034-Adaptive-Resource-Budgets-For-Pillars.md",
+      "curatedFile": "docs/adr/ADR-034-adaptive-resource-budgets-for-pillars.md"
+    },
+    {
+      "id": "ADR-035",
+      "title": "ADR-035: Adaptive Change Execution (Safe‑by‑Default)",
+      "status": "Proposed",
+      "date": "2025-12-25",
+      "archiveFile": ".archive/ADR-035-Adaptive-Change-Execution.md",
+      "curatedFile": "docs/adr/ADR-035-adaptive-change-execution.md"
+    },
+    {
+      "id": "ADR-036",
+      "title": "ADR-036: Universal Document Support (Markdown/MDX-first)",
+      "status": "Proposed",
+      "date": "2025-12-30",
+      "archiveFile": ".archive/ADR-036-universal-document-support.md",
+      "curatedFile": "docs/adr/ADR-036-039-universal-documents-and-evidence.md"
+    },
+    {
+      "id": "ADR-037",
+      "title": "ADR-037: Universal Text + Code Comments + Retrieval Quality + Embedding Ops + Scalable Storage (Docs v2)",
+      "status": "Proposed",
+      "date": "2025-12-31",
+      "archiveFile": ".archive/ADR-037-universal-text-retrieval-ops.md",
+      "curatedFile": null
+    },
+    {
+      "id": "ADR-038",
+      "title": "ADR-038: Token-Efficient Evidence Packs & Progressive Disclosure (Agent Token Budget)",
+      "status": "Proposed",
+      "date": "2025-12-31",
+      "archiveFile": ".archive/ADR-038-token-efficient-evidence-packs.md",
+      "curatedFile": null
+    },
+    {
+      "id": "ADR-039",
+      "title": "ADR-039: Universal Document Implementation Strategy",
+      "status": "unknown",
+      "date": "unknown",
+      "archiveFile": ".archive/ADR-039-universal-document-implementation-strategy.md",
+      "curatedFile": null
+    },
+    {
+      "id": "ADR-040",
+      "title": "ADR-040: Five Pillars Toolset Consolidation (Explore-first)",
+      "status": "Proposed",
+      "date": "2025-12-31",
+      "archiveFile": ".archive/ADR-040-five-pillars-explore-consolidation.md",
+      "curatedFile": "docs/adr/ADR-040-five-pillars-toolset.md"
+    },
+    {
+      "id": "ADR-041",
+      "title": "ADR-041: Integrity Audit Modes (Cross-source Consistency) — Five Pillars 강화",
+      "status": "Proposed",
+      "date": "2025-12-31",
+      "archiveFile": ".archive/ADR-041-integrity-audit-modes.md",
+      "curatedFile": "docs/adr/ADR-041-integrity-audit-and-guardrails.md"
+    },
+    {
+      "id": "ADR-042",
+      "title": "ADR-042-001: P0 Observability + Standalone Baseline (No Network / No Native DB)",
+      "status": "✅ **Implemented**",
+      "date": "2026-01-02",
+      "archiveFile": ".archive/ADR-042-001-p0-observability-and-offline-baseline.md",
+      "curatedFile": "docs/adr/ADR-042-series-production-baseline.md"
+    },
+    {
+      "id": "ADR-042",
+      "title": "ADR-042-002: P1 Hybrid ANN + Search Scaling (Offline-First)",
+      "status": "Accepted",
+      "date": "2026-01-03",
+      "archiveFile": ".archive/ADR-042-002-p1-hybrid-ann-and-search-scaling.md",
+      "curatedFile": "docs/adr/ADR-042-series-production-baseline.md"
+    },
+    {
+      "id": "ADR-042",
+      "title": "ADR-042-003: P2 Vector Quantization + Persistence/IO Scaling (Offline-First)",
+      "status": "✅ **Implemented** (2026-01-03)",
+      "date": "2026-01-02",
+      "archiveFile": ".archive/ADR-042-003-p2-quantization-and-io-scaling.md",
+      "curatedFile": "docs/adr/ADR-042-series-production-baseline.md"
+    },
+    {
+      "id": "ADR-042",
+      "title": "ADR-042-004: PH Change/Write (Batch + Latency)",
+      "status": "✅ **Phase 0-1 Implemented**",
+      "date": "2026-01-05",
+      "archiveFile": ".archive/ADR-042-004-ph-change-write.md",
+      "curatedFile": "docs/adr/ADR-042-series-production-baseline.md"
+    },
+    {
+      "id": "ADR-042",
+      "title": "ADR-042-005: PH Editor Overhaul + Change/Write Completion (No More Follow-ups)",
+      "status": "✅ **Phase A3, B2 Implemented**",
+      "date": "2026-01-05",
+      "archiveFile": ".archive/ADR-042-005-ph-editor-overhaul-and-change-write-completion.md",
+      "curatedFile": "docs/adr/ADR-042-series-production-baseline.md"
+    },
+    {
+      "id": "ADR-042",
+      "title": "ADR-042-006: PH Layer 3 AI-Enhanced Features (Smart Fuzzy Match, AST Impact, Code Generation)",
+      "status": "✅ **Implemented** (2026-01-03)",
+      "date": "2026-01-03",
+      "archiveFile": ".archive/ADR-042-006-ph-layer3-ai-enhanced-features.md",
+      "curatedFile": "docs/adr/ADR-042-series-production-baseline.md"
+    },
+    {
+      "id": "ADR-042",
+      "title": "ADR-042 Series Completion Summary",
+      "status": "✅ **Complete**",
+      "date": "2026-01-03",
+      "archiveFile": ".archive/ADR-042-COMPLETION-SUMMARY.md",
+      "curatedFile": "docs/adr/ADR-042-series-production-baseline.md"
+    },
+    {
+      "id": "ADR-043",
+      "title": "ADR-043: Adaptive Context Architecture (Adaptive Flow)",
+      "status": "unknown",
+      "date": "unknown",
+      "archiveFile": ".archive/ADR-043-adaptive-context-architecture.md",
+      "curatedFile": "docs/adr/ADR-043-adaptive-context-architecture.md"
+    },
+    {
+      "id": "ADR-044",
+      "title": "ADR-044: Universal Language Parity via Tree-Sitter WASM",
+      "status": "Proposed",
+      "date": "2026-01-04",
+      "archiveFile": ".archive/ADR-044-universal-language-parity.md",
+      "curatedFile": "docs/adr/ADR-044-universal-language-parity.md"
+    },
+    {
+      "id": "ADR-045",
+      "title": "ADR-045: Modular Architecture Optimization & Code Consolidation",
+      "status": "unknown",
+      "date": "unknown",
+      "archiveFile": ".archive/ADR-045-modular-architecture-optimization.md",
+      "curatedFile": "docs/adr/ADR-045-modular-architecture.md"
+    },
+    {
+      "id": "ADR-046",
+      "title": "ADR-046: Semantic Validation Layer for Edit Operations",
+      "status": "Proposed",
+      "date": "2026-01-07",
+      "archiveFile": ".archive/ADR-046-semantic-validation-layer.md",
+      "curatedFile": "docs/adr/ADR-046-semantic-validation-layer.md"
+    },
+    {
+      "id": "ADR-047",
+      "title": "ADR-047: Multi-Repo & Multi-Language Expansion",
+      "status": "Implemented",
+      "date": "2026-01-08",
+      "archiveFile": ".archive/ADR-047-multi-repo-multi-lang-expansion.md",
+      "curatedFile": "docs/adr/ADR-047-multi-repo-multi-language.md"
+    },
+    {
+      "id": "ADR-048",
+      "title": "ADR-048: Sync Feedback Loop & Architectural Safety Guardrails",
+      "status": "Implemented",
+      "date": "2026-01-09",
+      "archiveFile": ".archive/ADR-048-sync-feedback-and-architectural-safety.md",
+      "curatedFile": "docs/adr/ADR-048-sync-feedback-and-architectural-safety.md"
+    },
+    {
+      "id": "ADR-049",
+      "title": "ADR-049: Integrity Engine Defensive Hardening",
+      "status": "Proposed",
+      "date": "2026-01-10",
+      "archiveFile": ".archive/ADR-049-integrity-engine-defensive-hardening.md",
+      "curatedFile": "docs/adr/ADR-049-integrity-engine-defensive-hardening.md"
+    },
+    {
+      "id": "ADR-050",
+      "title": "ADR-050: Writer's Flow (Research → Analyze → Skeleton → Write → Review → Manage)",
+      "status": "Accepted",
+      "date": "2026-01-09",
+      "archiveFile": ".archive/ADR-050-writers-flow.md",
+      "curatedFile": "docs/adr/ADR-050-writers-flow.md"
+    },
+    {
+      "id": "ADR-051",
+      "title": "ADR-051: Review Quality + Session UX for Writer’s Flow",
+      "status": "In Progress",
+      "date": "2026-01-09",
+      "archiveFile": ".archive/ADR-051-review-quality-and-session-ux.md",
+      "curatedFile": "docs/adr/ADR-051-review-quality-and-session-ux.md"
+    },
+    {
+      "id": "ADR-052",
+      "title": "ADR-052: Pillar Option Profiles + Session Policy (Option Surface Simplification)",
+      "status": "Accepted",
+      "date": "2026-01-09",
+      "archiveFile": ".archive/ADR-052-pillar-option-profiles-and-session-policy.md",
+      "curatedFile": "docs/adr/ADR-052-pillar-option-profiles-and-session-policy.md"
+    },
+    {
+      "id": "ADR-053",
+      "title": "ADR-053-C: Managed Config Bootstrap (manage init/doctor)",
+      "status": "Proposed",
+      "date": "2026-01-10",
+      "archiveFile": ".archive/ADR-053-C-managed-config-bootstrap.md",
+      "curatedFile": "docs/adr/ADR-053-hybrid-rust-architecture-and-optimization.md"
+    },
+    {
+      "id": "ADR-053",
+      "title": "ADR-053-H: Universal Hybrid Architecture & Multi-Engine Capability Framework",
+      "status": "Proposed",
+      "date": "2026-01-10",
+      "archiveFile": ".archive/ADR-053-H-universal-hybrid-architecture.md",
+      "curatedFile": "docs/adr/ADR-053-hybrid-rust-architecture-and-optimization.md"
+    },
+    {
+      "id": "ADR-053",
+      "title": "ADR-053-L: Language Support Levels (L2/L3) & Target Matrix",
+      "status": "Proposed",
+      "date": "2026-01-10",
+      "archiveFile": ".archive/ADR-053-L-language-support-levels.md",
+      "curatedFile": "docs/adr/ADR-053-hybrid-rust-architecture-and-optimization.md"
+    },
+    {
+      "id": "ADR-053",
+      "title": "ADR-053: Hybrid Architecture with Rust Core & Tokenizer Optimization",
+      "status": "Proposed",
+      "date": "2026-01-10",
+      "archiveFile": ".archive/ADR-053-hybrid-rust-architecture-and-optimization.md",
+      "curatedFile": "docs/adr/ADR-053-hybrid-rust-architecture-and-optimization.md"
+    },
+    {
+      "id": "ADR-054",
+      "title": "ADR-054-H: Contract Hardening & Bootstrap Alignment (NAPI: Rust ↔ TS/JS)",
+      "status": "Proposed",
+      "date": "2026-01-10",
+      "archiveFile": ".archive/ADR-054-H-contract-hardening-and-bootstrap.md",
+      "curatedFile": "docs/adr/ADR-054-cross-language-contract-awareness.md"
+    },
+    {
+      "id": "ADR-054",
+      "title": "ADR-054: Cross-Language Contract Awareness (Boundary Adapter Framework + NAPI First)",
+      "status": "Proposed",
+      "date": "2026-01-10",
+      "archiveFile": ".archive/ADR-054-cross-language-contract-awareness.md",
+      "curatedFile": "docs/adr/ADR-054-cross-language-contract-awareness.md"
+    },
+    {
+      "id": "ADR-055",
+      "title": "ADR-055-H: Adaptive Trust Policy (Read-Permissive, Preview-Strict, Write-Safe)",
+      "status": "Draft (validated against `0.4.0` implementation)",
+      "date": "2026-01-11",
+      "archiveFile": ".archive/ADR-055-H-adaptive-trust-policy.md",
+      "curatedFile": "docs/adr/ADR-055-universal-parity-and-standardization.md"
+    },
+    {
+      "id": "ADR-055",
+      "title": "ADR-055-L: Action Guidance Surfacing + Understand L3→L2 Fallback Graph",
+      "status": "Implemented (0.4.0)",
+      "date": "2026-01-11",
+      "archiveFile": ".archive/ADR-055-L-action-guidance-and-understand-fallback.md",
+      "curatedFile": "docs/adr/ADR-055-universal-parity-and-standardization.md"
+    },
+    {
+      "id": "ADR-055",
+      "title": "ADR-055: Universal Parity & Standardization Program",
+      "status": "Proposed (program) — baseline partially implemented in `0.4.0`",
+      "date": "2026-01-10",
+      "archiveFile": ".archive/ADR-055-universal-parity-and-standardization.md",
+      "curatedFile": "docs/adr/ADR-055-universal-parity-and-standardization.md"
+    },
+    {
+      "id": "ADR-056",
+      "title": "ADR-056: Token-Aware Dynamic Context Compression",
+      "status": "Implemented (0.4.3 baseline)",
+      "date": "2026-01-11",
+      "archiveFile": ".archive/ADR-056-token-aware-dynamic-context-compression.md",
+      "curatedFile": "docs/adr/ADR-056-token-aware-dynamic-context-compression.md"
+    },
+    {
+      "id": "ADR-057",
+      "title": "ADR-057: Unified `degradedReasons` & Action Guidance v1",
+      "status": "Implemented",
+      "date": "2026-01-12",
+      "archiveFile": ".archive/ADR-057-unified-degraded-reasons-and-action-guidance-v1.md",
+      "curatedFile": "docs/adr/ADR-057-unified-degraded-reasons-and-action-guidance-v1.md"
+    },
+    {
+      "id": "ADR-058",
+      "title": "ADR-058: Tool Schema Contract & Compatibility Layer",
+      "status": "Implemented",
+      "date": "2026-01-12",
+      "archiveFile": ".archive/ADR-058-tool-schema-contract-and-compatibility-layer.md",
+      "curatedFile": "docs/adr/ADR-058-tool-schema-contract-and-compatibility-layer.md"
+    },
+    {
+      "id": "ADR-059",
+      "title": "ADR-059: EvidencePack/Summaries Lifecycle (prune/compact)",
+      "status": "Implemented",
+      "date": "2026-01-12",
+      "archiveFile": ".archive/ADR-059-evidence-pack-and-summaries-lifecycle-prune-compact.md",
+      "curatedFile": "docs/adr/ADR-059-evidence-pack-and-summaries-lifecycle-prune-compact.md"
+    },
+    {
+      "id": "ADR-060",
+      "title": "ADR-060: Document Tool Parity (PDF/XLSX 포함)",
+      "status": "Implemented",
+      "date": "2026-01-13",
+      "archiveFile": ".archive/ADR-060-document-tool-parity-pdf-xlsx.md",
+      "curatedFile": "docs/adr/ADR-060-document-tool-parity-pdf-xlsx.md"
+    },
+    {
+      "id": "ADR-061",
+      "title": "ADR-061: Language Parity Gates (L2/L3) & Silent-pass 제거",
+      "status": "Implemented",
+      "date": "2026-01-13",
+      "archiveFile": ".archive/ADR-061-language-parity-gates-and-silent-pass-removal.md",
+      "curatedFile": "docs/adr/ADR-061-language-parity-gates-and-silent-pass-removal.md"
+    },
+    {
+      "id": "ADR-062",
+      "title": "ADR-062: Multi-Repo E2E UX & Safety Boundaries",
+      "status": "Implemented",
+      "date": "2026-01-13",
+      "archiveFile": ".archive/ADR-062-multi-repo-e2e-ux-and-safety-boundaries.md",
+      "curatedFile": "docs/adr/ADR-062-multi-repo-e2e-ux-and-safety-boundaries.md"
+    },
+    {
+      "id": "ADR-063",
+      "title": "ADR-063: Capability Diagnostics & Provider Policy Integration",
+      "status": "Implemented",
+      "date": "2026-01-13",
+      "archiveFile": ".archive/ADR-063-capability-diagnostics-and-provider-policy-integration.md",
+      "curatedFile": "docs/adr/ADR-063-capability-diagnostics-and-provider-policy-integration.md"
+    },
+    {
+      "id": "ADR-064",
+      "title": "ADR-064: FileVersion Handshake (read↔apply)",
+      "status": "Implemented",
+      "date": "2026-01-13",
+      "archiveFile": ".archive/ADR-064-fileversion-handshake-read-apply.md",
+      "curatedFile": "docs/adr/ADR-064-fileversion-handshake-read-apply.md"
+    },
+    {
+      "id": "ADR-065",
+      "title": "ADR-065: Change Execution Contract (atomic apply, partial opt-in, delete policy)",
+      "status": "Implemented (Phase A/B/C)",
+      "date": "2026-01-13",
+      "archiveFile": ".archive/ADR-065-change-execution-contract-atomic-apply-partial-opt-in-delete-policy.md",
+      "curatedFile": "docs/adr/ADR-065-change-execution-contract-atomic-apply-partial-opt-in-delete-policy.md"
+    },
+    {
+      "id": "ADR-066",
+      "title": "ADR-066: Guardrails Override & Audit Trail",
+      "status": "Implemented (Phase A/B/C)",
+      "date": "2026-01-14",
+      "archiveFile": ".archive/ADR-066-guardrails-override-and-audit-trail.md",
+      "curatedFile": "docs/adr/ADR-066-guardrails-override-and-audit-trail.md"
+    },
+    {
+      "id": "ADR-067",
+      "title": "ADR-067: Observability Baseline (bench accuracy + minimal metrics + optional OTel)",
+      "status": "Implemented (Phase A/B/C)",
+      "date": "2026-01-14",
+      "archiveFile": ".archive/ADR-067-observability-baseline-bench-accuracy-min-metrics-otel.md",
+      "curatedFile": "docs/adr/ADR-067-observability-baseline-bench-accuracy-min-metrics-otel.md"
+    },
+    {
+      "id": "ADR-068",
+      "title": "ADR-068: Index Freshness & Cache Invalidation Program",
+      "status": "Implemented (Phase A/B/C)",
+      "date": "2026-01-14",
+      "archiveFile": ".archive/ADR-068-index-freshness-cache-invalidation-program.md",
+      "curatedFile": "docs/adr/ADR-068-index-freshness-cache-invalidation-program.md"
+    },
+    {
+      "id": "ADR-069",
+      "title": "ADR-069: Search/Index Scalability without SQLite (baseline async, secondary index)",
+      "status": "Implemented (Phase A/B/C)",
+      "date": "2026-01-14",
+      "archiveFile": ".archive/ADR-069-search-index-scalability-without-sqlite.md",
+      "curatedFile": "docs/adr/ADR-069-search-index-scalability-without-sqlite.md"
+    },
+    {
+      "id": "ADR-070",
+      "title": "ADR-070: Offline Baseline Policy (remote embeddings, model packaging)",
+      "status": "Implemented (Phase A/B/C)",
+      "date": "2026-01-14",
+      "archiveFile": ".archive/ADR-070-offline-baseline-policy-remote-embeddings-model-packaging.md",
+      "curatedFile": "docs/adr/ADR-070-offline-baseline-policy-remote-embeddings-model-packaging.md"
+    },
+    {
+      "id": "ADR-071",
+      "title": "ADR-071: IFileSystem Boundary Expansion & Testability Program",
+      "status": "Implemented",
+      "date": "2026-01-14",
+      "archiveFile": ".archive/ADR-071-ifilesystem-boundary-expansion-and-testability-program.md",
+      "curatedFile": "docs/adr/ADR-071-ifilesystem-boundary-expansion-and-testability-program.md"
+    },
+    {
+      "id": "ADR-072",
+      "title": "ADR-072: Pillar Decomposition & Module Boundary Hardening",
+      "status": "Implemented",
+      "date": "2026-01-14",
+      "archiveFile": ".archive/ADR-072-pillar-decomposition-and-module-boundary-hardening.md",
+      "curatedFile": "docs/adr/ADR-072-pillar-decomposition-and-module-boundary-hardening.md"
+    },
+    {
+      "id": "ADR-073",
+      "title": "ADR-073: Option Trace Standardization (decisionTrace/effectiveOptions)",
+      "status": "Implemented",
+      "date": "2026-01-14",
+      "archiveFile": ".archive/ADR-073-option-trace-standardization-decisiontrace-effectiveoptions.md",
+      "curatedFile": "docs/adr/ADR-073-option-trace-standardization-decisiontrace-effectiveoptions.md"
+    },
+    {
+      "id": "ADR-074",
+      "title": "ADR-074: Token Budget Allocator v2 (cross-pillar) + summary reuse",
+      "status": "Implemented",
+      "date": "2026-01-15",
+      "archiveFile": ".archive/ADR-074-token-budget-allocator-v2-cross-pillar-summary-reuse.md",
+      "curatedFile": "docs/adr/ADR-074-token-budget-allocator-v2-cross-pillar-summary-reuse.md"
+    },
+    {
+      "id": "ADR-075",
+      "title": "ADR-075: Adaptive Flow Rollout Plan (UCG/LOD profile-based enable)",
+      "status": "Implemented (Phase A/B/C; ops guide ready)",
+      "date": "2026-01-15",
+      "archiveFile": ".archive/ADR-075-adaptive-flow-rollout-plan-ucg-lod-profile-based-enable.md",
+      "curatedFile": "docs/adr/ADR-075-adaptive-flow-rollout-plan-ucg-lod-profile-based-enable.md"
+    },
+    {
+      "id": "ADR-076",
+      "title": "ADR-076: Symbol Semantic Search E2E (integrate or deprecate)",
+      "status": "Implemented",
+      "date": "2026-01-16",
+      "archiveFile": ".archive/ADR-076-symbol-semantic-search-e2e-integrate-or-deprecate.md",
+      "curatedFile": "docs/adr/ADR-076-symbol-semantic-search-e2e-integrate-or-deprecate.md"
+    },
+    {
+      "id": "ADR-077",
+      "title": "ADR-077-H: Mixed-workflow Resilience Deferred Implementation Plan",
+      "status": "Proposed",
+      "date": "2026-01-16",
+      "archiveFile": ".archive/ADR-077-H-mixed-workflow-resilience-deferred-implementation.md",
+      "curatedFile": "docs/adr/ADR-077-mixed-workflow-resilience.md"
+    },
+    {
+      "id": "ADR-077",
+      "title": "ADR-077: Mixed-workflow Resilience (Interop/Drift/Reconcile + Checkpoints + Integrity UX)",
+      "status": "In Progress",
+      "date": "2026-01-16",
+      "archiveFile": ".archive/ADR-077-mixed-workflow-resilience.md",
+      "curatedFile": "docs/adr/ADR-077-mixed-workflow-resilience.md"
+    },
+    {
+      "id": "ADR-078",
+      "title": "ADR-078: Cost Stabilization & Adaptive LOD (Lean-first)",
+      "status": "Proposed",
+      "date": "2026-01-16",
+      "archiveFile": ".archive/ADR-078-cost-stabilization-and-adaptive-lod.md",
+      "curatedFile": "docs/adr/ADR-078-cost-stabilization-and-adaptive-lod.md"
+    },
+    {
+      "id": "ADR-079",
+      "title": "ADR-079: Workflow UX & Style Reliability v2 (Sessions/Artifacts + change(plan) coaching + StylePack grounded)",
+      "status": "Proposed",
+      "date": "2026-01-16",
+      "archiveFile": ".archive/ADR-079-workflow-ux-and-style-reliability-v2.md",
+      "curatedFile": "docs/adr/ADR-079-workflow-ux-and-style-reliability-v2.md"
+    },
+    {
+      "id": "ADR-080",
+      "title": "ADR-080: Explore/Understand Response Envelope Token Budget (final output JSON 기준)",
+      "status": "Accepted",
+      "date": "2026-01-18",
+      "archiveFile": ".archive/ADR-080-response-envelope-token-budget-explore-understand.md",
+      "curatedFile": "docs/adr/ADR-080-response-envelope-token-budget-explore-understand.md"
+    },
+    {
+      "id": "ADR-081",
+      "title": "ADR-081: GraphRAG Hybrid Retrieval (Vector Seeds + Graph Expansion)",
+      "status": "Proposed",
+      "date": "2026-01-18",
+      "archiveFile": ".archive/ADR-081-graphrag-hybrid-cluster-retrieval.md",
+      "curatedFile": "docs/adr/ADR-081-graphrag-hybrid-cluster-retrieval.md"
+    },
+    {
+      "id": "ADR-082",
+      "title": "ADR-082: Simulate → Reason → Execute (Best-of-N / MCTS) for Change Reliability",
+      "status": "Implemented (0.4.28 baseline)",
+      "date": "2026-01-19",
+      "archiveFile": ".archive/ADR-082-simulate-reason-execute-mcts.md",
+      "curatedFile": "docs/adr/ADR-082-simulate-reason-execute-mcts.md"
+    },
+    {
+      "id": "ADR-083",
+      "title": "ADR-083: Language-Agnostic Symbolic Guards (Portable Semantic Checks + Optional Solver)",
+      "status": "Implemented (0.4.27+ baseline)",
+      "date": "2026-01-18",
+      "archiveFile": ".archive/ADR-083-language-agnostic-symbolic-guards.md",
+      "curatedFile": "docs/adr/ADR-083-language-agnostic-symbolic-guards.md"
+    },
+    {
+      "id": "ADR-084",
+      "title": "ADR-084: MCP Autopilot & Preset Layer (Promptless/Agent-Agnostic Adoption)",
+      "status": "Proposed (design complete; implement in `0.5.x`)",
+      "date": "2026-01-20",
+      "archiveFile": ".archive/ADR-084-mcp-autopilot-and-preset-layer.md",
+      "curatedFile": "docs/adr/ADR-084-mcp-autopilot-and-preset-layer.md"
+    },
+    {
+      "id": "ADR-085",
+      "title": "ADR-085: Rust Native Search Core (Tantivy Integration)",
+      "status": "Proposed (design complete; implement as a single big‑bang migration)",
+      "date": "2026-01-21",
+      "archiveFile": ".archive/ADR-085-rust-native-search-core-tantivy.md",
+      "curatedFile": "docs/adr/ADR-085-rust-native-search-core-tantivy.md"
+    },
+    {
+      "id": "ADR-086",
+      "title": "ADR-086: Expand `task` to Support Change/Write/Verify in `publicSurface=compact`",
+      "status": "Implemented (2026-01-22)",
+      "date": "2026-01-22",
+      "archiveFile": ".archive/ADR-086-task-compact-change-write-verify.md",
+      "curatedFile": "docs/adr/ADR-086-task-compact-change-write-verify.md"
+    },
+    {
+      "id": "ADR-087",
+      "title": "ADR-087: Make `task` Production-Grade via Intelligent Orchestration (Adaptive LOD + Budget-Aware Multi-Pillar Use)",
+      "status": "Implemented",
+      "date": "2026-01-23",
+      "archiveFile": ".archive/ADR-087-task-adaptive-lod-and-evidence-pack.md",
+      "curatedFile": "docs/adr/ADR-087-task-adaptive-lod-and-evidence-pack.md"
+    },
+    {
+      "id": "ADR-088",
+      "title": "ADR-088: Agent Trust E2E Verification & Optimization Program (MCP stdio)",
+      "status": "Proposed",
+      "date": "2026-01-23",
+      "archiveFile": ".archive/ADR-088-agent-trust-e2e-verification-and-optimization-program.md",
+      "curatedFile": "docs/adr/ADR-088-agent-trust-e2e-verification-and-optimization-program.md"
+    },
+    {
+      "id": "ADR-089",
+      "title": "ADR-089: Raw Content Sources for `write`/`change` (No More Quote/Escape Breakage)",
+      "status": "Proposed",
+      "date": "2026-01-24",
+      "archiveFile": ".archive/ADR-089-raw-content-sources-for-change-write.md",
+      "curatedFile": "docs/adr/ADR-089-raw-content-sources-for-change-write.md"
+    },
+    {
+      "id": "ADR-090",
+      "title": "ADR-090: 8-Step Roadmap (Adoption/UX/Docs Quality → Reliability)",
+      "status": "Proposed",
+      "date": "2026-02-03",
+      "archiveFile": ".archive/ADR-090-8-step-roadmap-ux-doc-quality.md",
+      "curatedFile": null
+    }
+  ]
+}

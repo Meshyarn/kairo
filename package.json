@@ -56,6 +56,8 @@
     "validate:languages": "node --import tsx scripts/validate-language-support.ts",
     "validate:parity": "node --import tsx scripts/validate-parity.ts",
     "validate:docs": "node scripts/validate-docs.mjs",
+    "generate:adr-dashboard": "node scripts/generate-adr-dashboard.mjs",
+    "validate:adr-dashboard": "node scripts/generate-adr-dashboard.mjs --check",
     "validate:fs": "node --import tsx scripts/validate-fs-boundary.ts --mode=strict --phase=A",
     "validate:fs:b": "node --import tsx scripts/validate-fs-boundary.ts --mode=strict --phase=B",
     "validate:fs:c": "node --import tsx scripts/validate-fs-boundary.ts --mode=strict --phase=C",
