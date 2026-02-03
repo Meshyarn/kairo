@@ -11,7 +11,7 @@ GraphRAG aims to “pick strong seeds (lexical/semantic), expand within budget u
 ## What shipped
 - **Seed policy (dynamic selection) + fallback:**
   - choose `path_first` / `symbol_semantic` / `doc_first` / `lexical_default` based on path/symbol/document hints
-  - if semantic seeding is unavailable (or `doc_first` is not implemented), degrade to `lexical_default` (`graphrag_policy_degraded`)
+  - if semantic seeding is unavailable (or `doc_first` has no eligible doc seeds), degrade to `lexical_default` (`graphrag_policy_degraded`)
 - **DependencyGraph relationships:** include import/export relationships as `dependency` relationships (`imports-from` / `exports-to`).
 - **Cluster summary response (first-class context):**
   - return `clusters: ClusterSummary[]` when `include.clusters=true` in `explore`/`understand`/`navigate`

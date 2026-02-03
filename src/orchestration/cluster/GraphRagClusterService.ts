@@ -120,8 +120,13 @@ export class GraphRagClusterService {
                 policyUsed = "lexical_default";
             }
         } else if (selectedPolicy === "doc_first") {
-            degradedReasons.push("graphrag_policy_degraded");
-            policyUsed = "lexical_default";
+            const docSeeds = await this.buildDocSeeds(query, config, degradedReasons);
+            if (docSeeds.seeds.length > 0) {
+                response = await clusterSearchEngine.searchWithSeeds(docSeeds.seeds, clusterOptions);
+            } else {
+                degradedReasons.push("graphrag_policy_degraded");
+                policyUsed = "lexical_default";
+            }
         }
 
         if (!response) {
@@ -208,6 +213,96 @@ export class GraphRagClusterService {
         }
         const status = symbolEmbeddingIndex.getStatus();
         return Boolean(status.enabled);
+    }
+
+    private resolveDocSeedLimits(config: ReturnType<GraphRagClusterService["resolveConfig"]>) {
+        const defaults = { maxDocs: 3, maxMentions: 10, maxSeeds: 20 };
+        const docPolicy = config?.seedPolicy?.policies?.doc_first;
+        if (!docPolicy?.limits) return defaults;
+        return {
+            maxDocs: Number.isFinite(docPolicy.limits.maxDocs) ? docPolicy.limits.maxDocs : defaults.maxDocs,
+            maxMentions: Number.isFinite(docPolicy.limits.maxMentions) ? docPolicy.limits.maxMentions : defaults.maxMentions,
+            maxSeeds: Number.isFinite(docPolicy.limits.maxSeeds) ? docPolicy.limits.maxSeeds : defaults.maxSeeds
+        };
+    }
+
+    private async buildDocSeeds(
+        query: string,
+        config: ReturnType<GraphRagClusterService["resolveConfig"]>,
+        degradedReasons: string[]
+    ): Promise<{ seeds: ClusterSeed[] }> {
+        const limits = this.resolveDocSeedLimits(config);
+        if (!this.registry.hasTool("document_search") || !this.registry.hasTool("document_analyze")) {
+            degradedReasons.push("doc_search_skipped");
+            return { seeds: [] };
+        }
+        let docSearch: any;
+        try {
+            docSearch = await this.registry.execute("document_search", {
+                query,
+                scope: "docs",
+                maxResults: Math.max(1, limits.maxDocs)
+            });
+        } catch {
+            degradedReasons.push("doc_search_skipped");
+            return { seeds: [] };
+        }
+        const docResults = Array.isArray(docSearch?.results) ? docSearch.results : [];
+        const docFiles = Array.from(new Set(docResults.map((item: any) => item?.filePath).filter(Boolean)))
+            .slice(0, Math.max(1, limits.maxDocs));
+        if (docFiles.length === 0) {
+            degradedReasons.push("doc_search_skipped");
+            return { seeds: [] };
+        }
+
+        metrics.observe("graphrag.doc_first.docs_used", docFiles.length, "detailed");
+
+        const symbolIndex = this.registry.getMetadata<SymbolIndex>("symbolIndex");
+        if (!symbolIndex) {
+            degradedReasons.push("symbol_index_unavailable");
+            return { seeds: [] };
+        }
+
+        const mentions: string[] = [];
+        for (const filePath of docFiles) {
+            try {
+                const analysis = await this.registry.execute("document_analyze", { filePath });
+                const found = Array.isArray(analysis?.profile?.mentions) ? analysis.profile.mentions : [];
+                for (const mention of found) {
+                    if (mention?.kind !== "symbol") continue;
+                    if (!mention?.text) continue;
+                    mentions.push(String(mention.text));
+                    if (mentions.length >= limits.maxMentions) break;
+                }
+            } catch {
+                // best-effort
+            }
+            if (mentions.length >= limits.maxMentions) break;
+        }
+        if (mentions.length === 0) {
+            degradedReasons.push("graphrag_policy_degraded");
+            return { seeds: [] };
+        }
+
+        const seeds: ClusterSeed[] = [];
+        for (const mention of mentions) {
+            const hits = await symbolIndex.search(mention);
+            for (const hit of hits.slice(0, 3)) {
+                seeds.push({
+                    filePath: hit.filePath,
+                    symbol: hit.symbol,
+                    matchType: "contains",
+                    matchScore: 0.5,
+                    source: "doc"
+                });
+                if (seeds.length >= limits.maxSeeds) break;
+            }
+            if (seeds.length >= limits.maxSeeds) break;
+        }
+
+        metrics.observe("graphrag.doc_first.seeds_used", seeds.length, "detailed");
+
+        return { seeds };
     }
 
     private async buildSemanticSeeds(
