@@ -71,6 +71,7 @@ export const filterTaskArgs = (args: Record<string, unknown>): Record<string, un
         "paths",
         "targetFiles",
         "targetPath",
+        "verifyExec",
         "safety",
         "output",
         "trace"

@@ -55,6 +55,32 @@ Kairo의 쓰기 안전성은 plan → apply 핸드셰이크와 drift 인지 차�
 |---|---|---|
 | `KAIRO_CONTENT_SOURCE_MAX_BYTES` | `contentSource.kind="file"` 읽기 최대 바이트. | 기본 `1048576`(1MB). |
 
+## Verify exec (opt-in)
+
+`task(mode="verify")`에서 allowlist된 검증 명령을 실행합니다.
+
+| 변수 | 용도 | 비고 |
+|---|---|---|
+| `KAIRO_VERIFY_EXEC_ENABLED` | verify exec 전역 게이트. | 기본 `false`. config allowlist 필요. |
+
+설정 파일(기본 비활성):
+
+```json
+{
+  "version": 1,
+  "enabled": false,
+  "allowedCommands": [
+    { "id": "js:test", "cmd": "npm", "args": ["test"], "timeoutMs": 600000 }
+  ]
+}
+```
+
+`.kairo/config/verify-exec.json`에 저장하고, `task` 호출 시:
+
+```json
+{ "request": "Verify changes", "mode": "verify", "verifyExec": { "enabled": true, "ids": ["js:test"] } }
+```
+
 사용 흐름:
 
 - [안전한 쓰기(개념)](/ko/concepts/safe-writes)
