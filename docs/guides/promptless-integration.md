@@ -67,6 +67,20 @@ Entries are written to `.kairo/logs/beta.ndjson` by default.
 
 ## Host config templates
 
+### Generate host snippets (recommended)
+
+You can generate host-agnostic and host-specific MCP snippets with `manage init`:
+
+```json
+{
+  "command": "init",
+  "mode": "plan",
+  "targets": ["host_snippets", "host_codex", "host_claude_cli", "host_gemini_cli"]
+}
+```
+
+Generated files live under `.kairo/config/hosts/`. Copy the `server` block into your host config and replace the `/ABS/PATH/...` placeholders.
+
 ### Generic stdio block
 
 Most MCP hosts accept the same core fields even if the surrounding JSON differs:

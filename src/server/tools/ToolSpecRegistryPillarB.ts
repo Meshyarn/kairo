@@ -186,7 +186,7 @@ export const ToolSpecRegistryPillarB: ToolSpec[] = [
           },
           allowExternal: { type: "boolean" },
           mode: { type: "string", enum: ["plan", "apply"] },
-          targets: { type: "array", items: { type: "string", enum: ["kairo", "vscode"] } },
+          targets: { type: "array", items: { type: "string", enum: ["kairo", "vscode", "host_snippets", "host_codex", "host_claude_cli", "host_gemini_cli"] } },
           root: { type: "string" },
           multiRepo: { type: "string", enum: ["auto", "single", "detect"] },
           presets: { type: "string", enum: ["minimal", "recommended"] },

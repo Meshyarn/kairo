@@ -7,6 +7,7 @@ import {
     buildMcpConfigPlan,
     buildLanguagesConfigPlan,
     buildGraphRagConfigPlan,
+    buildHostSnippetPlan,
     buildMcpPolicyConfig,
     buildVscodePlan,
     buildMissingPatch,
@@ -328,6 +329,27 @@ export class ConfigBootstrapper {
             if (vscodePlan) {
                 plan.push(vscodePlan);
             }
+        }
+
+        const hostPreset = resolvePreset(args);
+        const hostTargets = targets.filter((target) =>
+            target === "host_snippets"
+            || target === "host_codex"
+            || target === "host_claude_cli"
+            || target === "host_gemini_cli"
+        );
+        for (const target of hostTargets) {
+            const hostPlan = buildHostSnippetPlan({
+                configDir,
+                preset: hostPreset,
+                target
+            });
+            if (hostPlan) {
+                plan.push(hostPlan);
+            }
+        }
+        if (hostTargets.length > 0) {
+            hints.push(`Host MCP snippets will be generated under ${path.join(configDir, "hosts")}. Copy the server block into your host config and replace /ABS/PATH placeholders.`);
         }
 
         const scoped = applyScope(
