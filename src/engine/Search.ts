@@ -195,7 +195,7 @@ export class SearchEngine {
     }
 
     public escapeRegExp(value: string, options: SearchOptions = {}): string {
-        const escaped = value.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&");
+        const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         return options.wordBoundary ? `\\b${escaped}\\b` : escaped;
     }
 
