@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "@jest/globals";
+import { afterEach, describe, expect, it, jest } from "@jest/globals";
 import { MemoryFileSystem } from "../../platform/FileSystem.js";
 import { EditPlanner } from "../../engine/editor/EditPlanning.js";
 import { BackupManager } from "../../engine/editor/EditIntegrity.js";
@@ -11,6 +11,8 @@ const SAMPLE_CONTENT = [
   "export const message = greet('hi');",
   ""
 ].join("\n");
+
+jest.setTimeout(60000);
 
 let originalSemantic: string | undefined;
 

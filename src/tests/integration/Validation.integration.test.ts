@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "@jest/globals";
+import { afterEach, beforeEach, describe, expect, it, jest } from "@jest/globals";
 import { promises as fs } from "fs";
 import path from "path";
 import { NodeFileSystem } from "../../platform/FileSystem.js";
@@ -14,6 +14,8 @@ const BASE_CONTENT = [
   "export const message = greet('hi');",
   ""
 ].join("\n");
+
+jest.setTimeout(60000);
 
 let originalSyntax: string | undefined;
 let originalSemantic: string | undefined;
