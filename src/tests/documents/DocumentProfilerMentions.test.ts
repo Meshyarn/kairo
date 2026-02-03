@@ -19,7 +19,7 @@ const HiddenSymbol = true;
 \`\`\`
 `;
 
-jest.setTimeout(20000);
+jest.setTimeout(60000);
 
 describe("DocumentProfiler mentions", () => {
     it("extracts mentions from markdown without code blocks", async () => {

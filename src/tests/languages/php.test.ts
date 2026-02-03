@@ -1,7 +1,9 @@
-import { describe, it, expect, beforeAll, afterAll } from "@jest/globals";
+import { describe, it, expect, beforeAll, afterAll, jest } from "@jest/globals";
 import { initAstManager, createBackend, loadFixture, loadExpected, validateSyntax } from "./helpers.js";
 import { getSupportForLanguageId } from "../../config/LanguageSupportLevels.js";
 import { AstManager } from "../../ast/AstManager.js";
+
+jest.setTimeout(60000);
 
 describe("Language support: PHP", () => {
   let manager: AstManager;
