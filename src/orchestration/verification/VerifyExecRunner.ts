@@ -18,11 +18,11 @@ const DEFAULT_TIMEOUT_MS = 300_000;
 
 const resolveCwd = (rootPath: string, cwd?: string): string => {
     if (!cwd) return rootPath;
-    const resolved = path.resolve(rootPath, cwd);
-    if (resolved.startsWith(rootPath)) {
-        return resolved;
-    }
-    return rootPath;
+    const root = path.resolve(rootPath);
+    const resolved = path.resolve(root, cwd);
+    const relative = path.relative(root, resolved);
+    const isInside = relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+    return isInside ? resolved : root;
 };
 
 export const runVerifyExec = async (args: {

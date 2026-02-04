@@ -127,8 +127,9 @@ export class RustFileScanProvider implements CapabilityProvider<IFileScanProvide
                     : (typeof result.path === "string" ? result.path : "");
                 const relative = pathValue ? args.normalizeRelativePath(pathValue, basePath) : null;
                 if (!pathValue) return null;
+                if (!relative) return null;
                 return {
-                    filePath: relative ?? pathValue,
+                    filePath: relative,
                     lineNumber: result.lineNumber ?? 1,
                     preview: result.preview ?? "",
                     score: result.score,
