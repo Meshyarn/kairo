@@ -35,45 +35,62 @@ const walk = (dir, files = []) => {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
+      if (entry.name === "node_modules") {
+        continue;
+      }
       walk(fullPath, files);
       continue;
     }
-    if (entry.isFile() && entry.name.endsWith(".md")) {
+    if (entry.isFile()) {
       files.push(fullPath);
     }
   }
   return files;
 };
 
-const docFiles = walk(docsRoot);
+const docFiles = walk(docsRoot).filter((filePath) => filePath.endsWith(".md"));
 const scriptRegex = /npm run ([A-Za-z0-9:_-]+)/g;
-const manageRegex = /manage\\s*\\(\\s*\\{[\\s\\S]*?command\\s*:\\s*["']([^"'\\s]+)["']/g;
+const manageRegex = /manage\s*\(\s*\{[\s\S]*?command\s*:\s*["']([^"'\s]+)["']/g;
 const envRegex = /KAIRO_[A-Z0-9_]+/g;
-const codeBlockRegex = /```[a-zA-Z0-9_-]*\\n([\\s\\S]*?)```/g;
-const requestRegex = /\\brequest\\b\\s*[:=]/;
-const modeRegex = /\\bmode\\b\\s*[:=]\\s*["']([^"'\\s]+)["']/g;
-const budgetRegex = /\\bbudget\\b\\s*[:=]\\s*["']([^"'\\s]+)["']/g;
+const codeBlockRegex = /```[a-zA-Z0-9_-]*\n([\s\S]*?)```/g;
+const requestRegex = /\brequest\b\s*[:=]/;
+const modeRegex = /\bmode\b\s*[:=]\s*["']([^"'\s]+)["']/g;
+const budgetRegex = /\bbudget\b\s*[:=]\s*["']([^"'\s]+)["']/g;
 const violations = [];
 
-const extractEnumValues = (content, name) => {
-  const re = new RegExp(`name:\\\\s*\\"${name}\\"[\\\\s\\\\S]*?enum:\\\\s*\\\\[([\\\\s\\\\S]*?)\\\\]`, "m");
-  const match = re.exec(content);
-  if (!match) return new Set();
-  return new Set(
-    match[1]
-      .split(/\\s*,\\s*/)
-      .map((value) => value.replace(/['"\\s]/g, ""))
-      .filter(Boolean)
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const extractToolEnumValues = (content, args) => {
+  const toolName = escapeRegex(args.toolName);
+  const propName = escapeRegex(args.propertyName);
+  const re = new RegExp(
+    `name:\\s*"${toolName}"[\\s\\S]*?${propName}\\s*:\\s*\\{[\\s\\S]*?enum\\s*:\\s*\\[([\\s\\S]*?)\\]`,
+    "m"
   );
+  const match = re.exec(content);
+  if (!match?.[1]) return new Set();
+  const values = new Set();
+  for (const item of match[1].matchAll(/"([^"]+)"/g)) {
+    if (item[1]) values.add(item[1]);
+  }
+  return values;
 };
 
 const toolSpecA = fs.readFileSync(path.join(repoRoot, "src/server/tools/ToolSpecRegistryPillarA.ts"), "utf-8");
 const toolSpecB = fs.readFileSync(path.join(repoRoot, "src/server/tools/ToolSpecRegistryPillarB.ts"), "utf-8");
-const manageCommands = extractEnumValues(toolSpecB, "manage");
-const taskModes = extractEnumValues(toolSpecA, "task").size > 0
-  ? extractEnumValues(toolSpecA, "task")
-  : new Set(["auto", "ask", "analyze", "plan_change", "apply_change", "write", "verify"]);
-const taskBudgets = new Set(["lean", "balanced", "deep"]);
+const manageCommands = extractToolEnumValues(toolSpecB, { toolName: "manage", propertyName: "command" });
+const taskModes = extractToolEnumValues(toolSpecA, { toolName: "task", propertyName: "mode" });
+const taskBudgets = extractToolEnumValues(toolSpecA, { toolName: "task", propertyName: "budget" });
+
+if (manageCommands.size === 0) {
+  throw new Error("[validate-docs] Failed to extract manage.command enum from ToolSpecRegistryPillarB.ts");
+}
+if (taskModes.size === 0) {
+  throw new Error("[validate-docs] Failed to extract task.mode enum from ToolSpecRegistryPillarA.ts");
+}
+if (taskBudgets.size === 0) {
+  throw new Error("[validate-docs] Failed to extract task.budget enum from ToolSpecRegistryPillarA.ts");
+}
 
 const scanEnvKeys = (rootDir) => {
   const envKeys = new Set();
@@ -93,6 +110,11 @@ const envKeys = new Set([
   ...scanEnvKeys(path.join(repoRoot, "src")),
   ...scanEnvKeys(path.join(repoRoot, "scripts")),
 ]);
+
+// Some env keys are intentionally referenced dynamically in code (e.g. `KAIRO_${pillar}_MAX_TOKENS`).
+for (const pillar of ["EXPLORE", "UNDERSTAND", "CHANGE", "WRITE", "MANAGE"]) {
+  envKeys.add(`KAIRO_${pillar}_MAX_TOKENS`);
+}
 
 for (const filePath of docFiles) {
   const content = fs.readFileSync(filePath, "utf-8");
@@ -128,6 +150,8 @@ for (const filePath of docFiles) {
   let envMatch;
   while ((envMatch = envRegex.exec(content)) !== null) {
     const key = envMatch[0];
+    // Docs sometimes mention env families like `KAIRO_EMBEDDING_*`; ignore the prefix token match.
+    if (key.endsWith("_")) continue;
     if (!key || envAllowlist.has(key)) continue;
     if (!envKeys.has(key)) {
       violations.push({

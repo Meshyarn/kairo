@@ -11,6 +11,7 @@
 따옴표/이스케이프가 복잡한 템플릿을 자주 다룬다면 추가로:
 
 - **ADR-089**: `change`/`write` 원문 소스(ContentSource) 계약 (따옴표/이스케이프 깨짐 방지)
+- **ADR-090**: adoption/UX/docs drift 로드맵 (WP1–WP8)
 
 - [Curated ADR Index](/ko/adr/README)
 - [ADR-084 — MCP autopilot & preset layer](/adr/ADR-084-mcp-autopilot-and-preset-layer)
@@ -18,3 +19,4 @@
 - [ADR-088 — Agent trust E2E verification program](/adr/ADR-088-agent-trust-e2e-verification-and-optimization-program)
 - [ADR-087 — Adaptive LOD & evidence packs](/adr/ADR-087-task-adaptive-lod-and-evidence-pack)
 - [ADR-089 — Raw content sources for change/write](/adr/ADR-089-raw-content-sources-for-change-write)
+- [ADR-090 — 8-step adoption/UX/docs drift roadmap](/adr/ADR-090-8-step-roadmap-ux-doc-quality)

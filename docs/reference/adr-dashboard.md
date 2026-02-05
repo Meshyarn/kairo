@@ -1,12 +1,12 @@
 # ADR Dashboard
 
-Generated: 2026-02-03T14:48:05.638Z
+Generated: 2026-02-05T02:15:58.228Z
 
 ## Summary
 
 - Total ADRs: 109
-- Curated ADRs: 105
-- Archived-only ADRs: 4
+- Curated ADRs: 106
+- Archived-only ADRs: 3
 
 ### Status breakdown
 
@@ -147,4 +147,4 @@ Generated: 2026-02-03T14:48:05.638Z
 | `.archive/ADR-087-task-adaptive-lod-and-evidence-pack.md` | Implemented | 2026-01-23 | `docs/adr/ADR-087-task-adaptive-lod-and-evidence-pack.md` | ADR-087: Make `task` Production-Grade via Intelligent Orchestration (Adaptive LOD + Budget-Aware Multi-Pillar Use) |
 | `.archive/ADR-088-agent-trust-e2e-verification-and-optimization-program.md` | Proposed | 2026-01-23 | `docs/adr/ADR-088-agent-trust-e2e-verification-and-optimization-program.md` | ADR-088: Agent Trust E2E Verification & Optimization Program (MCP stdio) |
 | `.archive/ADR-089-raw-content-sources-for-change-write.md` | Proposed | 2026-01-24 | `docs/adr/ADR-089-raw-content-sources-for-change-write.md` | ADR-089: Raw Content Sources for `write`/`change` (No More Quote/Escape Breakage) |
-| `.archive/ADR-090-8-step-roadmap-ux-doc-quality.md` | Proposed | 2026-02-03 | — | ADR-090: 8-Step Roadmap (Adoption/UX/Docs Quality → Reliability) |
+| `.archive/ADR-090-8-step-roadmap-ux-doc-quality.md` | Proposed | 2026-02-03 | `docs/adr/ADR-090-8-step-roadmap-ux-doc-quality.md` | ADR-090: 8-Step Roadmap (Adoption/UX/Docs Quality → Reliability) |
