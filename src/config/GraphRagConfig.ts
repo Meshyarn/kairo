@@ -13,6 +13,11 @@ export interface GraphRagSeedWeights {
 
 export interface GraphRagSeedPolicyDefinition {
     weights: GraphRagSeedWeights;
+    limits?: {
+        maxDocs: number;
+        maxMentions: number;
+        maxSeeds: number;
+    };
 }
 
 export interface GraphRagSeedPolicyConfig {
@@ -64,7 +69,14 @@ export const DEFAULT_GRAPHRAG_CONFIG: GraphRagConfig = {
             path_first: { weights: { path: 1.0, lexical: 0.6, semantic: 0.2 } },
             symbol_semantic: { weights: { semantic: 1.0, lexical: 0.5, path: 0.2 } },
             lexical_default: { weights: { lexical: 1.0, semantic: 0.3, path: 0.3 } },
-            doc_first: { weights: { doc: 1.0, lexical: 0.4, semantic: 0.2, path: 0.2 } }
+            doc_first: {
+                weights: { doc: 1.0, lexical: 0.4, semantic: 0.2, path: 0.2 },
+                limits: {
+                    maxDocs: 3,
+                    maxMentions: 10,
+                    maxSeeds: 20
+                }
+            }
         }
     },
     tuning: {

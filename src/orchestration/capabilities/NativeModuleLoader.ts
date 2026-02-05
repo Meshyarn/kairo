@@ -17,6 +17,7 @@ export type RustCoreModule = {
     validateSyntax: (language: string, content: string) => Array<{ line: number; column: number; message: string }>;
     cosineScores: (query: Float32Array, vectors: Float32Array[]) => number[];
     symbolicSolve?: (input: unknown) => unknown;
+    fileScan?: (args: unknown) => unknown[];
     NativeSearchCore?: new (indexDir: string, options?: { writerMemoryMb?: number; kairoVersion?: string; repoId?: string }) => {
         upsert: (doc: unknown) => void;
         upsertMany: (docs: unknown[]) => void;

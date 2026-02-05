@@ -1,7 +1,7 @@
 import path from "path";
 import { DEFAULT_GRAPHRAG_CONFIG } from "./GraphRagConfig.js";
 import { readJsonFile, deepMerge } from "./ConfigBootstrapperIO.js";
-import type { ConfigFinding, ConfigWriteOp, HostPreset, RepoSummary } from "./ConfigBootstrapperTypes.js";
+import type { BootstrapTarget, ConfigFinding, ConfigWriteOp, HostPreset, RepoSummary } from "./ConfigBootstrapperTypes.js";
 
 export const buildMcpConfigPlan = (
     configPath: string,
@@ -224,6 +224,113 @@ export const buildVscodeEnv = (preset: HostPreset, rootPath: string): Record<str
     }
 
     return env;
+};
+
+type HostSnippetSpec = {
+    id: BootstrapTarget;
+    fileName: string;
+    label: string;
+    description: string;
+};
+
+const HOST_SNIPPET_SPECS: HostSnippetSpec[] = [
+    {
+        id: "host_snippets",
+        fileName: "generic-stdio.json",
+        label: "Generic stdio snippet",
+        description: "Host-agnostic stdio template; copy the server block into your host config."
+    },
+    {
+        id: "host_codex",
+        fileName: "codex-cli.json",
+        label: "Codex CLI snippet",
+        description: "Template for Codex CLI MCP stdio configuration."
+    },
+    {
+        id: "host_claude_cli",
+        fileName: "claude-cli.json",
+        label: "Claude CLI snippet",
+        description: "Template for Claude CLI MCP stdio configuration."
+    },
+    {
+        id: "host_gemini_cli",
+        fileName: "gemini-cli.json",
+        label: "Gemini CLI snippet",
+        description: "Template for Gemini CLI MCP stdio configuration."
+    }
+];
+
+const buildHostSnippetEnv = (preset: HostPreset): Record<string, string> => {
+    const env: Record<string, string> = {
+        KAIRO_MODE: "mcp",
+        KAIRO_PRESET: "mcp-lean",
+        KAIRO_PUBLIC_SURFACE: "compact",
+        KAIRO_TOOL_SCHEMA_MODE: "compat",
+        KAIRO_LOG_TO_FILE: "true",
+        KAIRO_ALLOW_STDOUT_LOGS: "false"
+    };
+    if (preset === "recommended") {
+        env.KAIRO_LOG_LEVEL = "info";
+        env.KAIRO_VECTOR_INDEX_REBUILD = "auto";
+    }
+    return env;
+};
+
+const buildHostSnippetTemplate = (args: { spec: HostSnippetSpec; preset: HostPreset }): Record<string, unknown> => {
+    return {
+        version: 1,
+        host: args.spec.id,
+        label: args.spec.label,
+        description: args.spec.description,
+        notes: [
+            "Replace /ABS/PATH placeholders with real paths.",
+            "Keep stdout clean: use KAIRO_LOG_TO_FILE=true and KAIRO_ALLOW_STDOUT_LOGS=false.",
+            "If native search is unavailable, run: npm run build:core-rs"
+        ],
+        server: {
+            type: "stdio",
+            command: "node",
+            args: [
+                "/ABS/PATH/TO/kairo/dist/index.js",
+                "--root",
+                "/ABS/PATH/TO/your/repo"
+            ],
+            env: buildHostSnippetEnv(args.preset)
+        }
+    };
+};
+
+export const buildHostSnippetPlan = (args: {
+    configDir: string;
+    preset: HostPreset;
+    target: BootstrapTarget;
+}): ConfigWriteOp | null => {
+    const spec = HOST_SNIPPET_SPECS.find((item) => item.id === args.target);
+    if (!spec) return null;
+    const hostDir = path.join(args.configDir, "hosts");
+    const filePath = path.join(hostDir, spec.fileName);
+    const template = buildHostSnippetTemplate({ spec, preset: args.preset });
+    const existing = readJsonFile(filePath);
+    if (existing.value) {
+        const patch = buildMissingPatch(existing.value, template);
+        if (!patch) {
+            return { op: "noop", path: filePath, reason: "Host snippet already present." };
+        }
+        return {
+            op: "update",
+            path: filePath,
+            patch: {
+                beforeHash: existing.hash,
+                jsonMerge: patch
+            },
+            reason: "Patch host snippet with missing defaults."
+        };
+    }
+    return {
+        op: "create",
+        path: filePath,
+        content: JSON.stringify(template, null, 2)
+    };
 };
 
 export const buildMissingPatch = (existing: any, desired: any): Record<string, unknown> | null => {

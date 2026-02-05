@@ -183,7 +183,11 @@ export async function handlePlanChange(state: TaskExecutionState): Promise<any> 
             ...(Array.isArray(state.nextCalls) ? state.nextCalls : [])
         ];
         const guidance = rewriteGuidanceForCompact({
-            guidance: buildGuidance(response?.guidance, combinedNextCalls.length > 0 ? combinedNextCalls : undefined),
+            guidance: buildGuidance(
+                response?.guidance,
+                combinedNextCalls.length > 0 ? combinedNextCalls : undefined,
+                response?.degradedReasons
+            ),
             request: state.request,
             budget: state.budget,
             output: state.outputPayload,
@@ -279,7 +283,11 @@ export async function handlePlanChange(state: TaskExecutionState): Promise<any> 
         });
     }
     const guidance = rewriteGuidanceForCompact({
-        guidance: buildGuidance(response?.guidance, enhancedNextCalls.length > 0 ? enhancedNextCalls : undefined),
+        guidance: buildGuidance(
+            response?.guidance,
+            enhancedNextCalls.length > 0 ? enhancedNextCalls : undefined,
+            response?.degradedReasons
+        ),
         request: state.request,
         budget: state.budget,
         output: state.outputPayload,

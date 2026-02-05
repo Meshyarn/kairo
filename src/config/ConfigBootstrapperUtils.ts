@@ -22,7 +22,14 @@ export const resolveTargets = (args: ManageInitArgs | ManageDoctorArgs): Bootstr
     if (!Array.isArray(targets) || targets.length === 0) {
         return ["kairo"];
     }
-    return targets.filter((target) => target === "kairo" || target === "vscode");
+    return targets.filter((target) =>
+        target === "kairo"
+        || target === "vscode"
+        || target === "host_snippets"
+        || target === "host_codex"
+        || target === "host_claude_cli"
+        || target === "host_gemini_cli"
+    );
 };
 
 export const resolvePreset = (args: ManageInitArgs | ManageDoctorArgs): HostPreset => {
@@ -122,7 +129,9 @@ export const isPlanInScope = (scope: ManageDoctorArgs["scope"], filePath: string
     const configPrefix = path.posix.join(baseDir, "config");
     const contractsPrefix = path.posix.join(baseDir, "contracts");
     if (scope === "host") {
-        return filePath.replace(/\\\\/g, "/").endsWith("/.vscode/mcp.json");
+        const normalized = filePath.replace(/\\\\/g, "/");
+        return normalized.endsWith("/.vscode/mcp.json")
+            || normalized.includes(path.posix.join(configPrefix, "hosts/"));
     }
     if (scope === "capabilities") {
         return false;
@@ -170,7 +179,7 @@ export const isHintInScope = (scope: ManageDoctorArgs["scope"], hint: string): b
         return hint.includes("extensions") || hint.includes("mappings");
     }
     if (scope === "host") {
-        return hint.includes(".vscode");
+        return hint.includes(".vscode") || hint.includes("hosts");
     }
     if (scope === "config") {
         return hint.includes(".mcp-config") || hint.includes(configPrefix) || hint.includes("<KAIRO_DIR>/config");

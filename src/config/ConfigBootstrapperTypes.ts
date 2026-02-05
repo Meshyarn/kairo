@@ -1,5 +1,11 @@
 export type BootstrapMode = "plan" | "apply";
-export type BootstrapTarget = "kairo" | "vscode";
+export type BootstrapTarget =
+    | "kairo"
+    | "vscode"
+    | "host_snippets"
+    | "host_codex"
+    | "host_claude_cli"
+    | "host_gemini_cli";
 export type HostPreset = "minimal" | "recommended";
 
 export type ConfigWriteOp = {

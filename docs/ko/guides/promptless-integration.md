@@ -67,6 +67,20 @@ KAIRO_BETA_LOG_ENABLED=true
 
 ## 호스트 설정 템플릿
 
+### 호스트 스니펫 생성 (권장)
+
+`manage init`로 호스트별 MCP 스니펫을 생성할 수 있습니다:
+
+```json
+{
+  "command": "init",
+  "mode": "plan",
+  "targets": ["host_snippets", "host_codex", "host_claude_cli", "host_gemini_cli"]
+}
+```
+
+생성된 파일은 `.kairo/config/hosts/` 아래에 위치합니다. `server` 블록을 호스트 설정으로 복사한 뒤 `/ABS/PATH/...` 자리만 실제 경로로 바꿔 주세요.
+
 ### 일반 stdio 블록
 
 대부분의 MCP 호스트는 주변 JSON 형태가 달라도 아래 core 필드를 받아들입니다:

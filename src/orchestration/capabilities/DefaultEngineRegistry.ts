@@ -1,9 +1,11 @@
-import { CAP_CHUNKING_TOKENS, CAP_DIFF_UNIFIED, CAP_SYMBOLIC_SOLVE, CAP_SYNTAX_VALIDATE, CAP_VECTOR_COSINE_BATCH, CAP_TEXT_STATS } from "./CapabilityIds.js";
+import { CAP_FILE_SCAN, CAP_CHUNKING_TOKENS, CAP_DIFF_UNIFIED, CAP_SYMBOLIC_SOLVE, CAP_SYNTAX_VALIDATE, CAP_VECTOR_COSINE_BATCH, CAP_TEXT_STATS } from "./CapabilityIds.js";
 import { EngineManager } from "./EngineManager.js";
+import { JsFileScanProvider } from "./providers/JsFileScanProvider.js";
 import { JsChunkingProvider } from "./providers/JsChunkingProvider.js";
 import { JsDiffingProvider } from "./providers/JsDiffingProvider.js";
 import { JsTextStatsProvider } from "./providers/JsTextStatsProvider.js";
 import { JsVectorMathProvider } from "./providers/JsVectorMathProvider.js";
+import { RustFileScanProvider } from "./providers/RustFileScanProvider.js";
 import { RustChunkingProvider } from "./providers/RustChunkingProvider.js";
 import { RustDiffingProvider } from "./providers/RustDiffingProvider.js";
 import { RustSymbolicSolverProvider } from "./providers/RustSymbolicSolverProvider.js";
@@ -21,6 +23,7 @@ export class DefaultEngineRegistry {
         this.initialized = true;
 
         const rustCoreEnabled = FeatureFlags.isEnabled(FeatureFlags.RUST_CORE_ENABLED, FeatureFlags.getContext());
+        const rustFileScanEnabled = rustCoreEnabled && FeatureFlags.isEnabled(FeatureFlags.RUST_FILE_SCAN_ENABLED, FeatureFlags.getContext());
         const rustChunkingEnabled = resolveRustFeature(
             FeatureFlags.RUST_CHUNKING_ENABLED,
             rustCoreEnabled,
@@ -31,6 +34,11 @@ export class DefaultEngineRegistry {
         const rustSyntaxEnabled = resolveRustFeature(FeatureFlags.RUST_SYNTAX_ENABLED, rustCoreEnabled);
         const rustVectorEnabled = resolveRustFeature(FeatureFlags.RUST_VECTOR_ENABLED, rustCoreEnabled);
         const rustSymbolicSolverEnabled = resolveRustFeature(FeatureFlags.RUST_SYMBOLIC_SOLVER_ENABLED, rustCoreEnabled);
+
+        if (rustFileScanEnabled) {
+            EngineManager.registerProvider(CAP_FILE_SCAN, new RustFileScanProvider());
+        }
+        EngineManager.registerProvider(CAP_FILE_SCAN, new JsFileScanProvider());
 
         if (rustChunkingEnabled) {
             EngineManager.registerProvider(CAP_CHUNKING_TOKENS, new RustChunkingProvider());

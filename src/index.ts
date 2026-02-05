@@ -2,10 +2,12 @@ import "./utils/StdoutGuard.js";
 import * as path from "path";
 import * as os from "os";
 import * as url from "url";
+import { createRequire } from "module";
 import { SmartContextServer } from "./server/SmartContextServer.js";
 import { emitEnvDeprecationWarnings } from "./utils/DeprecationNotice.js";
 
 export { SmartContextServer };
+const require = createRequire(import.meta.url);
 const isDirectRun = (() => {
     const entry = process.argv[1];
     if (!entry) {
@@ -18,6 +20,45 @@ const isDirectRun = (() => {
     }
 })();
 
+function hasFlag(argv: string[], ...flags: string[]): boolean {
+    return argv.some((token) =>
+        flags.includes(token) || flags.some((flag) => token.startsWith(`${flag}=`))
+    );
+}
+
+function printHelp(): string {
+    return [
+        "kairo [--root <path>]",
+        "",
+        "Options:",
+        "  --root, --rootPath, --projectRoot  Root path for indexing",
+        "  --help, -h                         Show help",
+        "  --version, -v                      Show version",
+        "",
+        "Env:",
+        "  KAIRO_ROOT_PATH, KAIRO_MODE, KAIRO_PRESET, KAIRO_PUBLIC_SURFACE",
+        "",
+        "Examples:",
+        "  node dist/index.js --root /path/to/repo"
+    ].join("\n");
+}
+
+const resolvePackageVersion = (): string => {
+    try {
+        const pkg = require("../package.json");
+        const version = typeof pkg?.version === "string" ? pkg.version.trim() : "";
+        if (version.length > 0) {
+            return version;
+        }
+    } catch {
+        // ignore
+    }
+    const envVersion = (process.env.npm_package_version ?? "").trim();
+    if (envVersion.length > 0) {
+        return envVersion;
+    }
+    return "unknown";
+};
 
 function parseRootFromArgv(argv: string[]): string | undefined {
     // Supports:
@@ -88,6 +129,15 @@ function isDangerouslyBroadRoot(rootPath: string): boolean {
 }
 
 if (isDirectRun) {
+    const argv = process.argv.slice(2);
+    if (hasFlag(argv, "--help", "-h")) {
+        console.log(printHelp());
+        process.exit(0);
+    }
+    if (hasFlag(argv, "--version", "-v")) {
+        console.log(resolvePackageVersion());
+        process.exit(0);
+    }
     emitEnvDeprecationWarnings();
     const resolved = resolveRootPath();
     try {
@@ -126,7 +176,8 @@ if (isDirectRun) {
         console.error(
             "[SmartContextServer] Refusing to start with a broad root (home or filesystem root). " +
             "Open a folder/workspace in VS Code and pass --root, or set KAIRO_ROOT_PATH. " +
-            "Override with KAIRO_ALLOW_CWD_ROOT=true if you really want this."
+            "Override with KAIRO_ALLOW_CWD_ROOT=true if you really want this. " +
+            "Run with --help for usage."
         );
         process.exit(1);
     }

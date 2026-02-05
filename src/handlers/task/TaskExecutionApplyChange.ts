@@ -74,8 +74,16 @@ export async function handleApplyChange(state: TaskExecutionState): Promise<any>
             reason: "Re-plan to refresh tokens/file versions, then re-apply."
         });
     }
+    const verifyDegradedReasons = verificationReasons.length > 0
+        ? buildDegradedReasons(verificationReasons, { filePath: verification?.relPath ?? verification?.targetPath })
+        : undefined;
+    const degradedReasons = mergeDegradedReasons(response?.degradedReasons, verifyDegradedReasons);
     const guidance = rewriteGuidanceForCompact({
-        guidance: buildGuidance(response?.guidance, enhancedNextCalls.length > 0 ? enhancedNextCalls : undefined),
+        guidance: buildGuidance(
+            response?.guidance,
+            enhancedNextCalls.length > 0 ? enhancedNextCalls : undefined,
+            degradedReasons
+        ),
         request: state.request,
         budget: state.budget,
         output: state.outputPayload,
@@ -100,10 +108,6 @@ export async function handleApplyChange(state: TaskExecutionState): Promise<any>
         artifacts.push({ id: response.postReview.id, kind: "review", detail: "summary" });
     }
     const details = state.outputFormat === "standard" ? { pillar: "change", response } : undefined;
-    const verifyDegradedReasons = verificationReasons.length > 0
-        ? buildDegradedReasons(verificationReasons, { filePath: verification?.relPath ?? verification?.targetPath })
-        : undefined;
-    const degradedReasons = mergeDegradedReasons(response?.degradedReasons, verifyDegradedReasons);
     const degraded = Boolean(response?.degraded) || verificationReasons.length > 0;
     const payload = {
         ok: true,

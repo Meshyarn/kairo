@@ -91,6 +91,13 @@ export class FeatureFlags {
     static RUST_CORE_ENABLED = 'rust_core_enabled';
 
     /**
+     * Enables Rust file scan capability (native scan PoC).
+     * Default: false
+     * Env var: KAIRO_RUST_FILE_SCAN_ENABLED
+     */
+    static RUST_FILE_SCAN_ENABLED = 'rust_file_scan_enabled';
+
+    /**
      * Enables Rust chunking capability.
      * Default: true (when core enabled)
      * Env var: KAIRO_RUST_CHUNKING_ENABLED
@@ -147,6 +154,7 @@ export class FeatureFlags {
         this.applyEnvFlag(this.WRITERS_FLOW_DEFAULT_DRYRUN, process.env.KAIRO_WRITERS_FLOW_DEFAULT_DRYRUN);
         this.applyEnvFlag(this.WRITERS_FLOW_REVIEW_DEFAULTS, process.env.KAIRO_WRITERS_FLOW_REVIEW_DEFAULTS);
         this.applyEnvFlag(this.RUST_CORE_ENABLED, process.env.KAIRO_RUST_CORE_ENABLED);
+        this.applyEnvFlag(this.RUST_FILE_SCAN_ENABLED, process.env.KAIRO_RUST_FILE_SCAN_ENABLED);
         this.applyEnvFlag(this.RUST_CHUNKING_ENABLED, process.env.KAIRO_RUST_CHUNKING_ENABLED);
         this.applyEnvFlag(this.RUST_DIFF_ENABLED, process.env.KAIRO_RUST_DIFF_ENABLED);
         this.applyEnvFlag(this.RUST_SYNTAX_ENABLED, process.env.KAIRO_RUST_SYNTAX_ENABLED);

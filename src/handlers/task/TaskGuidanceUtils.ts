@@ -1,11 +1,40 @@
 import type { TaskBudget } from "../../orchestration/policy/McpModePresetRegistry.js";
 
-export const buildGuidance = (guidance: any, nextCalls?: Array<{ tool: string; args: Record<string, unknown>; reason?: string }>) => {
-    if (!guidance && (!nextCalls || nextCalls.length === 0)) return undefined;
-    const next = nextCalls && nextCalls.length > 0 ? nextCalls : guidance?.nextCalls;
+const buildNextCallsFromDegradedReasons = (
+    degradedReasons?: Array<{ actionToolCall?: { tool: string; args: Record<string, unknown> }; actionId?: string; message?: string; type?: string }>
+): Array<{ tool: string; args: Record<string, unknown>; reason?: string }> => {
+    if (!Array.isArray(degradedReasons) || degradedReasons.length === 0) return [];
+    const nextCalls: Array<{ tool: string; args: Record<string, unknown>; reason?: string }> = [];
+    const seen = new Set<string>();
+    for (const reason of degradedReasons) {
+        const toolCall = reason?.actionToolCall;
+        if (!toolCall?.tool || !toolCall?.args) continue;
+        const key = reason.actionId ?? `${toolCall.tool}:${JSON.stringify(toolCall.args)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        nextCalls.push({
+            tool: toolCall.tool,
+            args: toolCall.args,
+            reason: reason.message ?? reason.type
+        });
+    }
+    return nextCalls;
+};
+
+export const buildGuidance = (
+    guidance: any,
+    nextCalls?: Array<{ tool: string; args: Record<string, unknown>; reason?: string }>,
+    degradedReasons?: Array<{ actionToolCall?: { tool: string; args: Record<string, unknown> }; actionId?: string; message?: string; type?: string }>
+) => {
+    const degradedNextCalls = buildNextCallsFromDegradedReasons(degradedReasons);
+    const next = [
+        ...(nextCalls && nextCalls.length > 0 ? nextCalls : (guidance?.nextCalls ?? [])),
+        ...degradedNextCalls
+    ];
+    if (!guidance && next.length === 0) return undefined;
     return {
         ...guidance,
-        ...(next ? { nextCalls: next } : {})
+        ...(next.length > 0 ? { nextCalls: next } : {})
     };
 };
 
@@ -42,6 +71,7 @@ export const filterTaskArgs = (args: Record<string, unknown>): Record<string, un
         "paths",
         "targetFiles",
         "targetPath",
+        "verifyExec",
         "safety",
         "output",
         "trace"

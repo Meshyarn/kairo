@@ -30,6 +30,13 @@ export const ToolSpecRegistryPillarA: ToolSpec[] = [
               maxChars: { type: "number" }
             }
           },
+          verifyExec: {
+            type: "object",
+            properties: {
+              enabled: { type: "boolean" },
+              ids: { type: "array", items: { type: "string" } }
+            }
+          },
           trace: { type: "boolean" }
         },
         required: ["request"],

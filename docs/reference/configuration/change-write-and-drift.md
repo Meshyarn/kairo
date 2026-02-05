@@ -55,6 +55,32 @@ Kairo’s write safety is built around a plan → apply handshake with drift-awa
 |---|---|---|
 | `KAIRO_CONTENT_SOURCE_MAX_BYTES` | Max bytes allowed for `contentSource.kind="file"` reads. | Default `1048576` (1MB). |
 
+## Verify exec (opt-in)
+
+Run allowlisted verification commands during `task(mode="verify")`.
+
+| Variable | Purpose | Notes |
+|---|---|---|
+| `KAIRO_VERIFY_EXEC_ENABLED` | Enable verify exec (global gate). | Default `false`. Requires config allowlist. |
+
+Config file (disabled by default):
+
+```json
+{
+  "version": 1,
+  "enabled": false,
+  "allowedCommands": [
+    { "id": "js:test", "cmd": "npm", "args": ["test"], "timeoutMs": 600000 }
+  ]
+}
+```
+
+Save as `.kairo/config/verify-exec.json`, then call `task` with:
+
+```json
+{ "request": "Verify changes", "mode": "verify", "verifyExec": { "enabled": true, "ids": ["js:test"] } }
+```
+
 For usage flows:
 
 - [Safe Writes concepts](/concepts/safe-writes)

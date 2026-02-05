@@ -153,7 +153,11 @@ export async function handleWrite(state: TaskExecutionState): Promise<any> {
         });
     }
     const guidance = rewriteGuidanceForCompact({
-        guidance: buildGuidance(response?.guidance, enhancedNextCalls.length > 0 ? enhancedNextCalls : undefined),
+        guidance: buildGuidance(
+            response?.guidance,
+            enhancedNextCalls.length > 0 ? enhancedNextCalls : undefined,
+            response?.degradedReasons
+        ),
         request: state.request,
         budget: state.budget,
         output: state.outputPayload,

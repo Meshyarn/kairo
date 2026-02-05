@@ -52,6 +52,7 @@ High-level router for promptless workflows (ask/analyze/plan/apply).
 | `output.format` | `"summary" \| "standard"` | policy-driven | Response shape (usually `summary` in MCP). |
 | `output.maxTokens` | `number` | policy-driven | Hard cap on response tokens. Task downshifts LOD to fit. |
 | `output.maxChars` | `number` | policy-driven | Hard cap on response characters. |
+| `verifyExec` | `{ enabled?: boolean; ids?: string[] }` | — | Opt-in allowlisted command execution during `mode="verify"` (requires `KAIRO_VERIFY_EXEC_ENABLED` + `.kairo/config/verify-exec.json`). |
 
 **Sessions & Refinement** (optional)
 
