@@ -5,51 +5,20 @@ import {
     CallGraphEdge,
     CallGraphNode,
     CallGraphResult,
-    CallConfidence,
     CallSiteInfo,
     DefinitionSymbol,
-    ImportSymbol,
     SymbolInfo
 } from "../types.js";
-
-export type CallGraphDirection = "upstream" | "downstream" | "both";
-
-interface DefinitionLocation {
-    definition: DefinitionSymbol;
-    absPath: string;
-    relativePath: string;
-}
-
-interface FileSymbolContext {
-    absPath: string;
-    relativePath: string;
-    definitions: DefinitionSymbol[];
-    imports: ImportSymbol[];
-    importBindings?: ImportBinding[];
-}
-
-interface ImportBinding {
-    alias: string;
-    source: string;
-    importKind: ImportSymbol["importKind"];
-    importedName?: string;
-    isTypeOnly?: boolean;
-}
-
-interface ResolvedCallTarget extends DefinitionLocation {
-    confidence: CallConfidence;
-}
-
-interface GlobalCallSite {
-    context: FileSymbolContext;
-    definition: DefinitionSymbol;
-    call: CallSiteInfo;
-}
-
-interface GlobalIndexData {
-    definitionsByName: Map<string, DefinitionLocation[]>;
-    callSitesByName: Map<string, GlobalCallSite[]>;
-}
+import type {
+    CallGraphBudget,
+    CallGraphDirection,
+    DefinitionLocation,
+    FileSymbolContext,
+    GlobalIndexData
+} from "./CallGraphBuilderTypes.js";
+import { getFileContext, resolveCallTargets } from "./CallGraphBuilderContext.js";
+import { buildGlobalIndex } from "./CallGraphBuilderIndex.js";
+import { populateDownstream, populateUpstream } from "./CallGraphBuilderTraversal.js";
 
 /**
  * CallGraphBuilder is responsible for assembling symbol-level call relationships.
@@ -146,7 +115,7 @@ export class CallGraphBuilder {
             }
 
             if (needsDownstream) {
-                const downstream = await this.populateDownstream({
+                const downstream = await populateDownstream(this.buildTraversalContext(), {
                     node,
                     location,
                     depth,
@@ -168,7 +137,7 @@ export class CallGraphBuilder {
             }
 
             if (needsUpstream) {
-                const upstream = await this.populateUpstream({
+                const upstream = await populateUpstream(this.buildTraversalContext(), {
                     node,
                     location,
                     depth,
@@ -313,412 +282,71 @@ export class CallGraphBuilder {
         );
     }
 
-    private async populateDownstream(params: {
-        node: CallGraphNode;
-        location: DefinitionLocation;
-        depth: number;
-        maxDepth: number;
-        visitedNodes: Record<string, CallGraphNode>;
-        definitionCache: Map<string, DefinitionLocation>;
-        queue: Array<{ symbolId: string; depth: number }>;
-        depthBySymbol: Map<string, number>;
-        processed: Set<string>;
-        budget?: CallGraphBudget;
-        getGlobalDefinitions?: () => Promise<Map<string, DefinitionLocation[]>>;
-    }): Promise<{ truncated: boolean; truncatedReason?: "cap" | "depth" | "unknown" }> {
-        const { node, location, depth, maxDepth, visitedNodes, definitionCache, queue, depthBySymbol, processed, budget } = params;
-        const definition = location.definition;
-        if (!definition.calls || definition.calls.length === 0) {
-            return { truncated: false };
-        }
-
-        if (depth >= maxDepth) {
-            return { truncated: true, truncatedReason: "depth" };
-        }
-
-        const context = await this.getFileContext(location.absPath);
-        if (!context) {
-            return { truncated: true, truncatedReason: "unknown" };
-        }
-
-        let truncated = false;
-        let truncatedReason: "cap" | "depth" | "unknown" | undefined;
-        for (const call of definition.calls) {
-            if (budget?.exhausted) {
-                truncated = true;
-                truncatedReason = truncatedReason ?? "cap";
-                break;
-            }
-            const targets = await this.resolveCallTargets(call, context, params.getGlobalDefinitions);
-            if (targets.length === 0) {
-                truncated = true;
-                truncatedReason = truncatedReason ?? "unknown";
-                continue;
-            }
-
-            for (const target of targets) {
-                if (budget?.exhausted) {
-                    truncated = true;
-                    truncatedReason = truncatedReason ?? "cap";
-                    break;
-                }
-                const nextDepth = depth + 1;
-                if (nextDepth > maxDepth) {
-                    truncated = true;
-                    truncatedReason = truncatedReason ?? "depth";
-                    continue;
-                }
-
-                const symbolId = this.makeSymbolId(target.relativePath, target.definition.name);
-                const calleeNode = this.getOrCreateNodeWithBudget(symbolId, target.definition, target.relativePath, visitedNodes, budget);
-                if (!calleeNode) {
-                    truncated = true;
-                    truncatedReason = truncatedReason ?? "cap";
-                    continue;
-                }
-                if (!definitionCache.has(symbolId)) {
-                    definitionCache.set(symbolId, target);
-                }
-
-                const added = this.addEdge(node, calleeNode, {
-                    callType: call.callType,
-                    confidence: target.confidence,
-                    line: call.line,
-                    column: call.column
-                }, budget);
-                if (!added && budget?.exhausted) {
-                    truncated = true;
-                    truncatedReason = truncatedReason ?? "cap";
-                    break;
-                }
-
-                this.enqueueNode(symbolId, nextDepth, maxDepth, queue, depthBySymbol, processed);
-            }
-        }
-
-        return { truncated, ...(truncatedReason ? { truncatedReason } : {}) };
-    }
-
-    private async populateUpstream(params: {
-        node: CallGraphNode;
-        location: DefinitionLocation;
-        depth: number;
-        maxDepth: number;
-        visitedNodes: Record<string, CallGraphNode>;
-        definitionCache: Map<string, DefinitionLocation>;
-        queue: Array<{ symbolId: string; depth: number }>;
-        depthBySymbol: Map<string, number>;
-        processed: Set<string>;
-        budget?: CallGraphBudget;
-        getGlobalData: () => Promise<GlobalIndexData>;
-    }): Promise<{ truncated: boolean; truncatedReason?: "cap" | "depth" | "unknown" }> {
-        const { node, location, depth, maxDepth, visitedNodes, definitionCache, queue, depthBySymbol, processed, budget } = params;
-        const globalData = await params.getGlobalData();
-        const candidates = globalData.callSitesByName.get(location.definition.name);
-        if (!candidates || candidates.length === 0) {
-            return { truncated: false };
-        }
-
-        if (depth >= maxDepth) {
-            return { truncated: true, truncatedReason: "depth" };
-        }
-
-        let truncated = false;
-        let truncatedReason: "cap" | "depth" | "unknown" | undefined;
-        for (const site of candidates) {
-            if (budget?.exhausted) {
-                truncated = true;
-                truncatedReason = truncatedReason ?? "cap";
-                break;
-            }
-            const resolvedTargets = await this.resolveCallTargets(site.call, site.context, async () => globalData.definitionsByName);
-            const match = resolvedTargets.find(target =>
-                target.relativePath === location.relativePath &&
-                target.definition.name === location.definition.name
-            );
-            if (!match) {
-                continue;
-            }
-
-            const nextDepth = depth + 1;
-            if (nextDepth > maxDepth) {
-                truncated = true;
-                truncatedReason = truncatedReason ?? "depth";
-                continue;
-            }
-
-            const callerId = this.makeSymbolId(site.context.relativePath, site.definition.name);
-            const callerNode = this.getOrCreateNodeWithBudget(callerId, site.definition, site.context.relativePath, visitedNodes, budget);
-            if (!callerNode) {
-                truncated = true;
-                truncatedReason = truncatedReason ?? "cap";
-                continue;
-            }
-            if (!definitionCache.has(callerId)) {
-                definitionCache.set(callerId, {
-                    definition: site.definition,
-                    absPath: site.context.absPath,
-                    relativePath: site.context.relativePath
-                });
-            }
-
-            const added = this.addEdge(callerNode, node, {
-                callType: site.call.callType,
-                confidence: match.confidence,
-                line: site.call.line,
-                column: site.call.column
-            }, budget);
-            if (!added && budget?.exhausted) {
-                truncated = true;
-                truncatedReason = truncatedReason ?? "cap";
-                break;
-            }
-
-            this.enqueueNode(callerId, nextDepth, maxDepth, queue, depthBySymbol, processed);
-        }
-
-        return { truncated, ...(truncatedReason ? { truncatedReason } : {}) };
+    private buildTraversalContext() {
+        return {
+            resolveCallTargets: (call: CallSiteInfo, context: FileSymbolContext, provider?: () => Promise<Map<string, DefinitionLocation[]>>) =>
+                this.resolveCallTargets(call, context, provider),
+            getFileContext: (absPath: string) => this.getFileContext(absPath),
+            makeSymbolId: (filePath: string, symbolName: string) => this.makeSymbolId(filePath, symbolName),
+            getOrCreateNodeWithBudget: (
+                symbolId: string,
+                definition: DefinitionSymbol,
+                relativePath: string,
+                visitedNodes: Record<string, CallGraphNode>,
+                budget?: CallGraphBudget
+            ) => this.getOrCreateNodeWithBudget(symbolId, definition, relativePath, visitedNodes, budget),
+            addEdge: (
+                fromNode: CallGraphNode,
+                toNode: CallGraphNode,
+                edge: Omit<CallGraphEdge, "fromSymbolId" | "toSymbolId">,
+                budget?: CallGraphBudget
+            ) => this.addEdge(fromNode, toNode, edge, budget),
+            enqueueNode: (
+                symbolId: string,
+                depth: number,
+                maxDepth: number,
+                queue: Array<{ symbolId: string; depth: number }>,
+                depthBySymbol: Map<string, number>,
+                processed: Set<string>
+            ) => this.enqueueNode(symbolId, depth, maxDepth, queue, depthBySymbol, processed)
+        };
     }
 
     private async resolveCallTargets(
         call: CallSiteInfo,
         context: FileSymbolContext,
         definitionRegistryProvider?: () => Promise<Map<string, DefinitionLocation[]>>
-    ): Promise<ResolvedCallTarget[]> {
-        const results: ResolvedCallTarget[] = [];
-        const seen = new Set<string>();
-
-        const pushTarget = (target: DefinitionLocation, confidence: CallConfidence) => {
-            const symbolId = this.makeSymbolId(target.relativePath, target.definition.name);
-            if (seen.has(symbolId)) {
-                return;
-            }
-            seen.add(symbolId);
-            results.push({ ...target, confidence });
-        };
-
-        const localMatches = this.findLocalMatches(call, context);
-        for (const match of localMatches) {
-            pushTarget(match, "definite");
-        }
-
-        const importMatches = await this.findImportMatches(call, context);
-        for (const match of importMatches) {
-            pushTarget(match.location, match.confidence);
-        }
-
-        if (results.length === 0 && definitionRegistryProvider) {
-            const registry = await definitionRegistryProvider();
-            const fallback = registry.get(call.calleeName) || [];
-            for (const location of fallback) {
-                pushTarget(location, "inferred");
-            }
-        }
-
-        return results;
-    }
-
-    private findLocalMatches(call: CallSiteInfo, context: FileSymbolContext): DefinitionLocation[] {
-        if (call.calleeObject && !["this", "super", "self"].includes(call.calleeObject)) {
-            return [];
-        }
-        const matches = context.definitions.filter(def => def.name === call.calleeName);
-        return matches.map(def => ({
-            definition: def,
-            absPath: context.absPath,
-            relativePath: context.relativePath
-        }));
-    }
-
-    private async findImportMatches(call: CallSiteInfo, context: FileSymbolContext): Promise<Array<{ location: DefinitionLocation; confidence: CallConfidence }>> {
-        const bindings = this.getImportBindings(context);
-        const matches: Array<{ location: DefinitionLocation; confidence: CallConfidence }> = [];
-
-        const relevant = bindings.filter(binding => {
-            if (binding.isTypeOnly) return false;
-            if (call.calleeObject) {
-                return binding.alias === call.calleeObject;
-            }
-            return binding.alias === call.calleeName;
+    ) {
+        return resolveCallTargets({
+            call,
+            context,
+            moduleResolver: this.moduleResolver,
+            getFileContext: (absPath: string) => this.getFileContext(absPath),
+            makeSymbolId: (filePath: string, symbolName: string) => this.makeSymbolId(filePath, symbolName),
+            definitionRegistryProvider
         });
-
-        for (const binding of relevant) {
-            const targetName = this.getTargetNameForBinding(binding, call);
-            const locations = await this.resolveBinding(binding, targetName, context);
-            const confidence: CallConfidence = binding.importKind === "named" ? "definite" : "possible";
-            for (const location of locations) {
-                matches.push({ location, confidence });
-            }
-        }
-
-        return matches;
-    }
-
-    private getTargetNameForBinding(binding: ImportBinding, call: CallSiteInfo): string | undefined {
-        if (binding.importKind === "named") {
-            return binding.importedName || call.calleeName;
-        }
-        if (binding.importKind === "namespace") {
-            return call.calleeName;
-        }
-        if (binding.importKind === "default") {
-            return binding.importedName || call.calleeName;
-        }
-        return undefined;
-    }
-
-    private async resolveBinding(binding: ImportBinding, targetName: string | undefined, context: FileSymbolContext): Promise<DefinitionLocation[]> {
-        const resolvedPath = this.moduleResolver.resolve(context.absPath, binding.source);
-        if (!resolvedPath) {
-            return [];
-        }
-        const targetContext = await this.getFileContext(resolvedPath);
-        if (!targetContext) {
-            return [];
-        }
-
-        const definitions = this.pickDefinitionsForBinding(binding, targetName, targetContext);
-        return definitions.map(def => ({
-            definition: def,
-            absPath: resolvedPath,
-            relativePath: targetContext.relativePath
-        }));
-    }
-
-    private pickDefinitionsForBinding(binding: ImportBinding, targetName: string | undefined, context: FileSymbolContext): DefinitionSymbol[] {
-        if (binding.importKind === "named") {
-            return context.definitions.filter(def => def.name === targetName);
-        }
-
-        if (binding.importKind === "namespace") {
-            return context.definitions.filter(def => def.name === targetName);
-        }
-
-        if (binding.importKind === "default") {
-            let matches = context.definitions.filter(def => def.modifiers?.includes("default"));
-            if (matches.length === 0 && targetName) {
-                matches = context.definitions.filter(def => def.name === targetName);
-            }
-            if (matches.length === 0 && context.definitions.length > 0) {
-                matches = [context.definitions[0]];
-            }
-            return matches;
-        }
-
-        return [];
-    }
-
-    private getImportBindings(context: FileSymbolContext): ImportBinding[] {
-        if (context.importBindings) {
-            return context.importBindings;
-        }
-
-        const bindings: ImportBinding[] = [];
-        for (const symbol of context.imports) {
-            if (symbol.importKind === "default") {
-                const alias = symbol.alias || symbol.name;
-                if (alias) {
-                    bindings.push({
-                        alias,
-                        source: symbol.source,
-                        importKind: symbol.importKind,
-                        importedName: alias,
-                        isTypeOnly: symbol.isTypeOnly
-                    });
-                }
-            } else if (symbol.importKind === "namespace") {
-                const alias = symbol.alias || symbol.name;
-                if (alias) {
-                    bindings.push({
-                        alias,
-                        source: symbol.source,
-                        importKind: symbol.importKind,
-                        isTypeOnly: symbol.isTypeOnly
-                    });
-                }
-            } else if (symbol.importKind === "named" && symbol.imports) {
-                for (const spec of symbol.imports) {
-                    const alias = spec.alias || spec.name;
-                    bindings.push({
-                        alias,
-                        source: symbol.source,
-                        importKind: symbol.importKind,
-                        importedName: spec.name,
-                        isTypeOnly: symbol.isTypeOnly
-                    });
-                }
-            }
-        }
-
-        context.importBindings = bindings;
-        return bindings;
     }
 
     private async getFileContext(absPath: string): Promise<FileSymbolContext | null> {
-        const cacheKey = this.getFileContextCacheKey(absPath);
-        if (this.fileContextCache.has(cacheKey)) {
-            return this.fileContextCache.get(cacheKey)!;
-        }
-
-        try {
-            const symbols = await this.symbolIndex.getSymbolsForFile(absPath);
-            return this.buildFileContext(absPath, symbols);
-        } catch {
-            return null;
-        }
-    }
-
-    private buildFileContext(absPath: string, symbols: SymbolInfo[]): FileSymbolContext {
-        const relativePath = this.normalizeRelativePath(absPath);
-        const definitions: DefinitionSymbol[] = [];
-        const imports: ImportSymbol[] = [];
-
-        for (const symbol of symbols) {
-            if (this.isDefinition(symbol)) {
-                definitions.push(symbol);
-            } else if (this.isImportSymbol(symbol)) {
-                imports.push(symbol);
-            }
-        }
-
-        const context: FileSymbolContext = { absPath, relativePath, definitions, imports };
-        const cacheKey = this.getFileContextCacheKey(absPath);
-        this.fileContextCache.set(cacheKey, context);
-        return context;
+        return getFileContext({
+            absPath,
+            symbolIndex: this.symbolIndex,
+            fileContextCache: this.fileContextCache,
+            normalizeRelativePath: (entry) => this.normalizeRelativePath(entry)
+        });
     }
 
     private getFileContextCacheKey(absPath: string): string {
         return path.normalize(absPath);
     }
 
-    private isImportSymbol(symbol: SymbolInfo): symbol is ImportSymbol {
-        return symbol.type === "import";
-    }
-
     private async buildGlobalIndex(): Promise<GlobalIndexData> {
-        const entries = await this.symbolIndex.getAllSymbols();
-        const definitionsByName = new Map<string, DefinitionLocation[]>();
-        const callSitesByName = new Map<string, GlobalCallSite[]>();
-
-        for (const [relativePath, symbols] of entries.entries()) {
-            const absPath = path.isAbsolute(relativePath) ? relativePath : path.join(this.rootPath, relativePath);
-            const context = this.buildFileContext(absPath, symbols);
-
-            for (const definition of context.definitions) {
-                const list = definitionsByName.get(definition.name) || [];
-                list.push({ definition, absPath, relativePath: context.relativePath });
-                definitionsByName.set(definition.name, list);
-
-                if (!definition.calls) continue;
-                for (const call of definition.calls) {
-                    const bucket = callSitesByName.get(call.calleeName) || [];
-                    bucket.push({ context, definition, call });
-                    callSitesByName.set(call.calleeName, bucket);
-                }
-            }
-        }
-
-        return { definitionsByName, callSitesByName };
+        return buildGlobalIndex({
+            rootPath: this.rootPath,
+            symbolIndex: this.symbolIndex,
+            fileContextCache: this.fileContextCache,
+            normalizeRelativePath: (entry) => this.normalizeRelativePath(entry)
+        });
     }
 
     public clearCaches(): void {
@@ -790,12 +418,3 @@ export class CallGraphBuilder {
         return node;
     }
 }
-
-type CallGraphBudget = {
-    maxNodes?: number;
-    maxEdges?: number;
-    nodeCount: number;
-    edgeCount: number;
-    truncated: boolean;
-    exhausted: boolean;
-};

@@ -125,9 +125,10 @@ manage({ command: "status" })
 ```
 
 Look for:
-- ✅ `indexHealth.state`: `"healthy"`
-- ✅ `languagesDetected`: Shows your project languages (TypeScript, Python, etc.)
-- ✅ `nativeCore.available`: `true` (lexical search enabled)
+- ✅ `status.global.totalFiles` and `status.global.indexedFiles` look reasonable for your repo
+- ✅ `nativeSearch.available: true` (lexical search enabled)
+- ✅ `indexSnapshot.coverageRatio` is close to `1` after a `manage({ command: "reindex" })`
+- ✅ `drift.workspaceDrift: "clean"` (or `"unknown"` before first index)
 
 ### 3. Validate error handling
 
@@ -170,8 +171,9 @@ If significantly slower, check [Performance & Reliability](/concepts/performance
 Verify logging setup:
 
 ```bash
-# Should exist and have recent entries
-tail -20 .kairo/kairo.log
+# With `KAIRO_LOG_TO_FILE=true`, these should exist and have recent entries
+tail -20 .kairo/logs/console.log
+# (or set `KAIRO_LOG_FILE=/absolute/path/to/kairo.log` for a single log file)
 
 # Should show: timestamps, operation names, no sensitive data
 ```
@@ -186,7 +188,7 @@ This pre-warms indexes and caches for faster subsequent queries.
 
 Then follow your deployment scenario:
 - **Development:** [Development scenario](/guides/deployment-scenarios#scenario-1-development-local-machine)
-- **Team:** [Team CI/CD scenario](/guides/deployment-scenarios#scenario-2-team-cicd-shared-containerb uild-system)
+- **Team:** [Team CI/CD scenario](/guides/deployment-scenarios#scenario-2-team-cicd-shared-container--build-system)
 - **Production:** [Production Agent scenario](/guides/deployment-scenarios#scenario-3-production-agent-high-throughput)
 
 ---

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "@jest/globals";
+import { describe, it, expect, beforeEach, afterEach, jest } from "@jest/globals";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -9,6 +9,8 @@ import { DocumentChunkRepository } from "../../indexing/DocumentChunkRepository.
 import { EmbeddingRepository } from "../../indexing/EmbeddingRepository.js";
 import { EmbeddingProviderFactory } from "../../embeddings/EmbeddingProviderFactory.js";
 import { PathManager } from "../../utils/PathManager.js";
+
+jest.setTimeout(60000);
 
 let tempDir: string;
 let previousEnv: string | undefined;

@@ -3,9 +3,7 @@
 // HistoryEngine (handles history.json, undo/redo stacks)
 // EditCoordinator needs to coordinate these two.
 
-import * as crypto from "crypto";
 import * as path from "path";
-import { createRequire } from "module";
 import { EditorEngine } from "./Editor.js";
 import { HistoryEngine } from "./History.js";
 import { ImpactAnalyzer } from "./ImpactAnalyzer.js";
@@ -23,7 +21,14 @@ import {
 } from "../types.js";
 import { IFileSystem } from "../platform/FileSystem.js";
 import { TransactionLog, TransactionSnapshot } from "./TransactionLog.js";
-import { metrics } from "../utils/MetricsCollector.js";
+import {
+    buildBatchFailure,
+    computeHash,
+    generateTransactionId,
+    normalizeBatchFailure,
+    resolveFilePath,
+    restoreSnapshots
+} from "./EditCoordinatorUtils.js";
 
 interface EditCoordinatorInitOptions {
     rootPath?: string;
@@ -31,20 +36,6 @@ interface EditCoordinatorInitOptions {
     fileSystem: IFileSystem;
     impactAnalyzer?: ImpactAnalyzer;
 }
-
-interface BatchFailure {
-    message: string;
-    errorCode?: string;
-}
-
-const require = createRequire(import.meta.url);
-let importedXxhash: any = null;
-try {
-    importedXxhash = require("xxhashjs");
-} catch {
-    importedXxhash = null;
-}
-const XXH: any = importedXxhash ? (importedXxhash.default ?? importedXxhash) : null;
 
 export class EditCoordinator {
     private editorEngine: EditorEngine;
@@ -262,7 +253,7 @@ export class EditCoordinator {
         }
 
         const batchOperation: BatchOperation = {
-            id: this.generateTransactionId(),
+            id: generateTransactionId(),
             timestamp: Date.now(),
             description: `Batch operation on ${applied.length} file(s).`,
             operations: applied.map((entry) => entry.operation),
@@ -282,7 +273,7 @@ export class EditCoordinator {
     ): Promise<EditResult> {
         const transactionLog = this.transactionLog!;
         const fileSystem = this.fileSystem!;
-        const transactionId = this.generateTransactionId();
+        const transactionId = generateTransactionId();
         const description = `Batch operation on ${fileEdits.length} file(s).`;
 
         const snapshots: TransactionSnapshot[] = [];
@@ -294,7 +285,7 @@ export class EditCoordinator {
                 filePath,
                 originalExists: true,
                 originalContent,
-                originalHash: this.computeHash(originalContent),
+                originalHash: computeHash(originalContent),
             };
             snapshots.push(snapshot);
             snapshotMap.set(filePath, snapshot);
@@ -315,7 +306,7 @@ export class EditCoordinator {
                 const result = await invokeApply(filePath, edits, false);
 
                 if (!result.success || !result.operation) {
-                    throw this.buildBatchFailure(filePath, result);
+                    throw buildBatchFailure(filePath, result);
                 }
 
                 operations.push(result.operation as EditOperation);
@@ -325,7 +316,7 @@ export class EditCoordinator {
                 if (snapshot) {
                     snapshot.newExists = true;
                     snapshot.newContent = newContent;
-                    snapshot.newHash = this.computeHash(newContent);
+                    snapshot.newHash = computeHash(newContent);
                 }
             }
 
@@ -344,11 +335,11 @@ export class EditCoordinator {
                 message: `Successfully applied batch edits to ${operations.length} file(s).`,
             };
         } catch (error) {
-            await this.restoreSnapshots(snapshots);
+            await restoreSnapshots(snapshots, this.fileSystem);
             transactionLog.rollback(transactionId);
             await this.historyEngine.removeOperation(transactionId);
 
-            const failure = this.normalizeBatchFailure(error);
+                const failure = normalizeBatchFailure(error);
             return {
                 success: false,
                 message: failure.message,
@@ -442,7 +433,7 @@ export class EditCoordinator {
         if (this.isFileOperation(op)) {
             return this.applyFileOperation(op, mode);
         }
-        const resolvedPath = this.resolveFilePath(op.filePath!);
+        const resolvedPath = resolveFilePath(op.filePath!, this.rootPath);
         const edits = mode === "undo" ? (op.inverseEdits as Edit[]) : (op.edits as Edit[]);
         return this.editorEngine.applyEdits(resolvedPath, edits, false);
     }
@@ -451,7 +442,7 @@ export class EditCoordinator {
         if (!this.fileSystem) {
             return { success: false, message: "File system unavailable for undo/redo." };
         }
-        const resolvedPath = this.resolveFilePath(op.filePath);
+        const resolvedPath = resolveFilePath(op.filePath, this.rootPath);
         const shouldDelete = (op.action === "create" && mode === "undo") || (op.action === "delete" && mode === "redo");
         if (shouldDelete) {
             try {
@@ -476,79 +467,4 @@ export class EditCoordinator {
         }
     }
 
-    private computeHash(content: string): string {
-        if (XXH) {
-            return XXH.h64(0xABCD).update(content).digest().toString(16);
-        }
-        return crypto.createHash("sha256").update(content).digest("hex");
-    }
-
-    private generateTransactionId(): string {
-        try {
-            return crypto.randomUUID();
-        } catch {
-            return `tx-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-        }
-    }
-
-    private async restoreSnapshots(snapshots: TransactionSnapshot[]): Promise<void> {
-        if (!this.fileSystem) {
-            return;
-        }
-
-        for (const snapshot of snapshots) {
-            try {
-                if (snapshot.originalExists === false) {
-                    if (await this.fileSystem.exists(snapshot.filePath)) {
-                        await this.fileSystem.deleteFile(snapshot.filePath);
-                    }
-                } else {
-                    await this.fileSystem.writeFile(snapshot.filePath, snapshot.originalContent);
-                    const restored = await this.fileSystem.readFile(snapshot.filePath);
-                    const restoredHash = this.computeHash(restored);
-                    if (restoredHash !== snapshot.originalHash) {
-                        console.error(`[EditCoordinator] Hash mismatch after rollback for ${snapshot.filePath}`);
-                        metrics.inc("transactions.hash_mismatch");
-                    }
-                }
-            } catch (error) {
-                console.error(`[EditCoordinator] Failed to restore ${snapshot.filePath}:`, error);
-            }
-        }
-    }
-
-    private buildBatchFailure(filePath: string, result: EditResult): BatchFailure {
-        return {
-            message: `Batch edit failed for file ${filePath}: ${result.message ?? "Unknown error"}`,
-            errorCode: result.errorCode ?? "BatchApplyFailed",
-        };
-    }
-
-    private normalizeBatchFailure(error: unknown): BatchFailure {
-        if (error && typeof error === "object" && "message" in error) {
-            const maybeFailure = error as BatchFailure & { message?: string };
-            return {
-                message: maybeFailure.message || "Unknown batch error",
-                errorCode: maybeFailure.errorCode,
-            };
-        }
-        return { message: String(error) };
-    }
-
-    /**
-     * Resolve a file path stored in history (typically relative to the project root)
-     * back to an absolute path for EditorEngine.
-     */
-    private resolveFilePath(storedPath: string): string {
-        if (path.isAbsolute(storedPath)) {
-            return storedPath;
-        }
-
-        if (this.rootPath) {
-            return path.join(this.rootPath, storedPath);
-        }
-
-        // Fallback: resolve relative to current working directory
-        return path.resolve(storedPath);
-    }
 }

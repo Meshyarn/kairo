@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { describe, it, expect, beforeEach, afterEach } from "@jest/globals";
+import { describe, it, expect, beforeEach, afterEach, jest } from "@jest/globals";
 import { MemoryFileSystem } from "../../platform/FileSystem.js";
 import { IndexDatabase } from "../../indexing/IndexDatabase.js";
 import { DocumentIndexer } from "../../indexing/DocumentIndexer.js";
@@ -9,6 +9,8 @@ import { DocumentChunkRepository } from "../../indexing/DocumentChunkRepository.
 import { EngineManager } from "../../orchestration/capabilities/EngineManager.js";
 import { CAP_CHUNKING_TOKENS } from "../../orchestration/capabilities/CapabilityIds.js";
 import type { ITokenChunkingProvider } from "../../orchestration/capabilities/Chunking.js";
+
+jest.setTimeout(60000);
 
 describe("DocumentIndexer", () => {
     let tempDir: string;

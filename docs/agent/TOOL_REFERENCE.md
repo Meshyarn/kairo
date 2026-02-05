@@ -442,10 +442,10 @@ Project/session state utilities.
 
 | Field | Type | Required | Notes |
 |---|---|---:|---|
-| `command` | `"status" \| "undo" \| "redo" \| "reindex" \| "rebuild" \| "history" \| "test" \| "init" \| "doctor" \| "schema" \| "sessions" \| "session" \| "session_complete" \| "session_update" \| "artifacts" \| "artifact" \| "discard" \| "prune" \| "export" \| "import"` | ✓ | `rebuild` maps to `reindex`. |
-| `scope` | `"file" \| "transaction" \| "project" \| "config" \| "languages" \| "wasm" \| "host" \| "contracts" \| "parity" \| "capabilities"` |  | Used by `test`/`doctor`. |
+| `command` | `"status" \| "undo" \| "redo" \| "reindex" \| "rebuild" \| "history" \| "init" \| "doctor" \| "schema" \| "sessions" \| "session" \| "session_complete" \| "session_update" \| "artifacts" \| "artifact" \| "discard" \| "prune" \| "export" \| "import"` | ✓ | `rebuild` maps to `reindex`. |
+| `scope` | `"file" \| "transaction" \| "project" \| "config" \| "languages" \| "wasm" \| "host" \| "contracts" \| "parity" \| "capabilities"` |  | Used by `doctor`. |
 | `tool` | `string` |  | Tool name (used by `schema`). |
-| `target` | `string` |  | Mainly used by `test`. |
+| `target` | `string` |  | Used by commands that operate on a specific target (e.g., `artifact`). |
 | `paths` | `string[]` |  | Used by `reindex` for incremental/path-scoped refresh (when supported). |
 | `targetType` | `"artifact" \| "transaction" \| "patchRef"` |  | `export` target type. |
 | `allowExternal` | `boolean` |  | Allow `import` from outside `.kairo`. |

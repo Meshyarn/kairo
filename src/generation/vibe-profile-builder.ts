@@ -4,6 +4,7 @@ import { StyleInference } from "./StyleInference.js";
 import { PatternExtractor, type ProjectPatterns } from "./PatternExtractor.js";
 import { extractClaimsFromText } from "../integrity/ClaimExtractor.js";
 import { normalizePath, toRelativePath } from "../utils/PathHelpers.js";
+import { PathManager } from "../utils/PathManager.js";
 import type {
     CodeStyle,
     NormClaim,
@@ -295,8 +296,14 @@ function resolveNormSourceType(relative: string): NormClaim["sourceType"] {
 
 function isIgnoredPath(relative: string): boolean {
     const normalized = normalizePath(relative);
+    const baseDir = PathManager.getBaseDir()
+        .replace(/\\/g, "/")
+        .replace(/\/+$/, "")
+        .replace(/^\.\//, "");
+    const hasCustomBase = baseDir && !path.isAbsolute(baseDir);
     return normalized.includes("/.kairo/")
         || normalized.startsWith(".kairo/")
+        || (hasCustomBase && (normalized.includes(`/${baseDir}/`) || normalized.startsWith(`${baseDir}/`)))
         || normalized.includes("/.mcp/")
         || normalized.startsWith(".mcp/")
         || normalized.includes("/node_modules/")

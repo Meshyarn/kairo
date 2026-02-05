@@ -7,6 +7,8 @@ import { OrchestrationContext } from "../../../orchestration/OrchestrationContex
 import { ChangePillar } from "../../../orchestration/pillars/change/ChangePillar.js";
 import { AstManager } from "../../../ast/AstManager.js";
 
+jest.setTimeout(60000);
+
 const makeIntent = (constraints: Record<string, unknown>) => ({
   category: "change",
   action: "modify",

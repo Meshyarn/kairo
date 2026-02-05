@@ -10,6 +10,7 @@ import { ModuleResolver } from '../../ast/ModuleResolver.js';
 import { FileWatcher } from './FileWatcher.js';
 import { AdaptiveFlowMetrics } from '../../utils/AdaptiveFlowMetrics.js';
 import { NodeFileSystem, type IFileSystem } from '../../platform/FileSystem.js';
+import { PathManager } from '../../utils/PathManager.js';
 
 /**
  * Unified Context Graph: Centralized state for all file analysis.
@@ -44,7 +45,7 @@ export class UnifiedContextGraph {
         this.skeletonCache = new SkeletonCache(rootPath);
         this.astManager = AstManager.getInstance();
         this.moduleResolver = new ModuleResolver(rootPath);
-        this.persistPath = path.join(rootPath, '.kairo', 'data', 'ucg.json');
+        this.persistPath = PathManager.resolveForRoot(rootPath, 'data', 'ucg.json');
         
         if (enableWatcher) {
             this.fileWatcher = new FileWatcher(this, rootPath);

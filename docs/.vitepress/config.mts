@@ -43,6 +43,7 @@ export default defineConfig({
                 text: "Performance",
                 items: [
                   { text: "Overview", link: "/performance/" },
+                  { text: "Performance Baselines", link: "/performance/baselines" },
                   { text: "Benchmark Report", link: "/performance/benchmarks" },
                 ],
               },
@@ -132,7 +133,7 @@ export default defineConfig({
                  { text: "Promptless Integration", link: "/guides/promptless-integration" },
                  { text: "Raw Content Sources (write/change)", link: "/guides/raw-content" },
                  { text: "Search & Embeddings", link: "/guides/search-and-embeddings" },
-                 { text: "Configuration (All env vars)", link: "/guides/configuration" },
+                 { text: "Configuration (legacy: all env vars)", link: "/guides/configuration" },
                  { text: "Ops Runbook", link: "/guides/ops-runbook" },
                  { text: "Language Support", link: "/guides/language-support" },
                ],
@@ -234,6 +235,7 @@ export default defineConfig({
                 text: "성능",
                 items: [
                   { text: "개요", link: "/ko/performance/" },
+                  { text: "성능 기준(대표값)", link: "/ko/performance/baselines" },
                   { text: "벤치마크 리포트", link: "/ko/performance/benchmarks" },
                 ],
               },
@@ -323,7 +325,7 @@ export default defineConfig({
                  { text: "프롬프트리스 MCP 연동", link: "/ko/guides/promptless-integration" },
                  { text: "원문 콘텐츠 전달(write/change)", link: "/ko/guides/raw-content" },
                  { text: "검색 & 임베딩", link: "/ko/guides/search-and-embeddings" },
-                 { text: "설정(전체 환경 변수)", link: "/ko/guides/configuration" },
+                 { text: "설정(레거시: 전체 환경 변수)", link: "/ko/guides/configuration" },
                  { text: "운영 런북", link: "/ko/guides/ops-runbook" },
                  { text: "언어 지원", link: "/ko/guides/language-support" },
                ],

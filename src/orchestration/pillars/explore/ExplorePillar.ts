@@ -3,98 +3,32 @@ import { LRUCache } from "lru-cache";
 import { InternalToolRegistry } from "../../InternalToolRegistry.js";
 import { OrchestrationContext } from "../../OrchestrationContext.js";
 import { ParsedIntent } from "../../IntentRouter.js";
-import { BudgetManager } from "../../BudgetManager.js";
-import { analyzeQuery } from "../../../engine/search/QueryMetrics.js";
 import type { QueryMetrics } from "../../../engine/search/QueryMetrics.js";
 import { IntegrityEngine } from "../../../integrity/IntegrityEngine.js";
-import { UnifiedContextGraph } from "../../context/UnifiedContextGraph.js";
 import type { IndexStateManager } from "../../../indexing/IndexStateManager.js";
 import type { DependencyGraph } from "../../../ast/DependencyGraph.js";
 import { AstManager } from "../../../ast/AstManager.js";
 import { ProjectSketchBuilder } from "../../../generation/project-sketch-builder.js";
 import type { ResearchPack } from "../../../types/flow-artifacts.js";
 import type { FlowArtifactManager } from "../../flow-artifact-manager.js";
-import type { IFileSystem } from "../../../platform/FileSystem.js";
-import { buildDegradedReasons } from "../../DegradedReasonMapper.js";
-import { applyTokenBudget, estimateTokens } from "../../TokenBudget.js";
-import type { RepoRegistry } from "../../../config/RepoRegistry.js";
-import type { PathNormalizer } from "../../../utils/PathNormalizer.js";
-import { resolveRepoInfo } from "../../../utils/RepoScope.js";
-import type { OptionSource, TraceOptionResolution } from "../../../types/option-trace.js";
-import { TraceBuilder } from "../../trace/TraceBuilder.js";
-import { buildBudgetPlan, getSectionPlan } from "../../budget/TokenBudgetAllocatorV2.js";
-import { enforceExploreResponseBudget } from "../../budget/ResponseEnvelopeBudgeter.js";
-import type { ToolProfile } from "../../options/OptionResolver.js";
-import { FeatureFlags } from "../../../config/FeatureFlags.js";
+import { applyTokenBudget } from "../../TokenBudget.js";
 import { metrics } from "../../../utils/MetricsCollector.js";
-import { AdaptiveLodController } from "../../adaptive-flow/AdaptiveLodController.js";
 import {
-    computeAdaptiveFlowGate,
-    recordAdaptiveFlowGateTrace,
-    resolveAdaptiveFlowLOD,
-    resolveRolloutPresetFromEnv,
-    setAdaptiveFlowGate
-} from "../../adaptive-flow/AdaptiveFlowGate.js";
-import { normalizeExploreInput } from "./ExploreInputNormalizer.js";
-import {
-    applyBudgetToExploreItemsWithGlobalLimit,
-    applyBudgetToExploreItem,
-    createExploreBudgetState
-} from "./ExploreDecisionEngine.js";
-
-import { 
-    ExploreItem, 
-    ExploreResponse, 
-    truncate 
-} from "./ResultFormatter.js";
-import { 
-    ExplorePack, 
-    computeExplorePackId, 
-    parseItemsCursor, 
-    slicePack, 
-    computeNextCursor 
-} from "./EvidencePackBuilder.js";
-import { 
-    isDocPath, 
-    isLogPath, 
-    isSensitivePath, 
-    isBinaryPath, 
-    applySoftPriority
-} from "./FilteringStrategy.js";
-import {
-    expandPaths,
-    collectTopologyMetadata,
-    buildItemForPath
-} from "./PathExpansion.js";
-import { GraphRagClusterService } from "../../cluster/GraphRagClusterService.js";
-
-const DEFAULT_MAX_RESULTS = 8;
-const DEFAULT_MAX_CHARS = 8000;
-const DEFAULT_MAX_FULL_CHARS = 20000;
-const DEFAULT_MAX_FILES = 200;
-const DEFAULT_PACK_RESULTS = Number.parseInt(process.env.KAIRO_MAX_RESULTS ?? "25", 10) || 25;
-const DEFAULT_PACK_TTL_MS = Number.parseInt(process.env.KAIRO_EXPLORE_PACK_TTL_MS ?? "600000", 10) || 600000;
-const DEFAULT_PACK_CACHE_SIZE = Number.parseInt(process.env.KAIRO_EXPLORE_PACK_CACHE_SIZE ?? "100", 10) || 100;
-const DEFAULT_RESEARCH_TTL_MS = Number.parseInt(process.env.KAIRO_RESEARCH_PACK_TTL_MS ?? "1800000", 10) || 1800000;
-const DEFAULT_RESEARCH_CACHE_SIZE = Number.parseInt(process.env.KAIRO_RESEARCH_PACK_CACHE_SIZE ?? "50", 10) || 50;
-
-const resolveOptionSource = (explicit: boolean, hasSession: boolean): OptionSource => {
-    if (explicit) return "explicit";
-    if (hasSession) return "session";
-    return "default";
-};
-
-const buildStringResolution = (
-    resolved: string | undefined,
-    explicit: boolean,
-    hasSession: boolean,
-    requested?: unknown
-): TraceOptionResolution<string | null> => ({
-    source: resolveOptionSource(explicit, hasSession),
-    explicit,
-    resolved: resolved ?? null,
-    ...(requested !== undefined ? { requested } : {})
-});
+    DEFAULT_PACK_CACHE_SIZE,
+    DEFAULT_PACK_TTL_MS,
+    DEFAULT_RESEARCH_CACHE_SIZE,
+    DEFAULT_RESEARCH_TTL_MS
+} from "./ExplorePillarDefaults.js";
+import { ExploreItem, ExploreResponse, truncate } from "./ResultFormatter.js";
+import type { ExplorePack } from "./EvidencePackBuilder.js";
+import { isDocPath } from "./FilteringStrategy.js";
+import { createExploreExecutionState } from "./ExplorePillarExecutionState.js";
+import { initializeExploreExecution } from "./ExplorePillarExecutionSetup.js";
+import { executeExploreQuery } from "./ExplorePillarExecutionQuery.js";
+import { executeExplorePaths } from "./ExplorePillarExecutionPaths.js";
+import { executeExploreClusters } from "./ExplorePillarExecutionClusters.js";
+import { finalizeExploreResponse } from "./ExplorePillarExecutionFinalize.js";
+import { applyBudgetToExploreItem } from "./ExploreDecisionEngine.js";
 
 export class ExplorePillar {
     private static packCache = new LRUCache<string, ExplorePack>({
@@ -112,283 +46,42 @@ export class ExplorePillar {
         const stopTotal = metrics.startTimer("explore.total_ms");
         const startedAt = Date.now();
         try {
-        const repoRegistry = this.registry.getMetadata<RepoRegistry>("repoRegistry");
-        const pathNormalizer = this.registry.getMetadata<PathNormalizer>("pathNormalizer");
-        const artifactManager = this.registry.getMetadata<FlowArtifactManager>("flowArtifactManager");
-        const {
-            constraints,
-            query,
-            paths,
-            research,
-            researchRequested,
-            packId,
-            fullPaths,
-            allowSensitive,
-            allowBinary,
-            allowGlobs,
-            integrityOptions,
-            resolvedSessionId,
-            sessionPolicy,
-            resolvedOptions,
-            view: resolvedView,
-            include,
-            includeExplicit,
-            includeClusters,
-            clusterOptions,
-            sourcesWantsDocs,
-            traceEnabled,
-            profile: resolvedProfile,
-            limits
-        } = normalizeExploreInput(intent, {
-            resolveSessionId: (rawSessionId, fallback) => artifactManager?.resolveSessionId(rawSessionId, fallback),
-            getSessionPolicy: (sessionId) => (sessionId ? artifactManager?.getSession(sessionId)?.policy : undefined)
+        const setup = await initializeExploreExecution({
+            intent,
+            context,
+            registry: this.registry,
+            startedAt,
+            runTool: (ctx, tool, args) => this.runTool(ctx, tool, args),
+            isSymbolLikeQuery: (metrics, tokens) => this.isSymbolLikeQuery(metrics, tokens)
         });
-        let view = resolvedView;
-        let profile: ToolProfile | undefined = resolvedProfile as ToolProfile | undefined;
-        const adaptiveLod = this.registry.getMetadata<AdaptiveLodController>("adaptiveLodController");
-        const profileExplicit = typeof constraints.profile === "string";
-        const adaptiveDecision = adaptiveLod?.resolveProfile({
-            sessionId: resolvedSessionId,
-            tool: "explore",
-            requestedProfile: (profile ?? "balanced") as ToolProfile,
-            explicit: profileExplicit
-        });
-        if (adaptiveDecision?.downshifted) {
-            profile = adaptiveDecision.profile;
-            applyExploreProfileCaps(limits, profile);
-            if (!profileExplicit && typeof constraints.view !== "string") {
-                view = profile === "lean" || profile === "fast" ? "preview" : view;
-            }
-        }
-        resolvedOptions.effective.profile = profile;
+        const { input } = setup;
 
-        const queryMetrics = query ? analyzeQuery(query) : undefined;
-        const queryTokens = query ? query.trim().split(/\s+/).filter(Boolean) : [];
-        const symbolQuery = queryMetrics ? this.isSymbolLikeQuery(queryMetrics, queryTokens) : false;
-        const timeoutMs = Number.isFinite(limits.timeoutMs) && limits.timeoutMs! > 0
-            ? limits.timeoutMs!
-            : Number.parseInt(process.env.KAIRO_EXPLORE_TIMEOUT_MS ?? "", 10) || undefined;
-        const hasDeadline = Number.isFinite(timeoutMs) && timeoutMs! > 0;
-        const timeRemaining = () => hasDeadline
-            ? Math.max(0, timeoutMs! - (Date.now() - startedAt))
-            : Number.POSITIVE_INFINITY;
-        let projectStats = context.getState<any>("project_profile");
-        if (!projectStats) {
-            try {
-                projectStats = await this.runTool(context, "project_profile", {});
-                if (projectStats) {
-                    context.setState("project_profile", projectStats);
-                }
-            } catch {
-                projectStats = undefined;
-            }
-        }
-        const searchBudget = queryMetrics
-            ? BudgetManager.create({
-                category: "navigate",
-                queryLength: queryMetrics.length,
-                tokenCount: queryMetrics.tokenCount,
-                strongQuery: queryMetrics.strong,
-                projectStats: projectStats?.fileCount ? { fileCount: projectStats.fileCount } : undefined
-            })
-            : undefined;
-        if (searchBudget && hasDeadline) {
-            searchBudget.maxParseTimeMs = Math.min(searchBudget.maxParseTimeMs, timeoutMs!);
-        }
-
-        if (!query && paths.length === 0 && !researchRequested) {
+        if (!input.query && input.paths.length === 0 && !input.researchRequested) {
             return {
                 success: false,
                 status: "invalid_args",
                 message: "Missing query or paths.",
                 data: { docs: [], code: [] },
-                sessionId: resolvedSessionId
+                sessionId: input.resolvedSessionId
             };
-        }
-
-        const maxResults = Number.isFinite(limits.maxResults) && limits.maxResults! > 0 ? limits.maxResults! : DEFAULT_MAX_RESULTS;
-        const maxChars = Number.isFinite(limits.maxChars) && limits.maxChars! > 0
-            ? limits.maxChars!
-            : (view === "full" ? DEFAULT_MAX_FULL_CHARS : DEFAULT_MAX_CHARS);
-        const envMaxTokens = Number.parseInt(process.env.KAIRO_EXPLORE_MAX_TOKENS ?? process.env.KAIRO_DEFAULT_MAX_TOKENS ?? "", 10);
-        const maxTokens = Number.isFinite(limits.maxTokens) && limits.maxTokens! > 0
-            ? limits.maxTokens!
-            : (Number.isFinite(envMaxTokens) && envMaxTokens > 0 ? envMaxTokens : undefined);
-        const maxItemChars = Number.isFinite(limits.maxItemChars) && limits.maxItemChars! > 0
-            ? limits.maxItemChars!
-            : Math.max(400, Math.floor(maxChars / Math.max(1, maxResults)));
-        const maxItemTokens = maxTokens ? Math.max(128, Math.floor(maxTokens / Math.max(1, maxResults))) : undefined;
-        const maxBytes = Number.isFinite(limits.maxBytes) && limits.maxBytes! > 0
-            ? limits.maxBytes!
-            : Number.parseInt(process.env.KAIRO_READ_FILE_MAX_BYTES ?? "0", 10) || undefined;
-        const maxFiles = Number.isFinite(limits.maxFiles) && limits.maxFiles! > 0 ? limits.maxFiles! : DEFAULT_MAX_FILES;
-        const includeDocs = include.docs !== false;
-        const includeCode = include.code !== false;
-        const includeComments = include.comments === true;
-        const includeLogs = include.logs === true;
-        const docHint = includeDocs && !includeCode;
-        const sessionProfile = sessionPolicy?.explore?.profile ?? sessionPolicy?.profile;
-        const sessionSources = sessionPolicy?.explore?.sources ?? sessionPolicy?.sources;
-        const traceBuilder = traceEnabled
-            ? new TraceBuilder(
-                "explore",
-                {
-                    profile: buildStringResolution(
-                        profile,
-                        typeof constraints.profile === "string",
-                        Boolean(sessionProfile),
-                        typeof constraints.profile === "string" ? constraints.profile : undefined
-                    ),
-                    sources: buildStringResolution(
-                        resolvedOptions.effective.sources,
-                        typeof constraints.sources === "string",
-                        Boolean(sessionSources),
-                        typeof constraints.sources === "string" ? constraints.sources : undefined
-                    ),
-                    trace: {
-                        source: constraints.trace === true ? "explicit" : "default",
-                        explicit: constraints.trace === true,
-                        resolved: traceEnabled
-                    }
-                },
-                { startedAtMs: startedAt }
-            )
-            : undefined;
-        if (traceBuilder) {
-            traceBuilder.setBudget({ maxTokens, maxChars, timeoutMs });
-        }
-        if (traceBuilder && adaptiveDecision?.downshifted) {
-            traceBuilder.recordEvent({
-                area: "budget",
-                code: "adaptive_lod.downshift",
-                data: {
-                    from: resolvedOptions.effective.profile ?? "balanced",
-                    to: profile,
-                    violationStreak: adaptiveDecision.violationStreak,
-                    stableScore: adaptiveDecision.stableScore,
-                    cooldownRemaining: adaptiveDecision.cooldownRemaining,
-                    reasonCodes: adaptiveDecision.reasonCodes
-                }
-            });
-        }
-        const gate = computeAdaptiveFlowGate({
-            profile,
-            fileCount: typeof projectStats?.fileCount === "number" ? projectStats.fileCount : undefined
-        });
-        setAdaptiveFlowGate(context, gate);
-        if (traceBuilder) {
-            recordAdaptiveFlowGateTrace(traceBuilder, gate, {
-                rolloutMode: resolveRolloutPresetFromEnv() ?? FeatureFlags.getMode(FeatureFlags.ADAPTIVE_FLOW_ENABLED),
-                userIdResolved: Boolean(FeatureFlags.getContext()?.userId)
-            });
-        }
-        const budgetPlan = buildBudgetPlan({
-            pillar: "explore",
-            profile: (profile ?? "balanced") as ToolProfile,
-            sources: resolvedOptions.effective.sources,
-            maxTokens,
-            maxChars,
-            timeoutMs,
-            include,
-            view
-        });
-        const docSectionPlan = getSectionPlan(budgetPlan, "doc_sections");
-        const docSectionStrategy = docSectionPlan?.strategy ?? "raw";
-        const docSectionMaxChars = Math.min(
-            maxChars,
-            resolveSectionChars(docSectionPlan, maxChars)
-        );
-        const allowDocSectionExpand = docSectionStrategy !== "omit";
-        const researchPlan = getSectionPlan(budgetPlan, "research_pack");
-        const researchOmitted = researchPlan?.strategy === "omit";
-        if (traceBuilder) {
-            traceBuilder.recordEvent({
-                area: "budget",
-                code: "allocator.plan_created",
-                data: {
-                    maxTokens: budgetPlan.maxTokens,
-                    maxChars: budgetPlan.maxChars,
-                    sectionCount: budgetPlan.sections.length
-                }
-            });
-            for (const section of budgetPlan.sections) {
-                traceBuilder.recordEvent({
-                    area: "budget",
-                    code: "allocator.section_strategy",
-                    data: {
-                        section: section.section,
-                        strategy: section.strategy,
-                        tokens: section.tokens,
-                        chars: section.chars
-                    }
-                });
-                if (section.strategy === "omit") {
-                    traceBuilder.recordSkip(section.section, "budget_exceeded", "allocator omitted section");
-                }
-            }
-        }
-
-        if (searchBudget) {
-            const desiredFileBudget = Math.min(
-                maxFiles,
-                Math.max(12, maxResults * 2)
-            );
-            searchBudget.maxCandidates = Math.min(searchBudget.maxCandidates, desiredFileBudget);
-            searchBudget.maxFilesRead = Math.min(searchBudget.maxFilesRead, desiredFileBudget);
-            const perFileCharBudget = Math.max(400, Math.floor(maxChars / Math.max(1, maxResults)));
-            searchBudget.maxBytesRead = Math.min(
-                searchBudget.maxBytesRead,
-                desiredFileBudget * perFileCharBudget
-            );
-        }
-
-        const packOptions: Record<string, unknown> = {
-            include: { docs: includeDocs, code: includeCode, comments: includeComments, logs: includeLogs },
-            intent: constraints.intent,
-            paths
-        };
-        const profileAffectsPack = resolvedOptions.meta.profileAffectsPack || Boolean(adaptiveDecision?.downshifted);
-        if (profileAffectsPack && profile) {
-            packOptions.profile = profile;
-        }
-        if (resolvedOptions.meta.sourcesAffectsPack && resolvedOptions.effective.sources) {
-            packOptions.sources = resolvedOptions.effective.sources;
-        }
-        const effectivePackId = query
-            ? (packId ?? computeExplorePackId(query, packOptions))
-            : undefined;
-
-        if (resolvedSessionId) {
-            const policyPatch: Partial<{ profile?: string; sources?: string; explore?: Record<string, unknown> }> = {};
-            if (typeof constraints.profile === "string") {
-                policyPatch.profile = constraints.profile;
-                policyPatch.explore = { ...(policyPatch.explore ?? {}), profile: constraints.profile };
-            }
-            if (typeof constraints.sources === "string") {
-                policyPatch.sources = constraints.sources;
-                policyPatch.explore = { ...(policyPatch.explore ?? {}), sources: constraints.sources };
-            }
-            if (Object.keys(policyPatch).length > 0) {
-                artifactManager?.updateSessionPolicy(resolvedSessionId, policyPatch as any, "merge");
-            }
         }
 
         const response: ExploreResponse = {
             success: true,
             status: "ok",
-            query,
+            query: input.query,
             data: { docs: [], code: [] },
-            sessionId: resolvedSessionId
+            sessionId: input.resolvedSessionId
         };
-        if (researchRequested) {
-            if (researchOmitted) {
-                if (traceBuilder) {
-                    traceBuilder.recordSkip("research_pack", "budget_exceeded", "allocator omitted research pack");
+        if (input.researchRequested) {
+            if (setup.researchOmitted) {
+                if (setup.traceBuilder) {
+                    setup.traceBuilder.recordSkip("research_pack", "budget_exceeded", "allocator omitted research pack");
                 }
             } else {
-                response.researchPack = await this.buildResearchPack(research, resolvedSessionId, intent.originalIntent).catch(() => undefined);
+                response.researchPack = await this.buildResearchPack(input.research, input.resolvedSessionId, intent.originalIntent).catch(() => undefined);
             }
-            if (!response.researchPack && !researchOmitted) {
+            if (!response.researchPack && !setup.researchOmitted) {
                 response.insights = response.insights || [];
                 response.insights.push({
                     type: "warning",
@@ -398,552 +91,79 @@ export class ExplorePillar {
             }
         }
 
-        if (!query && paths.length === 0) {
+        if (!input.query && input.paths.length === 0) {
             this.addIndexStatusInsights(response);
             await this.attachIndexSnapshot(response);
             return response;
         }
-        if (integrityOptions && integrityOptions.mode !== "off") {
-            const integrityQuery = query ?? (paths.length > 0 ? path.basename(paths[0]) : undefined);
+        if (input.integrityOptions && input.integrityOptions.mode !== "off") {
+            const integrityQuery = input.query ?? (input.paths.length > 0 ? path.basename(input.paths[0]) : undefined);
             const integrityResult = await IntegrityEngine.run(
                 {
                     query: integrityQuery,
-                    targetPaths: paths,
-                    scope: integrityOptions.scope ?? "auto",
-                    sources: integrityOptions.sources ?? [],
-                    limits: integrityOptions.limits ?? {},
-                    mode: integrityOptions.mode ?? "warn"
+                    targetPaths: input.paths,
+                    scope: input.integrityOptions.scope ?? "auto",
+                    sources: input.integrityOptions.sources ?? [],
+                    limits: input.integrityOptions.limits ?? {},
+                    mode: input.integrityOptions.mode ?? "warn"
                 },
                 (tool, args) => this.runTool(context, tool, args)
             );
             response.integrity = integrityResult.report;
         }
 
-        const reasons: string[] = [];
-        let degraded = false;
-        let totalChars = 0;
-        let totalTokens = 0;
-        const budgetState = createExploreBudgetState();
-        const getLanguageId = (filePath: string) => isDocPath(filePath) ? undefined : AstManager.getInstance().getLanguageId(filePath);
+        const state = createExploreExecutionState();
         const applyBudgetToItem = (item: ExploreItem, isFullContent: boolean, allowDistill: boolean): ExploreItem => {
-            return applyBudgetToExploreItem(budgetState, item, {
+            return applyBudgetToExploreItem(state.budgetState, item, {
                 isFullContent,
                 allowDistill,
-                maxItemTokens,
-                maxChars,
-                maxItemChars,
-                getLanguageId,
+                maxItemTokens: setup.maxItemTokens,
+                maxChars: setup.maxChars,
+                maxItemChars: setup.maxItemChars,
+                getLanguageId: (filePath) => (filePath && !isDocPath(filePath) ? AstManager.getInstance().getLanguageId(filePath) : undefined),
                 applyTokenBudget,
                 truncate
             });
         };
 
-        if (query) {
-            const cursorState = parseItemsCursor(constraints.cursor?.items);
-            const contentCursorState = parseItemsCursor(constraints.cursor?.content);
-            const cachedPack = effectivePackId ? ExplorePillar.packCache.get(effectivePackId) : undefined;
-            if (cachedPack) {
-                if (traceBuilder) {
-                    traceBuilder.setCache({ used: true, hit: true, keyHint: "explore.pack:v1" });
-                    traceBuilder.recordSkip("doc_search", "cache_hit", "explore pack cache hit");
-                }
-                if (constraints.cursor?.content) {
-                    const sliced = slicePack(cachedPack, contentCursorState, maxResults, includeDocs, includeCode, includeComments, includeLogs);
-                    const expandedDocs = allowDocSectionExpand
-                        ? await Promise.all(sliced.docs.map((item) => this.expandDocContent(item, docSectionMaxChars, context, docSectionStrategy, query)))
-                        : sliced.docs;
-                    const expandedCode = await Promise.all(sliced.code.map((item) => this.expandCodeContent(item, maxChars, context)));
-
-                    const applyBudgetWithGlobalLimit = (items: ExploreItem[]) => {
-                        const result = applyBudgetToExploreItemsWithGlobalLimit({
-                            state: budgetState,
-                            items,
-                            isFullContent: true,
-                            allowDistill: view !== "full",
-                            maxItemTokens,
-                            maxChars,
-                            maxItemChars,
-                            maxTokens,
-                            totalTokens,
-                            degraded,
-                            reasons,
-                            getLanguageId,
-                            estimateTokens
-                        });
-                        totalTokens = result.totalTokens;
-                        degraded = result.degraded;
-                        return result.items;
-                    };
-
-                    response.data.docs = applyBudgetWithGlobalLimit(expandedDocs);
-                    response.data.code = applyBudgetWithGlobalLimit(expandedCode);
-                    if (sliced.nextCursor) {
-                        response.next = { contentCursor: sliced.nextCursor };
-                    }
-                } else {
-                    const sliced = slicePack(cachedPack, cursorState, maxResults, includeDocs, includeCode, includeComments, includeLogs);
-                    response.data.docs = sliced.docs.map((item) => applyBudgetToItem(item, false, false));
-                    response.data.code = sliced.code.map((item) => applyBudgetToItem(item, false, false));
-                    if (sliced.nextCursor) {
-                        response.next = { itemsCursor: sliced.nextCursor };
-                    }
-                }
-                response.pack = {
-                    packId: cachedPack.packId,
-                    hit: true,
-                    createdAt: cachedPack.createdAt,
-                    expiresAt: cachedPack.expiresAt
-                };
-            } else {
-                if (traceBuilder) {
-                    traceBuilder.setCache({ used: true, hit: false, keyHint: "explore.pack:v1" });
-                }
-                const isDeepProfile = profile === "deep";
-                const packMaxResults = Math.max(maxResults, DEFAULT_PACK_RESULTS, isDeepProfile ? 40 : 0);
-                let docsForPack: ExploreItem[] = [];
-                let codeForPack: ExploreItem[] = [];
-
-                const ucg = context.getState<UnifiedContextGraph>('ucg');
-
-                if (includeCode) {
-                    let codeResults: any;
-                    try {
-                        codeResults = await this.runTool(context, "project_search", {
-                            query,
-                            maxResults: packMaxResults,
-                            type: "file",
-                            repoScope: (constraints as any).repoScope,
-                            repoId: (constraints as any).repoId,
-                            repoIds: (constraints as any).repoIds,
-                            budget: searchBudget
-                        });
-                    } catch (error) {
-                        degraded = true;
-                        reasons.push("code_search_failed");
-                        if (traceBuilder) {
-                            traceBuilder.recordEvent({
-                                area: "io",
-                                code: "project_search_failed",
-                                message: "project_search failed",
-                                data: { error: String((error as any)?.message ?? "unknown").slice(0, 120) }
-                            });
-                        }
-                        codeResults = { results: [] };
-                    }
-                    const results = Array.isArray(codeResults?.results) ? codeResults.results : [];
-                    
-                    const topologyMinLOD = resolveAdaptiveFlowLOD(context, 1);
-                    const codeItems = await Promise.all(results.map(async (item: any) => {
-                        const codeItem: ExploreItem = {
-                            kind: "file_preview",
-                            filePath: item.path ?? "",
-                            preview: truncate(item.context ?? "", maxItemChars),
-                            range: item.line ? { startLine: item.line, endLine: item.line } : undefined,
-                            score: item.score,
-                            why: [item.type ?? "project_search"],
-                            metadata: {
-                                ...(item?.repoId ? { repoId: item.repoId } : {}),
-                                ...(item?.repoRelativePath ? { repoRelativePath: item.repoRelativePath } : {})
-                            }
-                        };
-
-                        try {
-                            if (item.path) {
-                                const fileSystem = this.registry.getMetadata<IFileSystem>("fileSystem");
-                                const graphSnapshot = await collectTopologyMetadata(ucg, item.path, fileSystem, topologyMinLOD);
-                                if (graphSnapshot.topology) {
-                                    codeItem.metadata = {
-                                        ...codeItem.metadata,
-                                        symbols: graphSnapshot.topology.topLevelSymbols?.map((s: any) => `${s.kind === 'heading' ? '#' : s.kind === 'class' ? '@' : ''}${s.name}`).slice(0, 10),
-                                        exports: graphSnapshot.topology.exports?.map((e: any) => e.name).slice(0, 5),
-                                        lod: graphSnapshot.lod,
-                                        dependencyCount: graphSnapshot.dependencyCount,
-                                        dependents: graphSnapshot.dependents
-                                    };
-                                }
-                            }
-                        } catch (error) {
-                            console.debug('[ExplorePillar] Topology enrichment skipped:', error);
-                        }
-                        return codeItem;
-                    }));
-
-                    codeForPack = codeItems;
-                    response.data.code = codeItems.slice(0, maxResults).map((item) => applyBudgetToItem(item, false, false));
-                    if (codeResults?.degraded) {
-                        degraded = true;
-                        if (codeResults?.reason) {
-                            reasons.push(codeResults.reason);
-                        }
-                    }
-                }
-
-                const shouldPreferCode = symbolQuery && !includeExplicit && !sourcesWantsDocs;
-                const shouldRunDocSearch = (includeDocs || includeComments)
-                    && !shouldPreferCode
-                    && (!hasDeadline || timeRemaining() > 400);
-
-                if (shouldRunDocSearch) {
-                    if (traceBuilder) {
-                        traceBuilder.recordEvent({
-                            area: "policy",
-                            code: "doc_search_attempted",
-                            data: { includeDocs, includeComments }
-                        });
-                    }
-                    const docCandidateMultiplier = isDeepProfile ? 6 : 3;
-                    const docMaxCandidatesBase = Math.max(packMaxResults * docCandidateMultiplier, isDeepProfile ? 48 : 24);
-                    const docMaxCandidates = Math.min(
-                        docMaxCandidatesBase,
-                        maxFiles,
-                        symbolQuery ? 30 : 80
-                    );
-                    const docMaxChunkCandidates = Math.min(Math.max(docMaxCandidates * 6, 120), 360);
-                    const docEmbeddingBudgetMs = hasDeadline
-                        ? Math.min(1200, Math.max(200, Math.floor(timeRemaining() * 0.4)))
-                        : undefined;
-                    const disableEmbeddings = symbolQuery
-                        || (hasDeadline && typeof docEmbeddingBudgetMs === "number" && docEmbeddingBudgetMs < 400);
-                    let docResults: any;
-                    try {
-                        docResults = await this.runTool(context, "document_search", {
-                            query,
-                            output: "compact",
-                            maxResults: packMaxResults,
-                            maxCandidates: docMaxCandidates,
-                            maxChunkCandidates: docMaxChunkCandidates,
-                            maxChunksEmbeddedPerRequest: disableEmbeddings ? 8 : 24,
-                            maxEmbeddingTimeMs: docEmbeddingBudgetMs,
-                            includeEvidence: false,
-                            packId: undefined,
-                            includeComments,
-                            includeLogs,
-                            repoScope: (constraints as any).repoScope,
-                            repoId: (constraints as any).repoId,
-                            repoIds: (constraints as any).repoIds,
-                            embedding: disableEmbeddings ? { provider: "disabled" } : undefined
-                        });
-                    } catch (error) {
-                        degraded = true;
-                        reasons.push("doc_search_failed");
-                        if (traceBuilder) {
-                            traceBuilder.recordEvent({
-                                area: "io",
-                                code: "document_search_failed",
-                                message: "document_search failed",
-                                data: { error: String((error as any)?.message ?? "unknown").slice(0, 120) }
-                            });
-                        }
-                        docResults = { results: [] };
-                    }
-                    const sections = Array.isArray(docResults?.results) ? docResults.results : [];
-                    const filtered = sections.filter((section: any) => {
-                        if (section?.kind === "code_comment") return includeComments;
-                        if (isLogPath(section?.filePath)) {
-                            return includeLogs || includeDocs;
-                        }
-                        return includeDocs;
-                    });
-                    const docs = filtered.map((section: any) => ({
-                        kind: "document_section",
-                        filePath: section.filePath ?? "",
-                        title: section.heading ?? section.sectionPath?.slice?.(-1)?.[0],
-                        score: section.scores?.final,
-                        range: { startLine: section.range?.startLine, endLine: section.range?.endLine },
-                        preview: truncate(section.preview ?? "", maxItemChars),
-                        metadata: {
-                            ...(section.kind ? { kind: section.kind } : {}),
-                            ...(Array.isArray(section.sectionPath) ? { headingPath: section.sectionPath } : {})
-                        },
-                        why: ["document_search"]
-                    }));
-                    docsForPack = docs;
-                    response.data.docs = docs.slice(0, maxResults).map((item: ExploreItem) => applyBudgetToItem(item, false, false));
-                    if (docResults?.degraded) {
-                        degraded = true;
-                        if (Array.isArray(docResults?.reasons)) {
-                            reasons.push(...docResults.reasons);
-                        }
-                    }
-                } else if (includeDocs || includeComments) {
-                    degraded = true;
-                    reasons.push(shouldPreferCode ? "doc_search_skipped" : "budget_exceeded");
-                    if (traceBuilder) {
-                        traceBuilder.recordSkip(
-                            "doc_search",
-                            shouldPreferCode ? "sources_filtered" : "budget_exceeded",
-                            shouldPreferCode ? "symbol query prefers code" : "budget/time limit"
-                        );
-                    }
-                }
-
-                if (effectivePackId) {
-                    const createdAt = Date.now();
-                    const expiresAt = createdAt + DEFAULT_PACK_TTL_MS;
-                    const pack: ExplorePack = {
-                        packId: effectivePackId,
-                        query,
-                        createdAt,
-                        expiresAt,
-                        include: { docs: includeDocs, code: includeCode, comments: includeComments, logs: includeLogs },
-                        docs: docsForPack,
-                        code: codeForPack
-                    };
-                    ExplorePillar.packCache.set(effectivePackId, pack);
-                    response.pack = { packId: effectivePackId, hit: false, createdAt, expiresAt };
-                    const nextCursor = computeNextCursor(pack, cursorState, maxResults, includeDocs, includeCode, includeComments, includeLogs);
-                    if (nextCursor) {
-                        response.next = { itemsCursor: nextCursor };
-                    }
-                }
-            }
-        }
-
-        if (paths.length > 0) {
-            const expanded = await expandPaths(paths, { allowGlobs, maxFiles, includeDocs, includeCode }, this.registry);
-
-            if (expanded.blocked) {
-                return {
-                    success: false,
-                    status: "invalid_args",
-                    message: expanded.message ?? "Invalid paths.",
-                    data: { docs: [], code: [] },
-                    sessionId: resolvedSessionId
-                };
-            }
-
-            const selected = applySoftPriority(expanded.entries, maxFiles, includeDocs, includeCode);
-            const fullPathSet = new Set(fullPaths);
-
-            for (const entry of selected) {
-                if (!includeDocs && isDocPath(entry.path)) continue;
-                if (!includeCode && !isDocPath(entry.path)) continue;
-
-                const wantsFull = view === "full" && (fullPaths.length === 0 || fullPathSet.has(entry.path));
-                if (wantsFull) {
-                    if (!allowSensitive && isSensitivePath(entry.path)) {
-                        return {
-                            success: false,
-                            status: "blocked",
-                            message: `Full read blocked for sensitive path: ${entry.path}`,
-                            data: { docs: [], code: [] },
-                            sessionId: resolvedSessionId
-                        };
-                    }
-                    if (!allowBinary && isBinaryPath(entry.path)) {
-                        return {
-                            success: false,
-                            status: "blocked",
-                            message: `Full read blocked for binary path: ${entry.path}`,
-                            data: { docs: [], code: [] },
-                            sessionId: resolvedSessionId
-                        };
-                    }
-                    if (typeof maxBytes === "number" && entry.size && entry.size > maxBytes) {
-                        return {
-                            success: false,
-                            status: "blocked",
-                            message: `Full read blocked by maxBytes for ${entry.path}.`,
-                            data: { docs: [], code: [] },
-                            sessionId: resolvedSessionId
-                        };
-                    }
-                }
-
-                const fileSystem = this.registry.getMetadata<IFileSystem>("fileSystem");
-                const item = await buildItemForPath(entry.path, { view, maxChars, maxItemChars, allowSensitive, allowBinary, wantsFull, section: constraints.section }, context, (ctx, tool, args) => this.runTool(ctx, tool, args), fileSystem);
-
-                if (item.blocked) {
-                    let reason = item.reason;
-                    if (!reason && typeof item.message === "string" && item.message.includes("Syntax validation failed")) {
-                        reason = "syntax_validation_failed";
-                    }
-                    const reasons = reason ? [reason] : undefined;
-                    const languageId = reason ? AstManager.getInstance().getLanguageId(entry.path) : undefined;
-                    const degradedReasons = reasons
-                        ? buildDegradedReasons(reasons, { languageId, filePath: entry.path })
-                        : undefined;
-                    return {
-                        success: false,
-                        status: "blocked",
-                        message: item.message ?? "Full read blocked.",
-                        data: { docs: [], code: [] },
-                        reasons,
-                        degradedReasons,
-                        sessionId: resolvedSessionId
-                    };
-                }
-
-                if (item.degraded) {
-                    degraded = true;
-                    if (item.reason) reasons.push(item.reason);
-                }
-
-                const payloadItem = item.value;
-                if (!payloadItem) continue;
-
-                const isFullContent = typeof payloadItem.content === "string";
-                applyBudgetToItem(payloadItem, isFullContent, view !== "full");
-
-                if (repoRegistry && pathNormalizer) {
-                    try {
-                        const repoInfo = resolveRepoInfo(payloadItem.filePath, repoRegistry, pathNormalizer);
-                        payloadItem.metadata = {
-                            ...(payloadItem.metadata ?? {}),
-                            repoId: repoInfo.repoId,
-                            ...(repoInfo.repoRelativePath ? { repoRelativePath: repoInfo.repoRelativePath } : {})
-                        };
-                    } catch {
-                        // ignore repo scope metadata failures
-                    }
-                }
-
-                const contentText = payloadItem.content ?? payloadItem.preview ?? "";
-                const contentLength = contentText.length;
-                const itemTokens = estimateTokens(contentText, {
-                    languageId: isDocPath(payloadItem.filePath) ? undefined : AstManager.getInstance().getLanguageId(payloadItem.filePath)
-                });
-                if (maxTokens) {
-                    if (view === "full") {
-                        if (totalTokens + itemTokens > maxTokens) {
-                            return {
-                                success: false,
-                                status: "blocked",
-                                message: "Full read blocked by maxTokens. Increase limits.maxTokens and retry.",
-                                data: { docs: [], code: [] },
-                                sessionId: resolvedSessionId
-                            };
-                        }
-                    } else if (totalTokens + itemTokens > maxTokens) {
-                        degraded = true;
-                        reasons.push("budget_exceeded");
-                        break;
-                    }
-                }
-                if (view === "full") {
-                    if (totalChars + contentLength > maxChars) {
-                        return {
-                            success: false,
-                            status: "blocked",
-                            message: "Full read blocked by maxChars. Increase limits.maxChars and retry.",
-                            data: { docs: [], code: [] },
-                            sessionId: resolvedSessionId
-                        };
-                    }
-                } else {
-                    if (totalChars + contentLength > maxChars) {
-                        degraded = true;
-                        reasons.push("budget_exceeded");
-                        break;
-                    }
-                }
-                totalChars += contentLength;
-                totalTokens += itemTokens;
-
-                if (isDocPath(entry.path)) {
-                    response.data.docs.push(payloadItem);
-                } else {
-                    response.data.code.push(payloadItem);
-                }
-            }
-        }
-
-        if (includeClusters && query) {
-            const graphRagService = this.registry.getMetadata<GraphRagClusterService>("graphRagClusterService")
-                ?? new GraphRagClusterService(this.registry);
-            if (!this.registry.getMetadata("graphRagClusterService")) {
-                this.registry.setMetadata("graphRagClusterService", graphRagService);
-            }
-            const clusterResult = await graphRagService.buildClusters({
-                query,
-                clusterOptions,
-                projectFileCount: projectStats?.fileCount,
-                docHint,
-                repoScope: (constraints as any).repoScope,
-                repoId: (constraints as any).repoId,
-                repoIds: (constraints as any).repoIds,
-                allowCrossRepoEdits: (constraints as any).allowCrossRepoEdits
-            });
-            if (clusterResult) {
-                response.clusters = clusterResult.clusters;
-                response.clusterPolicy = clusterResult.policy;
-                if (traceBuilder) {
-                    traceBuilder.recordEvent({
-                        area: "policy",
-                        code: "graphrag_clusters",
-                        data: {
-                            policy: clusterResult.policy,
-                            clusters: clusterResult.clusters.length,
-                            degradedReasons: clusterResult.degradedReasons
-                        }
-                    });
-                }
-                if (clusterResult.degradedReasons?.length) {
-                    degraded = true;
-                    reasons.push(...clusterResult.degradedReasons);
-                }
-            }
-        }
-
-        if (response.data.docs.length === 0 && response.data.code.length === 0 && (!response.clusters || response.clusters.length === 0)) {
-            response.status = "no_results";
-            response.message = "No results found.";
-        }
-
-        if (budgetState.budgetExceeded) {
-            degraded = true;
-            reasons.push("budget_exceeded");
-            response.compression = {
-                applied: true,
-                mode: budgetState.compressionDecisions.length > 0 ? "distill" : "truncate",
-                elasticWindowPct: maxTokens ? 0.05 : undefined,
-                maxTokens,
-                estimatedTokens: budgetState.compressionEstimatedTokens > 0 ? budgetState.compressionEstimatedTokens : undefined,
-                maxChars,
-                usedChars: budgetState.compressionUsedChars > 0 ? budgetState.compressionUsedChars : undefined,
-                decisions: budgetState.compressionDecisions.length > 0 ? budgetState.compressionDecisions : undefined
-            };
-        }
-
-        if (degraded) {
-            response.degraded = true;
-            response.reasons = Array.from(new Set(reasons));
-            response.degradedReasons = buildDegradedReasons(response.reasons);
-        }
-
-        enforceExploreResponseBudget({
+        await executeExploreQuery({
+            setup,
+            state,
             response,
-            maxTokens,
-            maxChars,
-            traceBuilder
+            registry: this.registry,
+            context,
+            packCache: ExplorePillar.packCache,
+            runTool: (ctx, tool, args) => this.runTool(ctx, tool, args),
+            expandDocContent: (item, maxChars, ctx, strategy, query) => this.expandDocContent(item, maxChars, ctx, strategy, query),
+            expandCodeContent: (item, maxChars, ctx) => this.expandCodeContent(item, maxChars, ctx)
         });
 
-        if (traceEnabled) {
-            response.effectiveOptions = {
-                version: 1,
-                pillar: "explore",
-                profile,
-                sources: resolvedOptions.effective.sources,
-                include,
-                limits,
-                view
-            };
-            if (traceBuilder) {
-                traceBuilder.setBudget({
-                    maxTokens,
-                    maxChars,
-                    timeoutMs,
-                    compressionApplied: response.compression?.applied,
-                    compressionMode: response.compression?.mode === "none" ? undefined : response.compression?.mode
-                });
-                response.decisionTrace = traceBuilder.finalize();
-            }
-        }
+        const pathResult = await executeExplorePaths({
+            setup,
+            state,
+            response,
+            registry: this.registry,
+            context,
+            runTool: (ctx, tool, args) => this.runTool(ctx, tool, args),
+            applyBudgetToItem
+        });
+        if (pathResult) return pathResult;
+
+        await executeExploreClusters({
+            setup,
+            state,
+            response,
+            registry: this.registry,
+            context
+        });
+
+        finalizeExploreResponse({ setup, state, response });
+
         this.addIndexStatusInsights(response);
         await this.attachIndexSnapshot(response);
 
-        adaptiveLod?.recordOutcome({
-            sessionId: resolvedSessionId,
+        setup.adaptiveLod?.recordOutcome({
+            sessionId: input.resolvedSessionId,
             tool: "explore",
             success: Boolean(response.success),
             degradedReasons: response.degradedReasons
@@ -1153,48 +373,4 @@ export class ExplorePillar {
         const hasSymbolToken = tokens.some(token => /[A-Z_]/.test(token) || /\d/.test(token));
         return tokens.length > 1 ? hasSymbolToken : hasSymbolToken;
     }
-}
-
-function applyExploreProfileCaps(limits: {
-    maxResults?: number;
-    maxChars?: number;
-    maxTokens?: number;
-    maxItemChars?: number;
-    maxBytes?: number;
-    maxFiles?: number;
-}, profile: string): void {
-    if (profile === "lean") {
-        limits.maxResults = clampToMax(limits.maxResults, 20);
-        limits.maxFiles = clampToMax(limits.maxFiles, 400);
-        limits.maxItemChars = clampToMax(limits.maxItemChars, 2400);
-        limits.maxChars = clampToMax(limits.maxChars, 20000);
-        limits.maxTokens = clampToMax(limits.maxTokens, 1500);
-        limits.maxBytes = clampToMax(limits.maxBytes, 400000);
-    }
-    if (profile === "fast") {
-        limits.maxResults = clampToMax(limits.maxResults, 5);
-        limits.maxFiles = clampToMax(limits.maxFiles, 80);
-        limits.maxChars = clampToMax(limits.maxChars, 6000);
-    }
-    if (profile === "deep") {
-        limits.maxResults = clampToMax(limits.maxResults, 12);
-        limits.maxFiles = clampToMax(limits.maxFiles, 300);
-        limits.maxChars = clampToMax(limits.maxChars, 12000);
-    }
-}
-
-function clampToMax(value: number | undefined, maxValue: number): number {
-    if (!Number.isFinite(value)) return maxValue;
-    return Math.min(value as number, maxValue);
-}
-
-function resolveSectionChars(plan: { chars?: number; tokens?: number } | undefined, fallback: number): number {
-    if (!plan) return fallback;
-    if (Number.isFinite(plan.chars) && (plan.chars ?? 0) > 0) {
-        return Math.max(64, plan.chars ?? fallback);
-    }
-    if (Number.isFinite(plan.tokens) && (plan.tokens ?? 0) > 0) {
-        return Math.max(64, Math.floor((plan.tokens ?? 0) * 4));
-    }
-    return fallback;
 }

@@ -1,6 +1,8 @@
 import chokidar from 'chokidar';
+import path from 'path';
 import { UnifiedContextGraph } from './UnifiedContextGraph.js';
 import { FeatureFlags } from '../../config/FeatureFlags.js';
+import { PathManager } from '../../utils/PathManager.js';
 
 /**
  * File watcher for automatic UCG invalidation on file changes.
@@ -21,15 +23,24 @@ export class FileWatcher {
         if (this.watcher || !FeatureFlags.isEnabled(FeatureFlags.ADAPTIVE_FLOW_ENABLED)) return;
         
         console.log('[FileWatcher] Starting file watcher in: ' + this.rootPath);
-        
+
+        const ignored = [
+            '**/node_modules/**',
+            '**/.git/**',
+            '**/.kairo/**',
+            '**/dist/**',
+            '**/build/**'
+        ];
+        const baseDir = PathManager.getBaseDir()
+            .replace(/\\/g, "/")
+            .replace(/\/+$/, "")
+            .replace(/^\.\//, "");
+        if (baseDir && !path.isAbsolute(baseDir)) {
+            ignored.push(`**/${baseDir}/**`);
+        }
+
         this.watcher = chokidar.watch(this.rootPath, {
-            ignored: [
-                '**/node_modules/**',
-                '**/.git/**',
-                '**/.kairo/**',
-                '**/dist/**',
-                '**/build/**'
-            ],
+            ignored,
             persistent: true,
             ignoreInitial: true
         });

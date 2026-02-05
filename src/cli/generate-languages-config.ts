@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { BUILTIN_LANGUAGE_MAPPINGS } from "../config/LanguageConfig.js";
+import { PathManager } from "../utils/PathManager.js";
 
 function usage(): void {
     console.log(`kairo languages config generator
@@ -9,7 +10,7 @@ Usage:
   kairo-gen-languages --root <projectRoot> [--force]
 
 Options:
-  --root   Project root to write .kairo/languages.json
+  --root   Project root to write <KAIRO_DIR>/config/languages.json
   --force  Overwrite existing file
 `);
 }
@@ -24,7 +25,7 @@ function main(): void {
 
     const rootPath = path.resolve(args[rootIndex + 1]);
     const force = args.includes("--force");
-    const configDir = path.join(rootPath, ".kairo");
+    const configDir = PathManager.resolveForRoot(rootPath, "config");
     const configPath = path.join(configDir, "languages.json");
 
     if (!fs.existsSync(configDir)) {
@@ -46,4 +47,3 @@ function main(): void {
 }
 
 main();
-

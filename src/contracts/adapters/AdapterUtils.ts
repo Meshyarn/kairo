@@ -3,15 +3,28 @@ import path from "path";
 import ignore from "ignore";
 import type { RepoConfig } from "../../config/RepoRegistry.js";
 import type { BoundaryEvidence } from "../boundaries/types.js";
+import { PathManager } from "../../utils/PathManager.js";
 
-const DEFAULT_EXCLUDE_PATTERNS = [
-  "dist/**",
-  "coverage/**",
-  "node_modules/**",
-  ".git/**",
-  ".kairo/**",
-  ".mcp/**"
-];
+const DEFAULT_EXCLUDE_PATTERNS = (() => {
+  const patterns = [
+    "dist/**",
+    "coverage/**",
+    "node_modules/**",
+    ".git/**",
+    ".mcp/**",
+    ".kairo/**"
+  ];
+
+  const baseDir = PathManager.getBaseDir()
+    .replace(/\\/g, "/")
+    .replace(/\/+$/, "")
+    .replace(/^\.\//, "");
+  if (baseDir && !path.isAbsolute(baseDir)) {
+    patterns.push(`${baseDir}/**`);
+  }
+
+  return Array.from(new Set(patterns));
+})();
 
 export type ScannedFile = {
   absolutePath: string;

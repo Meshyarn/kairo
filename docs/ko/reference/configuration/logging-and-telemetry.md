@@ -9,11 +9,14 @@ Kairo는 stdio MCP 서버로 동작합니다. 가장 중요한 규칙은 **stdou
 | `KAIRO_LOG_TO_FILE` | `true` | stdout를 MCP 프레임 전용으로 유지. |
 | `KAIRO_ALLOW_STDOUT_LOGS` | `false` | 호스트의 JSON 파싱 오류를 방지. |
 | `KAIRO_LOG_LEVEL` | `info` (필요 시 잠시 `debug`) | `debug`는 조사 시에만. |
+| `KAIRO_LOG_DIR` | *(선택)* | 기본 로그 디렉터리를 오버라이드 (기본: `<KAIRO_DIR>/logs`). |
+| `KAIRO_LOG_FILE` | *(선택)* | 스트림별 로그 대신 단일 파일로 모든 로그를 기록. |
 
 메모:
 
 - MCP 호스트에서는 file logging을 권장합니다. stdout에 로그가 섞이면 MCP JSON 프레이밍이 깨질 수 있습니다.
 - 호스트 통합 문제를 조사할 때는 로그 + `manage({ command: "status" })` 결과를 함께 수집하고, apply 흐름은 serialize 하세요.
+- `KAIRO_LOG_TO_FILE=true`이고 `KAIRO_LOG_FILE`을 설정하지 않으면, Kairo는 `KAIRO_LOG_DIR`(기본: `<KAIRO_DIR>/logs`) 아래에 `console.log`, `console.warn.log`, `console.error.log`, `stdout.log`, `stderr.log` 등을 기록합니다.
 
 ## 베타 텔레메트리(opt-in)
 

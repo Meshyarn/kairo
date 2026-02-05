@@ -1,5 +1,6 @@
 import * as path from 'path';
 import { OrchestrationContext } from "../../OrchestrationContext.js";
+import { PathManager } from "../../../utils/PathManager.js";
 
 export async function suggestDocUpdates(
   context: OrchestrationContext,
@@ -205,7 +206,13 @@ async function listDocFiles(
 
 function isDocCandidate(filePath: string): boolean {
   if (!filePath) return false;
+  const baseDir = PathManager.getBaseDir()
+    .replace(/\\/g, "/")
+    .replace(/\/+$/, "")
+    .replace(/^\.\//, "");
+  const hasCustomBase = baseDir && !path.isAbsolute(baseDir);
   if (filePath.startsWith(".kairo/") || filePath.includes("/.kairo/")) return false;
+  if (hasCustomBase && (filePath.startsWith(`${baseDir}/`) || filePath.includes(`/${baseDir}/`))) return false;
   const lower = filePath.toLowerCase();
   if (lower.endsWith(".md") || lower.endsWith(".mdx") || lower.endsWith(".txt") || lower.endsWith(".log")) {
     return true;

@@ -2,8 +2,29 @@ import chokidar from "chokidar";
 import { EventEmitter } from "events";
 import * as fs from "fs";
 import * as path from "path";
-import type { ValidationConfig, ValidationMode } from "../types/validation.js";
+import type { ValidationConfig } from "../types/validation.js";
 import { PathManager } from "../utils/PathManager.js";
+import {
+    getAllowAmbiguousAutoPick as resolveAllowAmbiguousAutoPick,
+    getArchitecturalSafetyConfig as resolveArchitecturalSafetyConfig,
+    getEditorV2Enabled as resolveEditorV2Enabled,
+    getEditorV2Mode as resolveEditorV2Mode,
+    getEnvValue as resolveEnvValue,
+    getIntegrityGuardrailsConfig as resolveIntegrityGuardrailsConfig,
+    getLayer3CodeGenEnabled as resolveLayer3CodeGenEnabled,
+    getLayer3GenSimilarCount as resolveLayer3GenSimilarCount,
+    getLayer3ImpactMaxDepth as resolveLayer3ImpactMaxDepth,
+    getLayer3SmartMatchEnabled as resolveLayer3SmartMatchEnabled,
+    getLayer3SmartMatchThreshold as resolveLayer3SmartMatchThreshold,
+    getLayer3SymbolImpactEnabled as resolveLayer3SymbolImpactEnabled,
+    getMaxLevenshteinFileBytes as resolveMaxLevenshteinFileBytes,
+    getMinLevenshteinTargetLen as resolveMinLevenshteinTargetLen,
+    getOverridePolicy as resolveOverridePolicy,
+    getResolveTimeoutMs as resolveResolveTimeoutMs,
+    getValidationConfig as resolveValidationConfig
+} from "./ConfigurationManagerConfig.js";
+import type { OverridePolicyConfig } from "./ConfigurationManagerTypes.js";
+export type { OverridePolicyConfig } from "./ConfigurationManagerTypes.js";
 
 export type ConfigurationEvent =
     | "ignoreChanged"
@@ -18,20 +39,13 @@ export interface ConfigurationEventPayloads {
     packageJsonChanged: { filePath: string };
 }
 
-export type OverridePolicyConfig = {
-    enabled?: boolean;
-    maxTtlMinutes?: number;
-    maxFiles?: number;
-    allowed?: Record<string, boolean | "confirm_only">;
-};
-
 const WATCH_FILES = [
     "tsconfig.json",
     "jsconfig.json",
     "package.json"
 ];
 const IGNORE_FILES = [".gitignore", ".mcpignore"];
-const IGNORE_SCAN_EXCLUDES = new Set([
+const IGNORE_SCAN_EXCLUDES_BASE = new Set([
     ".git",
     "node_modules",
     ".mcp",
@@ -40,6 +54,19 @@ const IGNORE_SCAN_EXCLUDES = new Set([
     "dist",
     "coverage"
 ]);
+
+const getIgnoreScanExcludes = (): Set<string> => {
+    const excludes = new Set(IGNORE_SCAN_EXCLUDES_BASE);
+    const baseDir = PathManager.getBaseDir()
+        .replace(/\\/g, "/")
+        .replace(/\/+$/, "")
+        .replace(/^\.\//, "");
+    if (baseDir && !path.isAbsolute(baseDir)) {
+        const root = baseDir.split("/")[0];
+        if (root) excludes.add(root);
+    }
+    return excludes;
+};
 
 export class ConfigurationManager extends EventEmitter {
     private readonly watcher?: chokidar.FSWatcher;
@@ -149,6 +176,7 @@ export class ConfigurationManager extends EventEmitter {
 
     private collectIgnoreFiles(): string[] {
         const ignoreFiles: string[] = [];
+        const ignoreScanExcludes = getIgnoreScanExcludes();
         const stack = [this.rootPath];
         while (stack.length > 0) {
             const current = stack.pop()!;
@@ -164,7 +192,7 @@ export class ConfigurationManager extends EventEmitter {
                 }
                 const entryPath = path.join(current, entry.name);
                 if (entry.isDirectory()) {
-                    if (IGNORE_SCAN_EXCLUDES.has(entry.name)) {
+                    if (ignoreScanExcludes.has(entry.name)) {
                         continue;
                     }
                     stack.push(entryPath);
@@ -197,174 +225,59 @@ export class ConfigurationManager extends EventEmitter {
 
     // ADR-042-005: Phase A4 - ENV Configuration Getters
     public static get(key: string, defaultValue?: any): any {
-        const envValue = process.env[key];
-        if (envValue === undefined) {
-            return defaultValue;
-        }
-        // Boolean conversion
-        if (defaultValue === true || defaultValue === false) {
-            return envValue === 'true';
-        }
-        // Number conversion
-        if (typeof defaultValue === 'number') {
-            const parsed = Number(envValue);
-            return isNaN(parsed) ? defaultValue : parsed;
-        }
-        // String or other types
-        return envValue;
+        return resolveEnvValue(key, defaultValue);
     }
 
     public static getEditorV2Enabled(): boolean {
-        return ConfigurationManager.get('KAIRO_EDITOR_V2', false);
+        return resolveEditorV2Enabled();
     }
 
-    public static getEditorV2Mode(): 'off' | 'dryrun' | 'apply' {
-        const mode = ConfigurationManager.get('KAIRO_EDITOR_V2_MODE', 'off');
-        if (mode === 'dryrun' || mode === 'apply') {
-            return mode;
-        }
-        return 'off';
+    public static getEditorV2Mode(): "off" | "dryrun" | "apply" {
+        return resolveEditorV2Mode();
     }
 
     public static getResolveTimeoutMs(): number {
-        return ConfigurationManager.get('KAIRO_EDITOR_RESOLVE_TIMEOUT_MS', 1500);
+        return resolveResolveTimeoutMs();
     }
 
     public static getMinLevenshteinTargetLen(): number {
-        return ConfigurationManager.get('KAIRO_CHANGE_MIN_LEVENSHTEIN_TARGET_LEN', 20);
+        return resolveMinLevenshteinTargetLen();
     }
 
     public static getMaxLevenshteinFileBytes(): number {
-        return ConfigurationManager.get('KAIRO_CHANGE_MAX_LEVENSHTEIN_FILE_BYTES', 100000);
+        return resolveMaxLevenshteinFileBytes();
     }
 
     public static getAllowAmbiguousAutoPick(): boolean {
-        // v2 모드에서는 기본적으로 false
-        const v2Enabled = ConfigurationManager.getEditorV2Enabled();
-        const v2Mode = ConfigurationManager.getEditorV2Mode();
-        if (v2Enabled && v2Mode !== 'off') {
-            return ConfigurationManager.get('KAIRO_EDITOR_ALLOW_AMBIGUOUS_AUTOPICK', false);
-        }
-        // v1 모드에서는 기본적으로 true
-        return ConfigurationManager.get('KAIRO_EDITOR_ALLOW_AMBIGUOUS_AUTOPICK', true);
+        return resolveAllowAmbiguousAutoPick();
     }
 
-    // ADR-042-006: Layer 3 AI-Enhanced Features
-
-    /**
-     * Phase 1: Smart Fuzzy Match - Enable embedding-based symbol search
-     */
     public static getLayer3SmartMatchEnabled(): boolean {
-        return ConfigurationManager.get('KAIRO_LAYER3_SMART_MATCH', false);
+        return resolveLayer3SmartMatchEnabled();
     }
 
-    /**
-     * Phase 1: Confidence threshold for auto-resolving with smart match
-     */
     public static getLayer3SmartMatchThreshold(): number {
-        return ConfigurationManager.get('KAIRO_LAYER3_SMART_MATCH_THRESHOLD', 0.85);
+        return resolveLayer3SmartMatchThreshold();
     }
 
-    /**
-     * Phase 2: Symbol Impact Analysis - Enable AST-based breaking change detection
-     */
     public static getLayer3SymbolImpactEnabled(): boolean {
-        return ConfigurationManager.get('KAIRO_LAYER3_SYMBOL_IMPACT', false);
+        return resolveLayer3SymbolImpactEnabled();
     }
 
-    /**
-     * Phase 2: Maximum CallGraph traversal depth for impact analysis
-     */
     public static getLayer3ImpactMaxDepth(): number {
-        return ConfigurationManager.get('KAIRO_LAYER3_IMPACT_MAX_DEPTH', 3);
+        return resolveLayer3ImpactMaxDepth();
     }
 
-    /**
-     * Phase 2.5/3: Code Generation - Enable AI-powered code generation
-     */
     public static getLayer3CodeGenEnabled(): boolean {
-        return ConfigurationManager.get('KAIRO_LAYER3_CODE_GEN', false);
+        return resolveLayer3CodeGenEnabled();
     }
 
-    /**
-     * Phase 3: Number of similar files to analyze for pattern extraction
-     */
     public static getLayer3GenSimilarCount(): number {
-        return ConfigurationManager.get('KAIRO_LAYER3_GEN_SIMILAR_COUNT', 5);
+        return resolveLayer3GenSimilarCount();
     }
 
     public static getValidationConfig(): ValidationConfig {
-        const defaults = ConfigurationManager.getDefaultValidationConfig();
-        if (ConfigurationManager.get("MCP_VALIDATION_DISABLED", false) === true) {
-            return { ...defaults, syntax: "off", semantic: "off", lspDiagnostics: "off" };
-        }
-
-        const fileConfig = ConfigurationManager.loadValidationConfig();
-        const merged: ValidationConfig = { ...defaults, ...fileConfig };
-        const baseSyntax = ConfigurationManager.parseValidationMode(
-            typeof merged.syntax === "string" ? merged.syntax : undefined,
-            defaults.syntax
-        );
-        const baseSemantic = ConfigurationManager.parseValidationMode(
-            typeof merged.semantic === "string" ? merged.semantic : undefined,
-            defaults.semantic
-        );
-        const baseLspDiagnostics = ConfigurationManager.parseValidationMode(
-            typeof merged.lspDiagnostics === "string" ? merged.lspDiagnostics : undefined,
-            defaults.lspDiagnostics
-        );
-        const baseTimeout = ConfigurationManager.parseValidationTimeout(
-            typeof merged.timeoutMs === "string" ? merged.timeoutMs : undefined,
-            typeof merged.timeoutMs === "number" ? merged.timeoutMs : defaults.timeoutMs
-        );
-
-        const syntax = ConfigurationManager.parseValidationMode(
-            process.env.MCP_VALIDATION_SYNTAX,
-            baseSyntax
-        );
-        const semantic = ConfigurationManager.parseValidationMode(
-            process.env.MCP_VALIDATION_SEMANTIC,
-            baseSemantic
-        );
-        const lspDiagnostics = ConfigurationManager.parseValidationMode(
-            process.env.MCP_VALIDATION_LSP,
-            baseLspDiagnostics
-        );
-        const timeoutMs = ConfigurationManager.parseValidationTimeout(
-            process.env.MCP_VALIDATION_TIMEOUT,
-            baseTimeout
-        );
-
-        return {
-            syntax,
-            semantic,
-            lspDiagnostics,
-            timeoutMs
-        };
-    }
-
-    private static loadValidationConfig(): Partial<ValidationConfig> {
-        const configPath = ConfigurationManager.resolveMcpConfigPath();
-        if (!fs.existsSync(configPath)) {
-            return {};
-        }
-        try {
-            const raw = fs.readFileSync(configPath, "utf-8");
-            const parsed = JSON.parse(raw);
-            return parsed?.validation ?? {};
-        } catch (error) {
-            console.warn(`[ConfigurationManager] Failed to read ${path.basename(configPath)}:`, error);
-            return {};
-        }
-    }
-
-    private static getDefaultValidationConfig(): ValidationConfig {
-        return {
-            syntax: "warn",
-            semantic: "off",
-            lspDiagnostics: "off",
-            timeoutMs: 2000
-        };
+        return resolveValidationConfig();
     }
 
     public static getArchitecturalSafetyConfig(): {
@@ -373,13 +286,7 @@ export class ConfigurationManager extends EventEmitter {
         blockPolicy: string;
         maxDepth: number;
     } {
-        const fileConfig = ConfigurationManager.loadArchitecturalSafetyConfig();
-        return {
-            enabled: ConfigurationManager.get("KAIRO_ARCH_SAFETY_ENABLED", fileConfig.enabled ?? true),
-            coreThreshold: ConfigurationManager.get("KAIRO_CORE_THRESHOLD", fileConfig.coreThreshold ?? 0.3),
-            blockPolicy: ConfigurationManager.get("KAIRO_ARCH_SAFETY_BLOCK_POLICY", fileConfig.blockPolicy ?? "warn_only"),
-            maxDepth: ConfigurationManager.get("KAIRO_CYCLE_MAX_DEPTH", fileConfig.maxDepth ?? 8)
-        };
+        return resolveArchitecturalSafetyConfig();
     }
 
     public static getIntegrityGuardrailsConfig(): {
@@ -412,33 +319,7 @@ export class ConfigurationManager extends EventEmitter {
             pageRankCacheTTL: number;
         };
     } {
-        const fileConfig = ConfigurationManager.loadIntegrityGuardrailsConfig();
-        return {
-            enabled: ConfigurationManager.get("KAIRO_GUARDRAILS_ENABLED", fileConfig.enabled ?? true),
-            layerRules: fileConfig.layerRules,
-            coreProtection: {
-                pageRankThreshold: ConfigurationManager.get("KAIRO_CORE_PAGERANK_THRESHOLD", fileConfig.coreProtection?.pageRankThreshold ?? 0.3),
-                incomingCountThreshold: ConfigurationManager.get("KAIRO_CORE_INCOMING_THRESHOLD", fileConfig.coreProtection?.incomingCountThreshold ?? 10),
-                blockPolicy: ConfigurationManager.get("KAIRO_CORE_BLOCK_POLICY", fileConfig.coreProtection?.blockPolicy ?? "warn_only")
-            },
-            protocolProtection: {
-                files: fileConfig.protocolProtection?.files ?? ["src/utils/StdoutGuard.ts", "src/server/**"],
-                forbiddenTokens: fileConfig.protocolProtection?.forbiddenTokens ?? ["process.stdout", "process.stderr", "console.log"],
-                allowlist: fileConfig.protocolProtection?.allowlist
-            },
-            publicSurfaceMonitor: {
-                enabled: fileConfig.publicSurfaceMonitor?.enabled ?? true,
-                impactThreshold: fileConfig.publicSurfaceMonitor?.impactThreshold ?? 10,
-                requireBatchRefactoring: fileConfig.publicSurfaceMonitor?.requireBatchRefactoring ?? true
-            },
-            languageParity: {
-                mode: fileConfig.languageParity?.mode ?? "balanced",
-                fallbackConfidence: fileConfig.languageParity?.fallbackConfidence ?? "low"
-            },
-            performance: {
-                pageRankCacheTTL: fileConfig.performance?.pageRankCacheTTL ?? 300000
-            }
-        };
+        return resolveIntegrityGuardrailsConfig();
     }
 
     public static getOverridePolicy(): {
@@ -447,135 +328,7 @@ export class ConfigurationManager extends EventEmitter {
         maxFiles: number;
         allowed: Record<string, boolean | "confirm_only">;
     } {
-        const isTestEnv = process.env.NODE_ENV === "test" || process.env.JEST_WORKER_ID !== undefined;
-        const defaults = isTestEnv
-            ? {
-                enabled: true,
-                maxTtlMinutes: 60,
-                maxFiles: 50,
-                allowed: {
-                    "editPolicy.allowDelete": "confirm_only" as const,
-                    "editPolicy.allowPartialApply": true,
-                    "staleGuard.bypass": true
-                } as Record<string, boolean | "confirm_only">
-            }
-            : { enabled: false, maxTtlMinutes: 60, maxFiles: 50, allowed: {} };
-        const fileConfig = ConfigurationManager.loadOverridesConfig();
-        return {
-            enabled: fileConfig.enabled ?? defaults.enabled,
-            maxTtlMinutes: Number.isFinite(fileConfig.maxTtlMinutes) ? (fileConfig.maxTtlMinutes as number) : defaults.maxTtlMinutes,
-            maxFiles: Number.isFinite(fileConfig.maxFiles) ? (fileConfig.maxFiles as number) : defaults.maxFiles,
-            allowed: fileConfig.allowed ?? defaults.allowed
-        };
-    }
-
-    private static loadArchitecturalSafetyConfig(): {
-        enabled?: boolean;
-        coreThreshold?: number;
-        blockPolicy?: string;
-        maxDepth?: number;
-    } {
-        const configPath = ConfigurationManager.resolveMcpConfigPath();
-        if (!fs.existsSync(configPath)) {
-            return {};
-        }
-        try {
-            const raw = fs.readFileSync(configPath, "utf-8");
-            const parsed = JSON.parse(raw);
-            return parsed?.architecturalSafety ?? {};
-        } catch (error) {
-            console.warn(`[ConfigurationManager] Failed to read ${path.basename(configPath)}:`, error);
-            return {};
-        }
-    }
-
-    private static loadIntegrityGuardrailsConfig(): {
-        enabled?: boolean;
-        layerRules?: {
-            layers: Array<{ name: string; match: string[] }>;
-            allow?: Array<{ from: string; to: string }>;
-            deny?: Array<{ from: string; to: string }>;
-        };
-        coreProtection?: {
-            pageRankThreshold?: number;
-            incomingCountThreshold?: number;
-            blockPolicy?: string;
-        };
-        protocolProtection?: {
-            files?: string[];
-            forbiddenTokens?: string[];
-            allowlist?: Array<{ file: string; tokens: string[]; reason: string }>;
-        };
-        publicSurfaceMonitor?: {
-            enabled?: boolean;
-            impactThreshold?: number;
-            requireBatchRefactoring?: boolean;
-        };
-        languageParity?: {
-            mode?: "strict" | "balanced" | "permissive";
-            fallbackConfidence?: "low" | "medium";
-        };
-        performance?: {
-            pageRankCacheTTL?: number;
-        };
-    } {
-        const configPath = ConfigurationManager.resolveMcpConfigPath();
-        if (!fs.existsSync(configPath)) {
-            return {};
-        }
-        try {
-            const raw = fs.readFileSync(configPath, "utf-8");
-            const parsed = JSON.parse(raw);
-            return parsed?.integrityGuardrails ?? {};
-        } catch (error) {
-            console.warn(`[ConfigurationManager] Failed to read ${path.basename(configPath)}:`, error);
-            return {};
-        }
-    }
-
-    private static loadOverridesConfig(): OverridePolicyConfig {
-        const configPath = ConfigurationManager.resolveMcpConfigPath();
-        if (!fs.existsSync(configPath)) {
-            return {};
-        }
-        try {
-            const raw = fs.readFileSync(configPath, "utf-8");
-            const parsed = JSON.parse(raw);
-            return parsed?.overrides ?? {};
-        } catch (error) {
-            console.warn(`[ConfigurationManager] Failed to read ${path.basename(configPath)}:`, error);
-            return {};
-        }
-    }
-
-    private static parseValidationMode(value: string | undefined, fallback: ValidationMode): ValidationMode {
-        if (value === "off" || value === "warn" || value === "error") {
-            return value;
-        }
-        return fallback;
-    }
-
-    private static resolveMcpConfigPath(): string {
-        const configDir = PathManager.getConfigDir();
-        const primary = path.join(configDir, ".mcp-config.json");
-        if (fs.existsSync(primary)) return primary;
-
-        const legacyConfigDir = path.join(configDir, "mcp-config.json");
-        if (fs.existsSync(legacyConfigDir)) return legacyConfigDir;
-
-        const legacyRoot = path.join(process.cwd(), ".mcp-config.json");
-        if (fs.existsSync(legacyRoot)) return legacyRoot;
-
-        return primary;
-    }
-
-    private static parseValidationTimeout(value: string | undefined, fallback: number): number {
-        if (!value) return fallback;
-        const parsed = Number.parseInt(value, 10);
-        if (Number.isFinite(parsed) && parsed > 0) {
-            return parsed;
-        }
-        return fallback;
+        return resolveOverridePolicy();
     }
 }
 
