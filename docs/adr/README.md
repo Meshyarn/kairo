@@ -58,6 +58,7 @@ The entries below cover all ADRs from the project history. Items marked “retou
 - ADR-040 (retouched): Five Pillars toolset consolidation → `docs/adr/ADR-040-five-pillars-toolset.md`
 - ADR-050 (retouched): Writer’s Flow contract → `docs/adr/ADR-050-writers-flow.md`
 - ADR-089 (retouched): Raw content sources for `change`/`write` (no quote/escape breakage) → `docs/adr/ADR-089-raw-content-sources-for-change-write.md`
+- ADR-090: 8-step adoption/UX/docs drift roadmap (WP1–WP8) → `docs/adr/ADR-090-8-step-roadmap-ux-doc-quality.md`
 - ADR-051: Review quality + session UX → see `docs/agent/TOOL_REFERENCE.md` + `docs/guides/getting-started.md` + `docs/guides/configuration.md`
 - ADR-052: Pillar option profiles + session policy → `docs/adr/ADR-052-pillar-option-profiles-and-session-policy.md`
 - ADR-053-C: Managed config bootstrap (`manage init/doctor`) → `docs/adr/ADR-053-C-managed-config-bootstrap.md`
@@ -181,6 +182,7 @@ These are older “why we built this at all” documents. The code has evolved, 
 - ADR-042 completion summary: aggregated status report for the 042 series (covered by `docs/adr/ADR-042-series-production-baseline.md`).
 - ADR-044 implementation TODO: short ordered checklist (historical; effectively merged into ADR-044 work).
 - ADR-045 TODO tracking: internal planning notes (historical; merged into the modularization work).
+- ADR-090: 8-step adoption/UX/docs drift roadmap (executed as WP1–WP8) → `docs/adr/ADR-090-8-step-roadmap-ux-doc-quality.md`
 
 ## Complete ADR list (source titles, condensed)
 

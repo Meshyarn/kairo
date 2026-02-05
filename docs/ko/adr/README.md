@@ -58,6 +58,7 @@ ADR 히스토리를 볼 때 “선택되지 않은” 결정도 선택된 결정
 - ADR-040 (retouched): Five Pillars 도구세트 통합 → `docs/adr/ADR-040-five-pillars-toolset.md`
 - ADR-050 (retouched): Writer’s Flow 계약 → `docs/adr/ADR-050-writers-flow.md`
 - ADR-089 (retouched): `change`/`write` 원문 소스(ContentSource) 계약(따옴표/이스케이프 깨짐 방지) → `docs/adr/ADR-089-raw-content-sources-for-change-write.md`
+- ADR-090: 8-step adoption/UX/docs drift 로드맵(WP1–WP8) → `docs/adr/ADR-090-8-step-roadmap-ux-doc-quality.md`
 - ADR-051: 리뷰 품질 + 세션 UX → `docs/ko/agent/TOOL_REFERENCE.md` + `docs/ko/guides/getting-started.md` + `docs/ko/guides/configuration.md` 참고
 - ADR-052: pillar 옵션 프로파일 + 세션 정책 → `docs/adr/ADR-052-pillar-option-profiles-and-session-policy.md`
 - ADR-053-C: Managed config bootstrap (`manage init/doctor`) → `docs/adr/ADR-053-C-managed-config-bootstrap.md`
@@ -126,6 +127,7 @@ ADR 히스토리를 볼 때 “선택되지 않은” 결정도 선택된 결정
 ### Meta ADRs / tracking notes
 
 - ADR-042 completion summary: `docs/adr/ADR-042-series-production-baseline.md`로 커버.
+- ADR-090: 8-step adoption/UX/docs drift 로드맵(WP1–WP8) → `docs/adr/ADR-090-8-step-roadmap-ux-doc-quality.md`
 
 ## Complete ADR list
 

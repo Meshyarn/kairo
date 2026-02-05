@@ -1,9 +1,9 @@
 {
-  "generatedAt": "2026-02-03T14:48:05.639Z",
+  "generatedAt": "2026-02-05T02:15:58.229Z",
   "totals": {
     "count": 109,
-    "curatedCount": 105,
-    "archivedOnlyCount": 4,
+    "curatedCount": 106,
+    "archivedOnlyCount": 3,
     "byStatus": {
       "Proposed": 37,
       "unknown": 25,
@@ -902,7 +902,7 @@
       "status": "Proposed",
       "date": "2026-02-03",
       "archiveFile": ".archive/ADR-090-8-step-roadmap-ux-doc-quality.md",
-      "curatedFile": null
+      "curatedFile": "docs/adr/ADR-090-8-step-roadmap-ux-doc-quality.md"
     }
   ]
 }
