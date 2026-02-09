@@ -38,23 +38,23 @@ export class GhostInterfaceBuilder {
                 const content = await this.fileSystem.readFile(absPath);
                 const langId = this.astManager.getLanguageId(absPath);
                 const doc = await this.astManager.parseFile(absPath, content);
-                
-                if (!doc) continue;
-
                 const lang = await this.astManager.getLanguageForFile(absPath);
-                if (!lang) continue;
-
-                const fileCallSites = this.callSiteAnalyzer.extractCallSites(doc.rootNode, lang, langId);
-                
-                // Heuristic: Find variables that are instances of symbolName
-                const instanceVars = this.findInstances(doc.rootNode, symbolName, langId, lang);
-
-                // Filter calls that specifically target our symbolName or its instances
-                const targetingCalls = fileCallSites.filter(call => 
-                    call.calleeObject === symbolName || 
-                    call.calleeName === symbolName ||
-                    (call.calleeObject && instanceVars.has(call.calleeObject))
-                );
+                let targetingCalls: CallSiteInfo[] = [];
+                if (doc && lang) {
+                    try {
+                        const fileCallSites = this.callSiteAnalyzer.extractCallSites(doc.rootNode, lang, langId);
+                        const instanceVars = this.findInstances(doc.rootNode, symbolName, langId, lang);
+                        targetingCalls = fileCallSites.filter(call => 
+                            call.calleeObject === symbolName || 
+                            call.calleeName === symbolName ||
+                            (call.calleeObject && instanceVars.has(call.calleeObject))
+                        );
+                    } catch {
+                        targetingCalls = this.extractCallSitesByRegex(content, symbolName);
+                    }
+                } else {
+                    targetingCalls = this.extractCallSitesByRegex(content, symbolName);
+                }
 
                 if (targetingCalls.length > 0) {
                     for (const call of targetingCalls) {
@@ -85,7 +85,13 @@ export class GhostInterfaceBuilder {
 
     private calculateAverageConsistency(methods: GhostMethodInfo[]): number {
         if (methods.length === 0) return 0;
-        return 1.0;
+        const scores: number[] = methods.map((method) => {
+            if (!method.inferredSignature) return 0;
+            const isVariadicLike = method.inferredSignature.includes('arg3: any') || method.inferredSignature.includes('arg4: any');
+            return isVariadicLike ? 0.5 : 1.0;
+        });
+        const total = scores.reduce((sum, score) => sum + score, 0);
+        return total / scores.length;
     }
 
     private findInstances(rootNode: any, symbolName: string, langId: string, lang: any): Set<string> {
@@ -195,11 +201,61 @@ export class GhostInterfaceBuilder {
         
         // Downgrade if consistency is very low
         if (consistency < 0.4 && base === 'high') return 'medium';
+        if (consistency <= 0.5) return 'low';
         return base;
     }
 
     private chooseBestSignature(name: string, signatures: string[]): string {
         if (signatures.length === 0) return `${name}(...)`;
         return signatures.sort((a, b) => a.length - b.length)[0];
+    }
+
+    private extractCallSitesByRegex(content: string, symbolName: string): CallSiteInfo[] {
+        if (!content.trim()) return [];
+        const instanceVars = new Set<string>();
+        const constructorRegex = new RegExp(`\\b(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*new\\s+${symbolName}\\s*\\(`, 'g');
+        let ctorMatch: RegExpExecArray | null;
+        while ((ctorMatch = constructorRegex.exec(content)) !== null) {
+            if (ctorMatch[1]) instanceVars.add(ctorMatch[1]);
+        }
+
+        const calls: CallSiteInfo[] = [];
+        const lines = content.split(/\r?\n/);
+        const methodCallRegex = /\b([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\s*\(([^)]*)\)/g;
+        const constructorCallRegex = new RegExp(`\\bnew\\s+${symbolName}\\s*\\(([^)]*)\\)`, 'g');
+
+        lines.forEach((line, index) => {
+            let methodMatch: RegExpExecArray | null;
+            while ((methodMatch = methodCallRegex.exec(line)) !== null) {
+                const targetObject = methodMatch[1];
+                if (targetObject !== symbolName && !instanceVars.has(targetObject)) continue;
+                const rawArgs = methodMatch[3]?.trim() ?? '';
+                calls.push({
+                    calleeName: methodMatch[2],
+                    calleeObject: targetObject,
+                    callType: 'method',
+                    line: index + 1,
+                    column: methodMatch.index + 1,
+                    text: methodMatch[0],
+                    arguments: rawArgs ? rawArgs.split(',').map(arg => arg.trim()).filter(Boolean) : [],
+                    isAwaited: line.includes(`await ${methodMatch[0]}`)
+                });
+            }
+
+            let ctorCallMatch: RegExpExecArray | null;
+            while ((ctorCallMatch = constructorCallRegex.exec(line)) !== null) {
+                const rawArgs = ctorCallMatch[1]?.trim() ?? '';
+                calls.push({
+                    calleeName: symbolName,
+                    callType: 'constructor',
+                    line: index + 1,
+                    column: ctorCallMatch.index + 1,
+                    text: ctorCallMatch[0],
+                    arguments: rawArgs ? rawArgs.split(',').map(arg => arg.trim()).filter(Boolean) : []
+                });
+            }
+        });
+
+        return calls;
     }
 }

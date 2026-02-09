@@ -109,14 +109,26 @@ export type ToolProfile = "lean" | "fast" | "balanced" | "deep";
 export type ToolSources = "code" | "docs" | "both";
 export type ToolSafety = "plan" | "apply";
 
-export interface SessionPolicy {
+export type SessionRepoScope =
+    | { mode: "all" }
+    | { mode: "default" }
+    | { mode: "repos"; repoIds?: string[] };
+
+export interface SessionRepoPolicy {
+    root?: string;
+    repoScope?: SessionRepoScope;
+    repoId?: string;
+    repoIds?: string[];
+}
+
+export interface SessionPolicy extends SessionRepoPolicy {
     profile?: ToolProfile;
     sources?: ToolSources;
     safety?: ToolSafety;
-    explore?: { profile?: ToolProfile; sources?: ToolSources };
-    understand?: { profile?: ToolProfile; sources?: ToolSources };
-    write?: { profile?: ToolProfile; safety?: ToolSafety };
-    change?: { profile?: ToolProfile; safety?: ToolSafety };
+    explore?: ({ profile?: ToolProfile; sources?: ToolSources } & SessionRepoPolicy);
+    understand?: ({ profile?: ToolProfile; sources?: ToolSources } & SessionRepoPolicy);
+    write?: ({ profile?: ToolProfile; safety?: ToolSafety } & SessionRepoPolicy);
+    change?: ({ profile?: ToolProfile; safety?: ToolSafety } & SessionRepoPolicy);
 }
 
 export interface FlowSessionOutcome {

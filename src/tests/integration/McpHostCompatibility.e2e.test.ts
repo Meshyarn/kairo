@@ -171,6 +171,35 @@ describe("MCP host compatibility harness", () => {
 
     await client.connect(transport);
 
+    const resourcesResult = await (client as any).listResources({});
+    expect(Array.isArray(resourcesResult?.resources)).toBe(true);
+    const resourceUris = resourcesResult.resources.map((entry: any) => entry.uri);
+    expect(resourceUris).toEqual(expect.arrayContaining([
+      "kairo://runtime/summary",
+      "kairo://config/mcp-policy",
+      "kairo://index/snapshot",
+      "kairo://tools/public"
+    ]));
+
+    const templatesResult = await (client as any).listResourceTemplates({});
+    expect(Array.isArray(templatesResult?.resourceTemplates)).toBe(true);
+    expect(templatesResult.resourceTemplates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ uriTemplate: "kairo://schema/{tool}" })
+      ])
+    );
+
+    const runtimeSummary = await (client as any).readResource({ uri: "kairo://runtime/summary" });
+    const runtimeText = runtimeSummary?.contents?.[0]?.text ?? "";
+    const runtimePayload = JSON.parse(runtimeText);
+    expect(runtimePayload.rootPath).toBe(tempRoot);
+    expect(Array.isArray(runtimePayload.tools)).toBe(true);
+
+    const taskSchema = await (client as any).readResource({ uri: "kairo://schema/task" });
+    const schemaText = taskSchema?.contents?.[0]?.text ?? "";
+    const schemaPayload = JSON.parse(schemaText);
+    expect(schemaPayload.tool).toBe("task");
+
     const toolsResult = await client.listTools();
     const toolNames = toolsResult.tools.map(tool => tool.name).sort();
     expect(toolNames).toEqual(["manage", "task"]);
@@ -252,6 +281,79 @@ describe("MCP host compatibility harness", () => {
       expect(listResponse.result?.tools ?? []).toEqual(
         expect.arrayContaining([expect.objectContaining({ name: "task" })])
       );
+
+      await sendChunked(child.stdin, {
+        jsonrpc: "2.0",
+        id: 4,
+        method: "resources/list",
+        params: {}
+      });
+
+      const resourcesResponse = await waitForMessage(
+        child,
+        readBuffer,
+        message => message.id === 4,
+        4000,
+        "resources/list",
+        stderrBuffer
+      );
+      if (resourcesResponse.error) {
+        throw new Error(`resources/list failed: ${resourcesResponse.error.message ?? "unknown"}`);
+      }
+      expect(resourcesResponse.result?.resources ?? []).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ uri: "kairo://runtime/summary" }),
+          expect.objectContaining({ uri: "kairo://config/mcp-policy" }),
+          expect.objectContaining({ uri: "kairo://index/snapshot" }),
+          expect.objectContaining({ uri: "kairo://tools/public" })
+        ])
+      );
+
+      await sendChunked(child.stdin, {
+        jsonrpc: "2.0",
+        id: 5,
+        method: "resources/templates/list",
+        params: {}
+      });
+
+      const templatesResponse = await waitForMessage(
+        child,
+        readBuffer,
+        message => message.id === 5,
+        4000,
+        "resources/templates/list",
+        stderrBuffer
+      );
+      if (templatesResponse.error) {
+        throw new Error(`resources/templates/list failed: ${templatesResponse.error.message ?? "unknown"}`);
+      }
+      expect(templatesResponse.result?.resourceTemplates ?? []).toEqual(
+        expect.arrayContaining([expect.objectContaining({ uriTemplate: "kairo://schema/{tool}" })])
+      );
+
+      await sendChunked(child.stdin, {
+        jsonrpc: "2.0",
+        id: 6,
+        method: "resources/read",
+        params: {
+          uri: "kairo://runtime/summary"
+        }
+      });
+
+      const readResponse = await waitForMessage(
+        child,
+        readBuffer,
+        message => message.id === 6,
+        4000,
+        "resources/read",
+        stderrBuffer
+      );
+      if (readResponse.error) {
+        throw new Error(`resources/read failed: ${readResponse.error.message ?? "unknown"}`);
+      }
+      const summaryText = readResponse.result?.contents?.[0]?.text ?? "";
+      const summaryPayload = JSON.parse(summaryText);
+      expect(summaryPayload.rootPath).toBe(root);
 
       await sendChunked(child.stdin, {
         jsonrpc: "2.0",

@@ -154,6 +154,13 @@ export interface IntentConstraints {
   profile?: "lean" | "fast" | "balanced" | "deep";
   sources?: "code" | "docs" | "both";
   safety?: "plan" | "apply";
+  repoScope?: {
+    mode: "all" | "default" | "repos";
+    repoIds?: string[];
+  };
+  repoId?: string;
+  repoIds?: string[];
+  root?: string;
   trace?: boolean;
   policy?: Record<string, unknown>;
   policyMode?: "merge" | "replace";

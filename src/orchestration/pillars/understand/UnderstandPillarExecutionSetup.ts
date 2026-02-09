@@ -2,6 +2,7 @@ import type { ParsedIntent } from "../../IntentRouter.js";
 import type { OrchestrationContext } from "../../OrchestrationContext.js";
 import type { InternalToolRegistry } from "../../InternalToolRegistry.js";
 import type { FlowArtifactManager } from "../../flow-artifact-manager.js";
+import type { RepoRegistry } from "../../../config/RepoRegistry.js";
 import type { OptionSource, TraceOptionResolution } from "../../../types/option-trace.js";
 import type { ToolProfile } from "../../options/OptionResolver.js";
 import { BudgetManager } from "../../BudgetManager.js";
@@ -18,6 +19,7 @@ import {
 } from "../../adaptive-flow/AdaptiveFlowGate.js";
 import { normalizeUnderstandInput } from "./UnderstandInputNormalizer.js";
 import { resolveProgressState, type ProgressState } from "../../../utils/ProgressLogger.js";
+import { applySessionRepoScopeDefaults } from "../shared/SessionScopePolicy.js";
 
 export interface UnderstandExecutionSetup {
   input: ReturnType<typeof normalizeUnderstandInput>;
@@ -40,6 +42,9 @@ export interface UnderstandExecutionSetup {
   initialProjectStats?: any;
   initialBudget?: ReturnType<typeof BudgetManager.create>;
   searchBudget?: ReturnType<typeof BudgetManager.create>;
+  timeoutMs?: number;
+  hasDeadline: boolean;
+  timeRemaining: () => number;
   progress: ProgressState | undefined;
   startedAt: number;
   adaptiveLod?: AdaptiveLodController;
@@ -80,6 +85,15 @@ export async function initializeUnderstandExecution(args: {
     extractPath,
     extractSymbol
   });
+  const repoRegistry = registry.getMetadata<RepoRegistry>("repoRegistry");
+  const rootPath = registry.getMetadata<string>("rootPath");
+  applySessionRepoScopeDefaults({
+    constraints: input.constraints as Record<string, any>,
+    sessionPolicy: input.sessionPolicy,
+    tool: "understand",
+    repoRegistry,
+    rootPath
+  });
   let depth = input.depth;
   const include = input.include;
   let maxTokens = input.maxTokens;
@@ -110,6 +124,13 @@ export async function initializeUnderstandExecution(args: {
   input.resolvedOptions.effective.profile = profile;
 
   const progress = resolveProgressState("Understand", input.constraints);
+  const timeoutMs = Number.isFinite(input.limits.timeoutMs) && (input.limits.timeoutMs ?? 0) > 0
+    ? (input.limits.timeoutMs as number)
+    : undefined;
+  const hasDeadline = Number.isFinite(timeoutMs) && (timeoutMs as number) > 0;
+  const timeRemaining = () => hasDeadline
+    ? Math.max(0, (timeoutMs as number) - (Date.now() - startedAt))
+    : Number.POSITIVE_INFINITY;
   const sessionProfile = input.sessionPolicy?.understand?.profile ?? input.sessionPolicy?.profile;
   const sessionSources = input.sessionPolicy?.understand?.sources ?? input.sessionPolicy?.sources;
   const traceBuilder = input.traceEnabled
@@ -277,6 +298,9 @@ export async function initializeUnderstandExecution(args: {
     initialProjectStats,
     initialBudget,
     searchBudget,
+    timeoutMs,
+    hasDeadline,
+    timeRemaining,
     progress,
     startedAt,
     adaptiveLod

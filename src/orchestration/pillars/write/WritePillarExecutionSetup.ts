@@ -16,6 +16,7 @@ import { enforceWriteResponseBudget } from '../../budget/ResponseEnvelopeBudgete
 import { resolveStylePack } from './WritePillarOptionUtils.js';
 import { TraceBuilder } from '../../trace/TraceBuilder.js';
 import { normalizeRepoScope } from '../../../utils/RepoScope.js';
+import { applySessionRepoScopeDefaults, buildSessionRepoScopePolicyPatch } from '../shared/SessionScopePolicy.js';
 
 export type WritePillarExecutionDeps = {
   registry: InternalToolRegistry;
@@ -65,6 +66,15 @@ export async function initializeWriteExecution(
       const artifact = artifactManager?.get(draftId) as any;
       return typeof artifact?.sessionId === "string" ? artifact.sessionId : undefined;
     }
+  });
+  const rootPath = deps.resolveRootPath();
+  const repoRegistryForDefaults = deps.registry.getMetadata("repoRegistry") as RepoRegistry | undefined;
+  applySessionRepoScopeDefaults({
+    constraints: input.constraints as Record<string, any>,
+    sessionPolicy: input.sessionPolicy,
+    tool: "write",
+    repoRegistry: repoRegistryForDefaults,
+    rootPath
   });
   const {
     constraints,
@@ -131,14 +141,21 @@ export async function initializeWriteExecution(
   const formatterMode = deps.resolveFormatterMode(constraints);
   let content = initialContent;
   if (resolvedSessionId) {
-    const policyPatch: Partial<{ profile?: string; safety?: string; write?: Record<string, unknown> }> = {};
+    const policyPatch: Record<string, unknown> = {};
     if (typeof constraints.profile === "string") {
       policyPatch.profile = constraints.profile;
-      policyPatch.write = { ...(policyPatch.write ?? {}), profile: constraints.profile };
+      policyPatch.write = { ...((policyPatch.write as Record<string, unknown> | undefined) ?? {}), profile: constraints.profile };
     }
     if (typeof (constraints as any).safety === "string") {
       policyPatch.safety = (constraints as any).safety;
-      policyPatch.write = { ...(policyPatch.write ?? {}), safety: (constraints as any).safety };
+      policyPatch.write = { ...((policyPatch.write as Record<string, unknown> | undefined) ?? {}), safety: (constraints as any).safety };
+    }
+    const repoPolicyPatch = buildSessionRepoScopePolicyPatch({
+      constraints: constraints as Record<string, any>,
+      tool: "write"
+    });
+    if (repoPolicyPatch) {
+      Object.assign(policyPatch, repoPolicyPatch);
     }
     if (Object.keys(policyPatch).length > 0) {
       artifactManager?.updateSessionPolicy(resolvedSessionId, policyPatch as any, "merge");
@@ -169,7 +186,7 @@ export async function initializeWriteExecution(
   });
   const workflowWarnings = buildWorkflowWarnings(workflowMeta, Boolean(resolvedSessionId));
   const responseEnvelope = deps.resolveEnvelopeBudget(constraints);
-  const repoRegistry = deps.registry.getMetadata("repoRegistry") as RepoRegistry | undefined;
+  const repoRegistry = repoRegistryForDefaults;
   const pathNormalizer = deps.registry.getMetadata("pathNormalizer") as PathNormalizer | undefined;
   const fileVersionManager = deps.registry.getMetadata("fileVersionManager") as FileVersionManager | undefined;
   const allowCrossRepoEdits = Boolean((constraints as any).allowCrossRepoEdits);

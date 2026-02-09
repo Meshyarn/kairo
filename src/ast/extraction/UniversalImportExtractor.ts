@@ -9,7 +9,11 @@ export class UniversalImportExtractor {
     constructor(private queryProvider: QueryProvider) {}
 
     public async extract(doc: AstDocument, languageId: string): Promise<ImportSymbol[]> {
-        const query = await this.queryProvider.getQuery(doc.rootNode.tree.language, languageId, 'imports');
+        const treeLanguage = (doc as any)?.rootNode?.tree?.language;
+        if (!treeLanguage) {
+            return doc.content ? this.fallbackExtractor.extractImports(doc.content, languageId) : [];
+        }
+        const query = await this.queryProvider.getQuery(treeLanguage, languageId, 'imports');
         const resultsMap = new Map<string, ImportSymbol>();
         const parsed = new Set<string>();
 

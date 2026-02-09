@@ -62,6 +62,15 @@ const makeContext = () => {
             normalize: (value: string) => value,
             toAbsolute: (value: string) => `/abs/${value}`
         },
+        runtimeControl: {
+            switchWorkspaceRoot: jest.fn(async (rootPath: string) => ({
+                success: true,
+                changed: true,
+                rootPath,
+                previousRootPath: process.cwd(),
+                output: "Workspace root switched."
+            }))
+        },
         toolSpecRegistry: createDefaultToolSpecRegistry(),
         isTestEnv: () => true
     };
@@ -145,6 +154,27 @@ describe("ManageHandlers additional paths", () => {
         const reindex = await raw({ command: "reindex", suppressLogs: true });
         expect(reindex.success).toBe(true);
         expect(context.skeletonCache.clearAll).toHaveBeenCalled();
+    });
+
+    it("supports root detection and runtime root switching", async () => {
+        const context = makeContext();
+        const handler = new ManageHandlers(context as any);
+        const raw = (handler as any).manageProjectRaw.bind(handler);
+
+        const detected = await raw({
+            command: "detect_root",
+            root: process.cwd(),
+            cwd: process.cwd()
+        });
+        expect(detected.success).toBe(true);
+        expect(detected.detected.root).toBe(process.cwd());
+
+        const switched = await raw({
+            command: "switch_root",
+            root: process.cwd()
+        });
+        expect(switched.success).toBe(true);
+        expect(context.runtimeControl.switchWorkspaceRoot).toHaveBeenCalled();
     });
 
     it("summarizes graph artifacts in list and returns truncated graph view", async () => {

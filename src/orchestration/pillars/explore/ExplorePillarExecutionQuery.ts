@@ -128,28 +128,46 @@ export async function executeExploreQuery(args: {
     const ucg = context.getState<UnifiedContextGraph>("ucg");
 
     if (setup.includeCode) {
-        let codeResults: any;
-        try {
-            codeResults = await runTool(context, "project_search", {
-                query,
-                maxResults: packMaxResults,
-                type: "file",
-                repoScope: (input.constraints as any).repoScope,
-                repoId: (input.constraints as any).repoId,
-                repoIds: (input.constraints as any).repoIds,
-                budget: setup.searchBudget
-            });
-        } catch (error) {
+        const canRunCodeSearch = !setup.hasDeadline || setup.timeRemaining() > 250;
+        if (!canRunCodeSearch) {
             state.degraded = true;
-            state.reasons.push("code_search_failed");
-            if (setup.traceBuilder) {
-                setup.traceBuilder.recordEvent({
-                    area: "io",
-                    code: "project_search_failed",
-                    message: "project_search failed",
-                    data: { error: String((error as any)?.message ?? "unknown").slice(0, 120) }
-                });
+            if (!state.reasons.includes("budget_exceeded")) {
+                state.reasons.push("budget_exceeded");
             }
+            if (setup.traceBuilder) {
+                setup.traceBuilder.recordSkip("code_search", "budget_exceeded", "timeout guard");
+            }
+        }
+        let codeResults: any;
+        if (canRunCodeSearch) {
+            const codeSearchTimeoutMs = setup.hasDeadline
+                ? Math.max(250, Math.min(1500, Math.floor(setup.timeRemaining() * 0.55)))
+                : undefined;
+            try {
+                codeResults = await runTool(context, "project_search", {
+                    query,
+                    maxResults: packMaxResults,
+                    type: "file",
+                    repoScope: (input.constraints as any).repoScope,
+                    repoId: (input.constraints as any).repoId,
+                    repoIds: (input.constraints as any).repoIds,
+                    budget: setup.searchBudget,
+                    timeoutMs: codeSearchTimeoutMs
+                });
+            } catch (error) {
+                state.degraded = true;
+                state.reasons.push("code_search_failed");
+                if (setup.traceBuilder) {
+                    setup.traceBuilder.recordEvent({
+                        area: "io",
+                        code: "project_search_failed",
+                        message: "project_search failed",
+                        data: { error: String((error as any)?.message ?? "unknown").slice(0, 120) }
+                    });
+                }
+                codeResults = { results: [] };
+            }
+        } else {
             codeResults = { results: [] };
         }
         const results = Array.isArray(codeResults?.results) ? codeResults.results : [];
@@ -225,35 +243,49 @@ export async function executeExploreQuery(args: {
             : undefined;
         const disableEmbeddings = setup.symbolQuery
             || (setup.hasDeadline && typeof docEmbeddingBudgetMs === "number" && docEmbeddingBudgetMs < 400);
+        const canRunDocSearch = !setup.hasDeadline || setup.timeRemaining() > 350;
         let docResults: any;
-        try {
-            docResults = await runTool(context, "document_search", {
-                query,
-                output: "compact",
-                maxResults: packMaxResults,
-                maxCandidates: docMaxCandidates,
-                maxChunkCandidates: docMaxChunkCandidates,
-                maxChunksEmbeddedPerRequest: disableEmbeddings ? 8 : 24,
-                maxEmbeddingTimeMs: docEmbeddingBudgetMs,
-                includeEvidence: false,
-                packId: undefined,
-                includeComments: setup.includeComments,
-                includeLogs: setup.includeLogs,
-                repoScope: (input.constraints as any).repoScope,
-                repoId: (input.constraints as any).repoId,
-                repoIds: (input.constraints as any).repoIds,
-                embedding: disableEmbeddings ? { provider: "disabled" } : undefined
-            });
-        } catch (error) {
-            state.degraded = true;
-            state.reasons.push("doc_search_failed");
-            if (setup.traceBuilder) {
-                setup.traceBuilder.recordEvent({
-                    area: "io",
-                    code: "document_search_failed",
-                    message: "document_search failed",
-                    data: { error: String((error as any)?.message ?? "unknown").slice(0, 120) }
+        if (canRunDocSearch) {
+            const docSearchTimeoutMs = setup.hasDeadline
+                ? Math.max(300, Math.min(1800, Math.floor(setup.timeRemaining() * 0.7)))
+                : undefined;
+            try {
+                docResults = await runTool(context, "document_search", {
+                    query,
+                    output: "compact",
+                    maxResults: packMaxResults,
+                    maxCandidates: docMaxCandidates,
+                    maxChunkCandidates: docMaxChunkCandidates,
+                    maxChunksEmbeddedPerRequest: disableEmbeddings ? 8 : 24,
+                    maxEmbeddingTimeMs: docEmbeddingBudgetMs,
+                    includeEvidence: false,
+                    packId: undefined,
+                    includeComments: setup.includeComments,
+                    includeLogs: setup.includeLogs,
+                    repoScope: (input.constraints as any).repoScope,
+                    repoId: (input.constraints as any).repoId,
+                    repoIds: (input.constraints as any).repoIds,
+                    embedding: disableEmbeddings ? { provider: "disabled" } : undefined,
+                    timeoutMs: docSearchTimeoutMs
                 });
+            } catch (error) {
+                state.degraded = true;
+                state.reasons.push("doc_search_failed");
+                if (setup.traceBuilder) {
+                    setup.traceBuilder.recordEvent({
+                        area: "io",
+                        code: "document_search_failed",
+                        message: "document_search failed",
+                        data: { error: String((error as any)?.message ?? "unknown").slice(0, 120) }
+                    });
+                }
+                docResults = { results: [] };
+            }
+        } else {
+            state.degraded = true;
+            state.reasons.push("budget_exceeded");
+            if (setup.traceBuilder) {
+                setup.traceBuilder.recordSkip("doc_search", "budget_exceeded", "timeout guard");
             }
             docResults = { results: [] };
         }

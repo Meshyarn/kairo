@@ -13,6 +13,16 @@ export async function executeUnderstandClusters(args: {
   const { setup, state, registry, projectStats, isDocument } = args;
   const { input } = setup;
   if (!input.includeClusters) return null;
+  if (setup.hasDeadline && setup.timeRemaining() < 1200) {
+    state.degraded = true;
+    if (!state.degradedReasons.includes("budget_exceeded")) {
+      state.degradedReasons.push("budget_exceeded");
+    }
+    if (setup.traceBuilder) {
+      setup.traceBuilder.recordSkip("clusters", "budget_exceeded", "timeout guard");
+    }
+    return null;
+  }
   const graphRagService = registry.getMetadata<GraphRagClusterService>("graphRagClusterService")
     ?? new GraphRagClusterService(registry);
   if (!registry.getMetadata("graphRagClusterService")) {

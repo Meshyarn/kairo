@@ -12,11 +12,21 @@ export async function executeExploreClusters(args: {
     registry: InternalToolRegistry;
     context: OrchestrationContext;
 }): Promise<void> {
-    const { setup, state, response, registry } = args;
-    const query = setup.input.query;
-    if (!setup.input.includeClusters || !query) return;
+  const { setup, state, response, registry } = args;
+  const query = setup.input.query;
+  if (!setup.input.includeClusters || !query) return;
+  if (setup.hasDeadline && setup.timeRemaining() < 1200) {
+    state.degraded = true;
+    if (!state.reasons.includes("budget_exceeded")) {
+      state.reasons.push("budget_exceeded");
+    }
+    if (setup.traceBuilder) {
+      setup.traceBuilder.recordSkip("clusters", "budget_exceeded", "timeout guard");
+    }
+    return;
+  }
 
-    const graphRagService = registry.getMetadata<GraphRagClusterService>("graphRagClusterService")
+  const graphRagService = registry.getMetadata<GraphRagClusterService>("graphRagClusterService")
         ?? new GraphRagClusterService(registry);
     if (!registry.getMetadata("graphRagClusterService")) {
         registry.setMetadata("graphRagClusterService", graphRagService);

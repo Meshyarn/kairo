@@ -49,6 +49,21 @@ describe("ManagePillar", () => {
     expect(fallback.result.command).toBe("redo");
     expect(fallback.projectState?.indexStatus).toBe("ready");
   });
+
+  it("routes root switching commands", async () => {
+    const registry = new InternalToolRegistry();
+    registry.register("project_manage", async (args: any) => ({
+      success: true,
+      command: args.command
+    } as any));
+
+    const pillar = new ManagePillar(registry);
+    const switched = await pillar.execute({ ...baseIntent, action: "switch_root" } as any, new OrchestrationContext());
+    const detected = await pillar.execute({ ...baseIntent, action: "detect_root" } as any, new OrchestrationContext());
+
+    expect(switched.result.command).toBe("switch_root");
+    expect(detected.result.command).toBe("detect_root");
+  });
 });
 
 describe("NavigatePillar", () => {

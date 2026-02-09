@@ -56,6 +56,7 @@ export class FileIndexStore extends MemoryIndexStore {
     private readonly hasLegacyEmbeddingsOnDisk: boolean;
     private hasEmbeddingPackOnDisk: boolean;
     private secondaryIndexPersistTimer?: NodeJS.Timeout;
+    private isHydrating = false;
 
     constructor(rootPath: string, repoId?: string) {
         super(rootPath, "file");
@@ -78,13 +79,24 @@ export class FileIndexStore extends MemoryIndexStore {
         this.hasLegacyEmbeddingsOnDisk = fs.existsSync(this.embeddingsPath) && fs.statSync(this.embeddingsPath).size > 2;
         this.hasEmbeddingPackOnDisk = this.embeddingPackConfig.enabled && (!this.hasLegacyEmbeddingsOnDisk || detectEmbeddingPackOnDisk(this as any));
         maybeMigrateEmbeddingPack(this as any);
-        loadFromDisk(this as any);
-        loadSecondaryIndex(this as any);
+        this.isHydrating = true;
+        try {
+            loadFromDisk(this as any);
+            loadSecondaryIndex(this as any);
+        } finally {
+            this.isHydrating = false;
+        }
+    }
+
+    private shouldPersist(): boolean {
+        return !this.isHydrating;
     }
 
     public override getOrCreateFile(relativePath: string, lastModified?: number, language?: string | null): FileRecord {
         const record = super.getOrCreateFile(relativePath, lastModified, language);
-        this.persistFiles();
+        if (this.shouldPersist()) {
+            this.persistFiles();
+        }
         return record;
     }
 
@@ -93,7 +105,9 @@ export class FileIndexStore extends MemoryIndexStore {
         updates: { lastModified?: number; language?: string | null; contentHash?: string; sizeBytes?: number }
     ): FileRecord {
         const record = super.updateFileMeta(relativePath, updates);
-        this.persistFiles();
+        if (this.shouldPersist()) {
+            this.persistFiles();
+        }
         return record;
     }
 
@@ -148,7 +162,9 @@ export class FileIndexStore extends MemoryIndexStore {
 
     public override addGhost(ghost: StoredGhostSymbol): void {
         super.addGhost(ghost);
-        this.persistGhosts();
+        if (this.shouldPersist()) {
+            this.persistGhosts();
+        }
     }
 
     public override deleteGhost(name: string): void {
@@ -163,7 +179,9 @@ export class FileIndexStore extends MemoryIndexStore {
 
     public override upsertDocumentChunks(filePath: string, chunks: StoredDocumentChunk[]): void {
         super.upsertDocumentChunks(filePath, chunks);
-        this.persistChunks();
+        if (this.shouldPersist()) {
+            this.persistChunks();
+        }
     }
 
     public override deleteDocumentChunks(filePath: string): void {
@@ -173,7 +191,9 @@ export class FileIndexStore extends MemoryIndexStore {
 
     public override upsertDocumentMeta(filePath: string, meta: any): void {
         super.upsertDocumentMeta(filePath, meta);
-        this.persistDocumentMeta();
+        if (this.shouldPersist()) {
+            this.persistDocumentMeta();
+        }
     }
 
     public override upsertEmbedding(chunkId: string, key: EmbeddingKey, embedding: { dims: number; vector: Float32Array; norm?: number }): void {
@@ -184,7 +204,9 @@ export class FileIndexStore extends MemoryIndexStore {
             return;
         }
         super.upsertEmbedding(chunkId, key, embedding);
-        this.persistEmbeddings();
+        if (this.shouldPersist()) {
+            this.persistEmbeddings();
+        }
     }
 
     public override getEmbedding(chunkId: string, key: EmbeddingKey): StoredEmbedding | null {
@@ -245,7 +267,9 @@ export class FileIndexStore extends MemoryIndexStore {
 
     public override upsertEvidencePack(packId: string, payload: unknown): void {
         super.upsertEvidencePack(packId, payload);
-        this.persistPacks();
+        if (this.shouldPersist()) {
+            this.persistPacks();
+        }
     }
 
     public override deleteEvidencePack(packId: string): void {
@@ -259,7 +283,9 @@ export class FileIndexStore extends MemoryIndexStore {
 
     public override upsertChunkSummary(chunkId: string, style: "preview" | "summary", summary: string, contentHash?: string): void {
         super.upsertChunkSummary(chunkId, style, summary, contentHash);
-        this.persistSummaries();
+        if (this.shouldPersist()) {
+            this.persistSummaries();
+        }
     }
 
     public override deleteChunkSummary(chunkId: string, style: "preview" | "summary"): void {
@@ -278,7 +304,9 @@ export class FileIndexStore extends MemoryIndexStore {
 
     public override upsertPendingTransaction(entry: TransactionLogEntry): void {
         super.upsertPendingTransaction(entry);
-        this.persistTransactions();
+        if (this.shouldPersist()) {
+            this.persistTransactions();
+        }
     }
 
     public override markTransactionCommitted(id: string, entry: TransactionLogEntry): void {

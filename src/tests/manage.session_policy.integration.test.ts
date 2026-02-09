@@ -72,6 +72,49 @@ describe('SmartContextServer - session policy integration', () => {
     expect(writeResult.decisionTrace?.optionResolution?.dryRun?.resolved).toBe(true);
   });
 
+  it('accepts root/repo defaults directly on manage session_update', async () => {
+    const explore = await runTool(server, 'explore', {
+      query: 'session context seed',
+      sessionId: 'new'
+    });
+
+    const sessionId = explore.sessionId as string;
+    expect(sessionId).toBeDefined();
+
+    const updated = await runTool(server, 'manage', {
+      command: 'session_update',
+      sessionId,
+      root: 'src',
+      repoId: 'default',
+      policyMode: 'merge'
+    });
+
+    expect(updated.success).toBe(true);
+
+    const fetched = await runTool(server, 'manage', {
+      command: 'session',
+      sessionId
+    });
+
+    expect(fetched.success).toBe(true);
+    expect(fetched.result?.session?.policy?.root).toBe('src');
+    expect(fetched.result?.session?.policy?.repoId).toBe('default');
+
+    const writeResult = await runTool(server, 'write', {
+      intent: 'Create a scoped file',
+      targetPath: 'src/scoped.ts',
+      content: 'export const scoped = true;',
+      sessionId,
+      trace: true
+    });
+
+    expect(writeResult.success).toBe(true);
+    const eventCodes = (writeResult.decisionTrace?.events ?? [])
+      .map((event: any) => event?.code)
+      .filter(Boolean);
+    expect(eventCodes).toContain('repo_scope_resolved');
+  });
+
   it('emits trace for manage commands', async () => {
     const result = await runTool(server, 'manage', {
       command: 'status',

@@ -1,6 +1,7 @@
 import type { ParsedIntent } from '../../IntentRouter.js';
 import type { OrchestrationContext } from '../../OrchestrationContext.js';
 import type { InternalToolRegistry } from '../../InternalToolRegistry.js';
+import type { RepoRegistry } from '../../../config/RepoRegistry.js';
 import { metrics } from '../../../utils/MetricsCollector.js';
 import type { DependencyGraph } from '../../../ast/DependencyGraph.js';
 import { FeatureFlags } from '../../../config/FeatureFlags.js';
@@ -22,6 +23,7 @@ import {
   resolveRolloutPresetFromEnv,
   setAdaptiveFlowGate
 } from '../../adaptive-flow/AdaptiveFlowGate.js';
+import { applySessionRepoScopeDefaults, buildSessionRepoScopePolicyPatch } from '../shared/SessionScopePolicy.js';
 
 export type ChangePillarExecutionDeps = {
   registry: InternalToolRegistry;
@@ -103,6 +105,15 @@ export async function initializeChangeExecution(
       const artifact = artifactManager?.get(draftId) as any;
       return typeof artifact?.sessionId === 'string' ? artifact.sessionId : undefined;
     }
+  });
+  const rootPath = deps.resolveRootPath();
+  const repoRegistryForDefaults = deps.registry.getMetadata<RepoRegistry>('repoRegistry');
+  applySessionRepoScopeDefaults({
+    constraints: input.constraints as Record<string, any>,
+    sessionPolicy: input.sessionPolicy,
+    tool: 'change',
+    repoRegistry: repoRegistryForDefaults,
+    rootPath
   });
   const {
     targets,
@@ -188,14 +199,21 @@ export async function initializeChangeExecution(
     });
   }
   if (resolvedSessionId) {
-    const policyPatch: Partial<{ profile?: string; safety?: string; change?: Record<string, unknown> }> = {};
+    const policyPatch: Record<string, unknown> = {};
     if (typeof constraints.profile === 'string') {
       policyPatch.profile = constraints.profile;
-      policyPatch.change = { ...(policyPatch.change ?? {}), profile: constraints.profile };
+      policyPatch.change = { ...((policyPatch.change as Record<string, unknown> | undefined) ?? {}), profile: constraints.profile };
     }
     if (typeof (constraints as any).safety === 'string') {
       policyPatch.safety = (constraints as any).safety;
-      policyPatch.change = { ...(policyPatch.change ?? {}), safety: (constraints as any).safety };
+      policyPatch.change = { ...((policyPatch.change as Record<string, unknown> | undefined) ?? {}), safety: (constraints as any).safety };
+    }
+    const repoPolicyPatch = buildSessionRepoScopePolicyPatch({
+      constraints: constraints as Record<string, any>,
+      tool: 'change'
+    });
+    if (repoPolicyPatch) {
+      Object.assign(policyPatch, repoPolicyPatch);
     }
     if (Object.keys(policyPatch).length > 0) {
       artifactManager?.updateSessionPolicy(resolvedSessionId, policyPatch as any, 'merge');
