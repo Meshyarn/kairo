@@ -109,14 +109,20 @@ export async function collectUnderstandData(args: {
     skeleton = await runToolWithContext(context, "code_read", { filePath, view: "skeleton" }, progress);
   }
 
-  await runToolWithContext(context, "file_profile", { filePath }, progress);
-
-  let projectStats: any = undefined;
-  try {
-    projectStats = await runToolWithContext(context, "project_profile", {}, progress);
-  } catch {
-    projectStats = undefined;
+  const shouldRunFileProfile = !setup.hasDeadline || setup.timeRemaining() > 500;
+  if (shouldRunFileProfile) {
+    await runToolWithContext(context, "file_profile", { filePath }, progress);
+  } else {
+    state.degraded = true;
+    if (!state.degradedReasons.includes("budget_exceeded")) {
+      state.degradedReasons.push("budget_exceeded");
+    }
+    if (setup.traceBuilder) {
+      setup.traceBuilder.recordSkip("file_profile", "budget_exceeded", "timeout guard");
+    }
   }
+
+  const projectStats = setup.initialProjectStats;
   const budget = BudgetManager.create({
     category: "understand",
     queryLength: setup.metrics.length,
@@ -146,7 +152,10 @@ export async function collectUnderstandData(args: {
     state.degraded = true;
     state.refinementReason = state.refinementReason ?? "document_file";
   }
-  if (setup.includeCallsPlanned && symbolName && allowGraphs) {
+  const enoughTimeForCalls = !setup.hasDeadline || setup.timeRemaining() > 900;
+  const enoughTimeForDeps = !setup.hasDeadline || setup.timeRemaining() > 800;
+  const enoughTimeForHotSpots = !setup.hasDeadline || setup.timeRemaining() > 700;
+  if (setup.includeCallsPlanned && symbolName && allowGraphs && enoughTimeForCalls) {
     calls = await fetchCallGraph({
       context,
       filePath,
@@ -155,9 +164,12 @@ export async function collectUnderstandData(args: {
       runTool: runToolWithContext,
       progress
     });
-  } else if (setup.includeCallsPlanned && symbolName && !allowGraphs) {
+  } else if (setup.includeCallsPlanned && symbolName && (!allowGraphs || !enoughTimeForCalls)) {
     state.degraded = true;
     state.refinementReason = state.refinementReason ?? "budget_exceeded";
+    if (!state.degradedReasons.includes("budget_exceeded")) {
+      state.degradedReasons.push("budget_exceeded");
+    }
     if (setup.traceBuilder) {
       setup.traceBuilder.recordSkip("call_graph", "budget_exceeded", "graph budget gated");
     }
@@ -185,7 +197,7 @@ export async function collectUnderstandData(args: {
     }
   }
 
-  if (setup.includeDependenciesPlanned && allowGraphs) {
+  if (setup.includeDependenciesPlanned && allowGraphs && enoughTimeForDeps) {
     deps = await collectDependenciesFromGraph(ucg, filePath, context);
 
     if (!deps || !Array.isArray(deps.edges) || deps.edges.length === 0) {
@@ -195,26 +207,38 @@ export async function collectUnderstandData(args: {
         direction: "both"
       }, progress);
     }
-  } else if (setup.includeDependenciesPlanned && !allowGraphs) {
+  } else if (setup.includeDependenciesPlanned && (!allowGraphs || !enoughTimeForDeps)) {
     state.degraded = true;
     state.refinementReason = state.refinementReason ?? "budget_exceeded";
+    if (!state.degradedReasons.includes("budget_exceeded")) {
+      state.degradedReasons.push("budget_exceeded");
+    }
     if (setup.traceBuilder) {
       setup.traceBuilder.recordSkip("dependencies", "budget_exceeded", "graph budget gated");
     }
   }
 
-  if (setup.includeHotSpotsPlanned && allowGraphs) {
+  if (setup.includeHotSpotsPlanned && allowGraphs && enoughTimeForHotSpots) {
     hotSpots = await runToolWithContext(context, "hotspot_detect", {}, progress);
-  } else if (setup.includeHotSpotsPlanned && !allowGraphs) {
+  } else if (setup.includeHotSpotsPlanned && (!allowGraphs || !enoughTimeForHotSpots)) {
     state.degraded = true;
     state.refinementReason = state.refinementReason ?? "budget_exceeded";
+    if (!state.degradedReasons.includes("budget_exceeded")) {
+      state.degradedReasons.push("budget_exceeded");
+    }
     if (setup.traceBuilder) {
       setup.traceBuilder.recordSkip("hot_spots", "budget_exceeded", "graph budget gated");
     }
   }
 
   let fallbackGraph: { mode: "l2"; edges: Array<{ from: string; to: string; confidence: "low"; reason?: string }>; evidence?: string[] } | undefined = undefined;
-  if (!isDocument && shouldBuildFallbackGraph(state.degradedReasons)) {
+  const shouldAttemptFallbackGraph =
+    !isDocument
+    && shouldBuildFallbackGraph(state.degradedReasons)
+    // Fallback graph extraction is comparatively cheap (single full read + import parse),
+    // so keep it enabled unless we're extremely close to timeout.
+    && (!setup.hasDeadline || setup.timeRemaining() > 250);
+  if (shouldAttemptFallbackGraph) {
     fallbackGraph = await buildFallbackGraph(filePath, runToolWithContext);
     if (setup.traceBuilder) {
       setup.traceBuilder.recordEvent({

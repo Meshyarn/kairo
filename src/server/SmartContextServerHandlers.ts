@@ -79,6 +79,10 @@ export function buildModularHandlersFromServer(server: any) {
     metricsExportService: server.metricsExportService,
     cacheInvalidationHub: server.cacheInvalidationHub,
     toolSpecRegistry: server.toolSpecRegistry,
-    isTestEnv: () => server.isTestEnv()
+    isTestEnv: () => server.isTestEnv(),
+    runtimeControl: {
+      switchWorkspaceRoot: (rootPath: string, options?: { triggerReindex?: boolean; allowBroadRoot?: boolean }) =>
+        server.switchWorkspaceRoot(rootPath, options)
+    }
   });
 }

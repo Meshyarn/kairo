@@ -92,7 +92,10 @@ export const handleSessionUpdate = async (deps: ManageHandlerDeps, args: any) =>
   if (!target) {
     return { success: false, output: "Missing target session id." };
   }
-  const policy = args?.policy;
+  const policy = mergeSessionPolicy(
+    buildSessionPolicyPatchFromArgs(args),
+    isRecord(args?.policy) ? args.policy : undefined
+  );
   const policyMode = args?.policyMode === "replace" ? "replace" : "merge";
   const updated = await context.flowArtifactManager.updateSessionPolicy(target, policy, policyMode);
   const summary = updated ? context.flowArtifactManager.getSessionSummary(target) : undefined;
@@ -202,4 +205,59 @@ export const handleDiscard = (deps: ManageHandlerDeps, args: any) => {
     success: discarded,
     output: discarded ? "Artifact discarded." : "Artifact not found."
   };
+};
+
+const isRecord = (value: unknown): value is Record<string, any> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const sanitizeRepoIds = (value: unknown): string[] | undefined => {
+  if (!Array.isArray(value)) return undefined;
+  const repoIds = value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+  return repoIds.length > 0 ? repoIds : undefined;
+};
+
+const cloneRepoScope = (value: unknown): Record<string, unknown> | undefined => {
+  if (!isRecord(value)) return undefined;
+  if (value.mode === "all" || value.mode === "default") {
+    return { mode: value.mode };
+  }
+  if (value.mode === "repos") {
+    return { mode: "repos", repoIds: sanitizeRepoIds(value.repoIds) ?? [] };
+  }
+  return undefined;
+};
+
+const mergeSessionPolicy = (
+  base: Record<string, unknown> | undefined,
+  override: Record<string, unknown> | undefined
+): Record<string, unknown> | undefined => {
+  if (!base && !override) return undefined;
+  const merged: Record<string, unknown> = { ...(base ?? {}), ...(override ?? {}) };
+  for (const tool of ["explore", "understand", "write", "change"] as const) {
+    const lhs = isRecord(base?.[tool]) ? (base?.[tool] as Record<string, unknown>) : undefined;
+    const rhs = isRecord(override?.[tool]) ? (override?.[tool] as Record<string, unknown>) : undefined;
+    if (lhs || rhs) {
+      merged[tool] = { ...(lhs ?? {}), ...(rhs ?? {}) };
+    }
+  }
+  return merged;
+};
+
+const buildSessionPolicyPatchFromArgs = (args: any): Record<string, unknown> | undefined => {
+  const policy: Record<string, unknown> = {};
+  if (typeof args?.root === "string" && args.root.trim().length > 0) {
+    policy.root = args.root.trim();
+  }
+  const repoScope = cloneRepoScope(args?.repoScope);
+  if (repoScope) {
+    policy.repoScope = repoScope;
+  }
+  if (typeof args?.repoId === "string" && args.repoId.trim().length > 0) {
+    policy.repoId = args.repoId.trim();
+  }
+  const repoIds = sanitizeRepoIds(args?.repoIds);
+  if (repoIds) {
+    policy.repoIds = repoIds;
+  }
+  return Object.keys(policy).length > 0 ? policy : undefined;
 };

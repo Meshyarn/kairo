@@ -5,6 +5,7 @@ import { handleConfig, handleMetrics, handleMetricsReset, handleStatus } from ".
 import { handleDoctor, handleInit, handleSchema } from "./ManageProjectOpsConfig.js";
 import { handleSymbolIndexBuild, handleSymbolIndexClear, handleSymbolIndexStatus } from "./ManageProjectOpsSymbol.js";
 import { handleReindex } from "./ManageProjectOpsReindex.js";
+import { handleDetectRoot, handleSwitchRoot } from "./ManageProjectOpsWorkspace.js";
 import {
     handleArtifact,
     handleArtifacts,
@@ -91,6 +92,14 @@ export const manageProjectRaw = async (deps: ManageHandlerDeps, args: any) => {
         case "reindex":
             {
                 return handleReindex(deps, args);
+            }
+        case "switch_root":
+            {
+                return handleSwitchRoot(deps, args);
+            }
+        case "detect_root":
+            {
+                return handleDetectRoot(deps, args);
             }
         case "history":
             {

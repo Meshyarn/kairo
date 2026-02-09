@@ -45,6 +45,11 @@ export class ManagePillar {
     const format = (constraints as any).format;
     const configTargets = (constraints as any).targets;
     const root = (constraints as any).root;
+    const cwd = (constraints as any).cwd;
+    const allowBroadRoot = (constraints as any).allowBroadRoot;
+    const repoScope = (constraints as any).repoScope;
+    const repoId = (constraints as any).repoId;
+    const repoIds = (constraints as any).repoIds;
     const multiRepo = (constraints as any).multiRepo;
     const presets = (constraints as any).presets;
     const languageScan = (constraints as any).languageScan;
@@ -76,6 +81,11 @@ export class ManagePillar {
           mode,
           targets: configTargets,
           root,
+          cwd,
+          allowBroadRoot,
+          repoScope,
+          repoId,
+          repoIds,
           multiRepo,
           presets,
           languageScan,
@@ -106,6 +116,11 @@ export class ManagePillar {
           mode,
           targets: configTargets,
           root,
+          cwd,
+          allowBroadRoot,
+          repoScope,
+          repoId,
+          repoIds,
           multiRepo,
           presets,
           languageScan,
@@ -146,8 +161,14 @@ export class ManagePillar {
         }
       case 'status':
         return wrap('status', await execute('status'));
+      case 'reindex':
+        return wrap('reindex', await execute('reindex'));
       case 'rebuild':
         return wrap('reindex', await execute('reindex'));
+      case 'switch_root':
+        return wrap('switch_root', await execute('switch_root'));
+      case 'detect_root':
+        return wrap('detect_root', await execute('detect_root'));
       case 'init':
         return wrap('init', await execute('init'));
       case 'doctor':

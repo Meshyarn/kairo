@@ -83,7 +83,7 @@ export function bootstrapSmartContextServer(args: {
     name: "kairo",
     version: serverVersion
   }, {
-    capabilities: { tools: {} }
+    capabilities: { tools: {}, resources: {} }
   });
 
   const resolvedRootPath = path.resolve(rootPath);

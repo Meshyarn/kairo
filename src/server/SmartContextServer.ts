@@ -1,8 +1,17 @@
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import {
+    ListToolsRequestSchema,
+    CallToolRequestSchema,
+    ListResourcesRequestSchema,
+    ListResourceTemplatesRequestSchema,
+    ReadResourceRequestSchema,
+    McpError,
+    ErrorCode
+} from "@modelcontextprotocol/sdk/types.js";
 import { createDefaultToolSpecRegistry } from "./tools/ToolSpecRegistry.js";
 import * as fs from "fs";
+import * as path from "path";
 import { createRequire } from "module";
 import {
     initFileLogger,
@@ -39,6 +48,7 @@ import { registerInternalTools } from "./SmartContextServerInternalTools.js";
 import { handleCallTool as dispatchToolCall, handleCallToolLegacy as dispatchHandleCallToolLegacy } from "./SmartContextServerToolDispatch.js";
 import { initMetricsReporter, initMetricsExportService } from "./SmartContextServerMetrics.js";
 import { initSymbolSemanticSearch } from "./SmartContextServerSymbolSearch.js";
+import { isDangerouslyBroadRoot } from "./StartupRootResolver.js";
 
 const require = createRequire(import.meta.url);
 
@@ -120,7 +130,7 @@ import type { MetricsExportService } from "../utils/metrics/MetricsExportService
 import { CacheInvalidationHub } from "./CacheInvalidationHub.js";
 import { BoundaryAdapterRegistry } from "../contracts/BoundaryAdapterRegistry.js";
 import { ContractRegistry } from "../contracts/ContractRegistry.js";
-import { resolveLogToFileEnabled, resolvePublicSurface } from "../orchestration/policy/McpModePresetRegistry.js";
+import { resolveLogToFileEnabled, resolveMcpPolicy, resolvePublicSurface } from "../orchestration/policy/McpModePresetRegistry.js";
 import { BetaTelemetryLogger } from "../utils/BetaTelemetryLogger.js";
 
 // Orchestration Imports
@@ -239,34 +249,47 @@ export class SmartContextServer {
 
         this.initFileLogger();
         this.initProcessDiagnostics();
+        this.bindRuntimeState(initialIgnorePatterns, packageAliasMap, propertyAccessIndex);
 
+        this.setupHandlers();
+        this.registerRuntimeHandlers();
+
+        this.startHeartbeat();
+        this.initMetricsReporter();
+        this.initMetricsExportService();
+        this.startStoragePrune();
+        void this.initSymbolSemanticSearch();
+    }
+
+    private bindRuntimeState(initialIgnorePatterns: string[], packageAliasMap: PackageAliasMap, propertyAccessIndex: PropertyAccessIndex): void {
         this.applyIgnorePatterns(initialIgnorePatterns);
         this.configurationManager.on("ignoreChanged", (payload) => {
             this.applyIgnorePatterns(payload?.patterns ?? []);
         });
 
         // Store searchEngine reference for pillars to access
-        this.internalRegistry.setMetadata('searchEngine', this.searchEngine);
-        this.internalRegistry.setMetadata('indexStateManager', this.indexStateManager);
-        this.internalRegistry.setMetadata('dependencyGraph', this.dependencyGraph);
-        this.internalRegistry.setMetadata('fileSystem', this.fileSystem);
-        this.internalRegistry.setMetadata('flowArtifactManager', this.flowArtifactManager);
-        this.internalRegistry.setMetadata('configurationManager', this.configurationManager);
-        this.internalRegistry.setMetadata('rootPath', this.rootPath);
-        this.internalRegistry.setMetadata('repoRegistry', this.repoRegistry);
-        this.internalRegistry.setMetadata('boundaryAdapterRegistry', this.boundaryAdapterRegistry);
-        this.internalRegistry.setMetadata('contractRegistry', this.contractRegistry);
-        this.internalRegistry.setMetadata('pathNormalizer', this.pathNormalizer);
-        this.internalRegistry.setMetadata('packageAliasMap', packageAliasMap);
-        this.internalRegistry.setMetadata('impactAnalyzer', this.impactAnalyzer);
-        this.internalRegistry.setMetadata('propertyAccessIndex', propertyAccessIndex);
-        this.internalRegistry.setMetadata('fileVersionManager', this.fileVersionManager);
-        this.internalRegistry.setMetadata('adaptiveLodController', new AdaptiveLodController());
-        this.internalRegistry.setMetadata('clusterSearchEngine', this.clusterSearchEngine);
-        this.internalRegistry.setMetadata('symbolIndex', this.symbolIndex);
-        this.internalRegistry.setMetadata('graphRagConfig', this.graphRagConfig);
-        
-        this.setupHandlers();
+        this.internalRegistry.setMetadata("searchEngine", this.searchEngine);
+        this.internalRegistry.setMetadata("indexStateManager", this.indexStateManager);
+        this.internalRegistry.setMetadata("dependencyGraph", this.dependencyGraph);
+        this.internalRegistry.setMetadata("fileSystem", this.fileSystem);
+        this.internalRegistry.setMetadata("flowArtifactManager", this.flowArtifactManager);
+        this.internalRegistry.setMetadata("configurationManager", this.configurationManager);
+        this.internalRegistry.setMetadata("rootPath", this.rootPath);
+        this.internalRegistry.setMetadata("repoRegistry", this.repoRegistry);
+        this.internalRegistry.setMetadata("boundaryAdapterRegistry", this.boundaryAdapterRegistry);
+        this.internalRegistry.setMetadata("contractRegistry", this.contractRegistry);
+        this.internalRegistry.setMetadata("pathNormalizer", this.pathNormalizer);
+        this.internalRegistry.setMetadata("packageAliasMap", packageAliasMap);
+        this.internalRegistry.setMetadata("impactAnalyzer", this.impactAnalyzer);
+        this.internalRegistry.setMetadata("propertyAccessIndex", propertyAccessIndex);
+        this.internalRegistry.setMetadata("fileVersionManager", this.fileVersionManager);
+        this.internalRegistry.setMetadata("adaptiveLodController", new AdaptiveLodController());
+        this.internalRegistry.setMetadata("clusterSearchEngine", this.clusterSearchEngine);
+        this.internalRegistry.setMetadata("symbolIndex", this.symbolIndex);
+        this.internalRegistry.setMetadata("graphRagConfig", this.graphRagConfig);
+    }
+
+    private registerRuntimeHandlers(): void {
         this.initializeModularHandlers();
         registerInternalTools({
             internalRegistry: this.internalRegistry,
@@ -277,16 +300,140 @@ export class SmartContextServer {
             manageHandlers: this.manageHandlers,
             hotSpotDetector: this.hotSpotDetector
         });
-
-        this.startHeartbeat();
-        this.initMetricsReporter();
-        this.initMetricsExportService();
-        this.startStoragePrune();
-        void this.initSymbolSemanticSearch();
     }
 
     private initializeModularHandlers(): void {
         Object.assign(this, buildModularHandlersFromServer(this));
+    }
+
+    private async disposeRuntimeForRootSwitch(): Promise<void> {
+        this.stopStoragePrune();
+        this.metricsReporter?.stop();
+        this.metricsReporter = undefined;
+
+        if (this.incrementalIndexer) {
+            await this.incrementalIndexer.stop();
+        }
+        this.clusterSearchEngine.stopBackgroundTasks();
+        if (this.vectorIndexInitPromise) {
+            await this.vectorIndexInitPromise.catch(() => undefined);
+        }
+        await this.searchEngine.dispose();
+        this.nativeSearchCore?.close();
+        await this.symbolIndex.dispose();
+        await this.skeletonCache.close();
+        await this.astManager.dispose();
+        await this.configurationManager.dispose();
+        this.graphRagConfig.dispose();
+        this.repoRegistry.dispose();
+        this.indexDatabase.close();
+        this.symbolEmbeddingIndex = undefined;
+    }
+
+    public async switchWorkspaceRoot(
+        rootPath: string,
+        options?: { triggerReindex?: boolean; allowBroadRoot?: boolean }
+    ): Promise<{
+        success: boolean;
+        changed: boolean;
+        rootPath: string;
+        previousRootPath: string;
+        reindexStarted?: boolean;
+        output: string;
+    }> {
+        const requested = String(rootPath ?? "").trim();
+        if (requested.length === 0) {
+            return {
+                success: false,
+                changed: false,
+                rootPath: this.rootPath,
+                previousRootPath: this.rootPath,
+                output: "Missing root path."
+            };
+        }
+        const resolved = path.resolve(requested);
+        if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
+            return {
+                success: false,
+                changed: false,
+                rootPath: this.rootPath,
+                previousRootPath: this.rootPath,
+                output: `Root path does not exist or is not a directory: ${resolved}`
+            };
+        }
+        if (!(options?.allowBroadRoot === true) && isDangerouslyBroadRoot(resolved)) {
+            return {
+                success: false,
+                changed: false,
+                rootPath: this.rootPath,
+                previousRootPath: this.rootPath,
+                output: "Refusing broad root (home or filesystem root). Set allowBroadRoot=true to override."
+            };
+        }
+        const previousRootPath = this.rootPath;
+        if (resolved === previousRootPath) {
+            return {
+                success: true,
+                changed: false,
+                rootPath: this.rootPath,
+                previousRootPath,
+                output: "Workspace root unchanged."
+            };
+        }
+
+        let bootstrap: ReturnType<typeof bootstrapSmartContextServer>;
+        try {
+            bootstrap = bootstrapSmartContextServer({
+                rootPath: resolved,
+                serverVersion: SERVER_VERSION,
+                isTestEnv: () => this.isTestEnv(),
+                getSymbolEmbeddingIndex: () => this.symbolEmbeddingIndex
+            });
+        } catch (error: any) {
+            return {
+                success: false,
+                changed: false,
+                rootPath: this.rootPath,
+                previousRootPath,
+                output: `Failed to bootstrap runtime for new root: ${error?.message ?? String(error)}`
+            };
+        }
+
+        await this.disposeRuntimeForRootSwitch();
+
+        const bootstrapServer = bootstrap.state.server as Server;
+        const { server: _discardServer, ...nextState } = bootstrap.state;
+        Object.assign(this, nextState);
+        this.bindRuntimeState(bootstrap.initialIgnorePatterns, bootstrap.packageAliasMap, bootstrap.propertyAccessIndex);
+        this.registerRuntimeHandlers();
+        this.initMetricsReporter();
+        this.startStoragePrune();
+        void this.initSymbolSemanticSearch();
+        if (this.incrementalIndexer) {
+            void this.incrementalIndexer.start().catch((error) => {
+                console.error("[SmartContextServer] Incremental indexer failed to start after root switch:", error);
+            });
+        }
+        await bootstrapServer.close();
+
+        let reindexStarted = false;
+        if (options?.triggerReindex === true) {
+            try {
+                const reindexResult = await this.manageHandlers.manageProjectRaw({ command: "reindex", quiet: true });
+                reindexStarted = reindexResult?.success === true;
+            } catch {
+                reindexStarted = false;
+            }
+        }
+
+        return {
+            success: true,
+            changed: true,
+            rootPath: this.rootPath,
+            previousRootPath,
+            reindexStarted,
+            output: reindexStarted ? "Workspace root switched and reindex started." : "Workspace root switched."
+        };
     }
 
     public isTestEnv(): boolean {
@@ -294,6 +441,18 @@ export class SmartContextServer {
     }
 
     private setupHandlers(): void {
+        this.server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+            resources: this.listCatalogResources()
+        }));
+
+        this.server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
+            resourceTemplates: this.listCatalogResourceTemplates()
+        }));
+
+        this.server.setRequestHandler(ReadResourceRequestSchema, async (request) => ({
+            contents: await this.readCatalogResource(request.params.uri)
+        }));
+
         this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
             tools: this.listIntentTools(),
         }));
@@ -491,6 +650,123 @@ export class SmartContextServer {
 
     public isPillarTool(name: string): boolean {
         return isPillarTool(name);
+    }
+
+    private listCatalogResources(): Array<{
+        uri: string;
+        name: string;
+        title: string;
+        description: string;
+        mimeType: string;
+    }> {
+        return [
+            {
+                uri: "kairo://runtime/summary",
+                name: "runtime_summary",
+                title: "Runtime Summary",
+                description: "Runtime metadata and exposed tool surface.",
+                mimeType: "application/json"
+            },
+            {
+                uri: "kairo://config/mcp-policy",
+                name: "mcp_policy",
+                title: "MCP Policy",
+                description: "Resolved MCP mode/preset/public-surface policy.",
+                mimeType: "application/json"
+            },
+            {
+                uri: "kairo://index/snapshot",
+                name: "index_snapshot",
+                title: "Index Snapshot",
+                description: "Current index freshness and activity snapshot.",
+                mimeType: "application/json"
+            },
+            {
+                uri: "kairo://tools/public",
+                name: "public_tools",
+                title: "Public Tools",
+                description: "Publicly exposed tools and schemas.",
+                mimeType: "application/json"
+            }
+        ];
+    }
+
+    private listCatalogResourceTemplates(): Array<{
+        uriTemplate: string;
+        name: string;
+        title: string;
+        description: string;
+        mimeType: string;
+    }> {
+        return [
+            {
+                uriTemplate: "kairo://schema/{tool}",
+                name: "tool_schema",
+                title: "Tool Schema",
+                description: "Resolved schema metadata for a given tool name.",
+                mimeType: "application/json"
+            }
+        ];
+    }
+
+    private async readCatalogResource(uri: string): Promise<Array<{ uri: string; mimeType: string; text: string }>> {
+        if (uri === "kairo://runtime/summary") {
+            const policy = resolveMcpPolicy();
+            const payload = {
+                rootPath: this.rootPath,
+                mode: policy.mode,
+                preset: policy.preset,
+                publicSurface: resolvePublicSurface(),
+                logToFile: resolveLogToFileEnabled(),
+                tools: this.listIntentTools().map((tool) => tool.name).sort(),
+                generatedAt: new Date().toISOString()
+            };
+            return [{ uri, mimeType: "application/json", text: JSON.stringify(payload, null, 2) }];
+        }
+
+        if (uri === "kairo://config/mcp-policy") {
+            return [{ uri, mimeType: "application/json", text: JSON.stringify(resolveMcpPolicy(), null, 2) }];
+        }
+
+        if (uri === "kairo://index/snapshot") {
+            const snapshot = await this.indexStateManager.getSnapshot();
+            const payload = {
+                snapshot,
+                activity: this.indexStateManager.getActivity() ?? null,
+                generatedAt: new Date().toISOString()
+            };
+            return [{ uri, mimeType: "application/json", text: JSON.stringify(payload, null, 2) }];
+        }
+
+        if (uri === "kairo://tools/public") {
+            const payload = {
+                tools: this.listIntentTools(),
+                generatedAt: new Date().toISOString()
+            };
+            return [{ uri, mimeType: "application/json", text: JSON.stringify(payload, null, 2) }];
+        }
+
+        const schemaPrefix = "kairo://schema/";
+        if (uri.startsWith(schemaPrefix)) {
+            const toolName = decodeURIComponent(uri.slice(schemaPrefix.length)).trim();
+            if (!toolName) {
+                throw new McpError(ErrorCode.InvalidParams, "Missing tool name in schema resource URI.");
+            }
+            const spec = this.toolSpecRegistry.get(toolName);
+            if (!spec) {
+                throw new McpError(ErrorCode.InvalidParams, `Unknown tool schema resource: ${uri}`);
+            }
+            const payload = {
+                tool: spec.name,
+                description: spec.description,
+                schemaVersion: spec.schemaVersion,
+                visibility: spec.visibility,
+                inputSchema: spec.inputSchema
+            };
+            return [{ uri, mimeType: "application/json", text: JSON.stringify(payload, null, 2) }];
+        }
+
+        throw new McpError(ErrorCode.InvalidParams, `Unknown resource URI: ${uri}`);
     }
 
 

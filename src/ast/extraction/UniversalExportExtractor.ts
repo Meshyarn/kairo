@@ -6,7 +6,9 @@ export class UniversalExportExtractor {
     constructor(private queryProvider: QueryProvider) {}
 
     public async extract(doc: AstDocument, languageId: string): Promise<ExportSymbol[]> {
-        const query = await this.queryProvider.getQuery(doc.rootNode.tree.language, languageId, 'exports');
+        const treeLanguage = (doc as any)?.rootNode?.tree?.language;
+        if (!treeLanguage) return [];
+        const query = await this.queryProvider.getQuery(treeLanguage, languageId, 'exports');
         if (!query) return [];
 
         const resultsMap = new Map<string, ExportSymbol>();

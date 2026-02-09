@@ -12,9 +12,10 @@ export function resolveConfig(overrides: EngineConfig | undefined, engineConfig:
   const envBackend = process.env.KAIRO_PARSER_BACKEND as EngineConfig["parserBackend"] | undefined;
   const envSnapshot = process.env.KAIRO_SNAPSHOT_DIR;
   const envRoot = process.env.KAIRO_ROOT_PATH || process.env.KAIRO_ROOT;
+  const isTestEnv = process.env.NODE_ENV === "test" || process.env.JEST_WORKER_ID !== undefined;
 
   return {
-    mode: overrides?.mode ?? envMode ?? engineConfig.mode ?? "prod",
+    mode: overrides?.mode ?? envMode ?? engineConfig.mode ?? (isTestEnv ? "test" : "prod"),
     parserBackend: overrides?.parserBackend ?? envBackend ?? engineConfig.parserBackend ?? "auto",
     snapshotDir: overrides?.snapshotDir ?? envSnapshot ?? engineConfig.snapshotDir,
     rootPath: overrides?.rootPath ?? engineConfig.rootPath ?? envRoot ?? process.cwd()
@@ -31,7 +32,10 @@ export function getBackendPriority(engineConfig: EngineConfig): Array<NonNullabl
 
   switch (mode) {
     case "test":
-      return ["snapshot", "wasm", "js"];
+      if (engineConfig.snapshotDir && engineConfig.rootPath) {
+        return ["snapshot", "js", "wasm"];
+      }
+      return ["js", "wasm"];
     case "ci":
       return ["wasm", "js"];
     case "prod":

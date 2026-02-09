@@ -66,6 +66,16 @@ export interface HandlerContext {
     cacheInvalidationHub?: CacheInvalidationHub;
     toolSpecRegistry: ToolSpecRegistry;
     isTestEnv: () => boolean;
+    runtimeControl?: {
+        switchWorkspaceRoot: (rootPath: string, options?: { triggerReindex?: boolean; allowBroadRoot?: boolean }) => Promise<{
+            success: boolean;
+            changed: boolean;
+            rootPath: string;
+            previousRootPath: string;
+            reindexStarted?: boolean;
+            output: string;
+        }>;
+    };
     metadata?: Record<string, unknown>;
 }
 

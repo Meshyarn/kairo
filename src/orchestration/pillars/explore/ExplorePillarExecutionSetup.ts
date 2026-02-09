@@ -22,6 +22,7 @@ import {
 } from "../../adaptive-flow/AdaptiveFlowGate.js";
 import { normalizeExploreInput } from "./ExploreInputNormalizer.js";
 import { computeExplorePackId } from "./EvidencePackBuilder.js";
+import { applySessionRepoScopeDefaults, buildSessionRepoScopePolicyPatch } from "../shared/SessionScopePolicy.js";
 import {
     DEFAULT_MAX_RESULTS,
     DEFAULT_MAX_CHARS,
@@ -100,6 +101,14 @@ export async function initializeExploreExecution(args: {
     const input = normalizeExploreInput(intent, {
         resolveSessionId: (rawSessionId, fallback) => artifactManager?.resolveSessionId(rawSessionId, fallback),
         getSessionPolicy: (sessionId) => (sessionId ? artifactManager?.getSession(sessionId)?.policy : undefined)
+    });
+    const rootPath = registry.getMetadata<string>("rootPath");
+    applySessionRepoScopeDefaults({
+        constraints: input.constraints as Record<string, any>,
+        sessionPolicy: input.sessionPolicy,
+        tool: "explore",
+        repoRegistry,
+        rootPath
     });
     let view = input.view;
     let profile: ToolProfile | undefined = input.profile as ToolProfile | undefined;
@@ -312,14 +321,21 @@ export async function initializeExploreExecution(args: {
         : undefined;
 
     if (input.resolvedSessionId) {
-        const policyPatch: Partial<{ profile?: string; sources?: string; explore?: Record<string, unknown> }> = {};
+        const policyPatch: Record<string, unknown> = {};
         if (typeof input.constraints.profile === "string") {
             policyPatch.profile = input.constraints.profile;
-            policyPatch.explore = { ...(policyPatch.explore ?? {}), profile: input.constraints.profile };
+            policyPatch.explore = { ...((policyPatch.explore as Record<string, unknown> | undefined) ?? {}), profile: input.constraints.profile };
         }
         if (typeof input.constraints.sources === "string") {
             policyPatch.sources = input.constraints.sources;
-            policyPatch.explore = { ...(policyPatch.explore ?? {}), sources: input.constraints.sources };
+            policyPatch.explore = { ...((policyPatch.explore as Record<string, unknown> | undefined) ?? {}), sources: input.constraints.sources };
+        }
+        const repoPolicyPatch = buildSessionRepoScopePolicyPatch({
+            constraints: input.constraints as Record<string, any>,
+            tool: "explore"
+        });
+        if (repoPolicyPatch) {
+            Object.assign(policyPatch, repoPolicyPatch);
         }
         if (Object.keys(policyPatch).length > 0) {
             artifactManager?.updateSessionPolicy(input.resolvedSessionId, policyPatch as any, "merge");

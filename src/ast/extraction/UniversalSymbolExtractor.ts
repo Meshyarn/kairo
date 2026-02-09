@@ -11,8 +11,14 @@ export class UniversalSymbolExtractor {
     constructor(private queryProvider: QueryProvider) {}
 
     public async extract(doc: AstDocument, languageId: string): Promise<SymbolInfo[]> {
-        const query = await this.queryProvider.getQuery(doc.rootNode.tree.language, languageId, 'symbols');
-        if (!query) return [];
+        const treeLanguage = (doc as any)?.rootNode?.tree?.language;
+        if (!treeLanguage) {
+            return this.extractByRegex(doc.content ?? '', languageId);
+        }
+        const query = await this.queryProvider.getQuery(treeLanguage, languageId, 'symbols');
+        if (!query) {
+            return this.extractByRegex(doc.content ?? '', languageId);
+        }
 
         const matches = query.matches(doc.rootNode);
         const symbols: SymbolInfo[] = [];
@@ -97,16 +103,93 @@ export class UniversalSymbolExtractor {
             }
         }
 
-        if (definitionNodeMap.size > 0) {
+        if (definitionNodeMap.size > 0 && treeLanguage) {
             this.callSiteAnalyzer.attachCallSiteMetadata(
                 doc.rootNode,
-                doc.rootNode.tree.language,
+                treeLanguage,
                 languageId,
                 definitionNodeMap
             );
         }
 
         return symbols;
+    }
+
+    private extractByRegex(content: string, languageId: string): SymbolInfo[] {
+        if (!content.trim()) return [];
+        if (!['typescript', 'tsx', 'javascript', 'jsx'].includes(languageId)) {
+            return [];
+        }
+
+        const symbols: SymbolInfo[] = [];
+        const lineOffsets = this.computeLineOffsets(content);
+        const pushSymbol = (matchIndex: number, matchText: string, type: DefinitionSymbol['type'], name: string) => {
+            const range = this.computeRange(matchIndex, matchText, lineOffsets);
+            symbols.push({
+                name,
+                type,
+                range,
+                content: matchText
+            } as DefinitionSymbol);
+        };
+
+        const patterns: Array<{ regex: RegExp; type: DefinitionSymbol['type']; group: number }> = [
+            { regex: /\bclass\s+([A-Za-z_$][\w$]*)/g, type: 'class', group: 1 },
+            { regex: /\binterface\s+([A-Za-z_$][\w$]*)/g, type: 'interface', group: 1 },
+            { regex: /\btype\s+([A-Za-z_$][\w$]*)\s*=/g, type: 'type_alias', group: 1 },
+            { regex: /\bfunction\s+([A-Za-z_$][\w$]*)\s*\(/g, type: 'function', group: 1 },
+            { regex: /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\b/g, type: 'variable', group: 1 }
+        ];
+
+        for (const pattern of patterns) {
+            let match: RegExpExecArray | null;
+            while ((match = pattern.regex.exec(content)) !== null) {
+                const name = match[pattern.group];
+                if (!name) continue;
+                pushSymbol(match.index, match[0], pattern.type, name);
+            }
+        }
+
+        return symbols;
+    }
+
+    private computeLineOffsets(content: string): number[] {
+        const offsets = [0];
+        for (let i = 0; i < content.length; i += 1) {
+            if (content[i] === '\n') {
+                offsets.push(i + 1);
+            }
+        }
+        return offsets;
+    }
+
+    private computeRange(start: number, text: string, lineOffsets: number[]) {
+        const end = start + text.length;
+        const startLine = this.offsetToLine(start, lineOffsets);
+        const endLine = this.offsetToLine(Math.max(start, end - 1), lineOffsets);
+        return {
+            startLine,
+            endLine,
+            startByte: start,
+            endByte: end
+        };
+    }
+
+    private offsetToLine(offset: number, lineOffsets: number[]): number {
+        let low = 0;
+        let high = lineOffsets.length - 1;
+        while (low <= high) {
+            const mid = Math.floor((low + high) / 2);
+            if (lineOffsets[mid] <= offset) {
+                if (mid === lineOffsets.length - 1 || lineOffsets[mid + 1] > offset) {
+                    return mid;
+                }
+                low = mid + 1;
+            } else {
+                high = mid - 1;
+            }
+        }
+        return 0;
     }
 
     private extractModifiers(node: any): string[] {

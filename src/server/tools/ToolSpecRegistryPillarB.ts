@@ -142,6 +142,8 @@ export const ToolSpecRegistryPillarB: ToolSpec[] = [
               "init",
               "doctor",
               "schema",
+              "switch_root",
+              "detect_root",
               "sessions",
               "session",
               "session_complete",
@@ -188,6 +190,9 @@ export const ToolSpecRegistryPillarB: ToolSpec[] = [
           mode: { type: "string", enum: ["plan", "apply"] },
           targets: { type: "array", items: { type: "string", enum: ["kairo", "vscode", "host_snippets", "host_codex", "host_claude_cli", "host_gemini_cli"] } },
           root: { type: "string" },
+          cwd: { type: "string" },
+          apply: { type: "boolean" },
+          allowBroadRoot: { type: "boolean" },
           multiRepo: { type: "string", enum: ["auto", "single", "detect"] },
           presets: { type: "string", enum: ["minimal", "recommended"] },
           languageScan: {
@@ -205,6 +210,15 @@ export const ToolSpecRegistryPillarB: ToolSpec[] = [
               legacyMcpConfig: { type: "boolean" }
             }
           },
+          repoScope: {
+            type: "object",
+            properties: {
+              mode: { type: "string", enum: ["all", "default", "repos"] },
+              repoIds: { type: "array", items: { type: "string" } }
+            }
+          },
+          repoId: { type: "string" },
+          repoIds: { type: "array", items: { type: "string" } },
           pruneOptions: {
             type: "object",
             properties: {

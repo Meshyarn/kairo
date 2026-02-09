@@ -16,6 +16,7 @@ import { buildUnderstandPacks } from "./understand/UnderstandPillarExecutionPack
 import { executeUnderstandClusters } from "./understand/UnderstandPillarExecutionClusters.js";
 import { finalizeUnderstandResponse } from "./understand/UnderstandPillarExecutionFinalize.js";
 import type { StylePack } from "../../types/flow-artifacts.js";
+import { buildSessionRepoScopePolicyPatch } from "./shared/SessionScopePolicy.js";
 
 
 export class UnderstandPillar {
@@ -88,14 +89,21 @@ export class UnderstandPillar {
     const indexStateManager = this.registry.getMetadata<IndexStateManager>("indexStateManager");
     const indexSnapshot = indexStateManager ? await indexStateManager.getSnapshot().catch(() => undefined) : undefined;
     if (setup.input.resolvedSessionId) {
-      const policyPatch: Partial<{ profile?: string; sources?: string; understand?: Record<string, unknown> }> = {};
+      const policyPatch: Record<string, unknown> = {};
       if (typeof setup.input.constraints.profile === "string") {
         policyPatch.profile = setup.input.constraints.profile;
-        policyPatch.understand = { ...(policyPatch.understand ?? {}), profile: setup.input.constraints.profile };
+        policyPatch.understand = { ...((policyPatch.understand as Record<string, unknown> | undefined) ?? {}), profile: setup.input.constraints.profile };
       }
       if (typeof setup.input.constraints.sources === "string") {
         policyPatch.sources = setup.input.constraints.sources;
-        policyPatch.understand = { ...(policyPatch.understand ?? {}), sources: setup.input.constraints.sources };
+        policyPatch.understand = { ...((policyPatch.understand as Record<string, unknown> | undefined) ?? {}), sources: setup.input.constraints.sources };
+      }
+      const repoPolicyPatch = buildSessionRepoScopePolicyPatch({
+        constraints: setup.input.constraints as Record<string, any>,
+        tool: "understand"
+      });
+      if (repoPolicyPatch) {
+        Object.assign(policyPatch, repoPolicyPatch);
       }
       if (Object.keys(policyPatch).length > 0) {
         artifactManager?.updateSessionPolicy(setup.input.resolvedSessionId, policyPatch as any, "merge");

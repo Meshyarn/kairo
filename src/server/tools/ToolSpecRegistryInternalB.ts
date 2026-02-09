@@ -28,9 +28,12 @@ export const ToolSpecRegistryInternalB: ToolSpec[] = [
               "symbol_index_build",
               "symbol_index_status",
               "symbol_index_clear",
+              "switch_root",
+              "detect_root",
               "sessions",
               "session",
               "session_complete",
+              "session_update",
               "artifacts",
               "artifact",
               "discard",
@@ -79,6 +82,9 @@ export const ToolSpecRegistryInternalB: ToolSpec[] = [
               legacyMcpConfig: { type: "boolean" }
             }
           },
+          cwd: { type: "string" },
+          apply: { type: "boolean" },
+          allowBroadRoot: { type: "boolean" },
           pruneOptions: {
             type: "object",
             properties: {
