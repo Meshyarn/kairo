@@ -17,6 +17,7 @@ Kairo는 의도적으로 설정 옵션이 많지만, 대부분의 프레임워�
 | 상황 | 추천 preset | 비고 |
 |---|---|---|
 | 소/중형 저장소, 빠른 반복 | `KAIRO_PRESET=mcp-lean` | 가장 가벼운 기본값. |
+| 일반 사용 (기본값) | `KAIRO_PRESET=mcp-balanced` | ADR-091 이후 기본 preset. |
 | 대형 저장소, 리콜↑ | `KAIRO_PRESET=mcp-balanced` | 깊이↑, 비용도 약간↑. |
 | 심층 감사, 초대형 저장소 | `KAIRO_PRESET=mcp-deep` | 비용↑; timebox 권장. |
 

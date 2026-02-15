@@ -12,6 +12,7 @@ If you frequently edit quote/escape-heavy templates, also read:
 
 - **ADR-089**: raw content sources for `change`/`write` (no quote/escape breakage)
 - **ADR-090**: adoption/UX/docs drift roadmap (WP1–WP8)
+- **ADR-091**: agent tool adoption failure analysis & remediation (default balanced, evidence floor, legacy name cleanup)
 
 - [Curated ADR Index](/adr/README)
 - [ADR-084 — MCP autopilot & preset layer](/adr/ADR-084-mcp-autopilot-and-preset-layer)
@@ -20,3 +21,4 @@ If you frequently edit quote/escape-heavy templates, also read:
 - [ADR-087 — Adaptive LOD & evidence packs](/adr/ADR-087-task-adaptive-lod-and-evidence-pack)
 - [ADR-089 — Raw content sources for change/write](/adr/ADR-089-raw-content-sources-for-change-write)
 - [ADR-090 — 8-step adoption/UX/docs drift roadmap](/adr/ADR-090-8-step-roadmap-ux-doc-quality)
+- [ADR-091 — Agent tool adoption failure analysis & remediation](/adr/ADR-091-agent-tool-adoption-failure-analysis-and-remediation)

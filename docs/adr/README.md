@@ -183,6 +183,7 @@ These are older “why we built this at all” documents. The code has evolved, 
 - ADR-044 implementation TODO: short ordered checklist (historical; effectively merged into ADR-044 work).
 - ADR-045 TODO tracking: internal planning notes (historical; merged into the modularization work).
 - ADR-090: 8-step adoption/UX/docs drift roadmap (executed as WP1–WP8) → `docs/adr/ADR-090-8-step-roadmap-ux-doc-quality.md`
+- ADR-091: Agent tool adoption failure analysis & remediation (default balanced, evidence floor, nextCalls promotion, legacy name cleanup; Phase 1–2 implemented) → `docs/adr/ADR-091-agent-tool-adoption-failure-analysis-and-remediation.md`
 
 ## Complete ADR list (source titles, condensed)
 

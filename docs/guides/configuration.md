@@ -26,7 +26,7 @@ If you’re looking for `.kairo/config/*` files, start here: [Project config fil
 | Variable | Purpose | Notes |
 |---|---|---|
 | `KAIRO_MODE` | Policy mode. | `mcp` (default), `dev`, or `ci`. Set `dev` to opt out of MCP defaults. |
-| `KAIRO_PRESET` | MCP preset. | `mcp-lean` (default), `mcp-balanced`, `mcp-deep`. |
+| `KAIRO_PRESET` | MCP preset. | `mcp-balanced` (default; ADR-091), `mcp-lean`, `mcp-deep`. |
 | `KAIRO_PUBLIC_SURFACE` | Public tool surface. | `compact` (default in mcp; `task`+`manage` only) or `pillars` (Five Pillars). |
 
 ### Storage & Persistence

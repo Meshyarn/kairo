@@ -48,7 +48,7 @@ High-level router for promptless workflows (ask/analyze/plan/apply).
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
-| `budget` | `"lean" \| "balanced" \| "deep"` | `lean` | Preset for depth/timeouts/token budgets. |
+| `budget` | `"lean" \| "balanced" \| "deep"` | `balanced` | Preset for depth/timeouts/token budgets (ADR-091). |
 | `output.format` | `"summary" \| "standard"` | policy-driven | Response shape (usually `summary` in MCP). |
 | `output.maxTokens` | `number` | policy-driven | Hard cap on response tokens. Task downshifts LOD to fit. |
 | `output.maxChars` | `number` | policy-driven | Hard cap on response characters. |

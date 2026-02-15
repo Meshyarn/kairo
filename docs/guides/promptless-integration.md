@@ -9,7 +9,7 @@ This guide shows how to connect Kairo to an MCP host without adding any special 
 Use these values in your host environment:
 
 - `KAIRO_MODE=mcp` (default; set `dev` to opt out)
-- `KAIRO_PRESET=mcp-lean` (or `mcp-balanced` for bigger repos)
+- `KAIRO_PRESET=mcp-balanced` (default; or `mcp-deep` for bigger repos)
 - `KAIRO_PUBLIC_SURFACE=compact`
 - `KAIRO_TOOL_SCHEMA_MODE=compat`
 - `KAIRO_LOG_TO_FILE=true`
@@ -31,7 +31,7 @@ Persist MCP policy under `.kairo/config/mcp.json`:
 {
   "version": 1,
   "mode": "mcp",
-  "preset": "mcp-lean",
+  "preset": "mcp-balanced",
   "publicSurface": "compact",
   "autopilot": {
     "autoModeNeverApplies": true,
