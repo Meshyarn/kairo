@@ -4,7 +4,7 @@ import { SCHEMA_VERSION, DEFAULT_ADDITIONAL_PROPERTIES, CONTENT_SOURCE_SCHEMA } 
 export const ToolSpecRegistryPillarA: ToolSpec[] = [
 {
       name: "task",
-      description: "High-level router for ask/analyze/plan workflows.",
+      description: "Unified entrypoint for discovery, analysis, and change workflows. Use mode ask for targeted search and reading, analyze for structural reasoning, plan_change to generate draftId and applyToken, apply_change to execute a planned draft, write to create files, and verify to run checks. budget defaults to balanced; use deep for richer evidence. Use manage({command:'schema', tool:'task'}) for full parameter details.",
       schemaVersion: SCHEMA_VERSION,
       visibility: "public",
       inputSchema: {
@@ -45,7 +45,7 @@ export const ToolSpecRegistryPillarA: ToolSpec[] = [
     },
     {
       name: "understand",
-      description: "Deeply analyzes code structure and architecture.",
+      description: "Performs architecture-level reasoning on symbols, files, modules, or the full project. Provide goal, optionally set profile and depth, and choose include flags for callGraph, dependencies, hot spots, and clusters. Use sources to control code or docs coverage and limits to cap cost. Best for root-cause analysis, impact forecasting, and design understanding before edits or migration work.",
       schemaVersion: SCHEMA_VERSION,
       visibility: "public",
       inputSchema: {
@@ -127,7 +127,7 @@ export const ToolSpecRegistryPillarA: ToolSpec[] = [
     },
     {
       name: "explore",
-      description: "Unified discovery for docs/code with previews, sections, and controlled full reads.",
+      description: "Searches code and docs with controllable output shapes. Use query with optional paths, choose view preview/section/full, and tune include flags for code, docs, comments, logs, and clusters. profile and limits trade detail for cost. Supports cursor pagination, section targeting, and fullPaths reads when precision is required. Ideal first step before analyze, change, write, or verify workflows.",
       schemaVersion: SCHEMA_VERSION,
       visibility: "public",
       inputSchema: {
@@ -243,7 +243,7 @@ export const ToolSpecRegistryPillarA: ToolSpec[] = [
     },
     {
       name: "change",
-      description: "Safely modifies code with impact analysis.",
+      description: "Plans or applies code modifications with guardrails and impact checks. Provide intent plus target or targetFiles and optional explicit edits. safety=plan prepares a draft and review artifacts; safety=apply executes with applyToken workflow and policy overrides. profile controls depth, reviewOptions govern blocking behavior, and override scope limits risk. Use when edits must remain auditable, reversible, and policy compliant.",
       schemaVersion: SCHEMA_VERSION,
       visibility: "public",
       inputSchema: {

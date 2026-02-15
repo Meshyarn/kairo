@@ -324,7 +324,7 @@ const resolvePresetId = (mode: McpMode, overrides?: McpPolicyOverrides, config?:
   if (configPreset) return configPreset;
   const envPreset = parsePreset(process.env.KAIRO_PRESET);
   if (envPreset) return envPreset;
-  if (mode === "mcp") return "mcp-lean";
+  if (mode === "mcp") return "mcp-balanced";
   return undefined;
 };
 
@@ -452,7 +452,7 @@ export const resolveTaskBudgetPolicy = (budget?: string): TaskBudgetPolicy => {
   if (budget === "balanced" || budget === "deep" || budget === "lean") {
     return TASK_BUDGET_POLICIES[budget];
   }
-  return TASK_BUDGET_POLICIES.lean;
+  return TASK_BUDGET_POLICIES.balanced;
 };
 
 export const resolveDefaultProfile = (_tool?: string): PolicyProfile | undefined => {

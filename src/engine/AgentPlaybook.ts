@@ -117,7 +117,7 @@ export const AgentWorkflowGuidance: {
             code: "INDEX_STALE",
             meaning: "Dependency/index information is outdated.",
             action: {
-                toolName: "project_manage",
+                toolName: "manage",
                 exampleArgs: { command: "status" },
                 rationale: "Check index health, wait for background rebuilds, and only then trust `relationship_analyze` outputs."
             }

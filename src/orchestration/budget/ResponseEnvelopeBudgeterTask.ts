@@ -1,6 +1,12 @@
 import type { TraceBuilder } from "../trace/TraceBuilder.js";
 import { truncate } from "../pillars/explore/ResultFormatter.js";
-import { DEFAULT_ELASTIC_WINDOW_PCT, MIN_PREVIEW_CHARS } from "./ResponseEnvelopeBudgeterConstants.js";
+import {
+  DEFAULT_ELASTIC_WINDOW_PCT,
+  MIN_PREVIEW_CHARS,
+  MIN_EVIDENCE_ITEMS_FLOOR,
+  MIN_EVIDENCE_EXCERPT_CHARS,
+  MIN_FALLBACK_EXCERPT_CHARS
+} from "./ResponseEnvelopeBudgeterConstants.js";
 import type { EnvelopeBudgetResult, TaskResponseBudgetOptions } from "./ResponseEnvelopeBudgeterTypes.js";
 import { estimateResponseUsage, markBudgetExceededWithReasons, recordBudgetAction, recordTrace, withinBudget } from "./ResponseEnvelopeBudgeterUtils.js";
 
@@ -33,6 +39,11 @@ export function enforceTaskResponseBudget(args: {
   }
 
   let applied = false;
+  const policyMinItems = Number.isFinite(options.minEvidenceItems)
+    ? options.minEvidenceItems!
+    : MIN_EVIDENCE_ITEMS_FLOOR;
+  const minEvidenceItems = Math.max(MIN_EVIDENCE_ITEMS_FLOOR, policyMinItems);
+
   const dropField = (key: string) => {
     if (response[key] !== undefined) {
       response[key] = undefined;
@@ -43,10 +54,9 @@ export function enforceTaskResponseBudget(args: {
 
   const ensureEvidenceCount = () => {
     if (!Array.isArray(response.evidence)) return false;
-    const minItems = Number.isFinite(options.minEvidenceItems) ? options.minEvidenceItems! : 0;
-    if (response.evidence.length <= minItems) return false;
-    response.evidence = response.evidence.slice(0, Math.max(0, minItems));
-    recordBudgetAction(options.traceBuilder, "budget.response.trim_lists", { field: "evidence", limit: minItems });
+    if (response.evidence.length <= minEvidenceItems) return false;
+    response.evidence = response.evidence.slice(0, minEvidenceItems);
+    recordBudgetAction(options.traceBuilder, "budget.response.trim_lists", { field: "evidence", limit: minEvidenceItems });
     return true;
   };
 
@@ -66,25 +76,30 @@ export function enforceTaskResponseBudget(args: {
     return changed;
   };
 
-  const dropEvidenceExcerpts = () => {
+  const trimEvidenceExcerptsFallback = () => {
     if (!Array.isArray(response.evidence)) return false;
     let changed = false;
     for (const item of response.evidence) {
-      if (item && Object.prototype.hasOwnProperty.call(item, "excerpt")) {
-        delete item.excerpt;
-        changed = true;
-      }
+      if (typeof item?.excerpt !== "string") continue;
+      if (item.excerpt.length <= MIN_FALLBACK_EXCERPT_CHARS) continue;
+      item.excerpt = truncate(item.excerpt, MIN_FALLBACK_EXCERPT_CHARS);
+      item.truncated = true;
+      changed = true;
     }
     if (changed) {
-      recordBudgetAction(options.traceBuilder, "budget.response.drop_field", { field: "evidence.excerpt" });
+      recordBudgetAction(options.traceBuilder, "budget.response.trim_items", {
+        field: "evidence",
+        maxChars: MIN_FALLBACK_EXCERPT_CHARS
+      });
     }
     return changed;
   };
 
   const dropEvidence = () => {
     if (!Array.isArray(response.evidence) || response.evidence.length === 0) return false;
-    response.evidence = [];
-    recordBudgetAction(options.traceBuilder, "budget.response.drop_field", { field: "evidence" });
+    if (response.evidence.length <= minEvidenceItems) return false;
+    response.evidence = response.evidence.slice(0, minEvidenceItems);
+    recordBudgetAction(options.traceBuilder, "budget.response.trim_lists", { field: "evidence", limit: minEvidenceItems });
     return true;
   };
 
@@ -128,7 +143,10 @@ export function enforceTaskResponseBudget(args: {
     return { applied: true, estimatedTokens: usage.estimatedTokens, usedChars: usage.usedChars };
   }
 
-  const excerptChars = Number.isFinite(options.minExcerptChars) ? options.minExcerptChars! : MIN_PREVIEW_CHARS;
+  const excerptChars = Math.max(
+    MIN_EVIDENCE_EXCERPT_CHARS,
+    Number.isFinite(options.minExcerptChars) ? options.minExcerptChars! : MIN_PREVIEW_CHARS
+  );
   if (trimEvidenceExcerpts(excerptChars)) {
     applied = true;
     usage = estimateResponseUsage(response);
@@ -169,7 +187,7 @@ export function enforceTaskResponseBudget(args: {
     return { applied: true, estimatedTokens: usage.estimatedTokens, usedChars: usage.usedChars };
   }
 
-  if (dropEvidenceExcerpts()) {
+  if (trimEvidenceExcerptsFallback()) {
     applied = true;
     usage = estimateResponseUsage(response);
   }

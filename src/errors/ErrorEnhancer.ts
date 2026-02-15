@@ -14,9 +14,9 @@ export class ErrorEnhancer {
         
         const suggestions: ToolSuggestion[] = [
             {
-                toolName: "project_search",
-                rationale: "Search for the symbol name in code contents if it might not be indexed.",
-                exampleArgs: { query: symbolName, type: "symbol" },
+                toolName: "task",
+                rationale: "Search for the symbol name through the public task surface if it might not be indexed.",
+                exampleArgs: { request: symbolName, mode: "ask", budget: "balanced" },
                 priority: "high"
             }
         ];
@@ -51,9 +51,9 @@ export class ErrorEnhancer {
         
         if (isLikelyFilename) {
             suggestions.push({
-                toolName: "project_search",
-                rationale: "Try searching with type='filename' for more accurate file matching.",
-                exampleArgs: { query, type: "filename" },
+                toolName: "task",
+                rationale: "Retry through task ask mode and mention the exact filename to improve matching.",
+                exampleArgs: { request: query, mode: "ask", budget: "balanced" },
                 priority: "high"
             });
         }

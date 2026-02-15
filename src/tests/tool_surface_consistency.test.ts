@@ -5,6 +5,7 @@ import { NativeSearchCoreStub } from "./utils/NativeSearchCoreStub.js";
 
 type ListedTool = {
     name: string;
+    description?: string;
     inputSchema?: {
         type?: string;
         properties?: Record<string, unknown>;
@@ -84,6 +85,9 @@ describe("Tool surface consistency", () => {
 
 
         for (const tool of tools) {
+            const descriptionWords = (tool.description ?? "").trim().split(/\s+/).filter(Boolean).length;
+            expect(descriptionWords).toBeGreaterThanOrEqual(50);
+
             const schema = tool.inputSchema;
             if (!schema) {
                 continue;

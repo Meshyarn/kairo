@@ -13,12 +13,14 @@ describe('ErrorEnhancer', () => {
     it('should enhance symbol not found error', () => {
         const details = ErrorEnhancer.enhanceSymbolNotFound('UserSvc', mockSymbolIndex);
         expect(details.similarSymbols).toContain('UserService');
-        expect(details.toolSuggestions?.some(s => s.toolName === 'project_search')).toBe(true);
+        expect(details.toolSuggestions?.some(s => s.toolName === 'task')).toBe(true);
+        expect(details.toolSuggestions?.some(s => (s.exampleArgs as any)?.mode === 'ask')).toBe(true);
     });
 
     it('should enhance search not found error for filenames', () => {
         const details = ErrorEnhancer.enhanceSearchNotFound('config.json');
-        expect(details.toolSuggestions?.some(s => s.exampleArgs?.type === 'filename')).toBe(true);
+        expect(details.toolSuggestions?.some(s => s.toolName === 'task')).toBe(true);
+        expect(details.toolSuggestions?.some(s => (s.exampleArgs as any)?.request === 'config.json')).toBe(true);
     });
 
     it('should enhance NO_MATCH errors', () => {
@@ -35,7 +37,7 @@ describe('ErrorEnhancer', () => {
 
     it('should enhance INDEX_STALE errors', () => {
         const details = ErrorEnhancer.enhanceIndexStale();
-        expect(details.toolSuggestions?.some(s => s.toolName === 'project_manage')).toBe(true);
+        expect(details.toolSuggestions?.some(s => s.toolName === 'manage')).toBe(true);
         expect(details.nextActionHint).toContain('index status');
     });
 });

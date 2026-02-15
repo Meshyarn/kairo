@@ -13,7 +13,7 @@ export const normalizeBudget = (raw: any): TaskBudget => {
     if (raw === "balanced" || raw === "deep" || raw === "lean") {
         return raw;
     }
-    return "lean";
+    return "balanced";
 };
 
 export const resolveProfile = (budget: TaskBudget): TaskProfile => {

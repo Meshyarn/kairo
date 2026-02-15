@@ -289,8 +289,8 @@ const PARITY_REASON_MAP: Record<string, {
     type: "degraded",
     message: "Symbol embeddings are not built; run a build to enable semantic symbol search.",
     severity: "warning",
-    actionToolCall: { tool: "project_manage", args: { command: "symbol_index_build" } },
-    actionId: "project_manage.symbol_index_build"
+    actionToolCall: CAPABILITY_ACTION_TOOLCALL,
+    actionId: CAPABILITY_ACTION_ID
   },
   embedding_provider_disabled: {
     type: "degraded",

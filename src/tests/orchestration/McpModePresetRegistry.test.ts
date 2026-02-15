@@ -3,7 +3,11 @@ import os from "os";
 import path from "path";
 import { describe, it, expect, beforeEach, afterEach } from "@jest/globals";
 import { PathManager } from "../../utils/PathManager.js";
-import { resolveEnvelopeMaxTokens, resolveMcpPolicy } from "../../orchestration/policy/McpModePresetRegistry.js";
+import {
+  resolveEnvelopeMaxTokens,
+  resolveMcpPolicy,
+  resolveTaskBudgetPolicy
+} from "../../orchestration/policy/McpModePresetRegistry.js";
 
 const writeMcpConfig = (root: string, payload: Record<string, unknown>) => {
   const configDir = path.join(root, ".kairo", "config");
@@ -31,7 +35,7 @@ describe("McpModePresetRegistry", () => {
     PathManager.setRoot(root);
     const policy = resolveMcpPolicy();
     expect(policy.mode).toBe("mcp");
-    expect(policy.preset).toBe("mcp-lean");
+    expect(policy.preset).toBe("mcp-balanced");
   });
 
   it("prefers config preset over env", () => {
@@ -45,12 +49,12 @@ describe("McpModePresetRegistry", () => {
     expect(policy.preset).toBe("mcp-balanced");
   });
 
-  it("defaults to mcp-lean when mode is mcp", () => {
+  it("defaults to mcp-balanced when mode is mcp", () => {
     const root = makeTempRoot();
     PathManager.setRoot(root);
     process.env.KAIRO_MODE = "mcp";
     const policy = resolveMcpPolicy();
-    expect(policy.preset).toBe("mcp-lean");
+    expect(policy.preset).toBe("mcp-balanced");
     expect(policy.publicSurface).toBe("compact");
   });
 
@@ -77,5 +81,11 @@ describe("McpModePresetRegistry", () => {
     process.env.KAIRO_PUBLIC_SURFACE = "pillars";
     const policy = resolveMcpPolicy();
     expect(policy.publicSurface).toBe("pillars");
+  });
+
+  it("defaults task budget policy to balanced when omitted", () => {
+    const policy = resolveTaskBudgetPolicy(undefined);
+    expect(policy.maxSteps).toBe(2);
+    expect(policy.minEvidence).toBe(2);
   });
 });
