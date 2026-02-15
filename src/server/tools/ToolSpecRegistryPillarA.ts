@@ -2,9 +2,9 @@ import type { ToolSpec } from "./ToolSpecTypes.js";
 import { SCHEMA_VERSION, DEFAULT_ADDITIONAL_PROPERTIES, CONTENT_SOURCE_SCHEMA } from "./ToolSpecRegistrySchema.js";
 
 export const ToolSpecRegistryPillarA: ToolSpec[] = [
-{
+	{
       name: "task",
-      description: "Unified entrypoint for discovery, analysis, and change workflows. Use mode ask for targeted search and reading, analyze for structural reasoning, plan_change to generate draftId and applyToken, apply_change to execute a planned draft, write to create files, and verify to run checks. budget defaults to balanced; use deep for richer evidence. Use manage({command:'schema', tool:'task'}) for full parameter details.",
+      description: "Unified entrypoint for discovery, analysis, and change workflows. Use mode ask for targeted search and reading, analyze for structural reasoning, plan_change to generate draftId and applyToken, apply_change to execute a planned draft, write to create files, and verify to run checks. profile defaults to balanced (budget/depth are legacy aliases). safety=auto supports one-shot small-change auto-apply when enabled. Use manage({command:'schema', tool:'task'}) for full parameter details.",
       schemaVersion: SCHEMA_VERSION,
       visibility: "public",
       inputSchema: {
@@ -12,6 +12,7 @@ export const ToolSpecRegistryPillarA: ToolSpec[] = [
         properties: {
           request: { type: "string" },
           mode: { type: "string", enum: ["auto", "ask", "analyze", "plan_change", "apply_change", "write", "verify"] },
+          profile: { type: "string", enum: ["lean", "fast", "balanced", "deep"] },
           budget: { type: "string", enum: ["lean", "balanced", "deep"] },
           sessionId: { type: "string" },
           draftId: { type: "string" },
@@ -21,7 +22,11 @@ export const ToolSpecRegistryPillarA: ToolSpec[] = [
           paths: { type: "array", items: { type: "string" } },
           targetFiles: { type: "array", items: { type: "string" } },
           targetPath: { type: "string" },
-          safety: { type: "string", enum: ["plan", "apply"] },
+          pillarOptions: {
+            type: "object",
+            description: "Advanced options passed through to the underlying pillar (or per-pillar via keys like explore/understand/change/write)."
+          },
+          safety: { type: "string", enum: ["plan", "apply", "auto"] },
           output: {
             type: "object",
             properties: {
@@ -41,6 +46,42 @@ export const ToolSpecRegistryPillarA: ToolSpec[] = [
         },
         required: ["request"],
         additionalProperties: DEFAULT_ADDITIONAL_PROPERTIES
+      },
+      compat: {
+        aliases: [
+          {
+            from: "budget",
+            to: "profile",
+            policy: "deprecate",
+            message: "Use profile instead of budget.",
+            since: SCHEMA_VERSION
+          },
+          {
+            from: "depth",
+            to: "profile",
+            policy: "deprecate",
+            message: "Use profile instead of depth.",
+            since: SCHEMA_VERSION
+          }
+        ],
+        valueAliases: [
+          {
+            path: "profile",
+            from: "shallow",
+            to: "lean",
+            policy: "deprecate",
+            message: "Use profile=lean instead of depth=shallow.",
+            since: SCHEMA_VERSION
+          },
+          {
+            path: "profile",
+            from: "standard",
+            to: "balanced",
+            policy: "deprecate",
+            message: "Use profile=balanced instead of depth=standard.",
+            since: SCHEMA_VERSION
+          }
+        ]
       }
     },
     {

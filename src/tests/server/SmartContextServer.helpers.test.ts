@@ -86,13 +86,13 @@ describe("SmartContextServer helpers", () => {
 
         const mapPayload = { map: new Map([["key", 1]]), set: new Set(["a"]) };
         const json = (server as any).jsonResponse(mapPayload);
+        expect(json.isError).toBe(false);
         const parsed = JSON.parse(json.content[0].text);
-        expect(parsed.map.__type).toBe("Map");
-        expect(parsed.map.entries).toEqual([["key", 1]]);
-        expect(parsed.set.__type).toBe("Set");
-        expect(parsed.set.values).toEqual(["a"]);
+        expect(parsed.map).toEqual({ key: 1 });
+        expect(parsed.set).toEqual(["a"]);
 
         const text = (server as any).textResponse("ok");
+        expect(text.isError).toBe(false);
         expect(text.content[0].text).toBe("ok");
 
         const error = (server as any).errorResponse("ERR", "message", { detail: true });

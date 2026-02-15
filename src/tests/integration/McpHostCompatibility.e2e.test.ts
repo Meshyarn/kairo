@@ -178,7 +178,10 @@ describe("MCP host compatibility harness", () => {
       "kairo://runtime/summary",
       "kairo://config/mcp-policy",
       "kairo://index/snapshot",
-      "kairo://tools/public"
+      "kairo://tools/public",
+      "kairo://docs/agent-playbook",
+      "kairo://docs/tool-reference",
+      "kairo://docs/quick-reference"
     ]));
 
     const templatesResult = await (client as any).listResourceTemplates({});
@@ -194,6 +197,10 @@ describe("MCP host compatibility harness", () => {
     const runtimePayload = JSON.parse(runtimeText);
     expect(runtimePayload.rootPath).toBe(tempRoot);
     expect(Array.isArray(runtimePayload.tools)).toBe(true);
+
+    const playbook = await (client as any).readResource({ uri: "kairo://docs/agent-playbook" });
+    const playbookText = playbook?.contents?.[0]?.text ?? "";
+    expect(playbookText).toContain("Agent Playbook");
 
     const taskSchema = await (client as any).readResource({ uri: "kairo://schema/task" });
     const schemaText = taskSchema?.contents?.[0]?.text ?? "";
@@ -305,7 +312,10 @@ describe("MCP host compatibility harness", () => {
           expect.objectContaining({ uri: "kairo://runtime/summary" }),
           expect.objectContaining({ uri: "kairo://config/mcp-policy" }),
           expect.objectContaining({ uri: "kairo://index/snapshot" }),
-          expect.objectContaining({ uri: "kairo://tools/public" })
+          expect.objectContaining({ uri: "kairo://tools/public" }),
+          expect.objectContaining({ uri: "kairo://docs/agent-playbook" }),
+          expect.objectContaining({ uri: "kairo://docs/tool-reference" }),
+          expect.objectContaining({ uri: "kairo://docs/quick-reference" })
         ])
       );
 

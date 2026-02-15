@@ -5,17 +5,19 @@ import { buildUnderstandSummary, buildInlineEvidence, resolveTaskLod } from "./T
 import { buildGuidance, buildEvidenceContinuation, rewriteGuidanceForCompact, mapStatus } from "./TaskGuidanceUtils.js";
 import { finalizeTaskResponse } from "./TaskResponseUtils.js";
 import { recordTaskMetrics, storeEvidencePack } from "./TaskMetricsUtils.js";
+import { mergePillarArgs, pickPillarOptions } from "./TaskRoutingUtils.js";
 import type { TaskExecutionState } from "./TaskExecutionState.js";
 
 export async function handleAnalyze(state: TaskExecutionState): Promise<any> {
-    const response = await state.executePillar("understand", {
+    const understandOptions = pickPillarOptions("understand", state.pillarOptions);
+    const response = await state.executePillar("understand", mergePillarArgs({
         goal: state.request,
         targetFiles: state.targetFiles.length > 0 ? state.targetFiles : undefined,
         sessionId: state.sessionId,
         profile: state.profile,
         trace: state.traceEnabled,
         limits: state.responseLimits
-    });
+    }, understandOptions, ["goal", "targetFiles", "sessionId", "profile", "trace"]));
     const relatedArtifacts = response?.callGraphArtifactId
         ? [{ id: response.callGraphArtifactId, kind: "call_graph", detail: "summary" as const }]
         : undefined;

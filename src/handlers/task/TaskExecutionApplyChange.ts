@@ -6,6 +6,7 @@ import { mergeDegradedReasons } from "./TaskDecisionUtils.js";
 import { recordTaskMetrics } from "./TaskMetricsUtils.js";
 import { attemptAutoRepair } from "./TaskAutoRepairUtils.js";
 import { buildVerificationResult } from "./TaskVerificationUtils.js";
+import { mergePillarArgs, pickPillarOptions } from "./TaskRoutingUtils.js";
 import type { TaskExecutionState } from "./TaskExecutionState.js";
 
 export async function handleApplyChange(state: TaskExecutionState): Promise<any> {
@@ -13,7 +14,8 @@ export async function handleApplyChange(state: TaskExecutionState): Promise<any>
         ? state.targetFiles
         : (state.targetPath ? [state.targetPath] : (state.paths.length > 0 ? state.paths : []));
     const applyLimits = state.responseLimits;
-    const response = await state.executePillar("change", {
+    const changeOptions = pickPillarOptions("change", state.pillarOptions);
+    const response = await state.executePillar("change", mergePillarArgs({
         intent: state.request,
         targetFiles: applyTargets.length > 0 ? applyTargets : undefined,
         ...(state.edits.length > 0 ? { edits: state.edits } : {}),
@@ -25,7 +27,7 @@ export async function handleApplyChange(state: TaskExecutionState): Promise<any>
         ...(state.draftId ? { draftId: state.draftId } : {}),
         ...(state.applyToken ? { applyToken: state.applyToken } : {}),
         ...(applyLimits ? { limits: applyLimits } : {})
-    });
+    }, changeOptions, ["intent", "targetFiles", "sessionId", "profile", "safety", "trace", "draftId", "applyToken"]));
     const summary = buildApplySummary({ response, request: state.request });
     let status = mapStatus(response);
     let verification: any | undefined;

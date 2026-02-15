@@ -5,11 +5,13 @@ import { buildExploreSummary, buildInlineEvidence, resolveTaskLod } from "./Task
 import { buildGuidance, buildEvidenceContinuation, rewriteGuidanceForCompact, mapStatus } from "./TaskGuidanceUtils.js";
 import { finalizeTaskResponse } from "./TaskResponseUtils.js";
 import { recordTaskMetrics, storeEvidencePack } from "./TaskMetricsUtils.js";
+import { mergePillarArgs, pickPillarOptions } from "./TaskRoutingUtils.js";
 import { buildFileVersionsSnapshot } from "./TaskVerificationUtils.js";
 import type { TaskExecutionState } from "./TaskExecutionState.js";
 
 export async function handleFallback(state: TaskExecutionState): Promise<any> {
-    const response = await state.executePillar("explore", {
+    const exploreOptions = pickPillarOptions("explore", state.pillarOptions);
+    const response = await state.executePillar("explore", mergePillarArgs({
         query: state.request,
         paths: state.paths.length > 0 ? state.paths : undefined,
         targetFiles: state.targetFiles.length > 0 ? state.targetFiles : undefined,
@@ -18,7 +20,7 @@ export async function handleFallback(state: TaskExecutionState): Promise<any> {
         view: "preview",
         trace: state.traceEnabled,
         limits: state.responseLimits
-    });
+    }, exploreOptions, ["query", "paths", "targetFiles", "sessionId", "profile", "view", "trace"]));
     const exploreEvidencePack = buildEvidencePackFromExplore({
         response,
         request: state.request,
@@ -43,14 +45,15 @@ export async function handleFallback(state: TaskExecutionState): Promise<any> {
         ?? response?.data?.code?.[0]?.filePath
         ?? response?.data?.docs?.[0]?.filePath;
     if (decisionGate.insufficient && state.budgetPolicy.maxSteps >= 2 && topTarget) {
-        understandResponse = await state.executePillar("understand", {
+        const understandOptions = pickPillarOptions("understand", state.pillarOptions);
+        understandResponse = await state.executePillar("understand", mergePillarArgs({
             goal: state.request,
             targetFiles: [topTarget],
             sessionId: state.sessionId,
             profile: state.profile,
             trace: state.traceEnabled,
             limits: state.responseLimits
-        });
+        }, understandOptions, ["goal", "targetFiles", "sessionId", "profile", "trace"]));
         analyzeDecisionGate = buildAnalyzeDecisionGate({
             response: understandResponse,
             budgetPolicy: state.budgetPolicy,

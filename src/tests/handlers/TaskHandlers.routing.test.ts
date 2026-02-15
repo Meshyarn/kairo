@@ -234,4 +234,145 @@ describe("TaskHandlers routing", () => {
     );
     expect(payload.draftId).toBe("draft_write_2");
   });
+
+  it("passes pillarOptions through to the routed pillar", async () => {
+    const context = makeContext();
+    const handler = new TaskHandlers(context as any);
+    context.orchestrationEngine.executePillar.mockResolvedValue({
+      success: true,
+      status: "ok",
+      summary: "analysis",
+      primaryFile: "src/core.ts",
+      sessionId: "s-pillar-options"
+    });
+
+    await handler.handle("task", {
+      request: "core structure",
+      mode: "analyze",
+      pillarOptions: {
+        understand: {
+          include: { dependencies: true },
+          vibe: { extract: true, includeNorms: true }
+        }
+      }
+    });
+
+    expect(context.orchestrationEngine.executePillar).toHaveBeenCalledWith(
+      "understand",
+      expect.objectContaining({
+        goal: "core structure",
+        include: { dependencies: true },
+        vibe: { extract: true, includeNorms: true }
+      })
+    );
+  });
+
+  it("supports profile as canonical task terminology", async () => {
+    const context = makeContext();
+    const handler = new TaskHandlers(context as any);
+    const exploreResponse = {
+      success: true,
+      status: "ok",
+      data: { docs: [], code: [{ kind: "file_preview", filePath: "src/app.ts" }] },
+      sessionId: "s-profile"
+    };
+    context.orchestrationEngine.executePillar.mockResolvedValue(exploreResponse);
+
+    const response = await handler.handle("task", { request: "find app", mode: "ask", profile: "fast" });
+    const payload = JSON.parse(response.content[0].text);
+
+    expect(context.orchestrationEngine.executePillar).toHaveBeenCalledWith(
+      "explore",
+      expect.objectContaining({ profile: "fast" })
+    );
+    expect(payload.budget).toBe("lean");
+  });
+
+  it("runs one-shot auto apply for small changes when enabled", async () => {
+    const previous = process.env.KAIRO_ENABLE_AUTO_APPLY;
+    process.env.KAIRO_ENABLE_AUTO_APPLY = "true";
+    const context = makeContext();
+    const handler = new TaskHandlers(context as any);
+    context.orchestrationEngine.executePillar
+      .mockResolvedValueOnce({
+        success: true,
+        status: "ok",
+        draftPack: { id: "draft_auto_1" },
+        applyToken: "token_auto_1",
+        sessionId: "s-auto"
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        status: "ok",
+        targetFile: "src/app.ts",
+        transactionId: "tx_auto_1",
+        rollbackAvailable: true,
+        sessionId: "s-auto"
+      });
+
+    try {
+      const response = await handler.handle("task", {
+        request: "update app",
+        mode: "plan_change",
+        safety: "auto",
+        targetFiles: ["src/app.ts"],
+        edits: [{ filePath: "src/app.ts", targetString: "foo", replacementString: "bar" }]
+      });
+      const payload = JSON.parse(response.content[0].text);
+
+      expect(context.orchestrationEngine.executePillar).toHaveBeenNthCalledWith(
+        1,
+        "change",
+        expect.objectContaining({ safety: "plan" })
+      );
+      expect(context.orchestrationEngine.executePillar).toHaveBeenNthCalledWith(
+        2,
+        "change",
+        expect.objectContaining({ safety: "apply", draftId: "draft_auto_1", applyToken: "token_auto_1" })
+      );
+      expect(payload.autoApplied).toBe(true);
+      expect(payload.rollbackId).toBe("tx_auto_1");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.KAIRO_ENABLE_AUTO_APPLY;
+      } else {
+        process.env.KAIRO_ENABLE_AUTO_APPLY = previous;
+      }
+    }
+  });
+
+  it("keeps plan-only result when auto apply is not enabled", async () => {
+    const previous = process.env.KAIRO_ENABLE_AUTO_APPLY;
+    delete process.env.KAIRO_ENABLE_AUTO_APPLY;
+    const context = makeContext();
+    const handler = new TaskHandlers(context as any);
+    context.orchestrationEngine.executePillar.mockResolvedValue({
+      success: true,
+      status: "ok",
+      draftPack: { id: "draft_auto_2" },
+      applyToken: "token_auto_2",
+      sessionId: "s-auto-disabled"
+    });
+
+    try {
+      const response = await handler.handle("task", {
+        request: "update app",
+        mode: "plan_change",
+        safety: "auto",
+        targetFiles: ["src/app.ts"],
+        edits: [{ filePath: "src/app.ts", targetString: "foo", replacementString: "bar" }]
+      });
+      const payload = JSON.parse(response.content[0].text);
+
+      expect(context.orchestrationEngine.executePillar).toHaveBeenCalledTimes(1);
+      expect(payload.autoApplied).toBe(false);
+      expect(payload.autoApplySkippedReason).toBe("env_disabled");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.KAIRO_ENABLE_AUTO_APPLY;
+      } else {
+        process.env.KAIRO_ENABLE_AUTO_APPLY = previous;
+      }
+    }
+  });
 });

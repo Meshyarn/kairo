@@ -70,33 +70,57 @@ describe("Tool schema contract", () => {
     }
   });
 
-  it("applies file_read raw alias with contract findings in compat mode", async () => {
-    const prevExpose = process.env.KAIRO_EXPOSE_FILE_TOOLS;
+  it("attaches contract metadata only when trace=true", async () => {
     const prevMode = process.env.KAIRO_TOOL_SCHEMA_MODE;
     const originalStorageMode = process.env.KAIRO_STORAGE_MODE;
-    process.env.KAIRO_EXPOSE_FILE_TOOLS = "true";
     process.env.KAIRO_TOOL_SCHEMA_MODE = "compat";
     process.env.KAIRO_STORAGE_MODE = "memory";
 
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "schema-contract-"));
-    const filePath = path.join(tempDir, "sample.txt");
+    const filePath = path.join(tempDir, "sample.ts");
     fs.writeFileSync(filePath, "hello", "utf-8");
 
     const server = new SmartContextServer(tempDir);
-    const response = await (server as any).handleCallTool("file_read", { filePath, raw: true });
+    const response = await (server as any).handleCallTool("task", {
+      request: "find sample",
+      files: [filePath],
+      trace: true
+    });
     const payload = parsePayload(response);
 
-    expect(payload.contract?.tool).toBe("file_read");
-    expect(payload.contract?.findings?.some((finding: any) => finding.code === "DEPRECATED_FIELD_USED")).toBe(true);
-    expect(payload.content).toBeDefined();
+    expect(payload.contract?.tool).toBe("task");
+    expect(payload.contract?.findings?.some((finding: any) => finding.code === "SCHEMA_ALIAS_USED")).toBe(true);
 
     await server.shutdown();
     fs.rmSync(tempDir, { recursive: true, force: true });
-    if (prevExpose === undefined) {
-      delete process.env.KAIRO_EXPOSE_FILE_TOOLS;
+    if (prevMode === undefined) {
+      delete process.env.KAIRO_TOOL_SCHEMA_MODE;
     } else {
-      process.env.KAIRO_EXPOSE_FILE_TOOLS = prevExpose;
+      process.env.KAIRO_TOOL_SCHEMA_MODE = prevMode;
     }
+    if (originalStorageMode === undefined) {
+      delete process.env.KAIRO_STORAGE_MODE;
+    } else {
+      process.env.KAIRO_STORAGE_MODE = originalStorageMode;
+    }
+  });
+
+  it("omits contract metadata when trace is not enabled", async () => {
+    const prevMode = process.env.KAIRO_TOOL_SCHEMA_MODE;
+    const originalStorageMode = process.env.KAIRO_STORAGE_MODE;
+    process.env.KAIRO_TOOL_SCHEMA_MODE = "compat";
+    process.env.KAIRO_STORAGE_MODE = "memory";
+    const server = new SmartContextServer(process.cwd());
+
+    const response = await (server as any).handleCallTool("task", {
+      request: "find app",
+      budget: "deep"
+    });
+    const payload = parsePayload(response);
+
+    expect(payload.contract).toBeUndefined();
+
+    await server.shutdown();
     if (prevMode === undefined) {
       delete process.env.KAIRO_TOOL_SCHEMA_MODE;
     } else {

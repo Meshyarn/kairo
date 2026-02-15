@@ -113,5 +113,11 @@ describe("ResponseEnvelopeBudgeter", () => {
     expect(response.evidence.length).toBeGreaterThanOrEqual(1);
     expect(response.evidence[0]?.filePath).toBeTruthy();
     expect(typeof response.evidence[0]?.excerpt).toBe("string");
+    expect(response.truncationSummary).toEqual(
+      expect.objectContaining({
+        removedItems: expect.any(Number),
+        originalSize: expect.any(Number)
+      })
+    );
   });
 });

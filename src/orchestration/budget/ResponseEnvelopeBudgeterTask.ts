@@ -33,6 +33,8 @@ export function enforceTaskResponseBudget(args: {
 
   const response = args.response;
   let usage = estimateResponseUsage(response);
+  const originalSize = usage.usedChars;
+  let removedItems = 0;
   if (withinBudget(usage, options)) {
     recordTrace(options.traceBuilder, usage, options, false);
     return { applied: false, estimatedTokens: usage.estimatedTokens, usedChars: usage.usedChars };
@@ -48,6 +50,7 @@ export function enforceTaskResponseBudget(args: {
     if (response[key] !== undefined) {
       response[key] = undefined;
       applied = true;
+      removedItems += 1;
       recordBudgetAction(options.traceBuilder, "budget.response.drop_field", { field: key });
     }
   };
@@ -55,6 +58,7 @@ export function enforceTaskResponseBudget(args: {
   const ensureEvidenceCount = () => {
     if (!Array.isArray(response.evidence)) return false;
     if (response.evidence.length <= minEvidenceItems) return false;
+    removedItems += response.evidence.length - minEvidenceItems;
     response.evidence = response.evidence.slice(0, minEvidenceItems);
     recordBudgetAction(options.traceBuilder, "budget.response.trim_lists", { field: "evidence", limit: minEvidenceItems });
     return true;
@@ -98,15 +102,23 @@ export function enforceTaskResponseBudget(args: {
   const dropEvidence = () => {
     if (!Array.isArray(response.evidence) || response.evidence.length === 0) return false;
     if (response.evidence.length <= minEvidenceItems) return false;
+    removedItems += response.evidence.length - minEvidenceItems;
     response.evidence = response.evidence.slice(0, minEvidenceItems);
     recordBudgetAction(options.traceBuilder, "budget.response.trim_lists", { field: "evidence", limit: minEvidenceItems });
     return true;
+  };
+  const attachTruncationSummary = () => {
+    response.truncationSummary = {
+      removedItems,
+      originalSize
+    };
   };
 
   dropField("details");
   usage = estimateResponseUsage(response);
   if (withinBudget(usage, options)) {
     recordTrace(options.traceBuilder, usage, options, true);
+    attachTruncationSummary();
     response.stats = {
       ...(response.stats ?? {}),
       responseBudget: {
@@ -127,6 +139,7 @@ export function enforceTaskResponseBudget(args: {
     usage = estimateResponseUsage(response);
   }
   if (withinBudget(usage, options)) {
+    attachTruncationSummary();
     response.stats = {
       ...(response.stats ?? {}),
       responseBudget: {
@@ -152,6 +165,7 @@ export function enforceTaskResponseBudget(args: {
     usage = estimateResponseUsage(response);
   }
   if (withinBudget(usage, options)) {
+    attachTruncationSummary();
     response.stats = {
       ...(response.stats ?? {}),
       responseBudget: {
@@ -171,6 +185,7 @@ export function enforceTaskResponseBudget(args: {
   dropField("decisionTrace");
   usage = estimateResponseUsage(response);
   if (withinBudget(usage, options)) {
+    attachTruncationSummary();
     response.stats = {
       ...(response.stats ?? {}),
       responseBudget: {
@@ -192,6 +207,7 @@ export function enforceTaskResponseBudget(args: {
     usage = estimateResponseUsage(response);
   }
   if (withinBudget(usage, options)) {
+    attachTruncationSummary();
     response.stats = {
       ...(response.stats ?? {}),
       responseBudget: {
@@ -214,6 +230,7 @@ export function enforceTaskResponseBudget(args: {
   }
 
   if (applied) {
+    attachTruncationSummary();
     response.stats = {
       ...(response.stats ?? {}),
       responseBudget: {

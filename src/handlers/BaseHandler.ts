@@ -9,21 +9,27 @@ export abstract class BaseHandler {
     }
 
     protected jsonResponse(payload: any): any {
-        return { content: [{ type: 'text', text: JSON.stringify(payload, this.jsonReplacer, 2) }] };
+        return {
+            isError: false,
+            content: [{ type: 'text', text: JSON.stringify(payload, this.jsonReplacer, 2) }]
+        };
     }
 
     protected jsonReplacer(_key: string, value: any): any {
         if (value instanceof Map) {
-            return { __type: "Map", entries: Array.from(value.entries()) };
+            return Object.fromEntries(value.entries());
         }
         if (value instanceof Set) {
-            return { __type: "Set", values: Array.from(value.values()) };
+            return Array.from(value.values());
         }
         return value;
     }
 
     protected textResponse(text: string): any {
-        return { content: [{ type: 'text', text }] };
+        return {
+            isError: false,
+            content: [{ type: 'text', text }]
+        };
     }
 
     protected errorResponse(errorCode: string, message: string, details?: any): any {
