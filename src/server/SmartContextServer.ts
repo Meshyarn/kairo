@@ -696,6 +696,13 @@ export class SmartContextServer {
                 mimeType: "text/markdown"
             },
             {
+                uri: "kairo://docs/agent-playbook-compact",
+                name: "agent_playbook_compact",
+                title: "Agent Playbook (Compact)",
+                description: "Compact-surface-only usage patterns for task/manage.",
+                mimeType: "text/markdown"
+            },
+            {
                 uri: "kairo://docs/tool-reference",
                 name: "tool_reference",
                 title: "Tool Reference",
@@ -769,6 +776,7 @@ export class SmartContextServer {
 
         const docResourceMap: Record<string, string> = {
             "kairo://docs/agent-playbook": "docs/agent/AGENT_PLAYBOOK.md",
+            "kairo://docs/agent-playbook-compact": "docs/agent/AGENT_PLAYBOOK_COMPACT.md",
             "kairo://docs/tool-reference": "docs/agent/TOOL_REFERENCE.md",
             "kairo://docs/quick-reference": "docs/agent/quick-reference.md"
         };

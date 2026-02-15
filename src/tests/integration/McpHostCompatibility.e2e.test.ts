@@ -180,6 +180,7 @@ describe("MCP host compatibility harness", () => {
       "kairo://index/snapshot",
       "kairo://tools/public",
       "kairo://docs/agent-playbook",
+      "kairo://docs/agent-playbook-compact",
       "kairo://docs/tool-reference",
       "kairo://docs/quick-reference"
     ]));
@@ -201,6 +202,9 @@ describe("MCP host compatibility harness", () => {
     const playbook = await (client as any).readResource({ uri: "kairo://docs/agent-playbook" });
     const playbookText = playbook?.contents?.[0]?.text ?? "";
     expect(playbookText).toContain("Agent Playbook");
+    const compactPlaybook = await (client as any).readResource({ uri: "kairo://docs/agent-playbook-compact" });
+    const compactPlaybookText = compactPlaybook?.contents?.[0]?.text ?? "";
+    expect(compactPlaybookText).toContain("Compact Surface");
 
     const taskSchema = await (client as any).readResource({ uri: "kairo://schema/task" });
     const schemaText = taskSchema?.contents?.[0]?.text ?? "";
@@ -314,6 +318,7 @@ describe("MCP host compatibility harness", () => {
           expect.objectContaining({ uri: "kairo://index/snapshot" }),
           expect.objectContaining({ uri: "kairo://tools/public" }),
           expect.objectContaining({ uri: "kairo://docs/agent-playbook" }),
+          expect.objectContaining({ uri: "kairo://docs/agent-playbook-compact" }),
           expect.objectContaining({ uri: "kairo://docs/tool-reference" }),
           expect.objectContaining({ uri: "kairo://docs/quick-reference" })
         ])

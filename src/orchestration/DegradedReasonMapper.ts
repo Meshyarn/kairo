@@ -68,13 +68,6 @@ const PARITY_REASON_MAP: Record<string, {
   actionToolCall?: { tool: string; args: Record<string, unknown> };
   actionId?: string;
 }> = {
-  CAP_NATIVE_SEARCH_UNAVAILABLE: {
-    type: "degraded",
-    message: "Native search core is unavailable.",
-    severity: "critical",
-    actionToolCall: CAPABILITY_ACTION_TOOLCALL,
-    actionId: CAPABILITY_ACTION_ID
-  },
   native_search_unavailable: {
     type: "degraded",
     message: "Native search core is unavailable.",
@@ -89,24 +82,12 @@ const PARITY_REASON_MAP: Record<string, {
     actionToolCall: CAPABILITY_ACTION_TOOLCALL,
     actionId: CAPABILITY_ACTION_ID
   },
-  NATIVE_SEARCH_FAILED: {
-    type: "degraded",
-    message: "Native search failed; results may be incomplete.",
-    severity: "warning",
-    actionToolCall: CAPABILITY_ACTION_TOOLCALL,
-    actionId: CAPABILITY_ACTION_ID
-  },
-  INDEX_CORRUPTED: {
+  index_corrupted: {
     type: "degraded",
     message: "Native search index is corrupted; run a reindex to repair it.",
     severity: "critical",
     actionToolCall: { tool: "manage", args: { command: "reindex" } },
     actionId: "manage.reindex"
-  },
-  INDEX_WRITE_LOCKED: {
-    type: "degraded",
-    message: "Native search index is write-locked by another process; running in read-only mode.",
-    severity: "warning"
   },
   index_write_locked: {
     type: "degraded",
@@ -370,7 +351,7 @@ export function buildDegradedReasons(
   const results: DegradedReason[] = [];
   for (const reason of reasons) {
     if (typeof reason !== "string" || reason.length === 0) continue;
-    const mapped = combinedMap[reason];
+    const mapped = combinedMap[normalizeReasonCode(reason)];
     if (mapped) {
       results.push({
         type: mapped.type,
@@ -392,4 +373,12 @@ export function buildDegradedReasons(
   }
 
   return results.length > 0 ? results : undefined;
+}
+
+function normalizeReasonCode(reason: string): string {
+  const normalized = reason.trim().toLowerCase();
+  if (normalized === "cap_native_search_unavailable") {
+    return "native_search_unavailable";
+  }
+  return normalized;
 }
