@@ -42,7 +42,7 @@ export class FlowArtifactManager {
   constructor(private readonly options: FlowArtifactManagerOptions = {}) {
     this.cache = new LRUCache({
       max: options.maxCacheSize ?? 100,
-      ttl: options.defaultTTL ?? 30 * 60 * 1000
+      ttl: options.defaultTTL ?? 2 * 60 * 60 * 1000
     });
     this.fileSystem = options.fileSystem ?? new NodeFileSystem(process.cwd());
     this.persistPath = options.persistPath ?? PathManager.resolve("flow-artifacts");
@@ -170,7 +170,7 @@ export class FlowArtifactManager {
     const session = this.sessions.get(args.sessionId);
     if (!session || !args.draftId) return undefined;
     const now = args.now ?? Date.now();
-    const ttlMs = args.ttlMs ?? this.options.defaultTTL ?? 30 * 60 * 1000;
+    const ttlMs = args.ttlMs ?? this.options.defaultTTL ?? 2 * 60 * 60 * 1000;
     const token = crypto.randomBytes(24).toString("hex");
     const record: ApplyTokenRecord = {
       draftId: args.draftId,

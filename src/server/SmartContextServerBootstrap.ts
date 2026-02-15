@@ -317,7 +317,8 @@ export function bootstrapSmartContextServer(args: {
   const internalRegistry = new InternalToolRegistry();
   const flowArtifactManager = new FlowArtifactManager({
     persistPath: PathManager.resolve("flow-artifacts"),
-    fileSystem
+    fileSystem,
+    autoPersist: true
   });
   const orchestrationEngine = new OrchestrationEngine(
     new IntentRouter(),

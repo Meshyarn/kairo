@@ -9,6 +9,9 @@ export const finalizeTaskResponse = (args: {
     maxTokens?: number;
     maxChars?: number;
 }) => {
+    if (!Array.isArray(args.response.nextCalls) && Array.isArray(args.response.guidance?.nextCalls) && args.response.guidance.nextCalls.length > 0) {
+        args.response.nextCalls = args.response.guidance.nextCalls;
+    }
     if (args.traceBuilder) {
         args.response.decisionTrace = args.traceBuilder.finalize();
     }

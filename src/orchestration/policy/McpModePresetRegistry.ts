@@ -161,7 +161,7 @@ const MCP_PRESETS: Record<McpPresetId, McpPreset> = {
     },
     timeboxMs: {
       total: 15000,
-      perStep: 3000
+      perStep: 5000
     }
   },
   "mcp-balanced": {

@@ -92,6 +92,11 @@ describe("Tool surface consistency", () => {
             if (!schema) {
                 continue;
             }
+            if (tool.name === "manage") {
+                const commandDescription = (schema.properties?.command as any)?.description;
+                expect(typeof commandDescription).toBe("string");
+                expect(commandDescription).toContain("schema requires tool");
+            }
 
             const properties = schema.properties ?? {};
             const required = Array.isArray(schema.required) ? schema.required : [];

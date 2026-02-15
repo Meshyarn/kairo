@@ -74,6 +74,16 @@ describe("McpModePresetRegistry", () => {
     expect(writeMaxTokens).toBe(4100);
   });
 
+  it("uses perStep 5000ms for mcp-lean preset", () => {
+    const root = makeTempRoot();
+    PathManager.setRoot(root);
+    process.env.KAIRO_MODE = "mcp";
+    writeMcpConfig(root, { preset: "mcp-lean" });
+    const policy = resolveMcpPolicy();
+    expect(policy.preset).toBe("mcp-lean");
+    expect(policy.timeboxMs?.perStep).toBe(5000);
+  });
+
   it("honors KAIRO_PUBLIC_SURFACE override", () => {
     const root = makeTempRoot();
     PathManager.setRoot(root);

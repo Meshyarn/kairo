@@ -132,6 +132,7 @@ export const ToolSpecRegistryPillarB: ToolSpec[] = [
         properties: {
           command: {
             type: "string",
+            description: "Command to execute. schema requires tool (for example tool:'task'). artifact requires target (artifact id). doctor accepts scope (contracts|languages|parity|capabilities). prune accepts pruneOptions. init accepts targets and optional presets. status/history/undo/redo/reindex can run without extra required parameters.",
             enum: [
               "status",
               "undo",

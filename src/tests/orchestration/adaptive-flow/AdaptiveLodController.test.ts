@@ -32,7 +32,7 @@ describe("AdaptiveLodController", () => {
     expect(decision?.downshifted).toBe(true);
   });
 
-  it("forces lean after consecutive violations", () => {
+  it("downshifts one level (not forced lean) after consecutive violations", () => {
     const controller = new AdaptiveLodController({ enabled: true, windowSize: 4, cooldownCalls: 2 });
     controller.recordOutcome({
       sessionId: "s1",
@@ -50,7 +50,7 @@ describe("AdaptiveLodController", () => {
       requestedProfile: "balanced",
       explicit: false
     });
-    expect(decision?.profile).toBe("lean");
+    expect(decision?.profile).toBe("fast");
     expect(decision?.forced).toBe(true);
   });
 

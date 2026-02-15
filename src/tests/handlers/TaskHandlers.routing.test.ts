@@ -20,7 +20,7 @@ describe("TaskHandlers routing", () => {
 
     expect(context.orchestrationEngine.executePillar).toHaveBeenCalledWith(
       "explore",
-      expect.objectContaining({ query: "find app", profile: "lean", view: "preview" })
+      expect.objectContaining({ query: "find app", profile: "balanced", view: "preview" })
     );
     expect(payload.summary.title).toContain("find app");
     expect(payload.packId).toBe("pack_1");
@@ -46,7 +46,7 @@ describe("TaskHandlers routing", () => {
 
     expect(context.orchestrationEngine.executePillar).toHaveBeenCalledWith(
       "understand",
-      expect.objectContaining({ goal: "core structure", profile: "lean" })
+      expect.objectContaining({ goal: "core structure", profile: "balanced" })
     );
     expect(payload.summary.title).toContain("core structure");
     expect(payload.status).toBe("success");
@@ -111,9 +111,14 @@ describe("TaskHandlers routing", () => {
       "explore",
       expect.objectContaining({ query: "update app", view: "preview" })
     );
-    expect(payload.status).toBe("partial_success");
+    expect(payload.status).toBe("success");
+    expect(payload.prepRequired).toBe(true);
+    expect(payload.prepKind).toBe("missing_edits");
     expect(payload.changePrep?.recommendedTargets).toContain("src/app.ts");
     expect(payload.packId).toBe("pack_2");
+    expect(Array.isArray(payload.nextCalls)).toBe(true);
+    expect(payload.nextCalls.length).toBeGreaterThan(0);
+    expect(payload.nextCalls).toEqual(payload.guidance?.nextCalls);
   });
 
   it("routes plan_change with edits to change plan", async () => {

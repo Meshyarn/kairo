@@ -319,8 +319,10 @@ export async function executeExploreQuery(args: {
             }
         }
     } else if (setup.includeDocs || setup.includeComments) {
-        state.degraded = true;
-        state.reasons.push(shouldPreferCode ? "doc_search_skipped" : "budget_exceeded");
+        if (!shouldPreferCode) {
+            state.degraded = true;
+            state.reasons.push("budget_exceeded");
+        }
         if (setup.traceBuilder) {
             setup.traceBuilder.recordSkip(
                 "doc_search",

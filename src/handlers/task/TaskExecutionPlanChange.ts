@@ -204,7 +204,9 @@ export async function handlePlanChange(state: TaskExecutionState): Promise<any> 
         const payload = {
             ok: true,
             sessionId: response?.sessionId ?? state.sessionId,
-            status: "partial_success",
+            status: "success",
+            prepRequired: true,
+            prepKind: "missing_edits",
             mode: state.routing.mode,
             budget: state.budget,
             surface: state.surface,

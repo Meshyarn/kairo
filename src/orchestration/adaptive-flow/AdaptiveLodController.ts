@@ -68,7 +68,7 @@ export class AdaptiveLodController {
 
     if (!args.explicit) {
       if (state.violationStreak >= 2) {
-        targetLevel = 0;
+        targetLevel = Math.max(0, baseLevel - 1);
         forced = true;
       } else if (state.violationStreak >= 1) {
         targetLevel = Math.max(0, baseLevel - 1);
