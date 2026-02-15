@@ -2,6 +2,12 @@ import type { ArtifactId, FlowArtifact, FlowSession } from "../types/flow-artifa
 import type { FlowArtifactIndex, FlowArtifactIndexEntry, FlowArtifactManagerState, FlowSessionIndexEntry } from "./flow-artifact-manager.types.js";
 import { toRelativePersistPath } from "./flow-artifact-manager.paths.js";
 
+function schedulePersistIndex(state: FlowArtifactManagerState): void {
+  void persistIndex(state).catch(() => {
+    // Auto-persist is best-effort; callers may tear down temp workspaces.
+  });
+}
+
 export function updateIndexForArtifact(state: FlowArtifactManagerState, artifact: FlowArtifact, filePath?: string): void {
   const entry: FlowArtifactIndexEntry = {
     type: artifact.type,
@@ -17,7 +23,7 @@ export function updateIndexForArtifact(state: FlowArtifactManagerState, artifact
   };
   touchIndex(state);
   if (state.options.autoPersist) {
-    void persistIndex(state);
+    schedulePersistIndex(state);
   }
 }
 
@@ -35,7 +41,7 @@ export function updateIndexForSession(state: FlowArtifactManagerState, session: 
   };
   touchIndex(state);
   if (state.options.autoPersist) {
-    void persistIndex(state);
+    schedulePersistIndex(state);
   }
 }
 
@@ -44,7 +50,7 @@ export function removeIndexEntry(state: FlowArtifactManagerState, id: ArtifactId
     delete state.index.artifacts[id];
     touchIndex(state);
     if (state.options.autoPersist) {
-      void persistIndex(state);
+      schedulePersistIndex(state);
     }
   }
 }

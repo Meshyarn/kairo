@@ -25,13 +25,13 @@ describe('ErrorEnhancer', () => {
 
     it('should enhance NO_MATCH errors', () => {
         const details = ErrorEnhancer.enhanceNoMatch('src/test.ts');
-        expect(details.toolSuggestions?.some(s => s.toolName === 'code_read')).toBe(true);
+        expect(details.toolSuggestions?.some(s => s.toolName === 'explore')).toBe(true);
         expect(details.nextActionHint).toContain('code_read(fragment)');
     });
 
     it('should enhance HASH_MISMATCH errors', () => {
         const details = ErrorEnhancer.enhanceHashMismatch('src/test.ts');
-        expect(details.toolSuggestions?.some(s => s.toolName === 'code_read')).toBe(true);
+        expect(details.toolSuggestions?.some(s => s.toolName === 'explore')).toBe(true);
         expect(details.nextActionHint).toContain('Refresh its metadata');
     });
 

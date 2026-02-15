@@ -64,7 +64,9 @@ export class NodeFileSystem implements IFileSystem {
     }
 
     async writeFile(targetPath: string, content: string): Promise<void> {
-        await fsPromises.writeFile(this.resolvePath(targetPath), content, "utf-8");
+        const resolved = this.resolvePath(targetPath);
+        await fsPromises.mkdir(path.dirname(resolved), { recursive: true });
+        await fsPromises.writeFile(resolved, content, "utf-8");
     }
 
     async rename(from: string, to: string): Promise<void> {

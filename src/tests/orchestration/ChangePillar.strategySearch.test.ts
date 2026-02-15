@@ -176,6 +176,9 @@ describe("ChangePillar strategySearch", () => {
         strategySearch: {
           mode: "force",
           stage: "r1",
+          timeboxMs: 5000,
+          maxSimulationMs: 2000,
+          maxImpactMs: 1500,
           candidates: [
             { id: "risky", edits: [{ targetString: "A", replacementString: "A1" }] },
             { id: "safe", edits: [{ targetString: "B", replacementString: "B1" }] }
@@ -278,6 +281,8 @@ describe("ChangePillar strategySearch", () => {
         strategySearch: {
           mode: "force",
           stage: "r1",
+          timeboxMs: 5000,
+          maxSimulationMs: 2000,
           maxImpactMs: 500,
           candidates: [
             {

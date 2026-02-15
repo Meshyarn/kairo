@@ -60,6 +60,18 @@ export class FlowArtifactManager {
     return this as unknown as FlowArtifactManagerState;
   }
 
+  private schedulePersistSession(session: FlowSession): void {
+    void this.persistSession(session).catch(() => {
+      // Auto-persist is best-effort; temp workspaces can disappear during teardown.
+    });
+  }
+
+  private schedulePersistArtifact(id: ArtifactId, artifact: FlowArtifact): void {
+    void this.persist(id, artifact).catch(() => {
+      // Auto-persist is best-effort; temp workspaces can disappear during teardown.
+    });
+  }
+
   store<T extends FlowArtifact>(artifact: T): ArtifactId {
     const stored = { ...artifact };
     this.cache.set(stored.id, stored);
@@ -68,7 +80,7 @@ export class FlowArtifactManager {
       this.attachToSession(stored.sessionId, stored, stored.metadata?.intent as string | undefined);
     }
     if (this.options.autoPersist) {
-      void this.persist(stored.id, stored);
+      this.schedulePersistArtifact(stored.id, stored);
     }
     return stored.id;
   }
@@ -185,7 +197,7 @@ export class FlowArtifactManager {
     session.updatedAt = now;
     updateIndexForSession(this.getState(), session);
     if (this.options.autoPersist) {
-      void this.persistSession(session);
+      this.schedulePersistSession(session);
     }
     return { token, issuedAt: record.issuedAt, expiresAt: record.expiresAt };
   }
@@ -226,7 +238,7 @@ export class FlowArtifactManager {
       session.updatedAt = now;
       updateIndexForSession(this.getState(), session);
       if (this.options.autoPersist) {
-        void this.persistSession(session);
+        this.schedulePersistSession(session);
       }
     }
     return { valid: true, issuedAt: record.issuedAt, expiresAt: record.expiresAt };
@@ -244,7 +256,7 @@ export class FlowArtifactManager {
     session.updatedAt = timestamp;
     updateIndexForSession(this.getState(), session);
     if (this.options.autoPersist) {
-      void this.persistSession(session);
+      this.schedulePersistSession(session);
     }
     return true;
   }
@@ -257,7 +269,7 @@ export class FlowArtifactManager {
     session.updatedAt = Date.now();
     updateIndexForSession(this.getState(), session);
     if (this.options.autoPersist) {
-      void this.persistSession(session);
+      this.schedulePersistSession(session);
     }
     return session;
   }
@@ -281,7 +293,7 @@ export class FlowArtifactManager {
     session.updatedAt = Date.now();
     updateIndexForSession(this.getState(), session);
     if (this.options.autoPersist) {
-      await this.persistSession(session);
+      this.schedulePersistSession(session);
     }
     return session;
   }
@@ -382,7 +394,7 @@ export class FlowArtifactManager {
         this.sessions.set(session.id, session);
         updateIndexForSession(this.getState(), session);
         if (this.options.autoPersist) {
-            void this.persistSession(session);
+            this.schedulePersistSession(session);
         }
         return session;
     }
@@ -431,7 +443,7 @@ export class FlowArtifactManager {
         session.updatedAt = Date.now();
         updateIndexForSession(this.getState(), session);
         if (this.options.autoPersist) {
-            void this.persistSession(session);
+            this.schedulePersistSession(session);
         }
     }
 
@@ -488,7 +500,7 @@ export class FlowArtifactManager {
         session.updatedAt = Date.now();
         updateIndexForSession(this.getState(), session);
         if (this.options.autoPersist) {
-            void this.persistSession(session);
+            this.schedulePersistSession(session);
         }
     }
 }
