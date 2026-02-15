@@ -7,6 +7,7 @@ Start here:
 - [Quick Reference](/agent/quick-reference) — practical host integration cheat-sheet
 - [Tool Reference (Public Surface)](/agent/TOOL_REFERENCE) — the stable contract (compact + pillars)
 - [Agent Playbook](/agent/AGENT_PLAYBOOK) — recommended usage patterns (evidence packs + compact follow-ups)
+- [Agent Playbook (Compact Only)](/agent/AGENT_PLAYBOOK_COMPACT) — task/manage-only workflow patterns
 
 ## Framework-friendly defaults
 
