@@ -16,7 +16,8 @@ Use these unless you have a specific reason not to:
 
 | Scenario | Suggested preset | Notes |
 |---|---|---|
-| Small/medium repo, fast loops | `KAIRO_PRESET=mcp-lean` | Lowest overhead; good default. |
+| Small/medium repo, fast loops | `KAIRO_PRESET=mcp-lean` | Lowest overhead. |
+| General use (default) | `KAIRO_PRESET=mcp-balanced` | Default preset since ADR-091. |
 | Larger repo, higher recall | `KAIRO_PRESET=mcp-balanced` | More depth; slightly more cost. |
 | Deep audits, big repos | `KAIRO_PRESET=mcp-deep` | Highest cost; prefer timeboxing. |
 

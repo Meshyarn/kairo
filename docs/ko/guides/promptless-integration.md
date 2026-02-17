@@ -9,7 +9,7 @@
 호스트 환경변수에 아래 값을 사용하세요:
 
 - `KAIRO_MODE=mcp` (기본값; opt out 하려면 `dev`)
-- `KAIRO_PRESET=mcp-lean` (더 큰 레포는 `mcp-balanced`)
+- `KAIRO_PRESET=mcp-balanced` (기본; 더 큰 레포는 `mcp-deep`)
 - `KAIRO_PUBLIC_SURFACE=compact`
 - `KAIRO_TOOL_SCHEMA_MODE=compat`
 - `KAIRO_LOG_TO_FILE=true`
@@ -31,7 +31,7 @@
 {
   "version": 1,
   "mode": "mcp",
-  "preset": "mcp-lean",
+  "preset": "mcp-balanced",
   "publicSurface": "compact",
   "autopilot": {
     "autoModeNeverApplies": true,

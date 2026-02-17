@@ -141,4 +141,16 @@ describe("FlowArtifactManager", () => {
         });
         expect(expired.reason).toBe("expired");
     });
+
+    it("uses 2-hour default ttl for apply tokens", () => {
+        const manager = new FlowArtifactManager();
+        const sessionId = manager.resolveSessionId("new", "Default ttl session") as string;
+        const issued = manager.issueApplyToken({
+            sessionId,
+            draftId: "draft_default",
+            now: 5000
+        });
+        expect(issued).toBeDefined();
+        expect((issued?.expiresAt ?? 0) - (issued?.issuedAt ?? 0)).toBe(2 * 60 * 60 * 1000);
+    });
 });

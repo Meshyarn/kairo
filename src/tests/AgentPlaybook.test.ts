@@ -34,14 +34,14 @@ describe('AGENT_WORKFLOW_PATTERNS', () => {
     it('should have finding-files pattern', () => {
         const pattern = AGENT_WORKFLOW_PATTERNS['finding-files'];
         expect(pattern).toBeDefined();
-        expect(pattern.bestApproach[0].tool).toBe('project_search');
-        expect(pattern.bestApproach[0].params.type).toBe('filename');
+        expect(pattern.bestApproach[0].tool).toBe('task');
+        expect(pattern.bestApproach[0].params.mode).toBe('ask');
     });
 
     it('should have finding-symbols pattern', () => {
         const pattern = AGENT_WORKFLOW_PATTERNS['finding-symbols'];
         expect(pattern).toBeDefined();
-        expect(pattern.bestApproach[0].tool).toBe('relationship_analyze');
+        expect(pattern.bestApproach[0].tool).toBe('understand');
     });
 
     it('should have recovery patterns', () => {

@@ -10,7 +10,7 @@
 {
   "version": 1,
   "mode": "mcp",
-  "preset": "mcp-lean",
+  "preset": "mcp-balanced",
   "publicSurface": "compact",
   "applyHandshake": {
     "required": true,

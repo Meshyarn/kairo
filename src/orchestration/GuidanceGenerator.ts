@@ -274,7 +274,7 @@ export class GuidanceGenerator {
     return {
       message,
       contextSummary: `Context: ${context.lastPillar}`,
-      suggestedActions: suggestedActions.sort((a, b) => a.priority - b.priority).slice(0, 3),
+      suggestedActions: suggestedActions.sort((a, b) => a.priority - b.priority).slice(0, 5),
       warnings,
       recoveryStrategies,
       meta

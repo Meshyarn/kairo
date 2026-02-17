@@ -19,7 +19,7 @@ import { ContextEngine } from "../engine/Context.js";
 import { SkeletonGenerator } from "../ast/SkeletonGenerator.js";
 import { SkeletonCache } from "../ast/SkeletonCache.js";
 import { IndexDatabase } from "../indexing/IndexDatabase.js";
-import { NativeSearchCore } from "../engine/search/native/NativeSearchCore.js";
+import { NativeSearchCore, NativeSearchError, type NativeSearchCoreClient } from "../engine/search/native/NativeSearchCore.js";
 import { NativeSearchIndexer } from "../engine/search/native/NativeSearchIndexer.js";
 import { EmbeddingRepository } from "../indexing/EmbeddingRepository.js";
 import { EmbeddingProviderFactory } from "../embeddings/EmbeddingProviderFactory.js";
@@ -71,6 +71,63 @@ export type SmartContextServerBootstrap = {
   packageAliasMap: PackageAliasMap;
   propertyAccessIndex: PropertyAccessIndex;
 };
+
+function createLazyInstance<T extends object>(factory: () => T): T {
+  let instance: T | undefined;
+  const ensure = (): T => {
+    if (!instance) {
+      instance = factory();
+    }
+    return instance;
+  };
+  return new Proxy({} as T, {
+    get(_target, property) {
+      const target = ensure() as Record<PropertyKey, unknown>;
+      const value = target[property];
+      if (typeof value === "function") {
+        return (value as Function).bind(target);
+      }
+      return value;
+    },
+    set(_target, property, value) {
+      const target = ensure() as Record<PropertyKey, unknown>;
+      target[property] = value;
+      return true;
+    },
+    has(_target, property) {
+      return property in (ensure() as Record<PropertyKey, unknown>);
+    },
+    ownKeys() {
+      return Reflect.ownKeys(ensure() as object);
+    },
+    getOwnPropertyDescriptor(_target, property) {
+      const descriptor = Object.getOwnPropertyDescriptor(ensure() as object, property);
+      if (descriptor) return descriptor;
+      return {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value: undefined
+      };
+    }
+  });
+}
+
+function createUnavailableNativeSearchCore(message: string): NativeSearchCoreClient {
+  const unavailable = () => {
+    throw new NativeSearchError("CAP_NATIVE_SEARCH_UNAVAILABLE", message);
+  };
+  return {
+    upsert: () => undefined,
+    upsertMany: () => undefined,
+    deleteDoc: () => undefined,
+    commit: () => undefined,
+    search: () => unavailable(),
+    close: () => undefined,
+    stats: () => unavailable(),
+    reset: () => unavailable()
+  };
+}
 
 export function bootstrapSmartContextServer(args: {
   rootPath: string;
@@ -134,10 +191,13 @@ export function bootstrapSmartContextServer(args: {
     nativeSearchIndexer = new NativeSearchIndexer(nativeSearchCore);
   } catch (error: any) {
     const message = error?.message ? String(error.message) : String(error);
-    throw new Error(
-      `[SmartContextServer] Native search init failed: ${message}. ` +
-      `Build the native module with \`npm run build:core-rs\` (requires Rust).`
-    );
+    const fallbackMessage = `[SmartContextServer] Native search unavailable; using JS scan fallback. ${message}`;
+    if (!isTestEnv()) {
+      console.warn(`${fallbackMessage} Build the native module with \`npm run build:core-rs\` (requires Rust).`);
+    }
+    const unavailableCore = createUnavailableNativeSearchCore(fallbackMessage);
+    nativeSearchCore = unavailableCore as unknown as NativeSearchCore;
+    nativeSearchIndexer = new NativeSearchIndexer(unavailableCore);
   }
 
   const embeddingRepository = new EmbeddingRepository(indexDatabase);
@@ -170,9 +230,15 @@ export function bootstrapSmartContextServer(args: {
   );
   const moduleResolver = new ModuleResolver({ rootPath: resolvedRootPath, packageAliasMap });
   const dependencyGraph = new DependencyGraph(resolvedRootPath, symbolIndex, moduleResolver, indexDatabase);
-  const callGraphBuilder = new CallGraphBuilder(resolvedRootPath, symbolIndex, moduleResolver);
-  const typeDependencyTracker = new TypeDependencyTracker(resolvedRootPath, symbolIndex);
-  const dataFlowTracer = new DataFlowTracer(resolvedRootPath, symbolIndex, fileSystem);
+  const callGraphBuilder = createLazyInstance(
+    () => new CallGraphBuilder(resolvedRootPath, symbolIndex, moduleResolver)
+  );
+  const typeDependencyTracker = createLazyInstance(
+    () => new TypeDependencyTracker(resolvedRootPath, symbolIndex)
+  );
+  const dataFlowTracer = createLazyInstance(
+    () => new DataFlowTracer(resolvedRootPath, symbolIndex, fileSystem)
+  );
   const propertyAccessIndex = new PropertyAccessIndex(resolvedRootPath);
   const fieldAccessIndex = new FieldAccessIndex(resolvedRootPath, { propertyAccessIndex });
   const impactAnalyzer = new ImpactAnalyzer(dependencyGraph, callGraphBuilder, symbolIndex, undefined, fieldAccessIndex);
@@ -317,7 +383,8 @@ export function bootstrapSmartContextServer(args: {
   const internalRegistry = new InternalToolRegistry();
   const flowArtifactManager = new FlowArtifactManager({
     persistPath: PathManager.resolve("flow-artifacts"),
-    fileSystem
+    fileSystem,
+    autoPersist: true
   });
   const orchestrationEngine = new OrchestrationEngine(
     new IntentRouter(),

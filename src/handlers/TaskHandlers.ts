@@ -6,13 +6,16 @@ import { resolveAutopilotPolicy, resolvePublicSurface, resolveTaskBudgetPolicy }
 import {
     normalizeMode,
     normalizeBudget,
-    resolveProfile,
+    normalizeProfile,
+    normalizeDepthAlias,
+    resolveBudgetFromProfile,
     normalizeSafety,
     resolveRoutingMode,
     extractPaths,
     extractEdits,
     extractMaxTokens,
-    extractMaxChars
+    extractMaxChars,
+    extractPillarOptions
 } from "./task/TaskRoutingUtils.js";
 import { buildNextCalls } from "./task/TaskGuidanceUtils.js";
 import { handleAnalyze } from "./task/TaskExecutionAnalyze.js";
@@ -44,9 +47,16 @@ export class TaskHandlers extends BaseHandler {
         const startedAt = Date.now();
         const request = typeof args?.request === "string" ? args.request.trim() : "";
         const mode = normalizeMode(args?.mode);
-        const budget = normalizeBudget(args?.budget);
         const safety = normalizeSafety(args?.safety);
-        const profile = resolveProfile(budget);
+        const depthAliasProfile = normalizeDepthAlias(args?.depth);
+        const requestedProfile = typeof args?.profile === "string"
+            ? args.profile
+            : (depthAliasProfile ?? args?.budget);
+        const profile = normalizeProfile(requestedProfile);
+        const budget = typeof args?.budget === "string" && requestedProfile === args?.budget
+            ? normalizeBudget(args?.budget)
+            : resolveBudgetFromProfile(profile);
+        const pillarOptions = extractPillarOptions(args?.pillarOptions);
         const autopilotPolicy = resolveAutopilotPolicy();
         const requestedFormat = args?.output?.format;
         const outputFormat = requestedFormat === "summary" || requestedFormat === "standard"
@@ -71,11 +81,11 @@ export class TaskHandlers extends BaseHandler {
                 "task",
                 {
                     profile: {
-                        source: typeof args?.budget === "string" ? "explicit" : "default",
-                        explicit: typeof args?.budget === "string",
-                        resolved: budget,
-                        requested: args?.budget,
-                        note: "task budget"
+                        source: typeof requestedProfile === "string" ? "explicit" : "default",
+                        explicit: typeof requestedProfile === "string",
+                        resolved: profile,
+                        requested: requestedProfile,
+                        note: "task profile"
                     },
                     safety: safety
                         ? {
@@ -116,6 +126,7 @@ export class TaskHandlers extends BaseHandler {
             budget,
             safety,
             profile,
+            pillarOptions,
             autopilotPolicy,
             outputFormat,
             outputPayload,

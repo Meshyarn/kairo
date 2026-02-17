@@ -10,7 +10,7 @@ Create `.kairo/config/mcp.json` to avoid host env sprawl and keep MCP defaults p
 {
   "version": 1,
   "mode": "mcp",
-  "preset": "mcp-lean",
+  "preset": "mcp-balanced",
   "publicSurface": "compact",
   "applyHandshake": {
     "required": true,

@@ -7,6 +7,7 @@
 - [빠른 참고서](/ko/agent/quick-reference) — 호스트/프레임워크 통합 치트시트
 - [도구 레퍼런스 (Public Surface)](/ko/agent/TOOL_REFERENCE) — 안정 계약(compact + pillars)
 - [에이전트 플레이북](/ko/agent/AGENT_PLAYBOOK) — 권장 사용 패턴(evidence packs + compact 후속 호출)
+- [에이전트 플레이북 (Compact 전용)](/ko/agent/AGENT_PLAYBOOK_COMPACT) — task/manage 전용 워크플로우
 
 ## 프레임워크 친화 기본값
 

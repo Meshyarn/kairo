@@ -63,7 +63,7 @@ See:
 Use presets as a starting point and tune from there:
 
 - `KAIRO_PRESET=mcp-lean` for fast iteration and small outputs
-- `KAIRO_PRESET=mcp-balanced` for team/shared environments
+- `KAIRO_PRESET=mcp-balanced` for general use (default since ADR-091)
 - `KAIRO_PRESET=mcp-deep` for agent loops and deep analysis
 
 Presets can be set via env or via `.kairo/config/mcp.json`.

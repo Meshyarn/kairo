@@ -1,10 +1,10 @@
 import { buildEvidencePackFromExplore } from "../../orchestration/task/TaskEvidenceBuilder.js";
-import { buildInlineEvidence, buildPlanPrepSummary, buildTargetStringCandidates, inferReplacementFromRequest, resolveTaskLod, buildPlanSummary } from "./TaskSummaryUtils.js";
+import { buildInlineEvidence, buildPlanPrepSummary, buildTargetStringCandidates, inferReplacementFromRequest, resolveTaskLod, buildApplySummary, buildPlanSummary } from "./TaskSummaryUtils.js";
 import { buildGuidance, rewriteGuidanceForCompact, mapStatus } from "./TaskGuidanceUtils.js";
 import { finalizeTaskResponse } from "./TaskResponseUtils.js";
-import { buildExploreDecisionGate, mergeDegradedReasons } from "./TaskDecisionUtils.js";
 import { recordTaskMetrics, storeEvidencePack } from "./TaskMetricsUtils.js";
 import { buildFileVersionsSnapshot } from "./TaskVerificationUtils.js";
+import { isSmallAutoApplyCandidate, isTaskAutoApplyEnabled, mergePillarArgs, pickPillarOptions } from "./TaskRoutingUtils.js";
 import type { TaskExecutionState } from "./TaskExecutionState.js";
 
 export async function handlePlanChange(state: TaskExecutionState): Promise<any> {
@@ -12,8 +12,10 @@ export async function handlePlanChange(state: TaskExecutionState): Promise<any> 
         ? state.targetFiles
         : (state.targetPath ? [state.targetPath] : (state.paths.length > 0 ? state.paths : []));
     const planLimits = state.responseLimits;
+    const exploreOptions = pickPillarOptions("explore", state.pillarOptions);
+    const changeOptions = pickPillarOptions("change", state.pillarOptions);
     if (state.edits.length === 0) {
-        const response = await state.executePillar("explore", {
+        const response = await state.executePillar("explore", mergePillarArgs({
             query: state.request,
             paths: state.paths.length > 0 ? state.paths : undefined,
             targetFiles: planTargets.length > 0 ? planTargets : undefined,
@@ -22,7 +24,7 @@ export async function handlePlanChange(state: TaskExecutionState): Promise<any> 
             view: "preview",
             trace: state.traceEnabled,
             limits: planLimits
-        });
+        }, exploreOptions, ["query", "paths", "targetFiles", "sessionId", "profile", "view", "trace"]));
         const packId = response?.pack?.packId ?? response?.researchPack?.id;
         const codeTargets = response?.data?.code
             ?.map((item: any) => item?.filePath)
@@ -67,14 +69,14 @@ export async function handlePlanChange(state: TaskExecutionState): Promise<any> 
                 .slice(0, maxAnchorFiles);
             if (anchorTargets.length > 0) {
                 try {
-                    const anchorResponse = await state.executePillar("explore", {
+                    const anchorResponse = await state.executePillar("explore", mergePillarArgs({
                         paths: anchorTargets,
                         sessionId: state.sessionId,
                         profile: "lean",
                         view: "full",
                         trace: state.traceEnabled,
                         limits: { maxBytes: 200000, maxChars: 20000 }
-                    });
+                    }, exploreOptions, ["paths", "sessionId", "profile", "view", "trace"]));
                     const anchorPack = buildEvidencePackFromExplore({
                         response: anchorResponse,
                         request: state.request,
@@ -204,7 +206,9 @@ export async function handlePlanChange(state: TaskExecutionState): Promise<any> 
         const payload = {
             ok: true,
             sessionId: response?.sessionId ?? state.sessionId,
-            status: "partial_success",
+            status: "success",
+            prepRequired: true,
+            prepKind: "missing_edits",
             mode: state.routing.mode,
             budget: state.budget,
             surface: state.surface,
@@ -246,7 +250,7 @@ export async function handlePlanChange(state: TaskExecutionState): Promise<any> 
         });
     }
 
-    const response = await state.executePillar("change", {
+    const response = await state.executePillar("change", mergePillarArgs({
         intent: state.request,
         targetFiles: planTargets.length > 0 ? planTargets : undefined,
         edits: state.edits,
@@ -257,12 +261,125 @@ export async function handlePlanChange(state: TaskExecutionState): Promise<any> 
         ...(typeof state.args?.refinement === "string" ? { refinement: state.args.refinement } : {}),
         ...(state.draftId ? { draftId: state.draftId } : {}),
         ...(planLimits ? { limits: planLimits } : {})
-    });
+    }, changeOptions, ["intent", "targetFiles", "sessionId", "profile", "safety", "trace", "draftId"]));
     const summary = buildPlanSummary({ response, request: state.request });
     const draftPackId = response?.draftPack?.id;
     const planApplyToken = typeof response?.applyToken === "string" ? response.applyToken : undefined;
     const applyTokenExpiresAt = typeof response?.applyTokenExpiresAt === "number" ? response.applyTokenExpiresAt : undefined;
     const effectiveSessionId = response?.sessionId ?? state.sessionId;
+    const autoApplyRequested = state.safety === "auto";
+    const autoApplyEnabled = autoApplyRequested && isTaskAutoApplyEnabled();
+    const smallAutoApplyCandidate = autoApplyRequested
+        ? isSmallAutoApplyCandidate({ targetFiles: planTargets, edits: state.edits, maxLines: 50 })
+        : false;
+    const reviewBlocked = response?.review?.status === "blocked"
+        || response?.review?.verdict === "block"
+        || response?.postReview?.status === "blocked"
+        || response?.postReview?.verdict === "block";
+    let autoApplySkippedReason: string | undefined;
+    if (autoApplyRequested && !autoApplyEnabled) {
+        autoApplySkippedReason = "env_disabled";
+    } else if (autoApplyRequested && !smallAutoApplyCandidate) {
+        autoApplySkippedReason = "not_small_change";
+    }
+    if (
+        autoApplyRequested
+        && autoApplyEnabled
+        && smallAutoApplyCandidate
+        && mapStatus(response) === "success"
+        && !reviewBlocked
+        && draftPackId
+        && planApplyToken
+    ) {
+        const applyResponse = await state.executePillar("change", mergePillarArgs({
+            intent: state.request,
+            targetFiles: planTargets.length > 0 ? planTargets : undefined,
+            edits: state.edits,
+            sessionId: effectiveSessionId,
+            profile: state.profile,
+            safety: "apply",
+            trace: state.traceEnabled,
+            ...(typeof state.args?.refinement === "string" ? { refinement: state.args.refinement } : {}),
+            draftId: draftPackId,
+            applyToken: planApplyToken,
+            ...(planLimits ? { limits: planLimits } : {})
+        }, changeOptions, ["intent", "targetFiles", "sessionId", "profile", "safety", "trace", "draftId", "applyToken"]));
+        const applyStatus = mapStatus(applyResponse);
+        if (applyStatus !== "blocked") {
+            const autoSummary = buildApplySummary({ response: applyResponse, request: state.request });
+            autoSummary.bullets.unshift("Auto apply enabled: planned and applied in one task call.");
+            const autoGuidance = rewriteGuidanceForCompact({
+                guidance: buildGuidance(
+                    applyResponse?.guidance,
+                    Array.isArray(state.nextCalls) ? state.nextCalls : undefined,
+                    applyResponse?.degradedReasons
+                ),
+                request: state.request,
+                budget: state.budget,
+                output: state.outputPayload,
+                traceEnabled: state.traceEnabled,
+                sessionId: applyResponse?.sessionId ?? effectiveSessionId,
+                surface: state.surface
+            });
+            const autoArtifacts: Array<{ id: string; kind: string; detail: "summary" | "full" }> = [];
+            if (draftPackId) {
+                autoArtifacts.push({ id: draftPackId, kind: "draft", detail: "summary" });
+            }
+            if (applyResponse?.review?.id) {
+                autoArtifacts.push({ id: applyResponse.review.id, kind: "review", detail: "summary" });
+            }
+            if (applyResponse?.postReview?.id) {
+                autoArtifacts.push({ id: applyResponse.postReview.id, kind: "review", detail: "summary" });
+            }
+            const autoDetails = state.outputFormat === "standard"
+                ? { pillar: "change", response: applyResponse, prep: { pillar: "change", response } }
+                : undefined;
+            const rollbackId = typeof applyResponse?.transactionId === "string" && applyResponse.transactionId.length > 0
+                ? applyResponse.transactionId
+                : undefined;
+            const autoPayload = {
+                ok: true,
+                sessionId: applyResponse?.sessionId ?? effectiveSessionId ?? state.sessionId,
+                status: applyStatus,
+                mode: state.routing.mode,
+                budget: state.budget,
+                surface: state.surface,
+                summary: autoSummary,
+                autoApplied: true,
+                ...(autoDetails ? { details: autoDetails } : {}),
+                ...(draftPackId ? { draftId: draftPackId } : {}),
+                ...(rollbackId ? { rollbackId } : {}),
+                ...(applyResponse?.rollbackAvailable !== undefined ? { rollbackAvailable: applyResponse.rollbackAvailable } : {}),
+                ...(autoArtifacts.length > 0 ? { artifacts: autoArtifacts } : {}),
+                ...(applyResponse?.degraded !== undefined ? { degraded: applyResponse.degraded } : {}),
+                ...(applyResponse?.degradedReasons ? { degradedReasons: applyResponse.degradedReasons } : {}),
+                ...(autoGuidance ? { guidance: autoGuidance } : {}),
+                stats: {
+                    latencyMs: Date.now() - state.startedAt
+                }
+            };
+            recordTaskMetrics({
+                mode: state.routing.mode,
+                budget: state.budget,
+                stepCount: state.stepCount,
+                traceBuilder: state.traceBuilder
+            });
+            return finalizeTaskResponse({
+                response: autoPayload,
+                traceBuilder: state.traceBuilder,
+                budgetPolicy: state.budgetPolicy,
+                maxTokens: state.maxTokens,
+                maxChars: state.maxChars
+            });
+        }
+        autoApplySkippedReason = "apply_blocked";
+    } else if (autoApplyRequested && mapStatus(response) !== "success") {
+        autoApplySkippedReason = "plan_blocked";
+    } else if (autoApplyRequested && reviewBlocked) {
+        autoApplySkippedReason = "review_blocked";
+    } else if (autoApplyRequested && (!draftPackId || !planApplyToken)) {
+        autoApplySkippedReason = "missing_apply_token";
+    }
     const enhancedNextCalls: Array<{ tool: string; args: Record<string, unknown>; reason?: string }> = Array.isArray(state.nextCalls)
         ? [...state.nextCalls]
         : [];
@@ -315,6 +432,8 @@ export async function handlePlanChange(state: TaskExecutionState): Promise<any> 
         surface: state.surface,
         summary,
         ...(details ? { details } : {}),
+        ...(autoApplyRequested ? { autoApplied: false } : {}),
+        ...(autoApplySkippedReason ? { autoApplySkippedReason } : {}),
         ...(draftPackId ? { draftId: draftPackId } : {}),
         ...(planApplyToken ? { applyToken: planApplyToken } : {}),
         ...(applyTokenExpiresAt ? { applyTokenExpiresAt } : {}),

@@ -2,6 +2,7 @@ import { describe, it, expect } from "@jest/globals";
 import {
   enforceChangeResponseBudget,
   enforceManageResponseBudget,
+  enforceTaskResponseBudget,
   enforceWriteResponseBudget
 } from "../../orchestration/budget/ResponseEnvelopeBudgeter.js";
 
@@ -85,5 +86,38 @@ describe("ResponseEnvelopeBudgeter", () => {
     expect(result.applied).toBe(true);
     expect(response.degraded).toBe(true);
     expect(response.result?.artifact?.pack?.phantomFiles).toBeUndefined();
+  });
+
+  it("keeps at least one evidence item with excerpt when task budget is exceeded", () => {
+    const response: any = {
+      ok: true,
+      status: "success",
+      summary: { title: "Result", bullets: ["x".repeat(5000)] },
+      details: { payload: "y".repeat(12000) },
+      decisionTrace: { events: [{ code: "trace", data: "z".repeat(5000) }] },
+      evidence: [
+        { filePath: "src/a.ts", excerpt: "a".repeat(1000) },
+        { filePath: "src/b.ts", excerpt: "b".repeat(1000) }
+      ]
+    };
+
+    const result = enforceTaskResponseBudget({
+      response,
+      maxTokens: 1,
+      minEvidenceItems: 2,
+      minExcerptChars: 400
+    });
+
+    expect(result.applied).toBe(true);
+    expect(Array.isArray(response.evidence)).toBe(true);
+    expect(response.evidence.length).toBeGreaterThanOrEqual(1);
+    expect(response.evidence[0]?.filePath).toBeTruthy();
+    expect(typeof response.evidence[0]?.excerpt).toBe("string");
+    expect(response.truncationSummary).toEqual(
+      expect.objectContaining({
+        removedItems: expect.any(Number),
+        originalSize: expect.any(Number)
+      })
+    );
   });
 });

@@ -61,7 +61,7 @@ manage({ command: "status", detail: "summary" })
 시작점으로 preset을 쓰고, 필요 시 튜닝하세요:
 
 - `KAIRO_PRESET=mcp-lean` (빠른 반복/작은 출력)
-- `KAIRO_PRESET=mcp-balanced` (팀/공유 환경)
+- `KAIRO_PRESET=mcp-balanced` (일반 사용; ADR-091 이후 기본값)
 - `KAIRO_PRESET=mcp-deep` (에이전트 루프/깊은 분석)
 
 preset은 env 또는 `.kairo/config/mcp.json`으로 설정할 수 있습니다.

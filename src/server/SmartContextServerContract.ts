@@ -16,9 +16,7 @@ export const wrapLegacyResult = (
     }
     const derivedError = deriveLegacyIsError(result);
     if (typeof derivedError === "boolean" && response && typeof response === "object") {
-        if (response.isError === undefined) {
-            response.isError = derivedError;
-        }
+        response.isError = derivedError;
     }
     return response;
 };
@@ -47,6 +45,7 @@ export const attachContractMeta = (
     jsonResponse: (payload: any) => any
 ): any => {
     if (!toolSpec) return result;
+    if (normalized.args?.trace !== true) return result;
     if (!result || typeof result !== "object" || !Array.isArray(result.content)) {
         return result;
     }
@@ -83,27 +82,5 @@ export const attachContractMeta = (
 export const ensureResponseHasIsError = (response: any): void => {
     if (!response || typeof response !== "object") return;
     if (typeof response.isError === "boolean") return;
-    if (typeof response.success === "boolean") {
-        response.isError = response.success === false;
-        return;
-    }
-    const text = response.content?.[0]?.text;
-    if (typeof text !== "string") return;
-    try {
-        const payload = JSON.parse(text);
-        if (!payload || typeof payload !== "object") return;
-        if (typeof payload.isError === "boolean") {
-            response.isError = payload.isError;
-            return;
-        }
-        if (typeof payload.success === "boolean") {
-            response.isError = payload.success === false;
-            return;
-        }
-        if (typeof payload.errorCode === "string") {
-            response.isError = true;
-        }
-    } catch {
-        // ignore parsing errors
-    }
+    response.isError = response.success === false;
 };

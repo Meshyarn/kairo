@@ -1,6 +1,6 @@
 import { buildEvidencePackFromExplore } from "../../orchestration/task/TaskEvidenceBuilder.js";
 import { buildDegradedReasons } from "../../orchestration/DegradedReasonMapper.js";
-import { extractContentFromRequest, resolveTargetPath } from "./TaskRoutingUtils.js";
+import { extractContentFromRequest, mergePillarArgs, pickPillarOptions, resolveTargetPath } from "./TaskRoutingUtils.js";
 import { buildWriteSummary, buildInlineEvidence, resolveTaskLod } from "./TaskSummaryUtils.js";
 import { buildGuidance, rewriteGuidanceForCompact, mapStatus } from "./TaskGuidanceUtils.js";
 import { finalizeTaskResponse } from "./TaskResponseUtils.js";
@@ -10,14 +10,15 @@ import { buildFileVersionsSnapshot, buildVerificationResult } from "./TaskVerifi
 import type { TaskExecutionState } from "./TaskExecutionState.js";
 
 export async function handleWrite(state: TaskExecutionState): Promise<any> {
-    const writeSafety = state.safety ?? "plan";
+    const writeSafety = state.safety === "apply" ? "apply" : "plan";
     const writeTargetPath = resolveTargetPath(state.targetFiles, state.paths, state.targetPath);
     const extractedContent = writeSafety === "plan" ? extractContentFromRequest(state.request) : undefined;
     let prepEvidencePack: any | undefined;
     let prepEvidenceArtifactId: string | undefined;
     let prepLodResolution: { lod: number; reason?: string } | undefined;
     if (writeSafety === "plan" && extractedContent === undefined && state.budgetPolicy.maxSteps >= 2) {
-        const exploreResponse = await state.executePillar("explore", {
+        const exploreOptions = pickPillarOptions("explore", state.pillarOptions);
+        const exploreResponse = await state.executePillar("explore", mergePillarArgs({
             query: state.request,
             paths: state.paths.length > 0 ? state.paths : undefined,
             targetFiles: writeTargetPath ? [writeTargetPath] : undefined,
@@ -26,7 +27,7 @@ export async function handleWrite(state: TaskExecutionState): Promise<any> {
             view: "preview",
             trace: state.traceEnabled,
             limits: state.responseLimits
-        });
+        }, exploreOptions, ["query", "paths", "targetFiles", "sessionId", "profile", "view", "trace"]));
         const relatedArtifacts = exploreResponse?.researchPack?.id
             ? [{ id: exploreResponse.researchPack.id, kind: "research", detail: "summary" as const }]
             : undefined;
@@ -76,7 +77,8 @@ export async function handleWrite(state: TaskExecutionState): Promise<any> {
             });
         }
     }
-    const response = await state.executePillar("write", {
+    const writeOptions = pickPillarOptions("write", state.pillarOptions);
+    const response = await state.executePillar("write", mergePillarArgs({
         intent: state.request,
         targetPath: writeTargetPath,
         ...(extractedContent !== undefined ? { content: extractedContent } : {}),
@@ -89,7 +91,7 @@ export async function handleWrite(state: TaskExecutionState): Promise<any> {
         ...(state.applyToken ? { applyToken: state.applyToken } : {}),
         ...(typeof state.args?.refinement === "string" ? { refinement: state.args.refinement } : {}),
         ...(state.responseLimits ? { limits: state.responseLimits } : {})
-    });
+    }, writeOptions, ["intent", "targetPath", "sessionId", "profile", "trace", "safety", "draftId", "applyToken"]));
     const summary = buildWriteSummary({ response, request: state.request });
     let status = mapStatus(response);
     let verification: any | undefined;

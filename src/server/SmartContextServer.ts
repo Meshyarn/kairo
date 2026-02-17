@@ -687,6 +687,34 @@ export class SmartContextServer {
                 title: "Public Tools",
                 description: "Publicly exposed tools and schemas.",
                 mimeType: "application/json"
+            },
+            {
+                uri: "kairo://docs/agent-playbook",
+                name: "agent_playbook",
+                title: "Agent Playbook",
+                description: "How to use Kairo tools effectively.",
+                mimeType: "text/markdown"
+            },
+            {
+                uri: "kairo://docs/agent-playbook-compact",
+                name: "agent_playbook_compact",
+                title: "Agent Playbook (Compact)",
+                description: "Compact-surface-only usage patterns for task/manage.",
+                mimeType: "text/markdown"
+            },
+            {
+                uri: "kairo://docs/tool-reference",
+                name: "tool_reference",
+                title: "Tool Reference",
+                description: "Complete parameter reference for tools.",
+                mimeType: "text/markdown"
+            },
+            {
+                uri: "kairo://docs/quick-reference",
+                name: "quick_reference",
+                title: "Quick Reference",
+                description: "Compact Kairo usage cheatsheet.",
+                mimeType: "text/markdown"
             }
         ];
     }
@@ -744,6 +772,32 @@ export class SmartContextServer {
                 generatedAt: new Date().toISOString()
             };
             return [{ uri, mimeType: "application/json", text: JSON.stringify(payload, null, 2) }];
+        }
+
+        const docResourceMap: Record<string, string> = {
+            "kairo://docs/agent-playbook": "docs/agent/AGENT_PLAYBOOK.md",
+            "kairo://docs/agent-playbook-compact": "docs/agent/AGENT_PLAYBOOK_COMPACT.md",
+            "kairo://docs/tool-reference": "docs/agent/TOOL_REFERENCE.md",
+            "kairo://docs/quick-reference": "docs/agent/quick-reference.md"
+        };
+        const docRelativePath = docResourceMap[uri];
+        if (docRelativePath) {
+            const candidates = [
+                path.resolve(process.cwd(), docRelativePath),
+                path.resolve(this.rootPath, docRelativePath)
+            ];
+            try {
+                const packageJsonPath = require.resolve("../../package.json");
+                candidates.push(path.resolve(path.dirname(packageJsonPath), docRelativePath));
+            } catch {
+                // ignore package root lookup errors
+            }
+            const resolved = candidates.find((candidate) => fs.existsSync(candidate));
+            if (!resolved) {
+                throw new McpError(ErrorCode.InvalidParams, `Agent document not found for URI: ${uri}`);
+            }
+            const text = fs.readFileSync(resolved, "utf-8");
+            return [{ uri, mimeType: "text/markdown", text }];
         }
 
         const schemaPrefix = "kairo://schema/";

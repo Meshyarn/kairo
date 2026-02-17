@@ -104,6 +104,7 @@ describe('SmartContextServer - session policy integration', () => {
       intent: 'Create a scoped file',
       targetPath: 'src/scoped.ts',
       content: 'export const scoped = true;',
+      safety: 'plan',
       sessionId,
       trace: true
     });

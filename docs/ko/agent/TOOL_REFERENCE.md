@@ -48,7 +48,7 @@ Kairo는 **두 가지 공개 도구 표면**을 제공합니다(ADR-084):
 
 | 필드 | 타입 | 기본값 | 비고 |
 |---|---|---|---|
-| `budget` | `"lean" \| "balanced" \| "deep"` | `lean` | 깊이/타임아웃/토큰 예산 프리셋. |
+| `budget` | `"lean" \| "balanced" \| "deep"` | `balanced` | 깊이/타임아웃/토큰 예산 프리셋 (ADR-091). |
 | `output.format` | `"summary" \| "standard"` | policy 기반 | 응답 형태 (MCP 모드에서 보통 `summary`). |
 | `output.maxTokens` | `number` | policy 기반 | 응답 토큰 상한. Task는 LOD를 downshift하여 맞춤. |
 | `output.maxChars` | `number` | policy 기반 | 응답 문자 상한. |

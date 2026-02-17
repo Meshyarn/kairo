@@ -2,9 +2,9 @@ import type { ToolSpec } from "./ToolSpecTypes.js";
 import { SCHEMA_VERSION, DEFAULT_ADDITIONAL_PROPERTIES, CONTENT_SOURCE_SCHEMA } from "./ToolSpecRegistrySchema.js";
 
 export const ToolSpecRegistryPillarA: ToolSpec[] = [
-{
+	{
       name: "task",
-      description: "High-level router for ask/analyze/plan workflows.",
+      description: "Unified entrypoint for discovery, analysis, and change workflows. Use mode ask for targeted search and reading, analyze for structural reasoning, plan_change to generate draftId and applyToken, apply_change to execute a planned draft, write to create files, and verify to run checks. profile defaults to balanced (budget/depth are legacy aliases). safety=auto supports one-shot small-change auto-apply when enabled. Use manage({command:'schema', tool:'task'}) for full parameter details.",
       schemaVersion: SCHEMA_VERSION,
       visibility: "public",
       inputSchema: {
@@ -12,6 +12,7 @@ export const ToolSpecRegistryPillarA: ToolSpec[] = [
         properties: {
           request: { type: "string" },
           mode: { type: "string", enum: ["auto", "ask", "analyze", "plan_change", "apply_change", "write", "verify"] },
+          profile: { type: "string", enum: ["lean", "fast", "balanced", "deep"] },
           budget: { type: "string", enum: ["lean", "balanced", "deep"] },
           sessionId: { type: "string" },
           draftId: { type: "string" },
@@ -21,7 +22,11 @@ export const ToolSpecRegistryPillarA: ToolSpec[] = [
           paths: { type: "array", items: { type: "string" } },
           targetFiles: { type: "array", items: { type: "string" } },
           targetPath: { type: "string" },
-          safety: { type: "string", enum: ["plan", "apply"] },
+          pillarOptions: {
+            type: "object",
+            description: "Advanced options passed through to the underlying pillar (or per-pillar via keys like explore/understand/change/write)."
+          },
+          safety: { type: "string", enum: ["plan", "apply", "auto"] },
           output: {
             type: "object",
             properties: {
@@ -41,11 +46,47 @@ export const ToolSpecRegistryPillarA: ToolSpec[] = [
         },
         required: ["request"],
         additionalProperties: DEFAULT_ADDITIONAL_PROPERTIES
+      },
+      compat: {
+        aliases: [
+          {
+            from: "budget",
+            to: "profile",
+            policy: "deprecate",
+            message: "Use profile instead of budget.",
+            since: SCHEMA_VERSION
+          },
+          {
+            from: "depth",
+            to: "profile",
+            policy: "deprecate",
+            message: "Use profile instead of depth.",
+            since: SCHEMA_VERSION
+          }
+        ],
+        valueAliases: [
+          {
+            path: "profile",
+            from: "shallow",
+            to: "lean",
+            policy: "deprecate",
+            message: "Use profile=lean instead of depth=shallow.",
+            since: SCHEMA_VERSION
+          },
+          {
+            path: "profile",
+            from: "standard",
+            to: "balanced",
+            policy: "deprecate",
+            message: "Use profile=balanced instead of depth=standard.",
+            since: SCHEMA_VERSION
+          }
+        ]
       }
     },
     {
       name: "understand",
-      description: "Deeply analyzes code structure and architecture.",
+      description: "Performs architecture-level reasoning on symbols, files, modules, or the full project. Provide goal, optionally set profile and depth, and choose include flags for callGraph, dependencies, hot spots, and clusters. Use sources to control code or docs coverage and limits to cap cost. Best for root-cause analysis, impact forecasting, and design understanding before edits or migration work.",
       schemaVersion: SCHEMA_VERSION,
       visibility: "public",
       inputSchema: {
@@ -127,7 +168,7 @@ export const ToolSpecRegistryPillarA: ToolSpec[] = [
     },
     {
       name: "explore",
-      description: "Unified discovery for docs/code with previews, sections, and controlled full reads.",
+      description: "Searches code and docs with controllable output shapes. Use query with optional paths, choose view preview/section/full, and tune include flags for code, docs, comments, logs, and clusters. profile and limits trade detail for cost. Supports cursor pagination, section targeting, and fullPaths reads when precision is required. Ideal first step before analyze, change, write, or verify workflows.",
       schemaVersion: SCHEMA_VERSION,
       visibility: "public",
       inputSchema: {
@@ -243,7 +284,7 @@ export const ToolSpecRegistryPillarA: ToolSpec[] = [
     },
     {
       name: "change",
-      description: "Safely modifies code with impact analysis.",
+      description: "Plans or applies code modifications with guardrails and impact checks. Provide intent plus target or targetFiles and optional explicit edits. safety=plan prepares a draft and review artifacts; safety=apply executes with applyToken workflow and policy overrides. profile controls depth, reviewOptions govern blocking behavior, and override scope limits risk. Use when edits must remain auditable, reversible, and policy compliant.",
       schemaVersion: SCHEMA_VERSION,
       visibility: "public",
       inputSchema: {

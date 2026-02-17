@@ -4,7 +4,7 @@ import { SCHEMA_VERSION, DEFAULT_ADDITIONAL_PROPERTIES, CONTENT_SOURCE_SCHEMA } 
 export const ToolSpecRegistryPillarB: ToolSpec[] = [
     {
       name: "write",
-      description: "Creates new files or scaffolds content.",
+      description: "Creates new files or scaffolds content with planning and safe-apply controls. Provide intent and targetPath, then choose template, content, or contentSource as needed. safety=plan prepares output for review; safety=apply writes with applyToken support. options and reviewOptions tune generation and validation behavior, while repoScope constrains where files are created. Use for docs, configs, and initial module scaffolding.",
       schemaVersion: SCHEMA_VERSION,
       visibility: "public",
       inputSchema: {
@@ -124,7 +124,7 @@ export const ToolSpecRegistryPillarB: ToolSpec[] = [
     },
     {
       name: "manage",
-      description: "Manages project state and transactions.",
+      description: "Administrative tool for workspace health, transactions, and artifacts. Use command status for index and runtime health, doctor for diagnostics by scope, schema for parameter docs (requires tool), history/undo/redo for transaction control, and reindex for rebuilds. artifact, artifacts, and sessions expose persisted outputs. init bootstraps workspace config and prune cleans storage. Example: manage({command:'schema', tool:'task'}).",
       schemaVersion: SCHEMA_VERSION,
       visibility: "public",
       inputSchema: {
@@ -132,6 +132,7 @@ export const ToolSpecRegistryPillarB: ToolSpec[] = [
         properties: {
           command: {
             type: "string",
+            description: "Command to execute. schema requires tool (for example tool:'task'). artifact requires target (artifact id). doctor accepts scope (contracts|languages|parity|capabilities). prune accepts pruneOptions. init accepts targets and optional presets. status/history/undo/redo/reindex can run without extra required parameters.",
             enum: [
               "status",
               "undo",

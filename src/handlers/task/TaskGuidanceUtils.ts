@@ -62,7 +62,9 @@ export const filterTaskArgs = (args: Record<string, unknown>): Record<string, un
     const allowed = new Set([
         "request",
         "mode",
+        "profile",
         "budget",
+        "depth",
         "sessionId",
         "draftId",
         "applyToken",
@@ -71,6 +73,7 @@ export const filterTaskArgs = (args: Record<string, unknown>): Record<string, un
         "paths",
         "targetFiles",
         "targetPath",
+        "pillarOptions",
         "verifyExec",
         "safety",
         "output",

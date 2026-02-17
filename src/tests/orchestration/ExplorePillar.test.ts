@@ -321,8 +321,8 @@ describe("ExplorePillar", () => {
     expect(response.success).toBe(true);
     expect(docCalls).toBe(0);
     expect(codeCalls).toBe(1);
-    expect(response.degraded).toBe(true);
-    expect(response.reasons).toContain("doc_search_skipped");
+    expect(response.degraded).not.toBe(true);
+    expect(response.reasons ?? []).not.toContain("doc_search_skipped");
   });
 
   it("runs document_search when include is explicitly provided", async () => {

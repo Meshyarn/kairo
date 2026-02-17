@@ -13,7 +13,7 @@
 | `KAIRO_ROOT_PATH` | 분석할 프로젝트 루트. | cwd보다 권장; CLI `--root` 인자와 동일. |
 | `KAIRO_ROOT` | 분석할 프로젝트 루트. | `KAIRO_ROOT_PATH`의 alias. |
 | `KAIRO_MODE` | 정책 모드. | `mcp`(기본), `dev`, `ci`. MCP 기본값을 끄려면 `dev`. |
-| `KAIRO_PRESET` | MCP preset. | `mcp-lean`(기본), `mcp-balanced`, `mcp-deep`. |
+| `KAIRO_PRESET` | MCP preset. | `mcp-balanced`(기본; ADR-091), `mcp-lean`, `mcp-deep`. |
 | `KAIRO_PUBLIC_SURFACE` | 공개 도구 표면. | `compact`(mcp에서 기본; `task`+`manage`만) 또는 `pillars`(Five Pillars). |
 | `KAIRO_DIR` | 데이터 디렉터리. | 기본값 `.kairo` (index/cache/history 포함). |
 | `KAIRO_ALLOW_LEGACY_MCP_DIR` | `KAIRO_DIR`에 대해 레거시 `.mcp` 경로를 허용. | (Deprecated) `true`면 `.mcp`/`.mcp/kairo` 허용; 아니면 `.kairo` 사용. |

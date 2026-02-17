@@ -86,6 +86,7 @@ export const applyCanonicalizationV2 = (
   applyFileAliasMapping(toolSpec, args, findings);
   applyDryRunAlias(toolSpec, args, findings);
   applyContentSourceAliasMapping(toolSpec, args, findings);
+  applyProfileTerminologyAliases(toolSpec, args, findings);
 };
 
 export const applySchemaCoercions = (
@@ -327,6 +328,32 @@ const applyContentSourceAliasMapping = (
 
     return next;
   });
+};
+
+const applyProfileTerminologyAliases = (
+  toolSpec: ToolSpec,
+  args: Record<string, any>,
+  findings: CompatFinding[]
+): void => {
+  if (toolSpec.name !== "understand") return;
+  if (getPathValue(args, "profile") !== undefined) return;
+  const depth = getPathValue(args, "depth");
+  const mapped = mapDepthToProfile(depth);
+  if (!mapped) return;
+  setPathValue(args, "profile", mapped);
+  findings.push({
+    severity: "warning",
+    code: "SCHEMA_ALIAS_USED",
+    message: "Mapped depth to profile.",
+    details: { from: "depth", to: "profile" }
+  });
+};
+
+const mapDepthToProfile = (depth: any): "lean" | "balanced" | "deep" | undefined => {
+  if (depth === "shallow") return "lean";
+  if (depth === "standard") return "balanced";
+  if (depth === "deep") return "deep";
+  return undefined;
 };
 
 const applyAliasKeys = (
