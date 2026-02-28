@@ -1,4 +1,3 @@
-import { ToolSpecRegistryPillarA } from "./ToolSpecRegistryPillarA.js";
-import { ToolSpecRegistryPillarB } from "./ToolSpecRegistryPillarB.js";
+import { kairoToolSpecs } from "./ToolSpecRegistryKairo.js";
 
-export const pillarTools = [...ToolSpecRegistryPillarA, ...ToolSpecRegistryPillarB];
+export const pillarTools = kairoToolSpecs;

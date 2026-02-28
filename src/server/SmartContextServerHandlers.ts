@@ -1,46 +1,30 @@
 import { createHandlerContext } from "../handlers/HandlerContext.js";
 import { HandlerRegistry } from "../handlers/HandlerRegistry.js";
-import { SearchHandlers } from "../handlers/SearchHandlers.js";
-import { CodeHandlers } from "../handlers/CodeHandlers.js";
-import { EditHandlers } from "../handlers/EditHandlers.js";
-import { DocumentHandlers } from "../handlers/DocumentHandlers.js";
-import { ManageHandlers } from "../handlers/ManageHandlers.js";
-import { NavigateHandlers } from "../handlers/NavigateHandlers.js";
-import { IntegrityHandlers } from "../handlers/IntegrityHandlers.js";
-import { TaskHandlers } from "../handlers/TaskHandlers.js";
+import { KairoSearchHandler } from "../handlers/kairo/KairoSearchHandler.js";
+import { KairoImpactHandler } from "../handlers/kairo/KairoImpactHandler.js";
+import { KairoGraphHandler } from "../handlers/kairo/KairoGraphHandler.js";
+import { KairoUndoHandler } from "../handlers/kairo/KairoUndoHandler.js";
+import { KairoStatusHandler } from "../handlers/kairo/KairoStatusHandler.js";
 
 export function buildModularHandlers(args: Parameters<typeof createHandlerContext>[0] & { isTestEnv: () => boolean }) {
   const handlerRegistry = new HandlerRegistry();
   const handlerContext = createHandlerContext(args);
-  const searchHandlers = new SearchHandlers(handlerContext);
-  const codeHandlers = new CodeHandlers(handlerContext);
-  const editHandlers = new EditHandlers(handlerContext);
-  const documentHandlers = new DocumentHandlers(handlerContext);
-  const manageHandlers = new ManageHandlers(handlerContext);
-  const navigateHandlers = new NavigateHandlers(handlerContext);
-  const integrityHandlers = new IntegrityHandlers(handlerContext);
-  const taskHandlers = new TaskHandlers(handlerContext);
 
-  handlerRegistry.register(searchHandlers);
-  handlerRegistry.register(codeHandlers);
-  handlerRegistry.register(editHandlers);
-  handlerRegistry.register(documentHandlers);
-  handlerRegistry.register(manageHandlers);
-  handlerRegistry.register(navigateHandlers);
-  handlerRegistry.register(integrityHandlers);
-  handlerRegistry.register(taskHandlers);
+  const kairoSearchHandler = new KairoSearchHandler(handlerContext);
+  const kairoImpactHandler = new KairoImpactHandler(handlerContext);
+  const kairoGraphHandler = new KairoGraphHandler(handlerContext);
+  const kairoUndoHandler = new KairoUndoHandler(handlerContext);
+  const kairoStatusHandler = new KairoStatusHandler(handlerContext);
+
+  handlerRegistry.register(kairoSearchHandler);
+  handlerRegistry.register(kairoImpactHandler);
+  handlerRegistry.register(kairoGraphHandler);
+  handlerRegistry.register(kairoUndoHandler);
+  handlerRegistry.register(kairoStatusHandler);
 
   return {
     handlerRegistry,
     handlerContext,
-    searchHandlers,
-    codeHandlers,
-    editHandlers,
-    documentHandlers,
-    manageHandlers,
-    navigateHandlers,
-    integrityHandlers,
-    taskHandlers
   };
 }
 
@@ -79,6 +63,9 @@ export function buildModularHandlersFromServer(server: any) {
     metricsExportService: server.metricsExportService,
     cacheInvalidationHub: server.cacheInvalidationHub,
     toolSpecRegistry: server.toolSpecRegistry,
+    callGraphMetricsBuilder: server.callGraphMetricsBuilder,
+    graphRagClusterService: server.graphRagClusterService,
+    hotSpotDetector: server.hotSpotDetector,
     isTestEnv: () => server.isTestEnv(),
     runtimeControl: {
       switchWorkspaceRoot: (rootPath: string, options?: { triggerReindex?: boolean; allowBroadRoot?: boolean }) =>

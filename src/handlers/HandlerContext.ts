@@ -30,6 +30,9 @@ import type { FlowArtifactManager } from "../orchestration/flow-artifact-manager
 import type { MetricsExportService } from "../utils/metrics/MetricsExportService.js";
 import type { CacheInvalidationHub } from "../server/CacheInvalidationHub.js";
 import type { ToolSpecRegistry } from "../server/tools/ToolSpecRegistry.js";
+import type { CallGraphMetricsBuilder } from "../engine/CallGraphMetricsBuilder.js";
+import type { GraphRagClusterService } from "../orchestration/cluster/GraphRagClusterService.js";
+import type { HotSpotDetector } from "../engine/ClusterSearch/HotSpotDetector.js";
 
 export interface HandlerContext {
     rootPath: string;
@@ -65,6 +68,10 @@ export interface HandlerContext {
     metricsExportService?: MetricsExportService;
     cacheInvalidationHub?: CacheInvalidationHub;
     toolSpecRegistry: ToolSpecRegistry;
+    // ADR-092: new kairo_graph dependencies
+    callGraphMetricsBuilder?: CallGraphMetricsBuilder;
+    graphRagClusterService?: GraphRagClusterService;
+    hotSpotDetector?: HotSpotDetector;
     isTestEnv: () => boolean;
     runtimeControl?: {
         switchWorkspaceRoot: (rootPath: string, options?: { triggerReindex?: boolean; allowBroadRoot?: boolean }) => Promise<{
