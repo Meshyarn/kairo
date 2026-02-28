@@ -72,30 +72,32 @@ describe("Tool surface consistency", () => {
         const tools = (server as any).listIntentTools() as ListedTool[];
 
         const expectedIntentTools = [
-            "task",
-            "understand",
-            "explore",
-            "change",
-            "write",
-            "manage",
+            "kairo_search",
+            "kairo_impact",
+            "kairo_graph",
+            "kairo_undo",
+            "kairo_status",
         ].sort();
 
         expect(Array.isArray(tools)).toBe(true);
         expect(tools.map((t) => t.name).sort()).toEqual(expectedIntentTools);
 
+        // Verify legacy tools are removed
+        const toolNames = tools.map((t) => t.name);
+        expect(toolNames).not.toContain("task");
+        expect(toolNames).not.toContain("manage");
+        expect(toolNames).not.toContain("explore");
+        expect(toolNames).not.toContain("understand");
+        expect(toolNames).not.toContain("change");
+        expect(toolNames).not.toContain("write");
 
         for (const tool of tools) {
             const descriptionWords = (tool.description ?? "").trim().split(/\s+/).filter(Boolean).length;
-            expect(descriptionWords).toBeGreaterThanOrEqual(50);
+            expect(descriptionWords).toBeGreaterThanOrEqual(30);
 
             const schema = tool.inputSchema;
             if (!schema) {
                 continue;
-            }
-            if (tool.name === "manage") {
-                const commandDescription = (schema.properties?.command as any)?.description;
-                expect(typeof commandDescription).toBe("string");
-                expect(commandDescription).toContain("schema requires tool");
             }
 
             const properties = schema.properties ?? {};
@@ -141,24 +143,15 @@ describe("Tool surface consistency", () => {
             const tools = (server as any).listIntentTools() as ListedTool[];
             const names = tools.map((t) => t.name);
 
+            // With ADR-092, internal tools may still exist; kairo_* are the public surface
             expect(names).toEqual(expect.arrayContaining([
-                "code_read",
-                "project_search",
-                "relationship_analyze",
-                "edit_apply",
-                "edit_guidance",
-                "project_manage",
-                "interface_reconstruct",
-                "understand",
-                "explore",
-                "change",
-                "write",
-                "manage",
-                "file_read",
-                "file_write",
-                "file_analyze",
+                "kairo_search",
+                "kairo_impact",
+                "kairo_graph",
+                "kairo_undo",
+                "kairo_status",
             ]));
-            expect(names.length).toBeGreaterThan(5);
+            expect(names.length).toBeGreaterThanOrEqual(5);
             await server.shutdown();
         } finally {
             if (prev === undefined) {

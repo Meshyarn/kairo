@@ -98,9 +98,10 @@ export const kairoToolSpecs: ToolSpec[] = [
   {
     name: "kairo_undo",
     description:
-      "Transaction-based undo/redo for code changes. " +
-      "View change history, undo recent modifications, or redo undone changes. " +
-      "Works independently of git — tracks Kairo-applied changes only.",
+      "Transaction-based undo/redo for code changes made through Kairo. " +
+      "View change history with timestamps, undo recent modifications to restore previous state, " +
+      "or redo undone changes. Works independently of git and tracks only Kairo-applied edits. " +
+      "Use action=history to list recent changes, action=undo to revert, action=redo to reapply.",
     schemaVersion: SCHEMA_VERSION,
     visibility: "public",
     inputSchema: {
