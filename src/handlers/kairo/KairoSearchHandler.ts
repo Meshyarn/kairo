@@ -53,7 +53,7 @@ export class KairoSearchHandler extends BaseHandler {
         try {
           const docResponse = await this.context.documentSearchEngine.search(
             query,
-            { limit },
+            { maxResults: limit },
           );
           const docResults = docResponse?.results ?? docResponse ?? [];
           const docArray = Array.isArray(docResults) ? docResults : [];

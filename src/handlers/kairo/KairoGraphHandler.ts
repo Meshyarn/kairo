@@ -28,7 +28,7 @@ export class KairoGraphHandler extends BaseHandler {
         );
 
         if (graph) {
-          const visitedNodes = graph.visitedNodes ?? graph.nodes ?? {};
+          const visitedNodes = graph.visitedNodes ?? {};
           result.nodes = Object.values(visitedNodes).map((n: any) => ({
             id: n.symbolId ?? n.id ?? "",
             name: n.symbolName ?? n.name ?? "",
@@ -57,7 +57,7 @@ export class KairoGraphHandler extends BaseHandler {
       // 3. Entry points
       if (include.includes("entryPoints")) {
         try {
-          const entryPoints = this.context.dependencyGraph.getEntryPoints?.() ?? [];
+          const entryPoints = (this.context.dependencyGraph as any).getEntryPoints?.() ?? [];
           result.entryPoints = (Array.isArray(entryPoints) ? entryPoints : []).slice(0, 20).map(
             (e: any) => ({
               file: typeof e === "string" ? e : e.filePath ?? e.path ?? "",

@@ -45,7 +45,7 @@ import { bootstrapSmartContextServer } from "./SmartContextServerBootstrap.js";
 import { buildRolloutContext, resolveRolloutUser } from "./SmartContextServerRollout.js";
 import { jsonResponse, textResponse, errorResponse } from "./SmartContextServerResponses.js";
 import { registerInternalTools } from "./SmartContextServerInternalTools.js";
-import { handleCallTool as dispatchToolCall, handleCallToolLegacy as dispatchHandleCallToolLegacy } from "./SmartContextServerToolDispatch.js";
+import { handleCallTool as dispatchToolCall } from "./SmartContextServerToolDispatch.js";
 import { initMetricsReporter, initMetricsExportService } from "./SmartContextServerMetrics.js";
 import { initSymbolSemanticSearch } from "./SmartContextServerSymbolSearch.js";
 import { isDangerouslyBroadRoot } from "./StartupRootResolver.js";
@@ -559,19 +559,14 @@ export class SmartContextServer {
             payload: args,
             toolSpecRegistry: this.toolSpecRegistry,
             handlerRegistry: this.handlerRegistry,
-            internalRegistry: this.internalRegistry,
-            orchestrationEngine: this.orchestrationEngine,
-            isPillarTool,
-            attachContractMeta: (result, toolSpec, mode, normalized) =>
-                attachContractMeta(result, toolSpec, mode, normalized, (payload) => jsonResponse(payload)),
-            wrapLegacyResult: (result) =>
-                wrapLegacyResult(result, (payload) => jsonResponse(payload), (text) => textResponse(text)),
-            jsonResponse: (payload) => jsonResponse(payload),
-            errorResponse: (errorCode, message, details) => errorResponse(errorCode, message, details),
+            errorResponse: (errorCode: string, message: string, details?: any) => ({
+                isError: true,
+                content: [{ type: 'text', text: JSON.stringify({ errorCode, message, details }) }]
+            }),
             ensureResponseHasIsError,
             recordToolCallTelemetry,
             recordResponseTelemetry,
-            recordBetaTelemetry: (toolName, payloadArgs, response, startedAt) =>
+            recordBetaTelemetry: (toolName: string, payloadArgs: any, response: any, startedAt: number) =>
                 recordBetaTelemetry({
                     name: toolName,
                     payloadArgs,
@@ -579,32 +574,6 @@ export class SmartContextServer {
                     startedAt,
                     betaTelemetry: this.betaTelemetry
                 }),
-            rolloutContext: buildRolloutContext(args),
-            handleCallToolLegacy: (params) => this.handleCallToolLegacy(params)
-        });
-    }
-
-    public async handleCallToolLegacy(params: {
-        name: string;
-        args: any;
-        internalRegistry?: { hasTool: (name: string) => boolean; execute: (name: string, args: any) => Promise<any> };
-        orchestrationEngine?: { executePillar: (name: string, args: any) => Promise<any> };
-        isPillarTool?: (name: string) => boolean;
-        wrapLegacyResult?: (result: any) => any;
-        jsonResponse?: (payload: any) => any;
-    } | string, args?: any): Promise<any> {
-        const resolved = typeof params === "string"
-            ? { name: params, args }
-            : params;
-        return dispatchHandleCallToolLegacy({
-            name: resolved.name,
-            args: resolved.args,
-            internalRegistry: resolved.internalRegistry ?? this.internalRegistry,
-            orchestrationEngine: resolved.orchestrationEngine ?? this.orchestrationEngine,
-            isPillarTool: resolved.isPillarTool ?? isPillarTool,
-            wrapLegacyResult: resolved.wrapLegacyResult ?? ((result) =>
-                wrapLegacyResult(result, (payload) => jsonResponse(payload), (text) => textResponse(text))),
-            jsonResponse: resolved.jsonResponse ?? ((payload) => jsonResponse(payload))
         });
     }
 

@@ -141,7 +141,7 @@ export class KairoImpactHandler extends BaseHandler {
       reason: string;
     }> = [];
 
-    const visitedNodes = graph.visitedNodes ?? graph.nodes ?? {};
+    const visitedNodes = graph.visitedNodes ?? {};
     for (const node of Object.values(visitedNodes) as any[]) {
       const filePath = node.filePath ?? node.file ?? "";
       if (!includeTests && this.isTestFile(filePath)) continue;

@@ -81,7 +81,7 @@ export class KairoStatusHandler extends BaseHandler {
       }
 
       const absPaths = paths.map((p: string) =>
-        this.context.pathNormalizer.resolve(p),
+        this.context.pathNormalizer.toAbsolute(p),
       );
       const enqueued = (this.context.incrementalIndexer as any).enqueuePaths?.(
         absPaths,
@@ -99,7 +99,7 @@ export class KairoStatusHandler extends BaseHandler {
       });
     } else {
       // Full reindex
-      await this.context.dependencyGraph.rebuild();
+      await this.context.dependencyGraph.build();
       this.context.cacheInvalidationHub?.onEvent?.({
         type: "reindex_start",
       } as any);
