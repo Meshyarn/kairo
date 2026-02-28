@@ -62,6 +62,8 @@ import { FlowArtifactManager } from "../orchestration/flow-artifact-manager.js";
 import { OrchestrationEngine } from "../orchestration/OrchestrationEngine.js";
 import { IntentRouter } from "../orchestration/IntentRouter.js";
 import { WorkflowPlanner } from "../orchestration/WorkflowPlanner.js";
+import { CallGraphMetricsBuilder } from "../engine/CallGraphMetricsBuilder.js";
+import { GraphRagClusterService } from "../orchestration/cluster/GraphRagClusterService.js";
 import { resolveAlertSeverity, resolveBaselineEnabled } from "./SmartContextServerEnv.js";
 import type { SymbolEmbeddingIndex } from "../indexing/SymbolEmbeddingIndex.js";
 
@@ -243,6 +245,7 @@ export function bootstrapSmartContextServer(args: {
   const fieldAccessIndex = new FieldAccessIndex(resolvedRootPath, { propertyAccessIndex });
   const impactAnalyzer = new ImpactAnalyzer(dependencyGraph, callGraphBuilder, symbolIndex, undefined, fieldAccessIndex);
   const hotSpotDetector = new HotSpotDetector(symbolIndex, dependencyGraph);
+  const callGraphMetricsBuilder = new CallGraphMetricsBuilder(callGraphBuilder);
   const referenceFinder = new ReferenceFinder(
     resolvedRootPath,
     dependencyGraph,
@@ -386,6 +389,18 @@ export function bootstrapSmartContextServer(args: {
     fileSystem,
     autoPersist: true
   });
+  const graphRagClusterService = new GraphRagClusterService({
+    clusterSearchEngine,
+    symbolIndex,
+    pathNormalizer,
+    repoRegistry,
+    graphRagConfig,
+    documentSearchEngine,
+    documentProfiler,
+    boundaryAdapterRegistry,
+    rootPath: resolvedRootPath,
+  });
+
   const orchestrationEngine = new OrchestrationEngine(
     new IntentRouter(),
     new WorkflowPlanner(),
@@ -427,6 +442,7 @@ export function bootstrapSmartContextServer(args: {
       fileVersionManager,
       pathNormalizer,
       hotSpotDetector,
+      callGraphMetricsBuilder,
       documentProfiler,
       documentIndexer,
       embeddingRepository,
@@ -437,6 +453,7 @@ export function bootstrapSmartContextServer(args: {
       fallbackResolver,
       clusterSearchEngine,
       impactAnalyzer,
+      graphRagClusterService,
       indexDatabase,
       indexStateManager,
       cacheStrategy,
