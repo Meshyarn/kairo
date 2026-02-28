@@ -24,7 +24,7 @@ export async function executeUnderstandClusters(args: {
     return null;
   }
   const graphRagService = registry.getMetadata<GraphRagClusterService>("graphRagClusterService")
-    ?? new GraphRagClusterService(registry);
+    ?? GraphRagClusterService.fromRegistry(registry);
   if (!registry.getMetadata("graphRagClusterService")) {
     registry.setMetadata("graphRagClusterService", graphRagService);
   }

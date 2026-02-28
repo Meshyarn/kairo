@@ -44,7 +44,7 @@ export const attachGraphRagClusters = async (args: {
         return [];
     }
     const graphRagService = args.registry.getMetadata<GraphRagClusterService>("graphRagClusterService")
-        ?? new GraphRagClusterService(args.registry);
+        ?? GraphRagClusterService.fromRegistry(args.registry);
     if (!args.registry.getMetadata("graphRagClusterService")) {
         args.registry.setMetadata("graphRagClusterService", graphRagService);
     }

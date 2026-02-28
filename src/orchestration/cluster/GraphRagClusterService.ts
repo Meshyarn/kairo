@@ -1,5 +1,4 @@
 import path from "path";
-import { InternalToolRegistry } from "../InternalToolRegistry.js";
 import { analyzeQuery } from "../../engine/search/QueryMetrics.js";
 import type { ClusterSearchOptions, ClusterSearchEngine } from "../../engine/ClusterSearch/index.js";
 import type { SymbolEmbeddingIndex, SymbolSearchResult } from "../../indexing/SymbolEmbeddingIndex.js";
@@ -25,6 +24,26 @@ import {
 } from "../../config/GraphRagConfig.js";
 import { metrics } from "../../utils/MetricsCollector.js";
 import { applyCrossBoundaryPolicy, getBoundaryEvidence } from "./GraphRagBoundaryPolicy.js";
+import type { DocumentSearchEngine } from "../../documents/search/DocumentSearchEngine.js";
+import type { DocumentProfiler } from "../../documents/DocumentProfiler.js";
+import type { BoundaryAdapterRegistry } from "../../contracts/BoundaryAdapterRegistry.js";
+
+/**
+ * Direct dependency injection interface for GraphRagClusterService.
+ * Replaces InternalToolRegistry to enable standalone usage without the orchestration layer.
+ */
+export interface GraphRagClusterDeps {
+    clusterSearchEngine?: ClusterSearchEngine;
+    symbolEmbeddingIndex?: SymbolEmbeddingIndex;
+    symbolIndex?: SymbolIndex;
+    pathNormalizer?: PathNormalizer;
+    repoRegistry?: RepoRegistry;
+    graphRagConfig?: GraphRagConfigLoader;
+    documentSearchEngine?: DocumentSearchEngine;
+    documentProfiler?: DocumentProfiler;
+    boundaryAdapterRegistry?: BoundaryAdapterRegistry;
+    rootPath?: string;
+}
 
 export type GraphRagClusterOptions = {
     maxClusters?: number;
@@ -50,7 +69,30 @@ export type GraphRagClusterResult = {
 };
 
 export class GraphRagClusterService {
-    constructor(private readonly registry: InternalToolRegistry) {}
+    private readonly deps: GraphRagClusterDeps;
+    private boundaryEvidenceCache: ReturnType<typeof getBoundaryEvidence> extends Promise<infer T> ? T : never = null;
+
+    constructor(deps: GraphRagClusterDeps) {
+        this.deps = deps;
+    }
+
+    /**
+     * Factory for legacy callers that still use InternalToolRegistry.
+     * Adapts registry.getMetadata calls to direct dependency injection.
+     */
+    static fromRegistry(registry: {
+        getMetadata<T>(key: string): T | undefined;
+    }): GraphRagClusterService {
+        return new GraphRagClusterService({
+            clusterSearchEngine: registry.getMetadata<ClusterSearchEngine>("clusterSearchEngine"),
+            symbolEmbeddingIndex: registry.getMetadata<SymbolEmbeddingIndex>("symbolEmbeddingIndex"),
+            symbolIndex: registry.getMetadata<SymbolIndex>("symbolIndex"),
+            pathNormalizer: registry.getMetadata<PathNormalizer>("pathNormalizer"),
+            repoRegistry: registry.getMetadata<RepoRegistry>("repoRegistry"),
+            graphRagConfig: registry.getMetadata<GraphRagConfigLoader>("graphRagConfig"),
+            rootPath: registry.getMetadata<string>("rootPath"),
+        });
+    }
 
     public async buildClusters(args: GraphRagClusterRequest): Promise<GraphRagClusterResult | null> {
         const stopTimer = metrics.startTimer("graphrag.build_clusters_ms", "detailed");
@@ -71,7 +113,7 @@ export class GraphRagClusterService {
             };
         }
 
-        const clusterSearchEngine = this.registry.getMetadata<ClusterSearchEngine>("clusterSearchEngine");
+        const clusterSearchEngine = this.deps.clusterSearchEngine;
         if (!clusterSearchEngine) {
             return {
                 clusters: [],
@@ -86,9 +128,9 @@ export class GraphRagClusterService {
             includePreview: args.clusterOptions?.includePreview
         };
 
-        const symbolEmbeddingIndex = this.registry.getMetadata<SymbolEmbeddingIndex>("symbolEmbeddingIndex");
-        const symbolIndex = this.registry.getMetadata<SymbolIndex>("symbolIndex");
-        const pathNormalizer = this.registry.getMetadata<PathNormalizer>("pathNormalizer");
+        const symbolEmbeddingIndex = this.deps.symbolEmbeddingIndex;
+        const symbolIndex = this.deps.symbolIndex;
+        const pathNormalizer = this.deps.pathNormalizer;
         const queryMetrics = analyzeQuery(query);
         const semanticEligible = this.isSemanticEligible(symbolEmbeddingIndex);
         const repoScope = this.resolveRepoScope(args);
@@ -137,7 +179,14 @@ export class GraphRagClusterService {
         }
         metrics.inc(`graphrag.policy.used.${policyUsed}`);
 
-        const boundaryEvidence = await getBoundaryEvidence(this.registry);
+        const boundaryEvidence = await getBoundaryEvidence({
+            boundaryAdapterRegistry: this.deps.boundaryAdapterRegistry,
+            repoRegistry: this.deps.repoRegistry,
+            pathNormalizer: this.deps.pathNormalizer,
+            rootPath: this.deps.rootPath,
+            cache: this.boundaryEvidenceCache,
+            setCache: (c) => { this.boundaryEvidenceCache = c; },
+        });
         const crossBoundaryByCluster = new Map<string, ClusterSummary["crossBoundary"]>();
         for (const cluster of response.clusters) {
             const crossBoundary = applyCrossBoundaryPolicy({
@@ -150,7 +199,8 @@ export class GraphRagClusterService {
                     repoScope,
                     allowCrossRepoEdits: args.allowCrossRepoEdits
                 },
-                registry: this.registry
+                repoRegistry: this.deps.repoRegistry,
+                pathNormalizer: this.deps.pathNormalizer,
             });
             if (crossBoundary) {
                 crossBoundaryByCluster.set(cluster.clusterId, crossBoundary);
@@ -176,7 +226,7 @@ export class GraphRagClusterService {
     }
 
     private resolveConfig() {
-        const loader = this.registry.getMetadata<GraphRagConfigLoader>("graphRagConfig");
+        const loader = this.deps.graphRagConfig;
         return loader?.getConfig() ?? DEFAULT_GRAPHRAG_CONFIG;
     }
 
@@ -232,22 +282,23 @@ export class GraphRagClusterService {
         degradedReasons: string[]
     ): Promise<{ seeds: ClusterSeed[] }> {
         const limits = this.resolveDocSeedLimits(config);
-        if (!this.registry.hasTool("document_search") || !this.registry.hasTool("document_analyze")) {
+        const documentSearchEngine = this.deps.documentSearchEngine;
+        const documentProfiler = this.deps.documentProfiler;
+        if (!documentSearchEngine) {
             degradedReasons.push("doc_search_skipped");
             return { seeds: [] };
         }
         let docSearch: any;
         try {
-            docSearch = await this.registry.execute("document_search", {
-                query,
-                scope: "docs",
+            docSearch = await documentSearchEngine.search(query, {
                 maxResults: Math.max(1, limits.maxDocs)
             });
         } catch {
             degradedReasons.push("doc_search_skipped");
             return { seeds: [] };
         }
-        const docResults = Array.isArray(docSearch?.results) ? docSearch.results : [];
+        const rawResults = docSearch?.results ?? docSearch ?? [];
+        const docResults = Array.isArray(rawResults) ? rawResults : [];
         const docFiles = Array.from(new Set(docResults.map((item: any) => item?.filePath).filter(Boolean)))
             .slice(0, Math.max(1, limits.maxDocs));
         if (docFiles.length === 0) {
@@ -257,7 +308,7 @@ export class GraphRagClusterService {
 
         metrics.observe("graphrag.doc_first.docs_used", docFiles.length, "detailed");
 
-        const symbolIndex = this.registry.getMetadata<SymbolIndex>("symbolIndex");
+        const symbolIndex = this.deps.symbolIndex;
         if (!symbolIndex) {
             degradedReasons.push("symbol_index_unavailable");
             return { seeds: [] };
@@ -266,8 +317,10 @@ export class GraphRagClusterService {
         const mentions: string[] = [];
         for (const filePath of docFiles) {
             try {
-                const analysis = await this.registry.execute("document_analyze", { filePath });
-                const found = Array.isArray(analysis?.profile?.mentions) ? analysis.profile.mentions : [];
+                // documentProfiler.profile requires full input; use best-effort approach
+                // via document search results which already have mentions inline
+                const docResult = docResults.find((r: any) => r?.filePath === filePath);
+                const found = Array.isArray(docResult?.mentions) ? docResult.mentions : [];
                 for (const mention of found) {
                     if (mention?.kind !== "symbol") continue;
                     if (!mention?.text) continue;
@@ -509,7 +562,7 @@ export class GraphRagClusterService {
     }
 
     private resolveRepoScope(args: GraphRagClusterRequest): NormalizedRepoScope | null {
-        const repoRegistry = this.registry.getMetadata<RepoRegistry>("repoRegistry");
+        const repoRegistry = this.deps.repoRegistry;
         if (!repoRegistry) return null;
         try {
             return normalizeRepoScope(args, repoRegistry, { defaultMode: "all" });

@@ -8,7 +8,6 @@ import type { GraphRagConfig } from "../../config/GraphRagConfig.js";
 import { resolveCrossBoundaryCaps } from "../../config/GraphRagConfig.js";
 import type { ClusterSearchResponse } from "../../types/cluster.js";
 import { ExpansionState, type ClusterSummary, type RelatedSymbol } from "../../types/cluster.js";
-import type { InternalToolRegistry } from "../InternalToolRegistry.js";
 
 export type BoundaryEvidenceCache = {
     builtAt: number;
@@ -16,23 +15,31 @@ export type BoundaryEvidenceCache = {
     byRepoPair: Map<string, Set<BoundaryKind>>;
 };
 
-export const getBoundaryEvidence = async (registry: InternalToolRegistry): Promise<BoundaryEvidenceCache | null> => {
-    const cached = registry.getMetadata<BoundaryEvidenceCache>("graphRagBoundaryEvidence");
-    if (cached) {
-        return cached;
+export type BoundaryEvidenceDeps = {
+    boundaryAdapterRegistry?: BoundaryAdapterRegistry;
+    repoRegistry?: RepoRegistry;
+    pathNormalizer?: PathNormalizer;
+    rootPath?: string;
+    cache?: BoundaryEvidenceCache | null;
+    setCache?: (cache: BoundaryEvidenceCache | null) => void;
+};
+
+export const getBoundaryEvidence = async (deps: BoundaryEvidenceDeps): Promise<BoundaryEvidenceCache | null> => {
+    if (deps.cache) {
+        return deps.cache;
     }
 
-    const boundaryRegistry = registry.getMetadata<BoundaryAdapterRegistry>("boundaryAdapterRegistry");
-    const repoRegistry = registry.getMetadata<RepoRegistry>("repoRegistry");
-    const pathNormalizer = registry.getMetadata<PathNormalizer>("pathNormalizer");
-    const rootPath = registry.getMetadata<string>("rootPath");
+    const boundaryRegistry = deps.boundaryAdapterRegistry;
+    const repoRegistry = deps.repoRegistry;
+    const pathNormalizer = deps.pathNormalizer;
+    const rootPath = deps.rootPath;
     if (!boundaryRegistry || !repoRegistry || !pathNormalizer || !rootPath) {
         return null;
     }
 
     const cache = await buildBoundaryEvidence(rootPath, boundaryRegistry, repoRegistry, pathNormalizer);
-    if (cache) {
-        registry.setMetadata("graphRagBoundaryEvidence", cache);
+    if (cache && deps.setCache) {
+        deps.setCache(cache);
     }
     return cache;
 };
@@ -44,10 +51,11 @@ export const applyCrossBoundaryPolicy = (args: {
     degradedReasons: string[];
     boundaryEvidence: BoundaryEvidenceCache | null;
     policy: { repoScope: NormalizedRepoScope | null; allowCrossRepoEdits?: boolean };
-    registry: InternalToolRegistry;
+    repoRegistry?: RepoRegistry;
+    pathNormalizer?: PathNormalizer;
 }): ClusterSummary["crossBoundary"] | undefined => {
-    const repoRegistry = args.registry.getMetadata<RepoRegistry>("repoRegistry");
-    const pathNormalizer = args.registry.getMetadata<PathNormalizer>("pathNormalizer");
+    const repoRegistry = args.repoRegistry;
+    const pathNormalizer = args.pathNormalizer;
     if (!repoRegistry || !pathNormalizer) {
         return undefined;
     }
