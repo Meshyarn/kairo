@@ -44,11 +44,11 @@ describe('FeatureFlags rollout context', () => {
 
     it('supports per-flag beta percent overrides', () => {
         FeatureFlags.setBetaPercent(100);
-        FeatureFlags.setBetaPercentForFlag(FeatureFlags.MODULAR_HANDLERS_ENABLED, 0);
-        FeatureFlags.set(FeatureFlags.MODULAR_HANDLERS_ENABLED, true, 'beta');
+        FeatureFlags.setBetaPercentForFlag('test_flag', 0);
+        FeatureFlags.set('test_flag', true, 'beta');
 
         const enabled = FeatureFlags.withContext({ userId: 'user-123' }, () =>
-            FeatureFlags.isEnabled(FeatureFlags.MODULAR_HANDLERS_ENABLED)
+            FeatureFlags.isEnabled('test_flag')
         );
 
         expect(enabled).toBe(false);

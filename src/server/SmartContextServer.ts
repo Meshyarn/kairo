@@ -329,7 +329,7 @@ export class SmartContextServer {
         let reindexStarted = false;
         if (options?.triggerReindex === true) {
             try {
-                await this.dependencyGraph.rebuildIndex();
+                await this.dependencyGraph.ensureBuilt();
                 reindexStarted = true;
             } catch {
                 reindexStarted = false;

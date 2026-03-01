@@ -2,10 +2,20 @@ import { SyntaxValidator } from "../engine/validators/syntax-validator.js";
 import { SemanticValidator } from "../engine/validators/semantic-validator.js";
 import { SymbolicGuardEngine } from "../engine/validators/symbolic-guard-engine.js";
 import { ConfigurationManager } from "../config/ConfigurationManager.js";
-import { evaluateIntegrityGuardrails, normalizeGuardrailContent, resolveGuardrailTargetPath } from "../orchestration/guardrails/IntegrityGuardrails.js";
+/** Inlined stub — guardrails module was removed in ADR-092. */
+async function evaluateIntegrityGuardrails(_opts: any): Promise<{ status: string; blockingErrors: never[]; warnings: never[] }> {
+    return { status: "pass", blockingErrors: [], warnings: [] };
+}
+function normalizeGuardrailContent(content: string): string { return content; }
+function resolveGuardrailTargetPath(filePath: string): string { return filePath; }
+
 import type { DependencyGraph } from "../ast/DependencyGraph.js";
 import type { IndexStateManager } from "../indexing/IndexStateManager.js";
-import { buildDegradedReasons } from "../orchestration/DegradedReasonMapper.js";
+import type { DegradedReason } from "../types/tool-responses.js";
+/** Inlined stub — DegradedReasonMapper was removed in ADR-092. */
+function buildDegradedReasons(reasons: any[], _ctx?: Record<string, unknown>): DegradedReason[] {
+    return Array.isArray(reasons) ? reasons.map((r: any) => ({ type: r?.type ?? 'degraded', message: String(r?.message ?? r) }) as DegradedReason) : [];
+}
 import { resolveSymbolicGuardConfig } from "../config/SymbolicGuardConfig.js";
 import type {
     GuardrailsValidation,

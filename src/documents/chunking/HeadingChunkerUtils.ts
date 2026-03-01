@@ -1,6 +1,14 @@
 import * as crypto from "crypto";
 import type { DocumentOutlineOptions } from "../../types.js";
-import { OptionResolver, ToolProfile } from "../../orchestration/options/OptionResolver.js";
+
+export type ToolProfile = "fast" | "balanced" | "deep";
+
+/** Inlined from deleted OptionResolver — maps profile to chunk size params. */
+const CHUNKING_PROFILES: Record<ToolProfile, { params: { maxTokens: number; overlapTokens: number }; preferredTier?: "native" | "wasm" | "js" }> = {
+    fast:     { params: { maxTokens: 512,  overlapTokens: 32 },  preferredTier: "native" },
+    balanced: { params: { maxTokens: 1024, overlapTokens: 64 },  preferredTier: "native" },
+    deep:     { params: { maxTokens: 2048, overlapTokens: 128 }, preferredTier: "native" },
+};
 
 export const resolveChunkProfile = (options: DocumentOutlineOptions): ToolProfile | undefined => {
     if (options.chunkProfile === "fast" || options.chunkProfile === "balanced" || options.chunkProfile === "deep") {
@@ -26,7 +34,7 @@ export const resolveTokenOptions = (
         };
     }
     if (profile) {
-        return OptionResolver.resolveChunkingOptions(profile);
+        return CHUNKING_PROFILES[profile] ?? null;
     }
     return null;
 };

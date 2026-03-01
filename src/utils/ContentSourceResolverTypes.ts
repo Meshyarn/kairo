@@ -24,6 +24,8 @@ export type ContentSourceResolveOptions = {
   ignoreGlobs?: string[];
   ignoreMatcher?: { ignores: (filePath: string) => boolean };
   maxBytes?: number;
+  /** Optional artifact manager for resolving artifact-based content sources. */
+  artifactManager?: { get(id: string): unknown };
 };
 
 export type RepoRoot = { id: string; rootPath: string; kind: "repo" | "workspace" };

@@ -7,7 +7,6 @@ import { LanguageConfigLoader } from '../config/LanguageConfig.js';
 import { AdaptiveAstManager } from './AdaptiveAstManager.js';
 import { FeatureFlags } from '../config/FeatureFlags.js';
 import { AdaptiveFlowMetrics } from '../utils/AdaptiveFlowMetrics.js';
-import { UnifiedContextGraph } from '../orchestration/context/UnifiedContextGraph.js';
 import { SkeletonCache } from './SkeletonCache.js';
 import { SkeletonGenerator } from './SkeletonGenerator.js';
 import { QueryProvider } from './QueryProvider.js';
@@ -32,7 +31,7 @@ export class AstManager implements AdaptiveAstManager {
     private engineConfig: EngineConfig;
     private activeBackend?: string;
     private languageConfig?: LanguageConfigLoader;
-    private ucg?: UnifiedContextGraph;
+    private ucg?: { ensureLOD(req: AnalysisRequest): Promise<LODResult>; getNode(path: string): any; getStats(): { nodes: number }; invalidate(path: string, cascade?: boolean): void; dispose(): Promise<void> };
     private skeletonCache?: SkeletonCache;
     private skeletonGenerator?: SkeletonGenerator;
     private fileSystem: IFileSystem;
@@ -269,10 +268,18 @@ export class AstManager implements AdaptiveAstManager {
         return this.activeBackend;
     }
 
-    public getUCG(): UnifiedContextGraph {
+    public getUCG(): NonNullable<AstManager['ucg']> {
         if (!this.ucg) {
-            const root = this.engineConfig.rootPath ?? process.cwd();
-            this.ucg = new UnifiedContextGraph(root);
+            // UCG module was removed in ADR-092. Stub that always returns undefined nodes.
+            this.ucg = {
+                async ensureLOD(req: AnalysisRequest): Promise<LODResult> {
+                    return { path: req.path, previousLOD: 0, currentLOD: 0, requestedLOD: req.minLOD ?? 0, promoted: false, durationMs: 0, fallbackUsed: false, confidence: 0 };
+                },
+                getNode(_path: string) { return undefined; },
+                getStats() { return { nodes: 0 }; },
+                invalidate() {},
+                async dispose() {}
+            };
         }
         return this.ucg;
     }

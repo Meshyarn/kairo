@@ -1,7 +1,33 @@
 import type { DependencyGraph } from "../ast/DependencyGraph.js";
 import type { IndexStateManager } from "../indexing/IndexStateManager.js";
-import { computePageRankFromEdges } from "../orchestration/pillars/change/ImpactAnalysis.js";
 import type { Edge, ProjectSketch, TopModule } from "../types/flow-artifacts.js";
+
+/** Inlined from deleted ImpactAnalysis — simple PageRank for module ranking. */
+function computePageRankFromEdges(edges: Array<{ from: string; to: string }>, damping = 0.85, iterations = 20): Map<string, number> {
+    const nodes = new Set<string>();
+    const outgoing = new Map<string, string[]>();
+    for (const { from, to } of edges) {
+        nodes.add(from);
+        nodes.add(to);
+        const list = outgoing.get(from) ?? [];
+        list.push(to);
+        outgoing.set(from, list);
+    }
+    const n = nodes.size;
+    if (n === 0) return new Map();
+    const rank = new Map<string, number>();
+    for (const node of nodes) rank.set(node, 1 / n);
+    for (let i = 0; i < iterations; i++) {
+        const next = new Map<string, number>();
+        for (const node of nodes) next.set(node, (1 - damping) / n);
+        for (const [from, targets] of outgoing) {
+            const share = (rank.get(from) ?? 0) * damping / targets.length;
+            for (const to of targets) next.set(to, (next.get(to) ?? 0) + share);
+        }
+        for (const [k, v] of next) rank.set(k, v);
+    }
+    return rank;
+}
 
 export interface ProjectSketchBuilderOptions {
     maxTopModules?: number;

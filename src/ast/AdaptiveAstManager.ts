@@ -1,5 +1,11 @@
 import { LOD_LEVEL, AnalysisRequest, LODResult, LODPromotionStats } from '../types.js';
-import { ContextNode } from '../orchestration/context/ContextNode.js';
+
+/** Minimal ContextNode type for AdaptiveAstManager interface. */
+export interface ContextNode {
+    path: string;
+    lod: LOD_LEVEL;
+    skeleton?: string;
+}
 
 /**
  * Adaptive AST Manager interface supporting granular LOD-based analysis.
