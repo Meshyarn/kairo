@@ -3,10 +3,8 @@ import * as path from "path";
 import util from "util";
 import { PathManager } from "../utils/PathManager.js";
 import { StorageMaintenanceService, type StoragePruneTarget } from "../indexing/StorageMaintenanceService.js";
-import { resolveLogToFileEnabled } from "../orchestration/policy/McpModePresetRegistry.js";
 import type { IndexDatabase } from "../indexing/IndexDatabase.js";
 import type { DocumentSearchEngine } from "../documents/search/DocumentSearchEngine.js";
-import type { FlowArtifactManager } from "../orchestration/flow-artifact-manager.js";
 
 export type SmartContextRuntimeHost = {
     logStream?: fs.WriteStream;
@@ -26,14 +24,13 @@ export type SmartContextRuntimeHost = {
     rootPath: string;
     indexDatabase: IndexDatabase;
     documentSearchEngine: DocumentSearchEngine;
-    flowArtifactManager: FlowArtifactManager;
     isTestEnv: () => boolean;
     shutdown: () => Promise<void>;
 };
 
 export const initFileLogger = (host: SmartContextRuntimeHost): void => {
     if (host.logStream) return;
-    const enabled = resolveLogToFileEnabled() || !!process.env.KAIRO_LOG_FILE;
+    const enabled = (process.env.KAIRO_LOG_TO_FILE === "true") || !!process.env.KAIRO_LOG_FILE;
     if (!enabled) return;
     const singleFilePath = process.env.KAIRO_LOG_FILE;
     const logDir = process.env.KAIRO_LOG_DIR || PathManager.resolve("logs");
@@ -197,7 +194,6 @@ export const startStoragePrune = (host: SmartContextRuntimeHost): void => {
     const intervalMs = Number(process.env.KAIRO_STORAGE_PRUNE_INTERVAL_MS ?? "");
     if (!Number.isFinite(intervalMs) || intervalMs <= 0) return;
     const includeOnStart = process.env.KAIRO_STORAGE_PRUNE_ON_START === "true";
-    const includeFlowArtifacts = process.env.KAIRO_STORAGE_PRUNE_FLOW_ARTIFACTS === "true";
     const includeTempFiles = process.env.KAIRO_STORAGE_PRUNE_TEMP_FILES === "true";
     const compact = process.env.KAIRO_STORAGE_PRUNE_COMPACT === "true";
 
@@ -205,16 +201,13 @@ export const startStoragePrune = (host: SmartContextRuntimeHost): void => {
         if (host.storagePruneRunning) return;
         host.storagePruneRunning = true;
         try {
-            const targets: StoragePruneTarget[] = includeFlowArtifacts
-                ? ["evidence_packs", "chunk_summaries", "flow_artifacts"]
-                : ["evidence_packs", "chunk_summaries"];
+            const targets: StoragePruneTarget[] = ["evidence_packs", "chunk_summaries"];
             if (includeTempFiles && !targets.includes("temp_files")) {
                 targets.push("temp_files");
             }
             const service = new StorageMaintenanceService(
                 host.indexDatabase,
-                host.documentSearchEngine,
-                host.flowArtifactManager
+                host.documentSearchEngine
             );
             await service.prune({
                 mode: "apply",

@@ -1,8 +1,11 @@
 import { metrics } from "../utils/MetricsCollector.js";
-import { estimateTokens } from "../orchestration/TokenBudget.js";
-import { resolvePublicSurface } from "../orchestration/policy/McpModePresetRegistry.js";
 import { hashContent } from "../utils/hash.js";
 import type { BetaTelemetryEvent, BetaTelemetryLogger } from "../utils/BetaTelemetryLogger.js";
+
+/** Inline token estimator (replaces deleted orchestration/TokenBudget). */
+const estimateTokens = (text: string, _opts?: { languageId?: string }): number => {
+    return Math.ceil(text.length / 4);
+};
 
 export const recordToolCallTelemetry = (name: string): void => {
     const toolName = typeof name === "string" && name.trim().length > 0 ? name.trim() : "unknown";
@@ -46,7 +49,7 @@ export const recordBetaTelemetry = (args: {
         const payload = safeParsePayload(text);
         const event: BetaTelemetryEvent = {
             tool: toolName,
-            surface: resolvePublicSurface(),
+            surface: "kairo",
             latencyMs: Math.max(0, Date.now() - args.startedAt),
             responseChars: responseChars > 0 ? responseChars : undefined,
             responseTokens,

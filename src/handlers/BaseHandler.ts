@@ -1,4 +1,3 @@
-import { validateRequiredArgs } from "./shared/ValidationHelpers.js";
 import type { ToolSpecRegistry } from "../server/tools/ToolSpecRegistry.js";
 
 export abstract class BaseHandler {
@@ -43,6 +42,12 @@ export abstract class BaseHandler {
         const required = Array.isArray(this.toolSpecRegistry?.get(toolName)?.inputSchema?.required)
             ? this.toolSpecRegistry?.get(toolName)?.inputSchema?.required ?? []
             : [];
-        return validateRequiredArgs(args, required);
+        const missing: string[] = [];
+        for (const key of required) {
+            if (args?.[key] === undefined || args?.[key] === null) {
+                missing.push(key);
+            }
+        }
+        return missing;
     }
 }

@@ -1,6 +1,4 @@
 import type { ToolSpec } from "./ToolSpecTypes.js";
-import { compatTools } from "./ToolSpecRegistryCompat.js";
-import { internalTools } from "./ToolSpecRegistryInternal.js";
 import { pillarTools } from "./ToolSpecRegistryPillar.js";
 
 export type { ToolSchemaVersion, ToolSchemaMode, ToolVisibility, ToolSpec } from "./ToolSpecTypes.js";
@@ -23,5 +21,5 @@ export class ToolSpecRegistry {
 }
 
 export function createDefaultToolSpecRegistry(): ToolSpecRegistry {
-  return new ToolSpecRegistry([...internalTools, ...pillarTools, ...compatTools]);
+  return new ToolSpecRegistry([...pillarTools]);
 }

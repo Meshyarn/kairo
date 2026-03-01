@@ -1,5 +1,4 @@
 import ignore from "ignore";
-import { resolvePublicSurface } from "../orchestration/policy/McpModePresetRegistry.js";
 import type { ToolSpec } from "./tools/ToolSpecRegistry.js";
 
 export const createIgnoreFilter = (patterns: string[]): any => {
@@ -13,14 +12,12 @@ export const createIgnoreFilter = (patterns: string[]): any => {
 export const applyIgnorePatterns = (args: {
     patterns: string[];
     symbolIndex: { updateIgnorePatterns: (patterns: string[]) => void };
-    contextEngine: { updateIgnoreFilter: (filter: any) => void };
     searchEngine: { updateExcludeGlobs: (patterns: string[]) => Promise<void> | void };
     documentIndexer?: { updateIgnorePatterns: (patterns: string[]) => void };
     cacheInvalidationHub?: { onEvent: (event: { type: string }) => void };
 }): void => {
     const normalized = Array.isArray(args.patterns) ? args.patterns : [];
     args.symbolIndex.updateIgnorePatterns(normalized);
-    args.contextEngine.updateIgnoreFilter(createIgnoreFilter(normalized));
     void args.searchEngine.updateExcludeGlobs(normalized);
     args.documentIndexer?.updateIgnorePatterns(normalized);
     args.cacheInvalidationHub?.onEvent({ type: "ignore_changed" });
@@ -35,12 +32,7 @@ export const listIntentTools = (toolSpecRegistry: { listTools: (options: { expos
         exposeInternal: exposeInternalTools,
         exposeCompat: exposeFileTools
     });
-    const surface = resolvePublicSurface();
-    const compactToolNames = new Set(["task", "manage"]);
-    const filtered = surface === "compact" && !exposeInternalTools && !exposeFileTools
-        ? tools.filter((tool) => compactToolNames.has(tool.name))
-        : tools;
-    return filtered.map((tool: ToolSpec) => ({
+    return tools.map((tool: ToolSpec) => ({
         name: tool.name,
         description: tool.description,
         inputSchema: tool.inputSchema

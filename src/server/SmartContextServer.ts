@@ -31,20 +31,11 @@ import {
 import {
     applyIgnorePatterns,
     createIgnoreFilter,
-    isPillarTool,
     listIntentTools,
     validateRequiredArgs
 } from "./SmartContextServerTooling.js";
-import {
-    attachContractMeta,
-    ensureResponseHasIsError,
-    wrapLegacyResult
-} from "./SmartContextServerContract.js";
 import { parseNumberEnv, resolveAlertSeverity } from "./SmartContextServerEnv.js";
 import { bootstrapSmartContextServer } from "./SmartContextServerBootstrap.js";
-import { buildRolloutContext, resolveRolloutUser } from "./SmartContextServerRollout.js";
-import { jsonResponse, textResponse, errorResponse } from "./SmartContextServerResponses.js";
-import { registerInternalTools } from "./SmartContextServerInternalTools.js";
 import { handleCallTool as dispatchToolCall } from "./SmartContextServerToolDispatch.js";
 import { initMetricsReporter, initMetricsExportService } from "./SmartContextServerMetrics.js";
 import { initSymbolSemanticSearch } from "./SmartContextServerSymbolSearch.js";
@@ -74,12 +65,9 @@ const SERVER_VERSION = resolvePackageVersion();
 
 // Engine Imports
 import { SearchEngine } from "../engine/Search.js";
-import { ContextEngine } from "../engine/Context.js";
 import { NativeSearchCore } from "../engine/search/native/NativeSearchCore.js";
 import { NativeSearchIndexer } from "../engine/search/native/NativeSearchIndexer.js";
-import { EditorEngine } from "../engine/Editor.js";
 import { HistoryEngine } from "../engine/History.js";
-import { EditCoordinator } from "../engine/EditCoordinator.js";
 import { ImpactAnalyzer } from "../engine/ImpactAnalyzer.js";
 import { SkeletonGenerator } from "../ast/SkeletonGenerator.js";
 import { SkeletonCache } from "../ast/SkeletonCache.js";
@@ -96,26 +84,13 @@ import { IncrementalIndexer } from "../indexing/IncrementalIndexer.js";
 import { DocumentIndexer } from "../indexing/DocumentIndexer.js";
 import { IndexStateManager } from "../indexing/IndexStateManager.js";
 import { EmbeddingRepository } from "../indexing/EmbeddingRepository.js";
-import { DocumentChunkRepository } from "../indexing/DocumentChunkRepository.js";
-import { EvidencePackRepository } from "../indexing/EvidencePackRepository.js";
-import { StorageMaintenanceService, type StoragePruneTarget } from "../indexing/StorageMaintenanceService.js";
-import { TransactionLog } from "../engine/TransactionLog.js";
-import { PatchStore } from "../engine/PatchStore.js";
 import { ConfigurationManager } from "../config/ConfigurationManager.js";
 import { RepoRegistry } from "../config/RepoRegistry.js";
-import { PackageAliasMap } from "../config/PackageAliasMap.js";
 import { GraphRagConfigLoader } from "../config/GraphRagConfig.js";
-import { PropertyAccessIndex } from "../ast/PropertyAccessIndex.js";
-import { FieldAccessIndex } from "../ast/FieldAccessIndex.js";
-import { RolloutController } from "../config/RolloutController.js";
-import { ModularRolloutController } from "../config/ModularRolloutController.js";
-import { FileVersionManager } from "../engine/FileVersionManager.js";
 import { PathNormalizer } from "../utils/PathNormalizer.js";
-import { AstAwareDiff } from "../engine/AstAwareDiff.js";
 import { NodeFileSystem } from "../platform/FileSystem.js";
 import { GhostInterfaceBuilder } from "../resolution/GhostInterfaceBuilder.js";
 import { FallbackResolver } from "../resolution/FallbackResolver.js";
-import { CallSiteAnalyzer } from "../ast/analysis/CallSiteAnalyzer.js";
 import { HotSpotDetector } from "../engine/ClusterSearch/HotSpotDetector.js";
 import { ReferenceFinder } from "../ast/ReferenceFinder.js";
 import { DocumentProfiler } from "../documents/DocumentProfiler.js";
@@ -125,49 +100,25 @@ import { VectorIndexManager } from "../vector/VectorIndexManager.js";
 import type { SymbolEmbeddingIndex } from "../indexing/SymbolEmbeddingIndex.js";
 import type { AdaptiveFlowReporter } from "../utils/AdaptiveFlowReporter.js";
 import type { AlertDispatcher } from "../utils/AlertDispatcher.js";
-import { AdaptiveLodController } from "../orchestration/adaptive-flow/AdaptiveLodController.js";
 import type { MetricsExportService } from "../utils/metrics/MetricsExportService.js";
 import { CacheInvalidationHub } from "./CacheInvalidationHub.js";
 import { BoundaryAdapterRegistry } from "../contracts/BoundaryAdapterRegistry.js";
 import { ContractRegistry } from "../contracts/ContractRegistry.js";
-import { resolveLogToFileEnabled, resolveMcpPolicy, resolvePublicSurface } from "../orchestration/policy/McpModePresetRegistry.js";
 import { BetaTelemetryLogger } from "../utils/BetaTelemetryLogger.js";
 
-// Orchestration Imports
-import { OrchestrationEngine } from "../orchestration/OrchestrationEngine.js";
-import { IntentRouter } from "../orchestration/IntentRouter.js";
-import { WorkflowPlanner } from "../orchestration/WorkflowPlanner.js";
-import { InternalToolRegistry } from "../orchestration/InternalToolRegistry.js";
-import { CachingStrategy } from "../orchestration/CachingStrategy.js";
-import { FlowArtifactManager } from "../orchestration/flow-artifact-manager.js";
-import { estimateTokens } from "../orchestration/TokenBudget.js";
-import { hashContent } from "../utils/hash.js";
-
 // Handler Imports
-import type { SearchHandlers } from "../handlers/SearchHandlers.js";
-import type { CodeHandlers } from "../handlers/CodeHandlers.js";
-import type { EditHandlers } from "../handlers/EditHandlers.js";
-import type { DocumentHandlers } from "../handlers/DocumentHandlers.js";
-import type { ManageHandlers } from "../handlers/ManageHandlers.js";
-import type { NavigateHandlers } from "../handlers/NavigateHandlers.js";
-import type { IntegrityHandlers } from "../handlers/IntegrityHandlers.js";
 import type { HandlerRegistry } from "../handlers/HandlerRegistry.js";
 import type { HandlerContext } from "../handlers/HandlerContext.js";
-import type { TaskHandlers } from "../handlers/TaskHandlers.js";
 import { buildModularHandlersFromServer } from "./SmartContextServerHandlers.js";
 
 export class SmartContextServer {
     public server!: Server;
     public rootPath!: string;
     private fileSystem!: NodeFileSystem;
-    public flowArtifactManager!: FlowArtifactManager;
-    private orchestrationEngine!: OrchestrationEngine;
-    private internalRegistry!: InternalToolRegistry;
     private incrementalIndexer?: IncrementalIndexer;
     private searchEngine!: SearchEngine;
     private nativeSearchCore?: NativeSearchCore;
     private nativeSearchIndexer?: NativeSearchIndexer;
-    private editCoordinator!: EditCoordinator;
     private historyEngine!: HistoryEngine;
     private configurationManager!: ConfigurationManager;
     private repoRegistry!: RepoRegistry;
@@ -184,8 +135,6 @@ export class SmartContextServer {
     private dataFlowTracer!: DataFlowTracer;
     private moduleResolver!: ModuleResolver;
     private referenceFinder!: ReferenceFinder;
-    private contextEngine!: ContextEngine;
-    private fileVersionManager!: FileVersionManager;
     private pathNormalizer!: PathNormalizer;
     private hotSpotDetector!: HotSpotDetector;
     private documentProfiler!: DocumentProfiler;
@@ -221,25 +170,16 @@ export class SmartContextServer {
     private alertDispatcher?: AlertDispatcher;
     private metricsExportService?: MetricsExportService;
     private cacheInvalidationHub?: CacheInvalidationHub;
-    private cacheStrategy!: CachingStrategy;
     private toolSpecRegistry = createDefaultToolSpecRegistry();
     private handlerContext?: HandlerContext;
     private vectorIndexInitPromise?: Promise<void>;
     private betaTelemetry?: BetaTelemetryLogger;
 
-    private searchHandlers!: SearchHandlers;
-    private codeHandlers!: CodeHandlers;
-    private editHandlers!: EditHandlers;
-    private documentHandlers!: DocumentHandlers;
-    private manageHandlers!: ManageHandlers;
-    private navigateHandlers!: NavigateHandlers;
-    private integrityHandlers!: IntegrityHandlers;
-    private taskHandlers!: TaskHandlers;
     private handlerRegistry!: HandlerRegistry;
 
 
     constructor(rootPath: string) {
-        const { state, initialIgnorePatterns, packageAliasMap, propertyAccessIndex } = bootstrapSmartContextServer({
+        const { state, initialIgnorePatterns } = bootstrapSmartContextServer({
             rootPath,
             serverVersion: SERVER_VERSION,
             isTestEnv: () => this.isTestEnv(),
@@ -249,7 +189,7 @@ export class SmartContextServer {
 
         this.initFileLogger();
         this.initProcessDiagnostics();
-        this.bindRuntimeState(initialIgnorePatterns, packageAliasMap, propertyAccessIndex);
+        this.bindRuntimeState(initialIgnorePatterns);
 
         this.setupHandlers();
         this.registerRuntimeHandlers();
@@ -261,45 +201,15 @@ export class SmartContextServer {
         void this.initSymbolSemanticSearch();
     }
 
-    private bindRuntimeState(initialIgnorePatterns: string[], packageAliasMap: PackageAliasMap, propertyAccessIndex: PropertyAccessIndex): void {
+    private bindRuntimeState(initialIgnorePatterns: string[]): void {
         this.applyIgnorePatterns(initialIgnorePatterns);
         this.configurationManager.on("ignoreChanged", (payload) => {
             this.applyIgnorePatterns(payload?.patterns ?? []);
         });
-
-        // Store searchEngine reference for pillars to access
-        this.internalRegistry.setMetadata("searchEngine", this.searchEngine);
-        this.internalRegistry.setMetadata("indexStateManager", this.indexStateManager);
-        this.internalRegistry.setMetadata("dependencyGraph", this.dependencyGraph);
-        this.internalRegistry.setMetadata("fileSystem", this.fileSystem);
-        this.internalRegistry.setMetadata("flowArtifactManager", this.flowArtifactManager);
-        this.internalRegistry.setMetadata("configurationManager", this.configurationManager);
-        this.internalRegistry.setMetadata("rootPath", this.rootPath);
-        this.internalRegistry.setMetadata("repoRegistry", this.repoRegistry);
-        this.internalRegistry.setMetadata("boundaryAdapterRegistry", this.boundaryAdapterRegistry);
-        this.internalRegistry.setMetadata("contractRegistry", this.contractRegistry);
-        this.internalRegistry.setMetadata("pathNormalizer", this.pathNormalizer);
-        this.internalRegistry.setMetadata("packageAliasMap", packageAliasMap);
-        this.internalRegistry.setMetadata("impactAnalyzer", this.impactAnalyzer);
-        this.internalRegistry.setMetadata("propertyAccessIndex", propertyAccessIndex);
-        this.internalRegistry.setMetadata("fileVersionManager", this.fileVersionManager);
-        this.internalRegistry.setMetadata("adaptiveLodController", new AdaptiveLodController());
-        this.internalRegistry.setMetadata("clusterSearchEngine", this.clusterSearchEngine);
-        this.internalRegistry.setMetadata("symbolIndex", this.symbolIndex);
-        this.internalRegistry.setMetadata("graphRagConfig", this.graphRagConfig);
     }
 
     private registerRuntimeHandlers(): void {
         this.initializeModularHandlers();
-        registerInternalTools({
-            internalRegistry: this.internalRegistry,
-            searchHandlers: this.searchHandlers,
-            codeHandlers: this.codeHandlers,
-            editHandlers: this.editHandlers,
-            documentHandlers: this.documentHandlers,
-            manageHandlers: this.manageHandlers,
-            hotSpotDetector: this.hotSpotDetector
-        });
     }
 
     private initializeModularHandlers(): void {
@@ -404,7 +314,7 @@ export class SmartContextServer {
         const bootstrapServer = bootstrap.state.server as Server;
         const { server: _discardServer, ...nextState } = bootstrap.state;
         Object.assign(this, nextState);
-        this.bindRuntimeState(bootstrap.initialIgnorePatterns, bootstrap.packageAliasMap, bootstrap.propertyAccessIndex);
+        this.bindRuntimeState(bootstrap.initialIgnorePatterns);
         this.registerRuntimeHandlers();
         this.initMetricsReporter();
         this.startStoragePrune();
@@ -419,8 +329,8 @@ export class SmartContextServer {
         let reindexStarted = false;
         if (options?.triggerReindex === true) {
             try {
-                const reindexResult = await this.manageHandlers.manageProjectRaw({ command: "reindex", quiet: true });
-                reindexStarted = reindexResult?.success === true;
+                await this.dependencyGraph.rebuildIndex();
+                reindexStarted = true;
             } catch {
                 reindexStarted = false;
             }
@@ -522,7 +432,6 @@ export class SmartContextServer {
             if (this.handlerContext) {
                 this.handlerContext.symbolEmbeddingIndex = symbolEmbeddingIndex;
             }
-            this.internalRegistry.setMetadata('symbolEmbeddingIndex', symbolEmbeddingIndex);
         } catch (error) {
             console.warn("[SmartContextServer] Symbol semantic search init failed:", error);
         }
@@ -540,7 +449,6 @@ export class SmartContextServer {
         applyIgnorePatterns({
             patterns,
             symbolIndex: this.symbolIndex,
-            contextEngine: this.contextEngine,
             searchEngine: this.searchEngine,
             documentIndexer: this.documentIndexer,
             cacheInvalidationHub: this.cacheInvalidationHub
@@ -563,7 +471,11 @@ export class SmartContextServer {
                 isError: true,
                 content: [{ type: 'text', text: JSON.stringify({ errorCode, message, details }) }]
             }),
-            ensureResponseHasIsError,
+            ensureResponseHasIsError: (response: any) => {
+                if (!response || typeof response !== "object") return;
+                if (typeof response.isError === "boolean") return;
+                response.isError = response.success === false;
+            },
             recordToolCallTelemetry,
             recordResponseTelemetry,
             recordBetaTelemetry: (toolName: string, payloadArgs: any, response: any, startedAt: number) =>
@@ -581,26 +493,6 @@ export class SmartContextServer {
         return validateRequiredArgs(this.toolSpecRegistry, toolName, args);
     }
 
-    public resolveRolloutUser(args: any): string | undefined {
-        return resolveRolloutUser(args);
-    }
-
-    public buildRolloutContext(args: any): { userId: string } | undefined {
-        return buildRolloutContext(args);
-    }
-
-    public jsonResponse(payload: any): any {
-        return jsonResponse(payload);
-    }
-
-    public textResponse(text: string): any {
-        return textResponse(text);
-    }
-
-    public errorResponse(errorCode: string, message: string, details?: any): any {
-        return errorResponse(errorCode, message, details);
-    }
-
     public createIgnoreFilter(patterns: string[]): any {
         return createIgnoreFilter(patterns);
     }
@@ -615,10 +507,6 @@ export class SmartContextServer {
 
     public resolveAlertSeverity(): 'info' | 'warning' | 'error' | 'critical' {
         return resolveAlertSeverity();
-    }
-
-    public isPillarTool(name: string): boolean {
-        return isPillarTool(name);
     }
 
     private listCatalogResources(): Array<{
@@ -708,13 +596,9 @@ export class SmartContextServer {
 
     private async readCatalogResource(uri: string): Promise<Array<{ uri: string; mimeType: string; text: string }>> {
         if (uri === "kairo://runtime/summary") {
-            const policy = resolveMcpPolicy();
             const payload = {
                 rootPath: this.rootPath,
-                mode: policy.mode,
-                preset: policy.preset,
-                publicSurface: resolvePublicSurface(),
-                logToFile: resolveLogToFileEnabled(),
+                logToFile: process.env.KAIRO_LOG_TO_FILE === "true",
                 tools: this.listIntentTools().map((tool) => tool.name).sort(),
                 generatedAt: new Date().toISOString()
             };
@@ -722,7 +606,8 @@ export class SmartContextServer {
         }
 
         if (uri === "kairo://config/mcp-policy") {
-            return [{ uri, mimeType: "application/json", text: JSON.stringify(resolveMcpPolicy(), null, 2) }];
+            const payload = { surface: "kairo", tools: this.listIntentTools().map((t) => t.name).sort() };
+            return [{ uri, mimeType: "application/json", text: JSON.stringify(payload, null, 2) }];
         }
 
         if (uri === "kairo://index/snapshot") {

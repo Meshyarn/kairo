@@ -2,7 +2,6 @@ import type { RepoRegistry } from "../config/RepoRegistry.js";
 import type { NormalizedRepoScope } from "./RepoScope.js";
 import type { PathNormalizer } from "./PathNormalizer.js";
 import type { IFileSystem } from "../platform/FileSystem.js";
-import type { FlowArtifactManager } from "../orchestration/flow-artifact-manager.js";
 
 export type ContentSourceResolveError = {
   errorCode: string;
@@ -22,7 +21,6 @@ export type ContentSourceResolveOptions = {
   repoRegistry?: RepoRegistry;
   repoScope?: NormalizedRepoScope;
   pathNormalizer?: PathNormalizer;
-  artifactManager?: FlowArtifactManager;
   ignoreGlobs?: string[];
   ignoreMatcher?: { ignores: (filePath: string) => boolean };
   maxBytes?: number;

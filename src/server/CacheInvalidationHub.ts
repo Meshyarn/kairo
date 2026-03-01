@@ -7,7 +7,6 @@ import type { IndexStateManager } from "../indexing/IndexStateManager.js";
 import type { SearchEngine } from "../engine/Search.js";
 import type { ClusterSearchEngine } from "../engine/ClusterSearch/index.js";
 import type { DocumentSearchEngine } from "../documents/search/DocumentSearchEngine.js";
-import type { CachingStrategy } from "../orchestration/CachingStrategy.js";
 import { metrics } from "../utils/MetricsCollector.js";
 
 export type FreshnessEvent =
@@ -27,7 +26,6 @@ export class CacheInvalidationHub {
         clusterSearchEngine: ClusterSearchEngine;
         documentSearchEngine: DocumentSearchEngine;
         documentIndexer?: DocumentIndexer;
-        orchestrationCache?: CachingStrategy;
         callGraphBuilder?: CallGraphBuilder;
         typeDependencyTracker?: TypeDependencyTracker;
     }) {}
@@ -80,7 +78,6 @@ export class CacheInvalidationHub {
         this.args.clusterSearchEngine.invalidateFile(normalized);
         this.args.callGraphBuilder?.invalidateFile(normalized);
         this.args.typeDependencyTracker?.invalidateFile(normalized);
-        this.args.orchestrationCache?.clear();
     }
 
     private async handleFileDeleted(absPath: string): Promise<void> {
@@ -90,7 +87,6 @@ export class CacheInvalidationHub {
         this.args.clusterSearchEngine.invalidateFile(normalized);
         this.args.callGraphBuilder?.invalidateFile(normalized);
         this.args.typeDependencyTracker?.invalidateFile(normalized);
-        this.args.orchestrationCache?.clear();
     }
 
     private async handleDirDeleted(absPath: string): Promise<void> {
@@ -101,32 +97,27 @@ export class CacheInvalidationHub {
         this.args.callGraphBuilder?.invalidateDirectory(normalized);
         this.args.typeDependencyTracker?.invalidateDirectory(normalized);
         this.args.documentSearchEngine.evictPackCache();
-        this.args.orchestrationCache?.clear();
     }
 
     private handleIgnoreChanged(): void {
         this.args.clusterSearchEngine.clearCache();
         this.args.documentSearchEngine.evictPackCache();
-        this.args.orchestrationCache?.clear();
     }
 
     private handleReindexStart(): void {
         this.args.clusterSearchEngine.clearCache();
         this.args.documentSearchEngine.evictPackCache();
-        this.args.orchestrationCache?.clear();
     }
 
     private async handleReindexComplete(): Promise<void> {
         this.args.clusterSearchEngine.clearCache();
         this.args.documentSearchEngine.evictPackCache();
-        this.args.orchestrationCache?.clear();
         await this.updateEpoch();
     }
 
     private async updateEpoch(): Promise<void> {
         try {
             const snapshot = await this.args.indexStateManager.getSnapshot();
-            this.args.orchestrationCache?.setEpoch(snapshot.epoch);
         } catch {
             // best-effort
         }

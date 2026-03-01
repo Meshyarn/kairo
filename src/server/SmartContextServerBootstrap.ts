@@ -1,7 +1,5 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import * as path from "path";
-import { RolloutController } from "../config/RolloutController.js";
-import { ModularRolloutController } from "../config/ModularRolloutController.js";
 import { PathManager } from "../utils/PathManager.js";
 import { BetaTelemetryLogger } from "../utils/BetaTelemetryLogger.js";
 import { NodeFileSystem } from "../platform/FileSystem.js";
@@ -14,8 +12,6 @@ import { RepoRegistry } from "../config/RepoRegistry.js";
 import { BoundaryAdapterRegistry } from "../contracts/BoundaryAdapterRegistry.js";
 import { ContractRegistry } from "../contracts/ContractRegistry.js";
 import { PackageAliasMap } from "../config/PackageAliasMap.js";
-import { createIgnoreFilter } from "./SmartContextServerTooling.js";
-import { ContextEngine } from "../engine/Context.js";
 import { SkeletonGenerator } from "../ast/SkeletonGenerator.js";
 import { SkeletonCache } from "../ast/SkeletonCache.js";
 import { IndexDatabase } from "../indexing/IndexDatabase.js";
@@ -45,23 +41,11 @@ import { DocumentSearchEngine } from "../documents/search/DocumentSearchEngine.j
 import { DocumentChunkRepository } from "../indexing/DocumentChunkRepository.js";
 import { EvidencePackRepository } from "../indexing/EvidencePackRepository.js";
 import { ClusterSearchEngine } from "../engine/ClusterSearch/index.js";
-import { CachingStrategy } from "../orchestration/CachingStrategy.js";
 import { CacheInvalidationHub } from "./CacheInvalidationHub.js";
 import { HistoryEngine } from "../engine/History.js";
-import { EditorEngine } from "../engine/Editor.js";
-import { AstAwareDiff } from "../engine/AstAwareDiff.js";
-import { TransactionLog } from "../engine/TransactionLog.js";
-import { PatchStore } from "../engine/PatchStore.js";
-import { EditCoordinator } from "../engine/EditCoordinator.js";
-import { FileVersionManager } from "../engine/FileVersionManager.js";
 import { GhostInterfaceBuilder } from "../resolution/GhostInterfaceBuilder.js";
 import { CallSiteAnalyzer } from "../ast/analysis/CallSiteAnalyzer.js";
 import { FallbackResolver } from "../resolution/FallbackResolver.js";
-import { InternalToolRegistry } from "../orchestration/InternalToolRegistry.js";
-import { FlowArtifactManager } from "../orchestration/flow-artifact-manager.js";
-import { OrchestrationEngine } from "../orchestration/OrchestrationEngine.js";
-import { IntentRouter } from "../orchestration/IntentRouter.js";
-import { WorkflowPlanner } from "../orchestration/WorkflowPlanner.js";
 import { CallGraphMetricsBuilder } from "../engine/CallGraphMetricsBuilder.js";
 import { GraphRagClusterService } from "../orchestration/cluster/GraphRagClusterService.js";
 import { resolveAlertSeverity, resolveBaselineEnabled } from "./SmartContextServerEnv.js";
@@ -70,8 +54,6 @@ import type { SymbolEmbeddingIndex } from "../indexing/SymbolEmbeddingIndex.js";
 export type SmartContextServerBootstrap = {
   state: Record<string, any>;
   initialIgnorePatterns: string[];
-  packageAliasMap: PackageAliasMap;
-  propertyAccessIndex: PropertyAccessIndex;
 };
 
 function createLazyInstance<T extends object>(factory: () => T): T {
@@ -146,8 +128,6 @@ export function bootstrapSmartContextServer(args: {
   });
 
   const resolvedRootPath = path.resolve(rootPath);
-  RolloutController.applyFromEnv();
-  ModularRolloutController.applyFromEnv();
   PathManager.setRoot(resolvedRootPath);
 
   const betaTelemetry = BetaTelemetryLogger.fromEnv(resolvedRootPath);
@@ -179,8 +159,6 @@ export function bootstrapSmartContextServer(args: {
   const packageAliasMap = new PackageAliasMap(repoRegistry);
   packageAliasMap.build();
   const initialIgnorePatterns = configurationManager.getIgnoreGlobs();
-  const ignoreFilter = createIgnoreFilter(initialIgnorePatterns);
-  const contextEngine = new ContextEngine(ignoreFilter, fileSystem);
 
   const skeletonGenerator = new SkeletonGenerator();
   const skeletonCache = new SkeletonCache(resolvedRootPath);
@@ -347,7 +325,6 @@ export function bootstrapSmartContextServer(args: {
     });
   }
 
-  const cacheStrategy = new CachingStrategy(resolvedRootPath);
   cacheInvalidationHub = new CacheInvalidationHub({
     rootPath: resolvedRootPath,
     indexStateManager,
@@ -356,24 +333,12 @@ export function bootstrapSmartContextServer(args: {
     clusterSearchEngine,
     documentSearchEngine,
     documentIndexer,
-    orchestrationCache: cacheStrategy,
     callGraphBuilder,
     typeDependencyTracker
   });
   void cacheInvalidationHub.syncEpoch();
 
   const historyEngine = new HistoryEngine(resolvedRootPath, fileSystem);
-  const editorEngine = new EditorEngine(resolvedRootPath, fileSystem, new AstAwareDiff(skeletonGenerator));
-  const transactionLog = new TransactionLog(indexDatabase, new PatchStore());
-
-  const editCoordinator = new EditCoordinator(editorEngine, historyEngine, {
-    rootPath: resolvedRootPath,
-    transactionLog,
-    fileSystem,
-    impactAnalyzer
-  });
-
-  const fileVersionManager = new FileVersionManager(fileSystem);
   const ghostInterfaceBuilder = new GhostInterfaceBuilder(
     searchEngine,
     new CallSiteAnalyzer(),
@@ -383,12 +348,6 @@ export function bootstrapSmartContextServer(args: {
   );
   const fallbackResolver = new FallbackResolver(symbolIndex, skeletonGenerator, ghostInterfaceBuilder);
 
-  const internalRegistry = new InternalToolRegistry();
-  const flowArtifactManager = new FlowArtifactManager({
-    persistPath: PathManager.resolve("flow-artifacts"),
-    fileSystem,
-    autoPersist: true
-  });
   const graphRagClusterService = new GraphRagClusterService({
     clusterSearchEngine,
     symbolIndex,
@@ -401,27 +360,16 @@ export function bootstrapSmartContextServer(args: {
     rootPath: resolvedRootPath,
   });
 
-  const orchestrationEngine = new OrchestrationEngine(
-    new IntentRouter(),
-    new WorkflowPlanner(),
-    internalRegistry,
-    cacheStrategy
-  );
-
   return {
     state: {
       server,
       rootPath: resolvedRootPath,
       fileSystem,
       cacheInvalidationHub,
-      flowArtifactManager,
-      orchestrationEngine,
-      internalRegistry,
       incrementalIndexer,
       searchEngine,
       nativeSearchCore,
       nativeSearchIndexer,
-      editCoordinator,
       historyEngine,
       configurationManager,
       repoRegistry,
@@ -438,8 +386,6 @@ export function bootstrapSmartContextServer(args: {
       dataFlowTracer,
       moduleResolver,
       referenceFinder,
-      contextEngine,
-      fileVersionManager,
       pathNormalizer,
       hotSpotDetector,
       callGraphMetricsBuilder,
@@ -456,13 +402,10 @@ export function bootstrapSmartContextServer(args: {
       graphRagClusterService,
       indexDatabase,
       indexStateManager,
-      cacheStrategy,
       alertDispatcher,
       betaTelemetry,
       vectorIndexInitPromise
     },
-    initialIgnorePatterns,
-    packageAliasMap,
-    propertyAccessIndex
+    initialIgnorePatterns
   };
 }

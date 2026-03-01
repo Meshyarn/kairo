@@ -1,7 +1,6 @@
 import type { StoredEvidencePack } from "./EvidencePackRepository.js";
 import type { IndexDatabase } from "./IndexDatabase.js";
 import type { DocumentSearchEngine } from "../documents/search/DocumentSearchEngine.js";
-import type { FlowArtifactManager } from "../orchestration/flow-artifact-manager.js";
 import type { WarningV1 } from "../types/guidance.js";
 import { metrics } from "../utils/MetricsCollector.js";
 import { PathManager } from "../utils/PathManager.js";
@@ -117,8 +116,7 @@ type SummaryEntry = {
 export class StorageMaintenanceService {
     constructor(
         private readonly indexDb: IndexDatabase,
-        private readonly documentSearchEngine?: DocumentSearchEngine,
-        private readonly flowArtifactManager?: FlowArtifactManager
+        private readonly documentSearchEngine?: DocumentSearchEngine
     ) {}
 
     public async prune(options: StoragePruneOptions = {}): Promise<StoragePruneResult> {
@@ -384,34 +382,12 @@ export class StorageMaintenanceService {
     }
 
     private async pruneFlowArtifacts(
-        options: StoragePruneOptions,
-        mode: StoragePruneMode,
-        warnings: WarningV1[]
+        _options: StoragePruneOptions,
+        _mode: StoragePruneMode,
+        _warnings: WarningV1[]
     ): Promise<FlowArtifactPruneReport> {
-        if (!this.flowArtifactManager) {
-            return { prunedInMemory: 0 };
-        }
-        if (mode === "plan") {
-            const planned = await this.flowArtifactManager.planPrunePersisted({
-                removeOrphans: options.flowArtifacts?.removeOrphans !== false
-            });
-            return {
-                prunedInMemory: 0,
-                deletedFiles: planned.deletedFiles,
-                fixedIndexEntries: planned.fixedIndexEntries,
-                removedSessions: planned.removedSessions
-            };
-        }
-        const prunedInMemory = this.flowArtifactManager.prune();
-        const persisted = await this.flowArtifactManager.prunePersisted({
-            removeOrphans: options.flowArtifacts?.removeOrphans !== false
-        });
-        return {
-            prunedInMemory,
-            deletedFiles: persisted.deletedFiles,
-            fixedIndexEntries: persisted.fixedIndexEntries,
-            removedSessions: persisted.removedSessions
-        };
+        // FlowArtifactManager removed in ADR-092; return no-op report.
+        return { prunedInMemory: 0 };
     }
 
     private async pruneTempFiles(
