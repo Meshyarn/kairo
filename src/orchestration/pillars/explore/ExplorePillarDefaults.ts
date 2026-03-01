@@ -1,9 +1,0 @@
-export const DEFAULT_MAX_RESULTS = 8;
-export const DEFAULT_MAX_CHARS = 8000;
-export const DEFAULT_MAX_FULL_CHARS = 20000;
-export const DEFAULT_MAX_FILES = 200;
-export const DEFAULT_PACK_RESULTS = Number.parseInt(process.env.KAIRO_MAX_RESULTS ?? "25", 10) || 25;
-export const DEFAULT_PACK_TTL_MS = Number.parseInt(process.env.KAIRO_EXPLORE_PACK_TTL_MS ?? "600000", 10) || 600000;
-export const DEFAULT_PACK_CACHE_SIZE = Number.parseInt(process.env.KAIRO_EXPLORE_PACK_CACHE_SIZE ?? "100", 10) || 100;
-export const DEFAULT_RESEARCH_TTL_MS = Number.parseInt(process.env.KAIRO_RESEARCH_PACK_TTL_MS ?? "1800000", 10) || 1800000;
-export const DEFAULT_RESEARCH_CACHE_SIZE = Number.parseInt(process.env.KAIRO_RESEARCH_PACK_CACHE_SIZE ?? "50", 10) || 50;
