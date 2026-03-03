@@ -38,8 +38,9 @@ import { parseNumberEnv, resolveAlertSeverity } from "./SmartContextServerEnv.js
 import { bootstrapSmartContextServer } from "./SmartContextServerBootstrap.js";
 import { handleCallTool as dispatchToolCall } from "./SmartContextServerToolDispatch.js";
 import { initMetricsReporter, initMetricsExportService } from "./SmartContextServerMetrics.js";
-import { initSymbolSemanticSearch } from "./SmartContextServerSymbolSearch.js";
 import { isDangerouslyBroadRoot } from "./StartupRootResolver.js";
+import { SymbolEmbeddingIndex } from "../indexing/SymbolEmbeddingIndex.js";
+import { resolveEmbeddingProviderEnv } from "../embeddings/EmbeddingConfig.js";
 
 const require = createRequire(import.meta.url);
 
@@ -97,7 +98,6 @@ import { DocumentProfiler } from "../documents/DocumentProfiler.js";
 import { DocumentSearchEngine } from "../documents/search/DocumentSearchEngine.js";
 import { EmbeddingProviderFactory } from "../embeddings/EmbeddingProviderFactory.js";
 import { VectorIndexManager } from "../vector/VectorIndexManager.js";
-import type { SymbolEmbeddingIndex } from "../indexing/SymbolEmbeddingIndex.js";
 import type { AdaptiveFlowReporter } from "../utils/AdaptiveFlowReporter.js";
 import type { AlertDispatcher } from "../utils/AlertDispatcher.js";
 import type { MetricsExportService } from "../utils/metrics/MetricsExportService.js";
@@ -417,16 +417,42 @@ export class SmartContextServer {
 
     private async initSymbolSemanticSearch(): Promise<void> {
         try {
-            const symbolEmbeddingIndex = await initSymbolSemanticSearch({
-                embeddingProviderFactory: this.embeddingProviderFactory,
-                vectorIndexManager: this.vectorIndexManager,
-                embeddingRepository: this.embeddingRepository,
-                symbolIndex: this.symbolIndex,
-                parseNumberEnv: (raw, fallback) => this.parseNumberEnv(raw, fallback)
-            });
-            if (!symbolEmbeddingIndex) {
+            const enabled = (process.env.KAIRO_SYMBOL_SEMANTIC_SEARCH_ENABLED ?? "false").toLowerCase() === "true";
+            const mode = (process.env.KAIRO_SYMBOL_SEMANTIC_SEARCH_MODE ?? "manual").toLowerCase();
+            if (!enabled || mode === "off") {
                 return;
             }
+            const embeddingConfig = this.embeddingProviderFactory.getConfig();
+            const providerEnv = resolveEmbeddingProviderEnv(embeddingConfig).provider;
+            const baseModel = embeddingConfig.local?.model ?? "multilingual-e5-small";
+            if (providerEnv === "disabled" || baseModel === "hash" || baseModel.startsWith("hash-")) {
+                return;
+            }
+            const provider = await this.embeddingProviderFactory.getProvider();
+            if (provider.provider === "disabled" || provider.model === "hash") {
+                return;
+            }
+            const symbolModelKey = process.env.KAIRO_SYMBOL_EMBEDDING_MODEL_KEY
+                ?? `${provider.model}::symbols_v1`;
+            const symbolEmbeddingIndex = new SymbolEmbeddingIndex(
+                this.symbolIndex,
+                this.vectorIndexManager,
+                this.embeddingRepository,
+                provider,
+                {
+                    enabled: true,
+                    mode: mode === "manual" ? "manual" : "off",
+                    batchSize: this.parseNumberEnv(process.env.KAIRO_SYMBOL_EMBEDDINGS_BATCH_SIZE, 10),
+                    minSimilarity: this.parseNumberEnv(process.env.KAIRO_SYMBOL_EMBEDDINGS_MIN_SIMILARITY, 0.5),
+                    maxResults: this.parseNumberEnv(process.env.KAIRO_SYMBOL_EMBEDDINGS_MAX_RESULTS, 20),
+                    maxTextChars: this.parseNumberEnv(process.env.KAIRO_SYMBOL_EMBEDDINGS_MAX_TEXT_CHARS, 2000),
+                    maxFiles: this.parseNumberEnv(process.env.KAIRO_SYMBOL_EMBEDDINGS_MAX_FILES, 2000),
+                    maxSymbols: this.parseNumberEnv(process.env.KAIRO_SYMBOL_EMBEDDINGS_MAX_SYMBOLS, 20000),
+                    maxBytesPerSymbol: this.parseNumberEnv(process.env.KAIRO_SYMBOL_EMBEDDINGS_MAX_BYTES_PER_SYMBOL, 4000),
+                    timeoutMs: this.parseNumberEnv(process.env.KAIRO_SYMBOL_EMBEDDINGS_TIMEOUT_MS, 60000),
+                    symbolModelKey
+                }
+            );
             this.symbolEmbeddingIndex = symbolEmbeddingIndex;
             this.searchEngine.setSymbolEmbeddingIndex(symbolEmbeddingIndex);
             if (this.handlerContext) {
