@@ -13,31 +13,31 @@ describe('ErrorEnhancer', () => {
     it('should enhance symbol not found error', () => {
         const details = ErrorEnhancer.enhanceSymbolNotFound('UserSvc', mockSymbolIndex);
         expect(details.similarSymbols).toContain('UserService');
-        expect(details.toolSuggestions?.some(s => s.toolName === 'task')).toBe(true);
-        expect(details.toolSuggestions?.some(s => (s.exampleArgs as any)?.mode === 'ask')).toBe(true);
+        expect(details.toolSuggestions?.some(s => s.toolName === 'kairo_search')).toBe(true);
+        expect(details.toolSuggestions?.some(s => (s.exampleArgs as any)?.query === 'UserSvc')).toBe(true);
     });
 
     it('should enhance search not found error for filenames', () => {
         const details = ErrorEnhancer.enhanceSearchNotFound('config.json');
-        expect(details.toolSuggestions?.some(s => s.toolName === 'task')).toBe(true);
-        expect(details.toolSuggestions?.some(s => (s.exampleArgs as any)?.request === 'config.json')).toBe(true);
+        expect(details.toolSuggestions?.some(s => s.toolName === 'kairo_search')).toBe(true);
+        expect(details.toolSuggestions?.some(s => (s.exampleArgs as any)?.query === 'config.json')).toBe(true);
     });
 
     it('should enhance NO_MATCH errors', () => {
         const details = ErrorEnhancer.enhanceNoMatch('src/test.ts');
-        expect(details.toolSuggestions?.some(s => s.toolName === 'explore')).toBe(true);
-        expect(details.nextActionHint).toContain('code_read(fragment)');
+        expect(details.toolSuggestions?.some(s => s.toolName === 'kairo_search')).toBe(true);
+        expect(details.nextActionHint).toContain('src/test.ts');
     });
 
     it('should enhance HASH_MISMATCH errors', () => {
         const details = ErrorEnhancer.enhanceHashMismatch('src/test.ts');
-        expect(details.toolSuggestions?.some(s => s.toolName === 'explore')).toBe(true);
-        expect(details.nextActionHint).toContain('Refresh its metadata');
+        expect(details.toolSuggestions?.some(s => s.toolName === 'kairo_status')).toBe(true);
+        expect(details.nextActionHint).toContain('Check index status');
     });
 
     it('should enhance INDEX_STALE errors', () => {
         const details = ErrorEnhancer.enhanceIndexStale();
-        expect(details.toolSuggestions?.some(s => s.toolName === 'manage')).toBe(true);
+        expect(details.toolSuggestions?.some(s => s.toolName === 'kairo_status')).toBe(true);
         expect(details.nextActionHint).toContain('index status');
     });
 });

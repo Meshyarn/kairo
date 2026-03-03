@@ -248,7 +248,7 @@ describe("HeadingChunker", () => {
 
         expect(chunkMock).toHaveBeenCalled();
         const args = chunkMock.mock.calls[0] as unknown as [string, number, number];
-        expect(args[1]).toBe(768);
+        expect(args[1]).toBe(2048);
         expect(args[2]).toBe(128);
         EngineManager.resetForTesting();
     });

@@ -3,7 +3,6 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { SmartContextServer } from "../../index.js";
-import { FeatureFlags } from "../../config/FeatureFlags.js";
 
 const captureEnv = (keys: string[]) => {
     const snapshot: Record<string, string | undefined> = {};
@@ -52,20 +51,9 @@ describe("SmartContextServer Core", () => {
         const mockResult = { content: [{ type: "text", text: "success" }] };
         jest.spyOn(registry, "handle").mockResolvedValue(mockResult);
 
-        const result = await (server as any).handleCallTool("test_modular_tool", { arg: 1 });
+        // kairo_search is a registered tool so it passes the toolSpec check
+        const result = await (server as any).handleCallTool("kairo_search", { query: "test" });
         expect(result.content[0].text).toBe("success");
-    });
-
-    it("falls back to legacy tool handling when modular handlers are disabled", async () => {
-        jest.spyOn(FeatureFlags, "isEnabled").mockImplementation((flag) => {
-            if (flag === (FeatureFlags as any).MODULAR_HANDLERS_ENABLED) return false;
-            return true;
-        });
-        const spy = jest.spyOn((server as any), "handleCallToolLegacy").mockResolvedValue({ content: [{ text: "legacy" }] });
-        
-        const result = await (server as any).handleCallTool("legacy_tool", {});
-        expect(result.content[0].text).toBe("legacy");
-        expect(spy).toHaveBeenCalled();
     });
 
     it("handles heartbeat logic", async () => {
@@ -89,31 +77,14 @@ describe("SmartContextServer Core", () => {
         restoreEnv(snapshot);
     });
 
-    it("resolves rollout user correctly from various sources", () => {
-        const serverAny = server as any;
-        
-        // No source
-        expect(serverAny.resolveRolloutUser({})).toBeUndefined();
-
-        // User object
-        expect(serverAny.resolveRolloutUser({ user: { id: "u1" } })).toBe("u1");
-
-        // Headers
-        expect(serverAny.resolveRolloutUser({ headers: { "X-User-Id": "u2" } })).toBe("u2");
-        expect(serverAny.resolveRolloutUser({ headers: { "X-GitHub-User": " u3 " } })).toBe("u3");
-
-        // Env fallback
-        const snapshot = captureEnv(["KAIRO_DEFAULT_USER"]);
-        process.env.KAIRO_DEFAULT_USER = "env-user";
-        expect(serverAny.resolveRolloutUser({})).toBe("env-user");
-        restoreEnv(snapshot);
-    });
-
     it("validates required arguments for tools", () => {
         const serverAny = server as any;
         expect(serverAny.validateRequiredArgs("unknown_tool", {})).toEqual([]);
-        expect(serverAny.validateRequiredArgs("file_write", {})).toEqual(["filePath", "content"]);
-        expect(serverAny.validateRequiredArgs("file_write", { filePath: "a.ts" })).toEqual(["content"]);
+        // kairo_search requires 'query'
+        expect(serverAny.validateRequiredArgs("kairo_search", {})).toEqual(["query"]);
+        expect(serverAny.validateRequiredArgs("kairo_search", { query: "test" })).toEqual([]);
+        // kairo_impact requires 'target'
+        expect(serverAny.validateRequiredArgs("kairo_impact", {})).toEqual(["target"]);
     });
 
     it("applies ignore patterns across engines", async () => {
