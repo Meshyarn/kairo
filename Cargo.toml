@@ -1,0 +1,50 @@
+[package]
+name = "kairo"
+version = "2.0.0-alpha.1"
+edition = "2021"
+description = "Semantic code intelligence for AI agents — MCP server powered by Tantivy"
+license = "MIT"
+repository = "https://github.com/meshyarn-io/kairo"
+keywords = ["mcp", "search", "code-intelligence", "tantivy"]
+categories = ["development-tools", "text-processing"]
+
+[[bin]]
+name = "kairo"
+path = "src/main.rs"
+
+[dependencies]
+# MCP protocol
+rmcp = { version = "0.16", features = ["server", "transport-io"] }
+
+# Search engine
+tantivy = "0.22"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# File system
+ignore = "0.4"          # gitignore-aware file walking
+notify = "7"            # file change watching (future)
+
+# Embeddings (BGE-M3 via ONNX Runtime)
+ort = { version = "2.0.0-rc.12", features = ["download-binaries"] }
+tokenizers = { version = "0.20", default-features = false, features = ["onig"] }
+hf-hub = { version = "0.4", features = ["tokio"] }
+dirs = "6"
+
+# Logging (stderr only — stdout is MCP protocol)
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+anyhow = "1"
+thiserror = "1"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true

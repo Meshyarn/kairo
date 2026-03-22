@@ -1,73 +1,77 @@
-# kairo
+# Kairo
 
-> A symbiotic MCP server for Vibe Coding. Syncs architectural intent, project context, and coding style with any AI agent.
+Semantic code intelligence for AI agents — an MCP server powered by Tantivy.
 
-`kairo` is a local-first Model Context Protocol (MCP) server that exposes a small, intent-based tool surface for agents to explore, understand, and safely change code.
+Kairo fills the gaps that AI coding agents (Claude Code, Copilot, etc.) can't cover natively:
 
-## Why kairo
+- **Concept search** — find code by meaning, not just keywords
+- **Impact analysis** — predict what breaks when you change something *(coming soon)*
+- **Project graphs** — understand module dependencies at a glance *(coming soon)*
 
-- Syncs architecture intent + constraints with edits (guardrails before apply)
-- Builds project-aware context from code + docs (fast search + structured reads)
-- Learns and applies repo coding style/patterns for consistent output
-- Captures Writer’s Flow artifacts (research/style/draft/review) with session chaining
-- Emphasizes safe changes (dry-run, validation, backups/transactions where applicable)
-- Improves change reliability via StrategySearch (Best-of-N / MCTS candidate scoring; opt-in)
-- **Native Core (v0.6.0+)**: Tantivy-backed native search + Rust-accelerated chunking/diff/syntax to keep latency and heap stable on large repos (see `docs/adr/ADR-085-rust-native-search-core-tantivy.md`).
-
-## Quickstart (from source)
-
-Prereqs: Node.js (see `package.json` engines, if present)
+## Quick Start
 
 ```bash
-npm ci
-npm run build
-node dist/index.js --root /absolute/path/to/your/project
+# Build
+cargo build --release
+
+# The binary is at target/release/kairo
 ```
 
-If you see `CAP_NATIVE_SEARCH_UNAVAILABLE`, build the native module (`@kairo/core-rs`) for your platform:
+### Claude Code
 
-```bash
-npm run build:core-rs
+Add to your MCP config (`.claude/settings.json`):
+
+```json
+{
+  "mcpServers": {
+    "kairo": {
+      "command": "/path/to/kairo",
+      "args": []
+    }
+  }
+}
 ```
 
-By default, runtime data is stored under `.kairo/` in the target project root.
+Kairo automatically indexes your project on first use. No configuration needed.
 
-## MCP defaults (promptless-friendly)
+## Tools
 
-By default (`KAIRO_MODE=mcp`), Kairo exposes a **compact** tool surface: `task` + `manage`.
-If you want direct control, set `KAIRO_PUBLIC_SURFACE=pillars` to expose the Five Pillars (`explore`/`understand`/`change`/`write`/`manage`).
+### `kairo_search`
 
-For host config templates and troubleshooting, see `docs/guides/promptless-integration.md`.
+Find code by concept, not just keywords. Use when Grep misses results.
 
-## Docs
+```
+kairo_search(query: "retry logic with backoff")
+kairo_search(query: "authentication middleware", scope: "code")
+kairo_search(query: "API rate limiting", limit: 5)
+```
 
-- Docs website (VitePress, EN/KO): `npm --prefix docs install && npm --prefix docs run dev`
-- `docs/README.md`
-- `docs/agent/AGENT_PLAYBOOK.md`
-- `docs/agent/TOOL_REFERENCE.md`
-- `docs/adr/README.md`
+**When to use instead of Grep:**
+- Searching for a concept: "error handling", "database connection pooling"
+- Looking for code you can't name exactly
+- Finding related implementations across different naming conventions
 
-## Use with CLI agents (Claude CLI / Gemini CLI / Codex CLI)
+### `kairo_status`
 
-In your CLI’s MCP configuration, add a server that runs `kairo` over stdio:
+Check index health or trigger reindexing.
 
-- **Name:** `kairo`
-- **Command:** `node`
-- **Args:** `/absolute/path/to/kairo/dist/index.js --root /absolute/path/to/your/project`
-- **Env (optional):**
-  - `KAIRO_MODE=mcp`
-  - `KAIRO_PUBLIC_SURFACE=compact`
-  - `KAIRO_TOOL_SCHEMA_MODE=compat`
-  - `KAIRO_LOG_TO_FILE=true`
-  - `KAIRO_ALLOW_STDOUT_LOGS=false`
-  - `KAIRO_LOG_LEVEL=info` (optional)
+```
+kairo_status()                    # check status
+kairo_status(action: "reindex")   # rebuild index
+```
 
-If your CLI supports per-server permissions, prefer read-only by default and grant write only when you intend to apply changes.
+## Architecture
 
-## Data directory
+Full Rust. Single binary. No runtime dependencies.
 
-`kairo` writes indexes/caches/logs under `.kairo/` (including the native search index under `.kairo/data/index/.../v2-tantivy`). Add it to `.gitignore` (this repo already does).
+- **Search engine:** Tantivy (BM25F full-text index)
+- **MCP protocol:** rmcp SDK (JSON-RPC over stdio)
+- **File walking:** `ignore` crate (respects .gitignore)
+
+## v1 Archive
+
+The original TypeScript + Rust hybrid implementation (v1) is preserved in `.archive/v1/` along with 91 Architecture Decision Records in `docs/adr/`. These document the journey from a full orchestration server to this focused intelligence tool.
 
 ## License
 
-MIT (see `LICENSE`).
+MIT

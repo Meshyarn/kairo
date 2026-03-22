@@ -1,42 +1,16 @@
-# vscode settings
+# IDE
 .vscode
+.idea
 
-# kairo artifact files
+# Kairo runtime artifacts
 .kairo
 
-# Node artifact files
-node_modules
+# Rust build output
+target/
 
-# test output
-coverage
-
-# build output
-dist
-
-# bundled models (local only)
-models
-
-# benchmark files
-benchmarks/reports/
-benchmarks/runs/
-benchmarks/scripts/
-
-# rust build output
-target
-crates/core-rs/target
-
-# core-rs alternate build output
-core_rs.node
-crates/core-rs/core_rs.node
-
-# local doc scratchpads
+# Archive (v1 code preserved locally, accessible via git history)
 .archive
-.backup
 
-# local runtime artifacts
-.smart-context
-tmp
-
-# vitepress
-docs/.vitepress/cache
-docs/.vitepress/.temp
+# OS files
+.DS_Store
+Thumbs.db
