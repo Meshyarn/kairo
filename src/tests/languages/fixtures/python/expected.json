@@ -1,5 +1,0 @@
-{
-  "imports": ["os", "sys"],
-  "symbols": ["greet", "User"],
-  "skeletonIncludes": ["def greet"]
-}

@@ -1,6 +1,0 @@
-{
-  "imports": ["std::fmt"],
-  "exports": ["greet", "User"],
-  "symbols": ["greet", "User"],
-  "skeletonIncludes": ["fn greet"]
-}

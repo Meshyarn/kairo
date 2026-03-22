@@ -1,6 +1,0 @@
-{
-  "imports": ["java.util.List"],
-  "exports": ["Foo"],
-  "symbols": ["Foo", "bar"],
-  "skeletonIncludes": ["class Foo"]
-}
