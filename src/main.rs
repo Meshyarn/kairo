@@ -2,6 +2,7 @@ mod common;
 mod graph;
 mod mcp;
 mod search;
+mod watcher;
 
 use anyhow::Result;
 use tracing_subscriber::EnvFilter;

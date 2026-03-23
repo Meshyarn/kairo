@@ -5,7 +5,7 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 /// Known code file extensions
-const CODE_EXTENSIONS: &[&str] = &[
+pub const CODE_EXTENSIONS: &[&str] = &[
     "rs", "ts", "tsx", "js", "jsx", "py", "go", "java", "c", "cpp", "h", "hpp",
     "rb", "php", "swift", "kt", "scala", "zig", "lua", "sh", "bash", "zsh",
     "css", "scss", "html", "vue", "svelte", "sql", "proto", "toml", "yaml", "yml",
@@ -13,7 +13,13 @@ const CODE_EXTENSIONS: &[&str] = &[
 ];
 
 /// Max file size to index (1MB)
-const MAX_FILE_SIZE: u64 = 1_048_576;
+pub const MAX_FILE_SIZE: u64 = 1_048_576;
+
+/// Directories to always skip during walks
+pub const SKIP_DIRS: &[&str] = &[
+    "node_modules", "target", ".git", ".archive", "__pycache__", ".venv",
+    "vendor", "dist", "build", ".next", ".kairo",
+];
 
 pub struct SourceFile {
     pub path: PathBuf,
@@ -43,12 +49,7 @@ pub fn walk_directory(root: &Path) -> Result<Vec<SourceFile>> {
         .git_exclude(true)
         .filter_entry(|entry| {
             let name = entry.file_name().to_string_lossy();
-            // Skip common non-source directories
-            !matches!(
-                name.as_ref(),
-                "node_modules" | "target" | ".git" | ".archive" | "__pycache__" | ".venv"
-                    | "vendor" | "dist" | "build" | ".next" | ".kairo"
-            )
+            !SKIP_DIRS.contains(&name.as_ref())
         })
         .build();
 
@@ -111,4 +112,46 @@ pub fn walk_directory(root: &Path) -> Result<Vec<SourceFile>> {
     }
 
     Ok(files)
+}
+
+/// Read a single file as a SourceFile, applying the same filters as walk_directory.
+/// Returns None if the file doesn't qualify (wrong extension, too big, unreadable).
+pub fn read_source_file(root: &Path, relative_path: &str) -> Option<SourceFile> {
+    let full_path = root.join(relative_path);
+
+    // Check that file exists and is a file
+    let meta = std::fs::metadata(&full_path).ok()?;
+    if !meta.is_file() || meta.len() > MAX_FILE_SIZE {
+        return None;
+    }
+
+    let extension = full_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    if !CODE_EXTENSIONS.contains(&extension.as_str()) {
+        return None;
+    }
+
+    let content = std::fs::read_to_string(&full_path).ok()?;
+    let is_code = !matches!(extension.as_str(), "md" | "txt" | "rst" | "org");
+    let content_hash = hash_content(&content);
+
+    Some(SourceFile {
+        path: full_path,
+        relative_path: relative_path.to_string(),
+        content,
+        extension,
+        is_code,
+        content_hash,
+    })
+}
+
+/// Check if a path component is in the skip list
+pub fn should_skip_path(relative_path: &str) -> bool {
+    relative_path
+        .split('/')
+        .any(|component| SKIP_DIRS.contains(&component))
 }

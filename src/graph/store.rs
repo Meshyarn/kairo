@@ -273,6 +273,52 @@ impl ProjectGraph {
         }
     }
 
+    /// Remove a single file from the graph (for watcher delete events)
+    pub fn remove_file(&mut self, path: &str) {
+        self.edges.remove(path);
+        self.file_hashes.remove(path);
+        // Remove from reverse_edges where this file appears as a dependent
+        for deps in self.reverse_edges.values_mut() {
+            deps.remove(path);
+        }
+        self.reverse_edges.remove(path);
+        // Also clean forward edges pointing to this file
+        for deps in self.edges.values_mut() {
+            deps.remove(path);
+        }
+    }
+
+    /// Update a single file in the graph (for watcher modify/create events)
+    /// Returns true if edges changed
+    pub fn update_single(&mut self, file: &SourceFile, known_files: &HashSet<String>) -> bool {
+        if let Some(&old_hash) = self.file_hashes.get(&file.relative_path) {
+            if old_hash == file.content_hash {
+                return false;
+            }
+        }
+
+        let raw_imports = imports::extract_imports(&file.content, &file.extension);
+        let mut resolved: HashSet<String> = HashSet::new();
+
+        for imp in &raw_imports {
+            if let Some(target) = resolver::resolve_import(
+                &imp.specifier,
+                &file.relative_path,
+                &file.extension,
+                known_files,
+            ) {
+                if target != file.relative_path {
+                    resolved.insert(target);
+                }
+            }
+        }
+
+        self.edges.insert(file.relative_path.clone(), resolved);
+        self.file_hashes.insert(file.relative_path.clone(), file.content_hash);
+        self.rebuild_reverse();
+        true
+    }
+
     /// Total number of edges in the graph
     pub fn edge_count(&self) -> usize {
         self.edges.values().map(|s| s.len()).sum()
