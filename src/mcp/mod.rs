@@ -64,8 +64,10 @@ struct EmbeddingProgress {
     done: Arc<AtomicUsize>,
     /// Whether embedding is currently running
     active: Arc<AtomicBool>,
-    /// Cancel signal
-    cancel: Arc<AtomicBool>,
+    /// Monotonically increasing generation counter.
+    /// Each new embedding task gets its own generation; it stops if the counter
+    /// advances past its generation (i.e., a newer task has superseded it).
+    generation: Arc<AtomicU64>,
 }
 
 impl EmbeddingProgress {
@@ -74,7 +76,7 @@ impl EmbeddingProgress {
             total: Arc::new(AtomicUsize::new(0)),
             done: Arc::new(AtomicUsize::new(0)),
             active: Arc::new(AtomicBool::new(false)),
-            cancel: Arc::new(AtomicBool::new(false)),
+            generation: Arc::new(AtomicU64::new(0)),
         }
     }
 }
@@ -157,11 +159,8 @@ impl KairoServer {
 
         let progress = self.embedding_progress.clone();
 
-        // Cancel any running embedding
-        progress.cancel.store(true, Ordering::Relaxed);
-        std::thread::sleep(std::time::Duration::from_millis(50));
-
-        progress.cancel.store(false, Ordering::Relaxed);
+        // Bump generation — any currently running task will detect the change and stop.
+        let my_gen = progress.generation.fetch_add(1, Ordering::SeqCst) + 1;
         progress.done.store(0, Ordering::Relaxed);
         progress.active.store(true, Ordering::Relaxed);
 
@@ -197,8 +196,11 @@ impl KairoServer {
             let mut embedded = 0usize;
 
             for (path, chunks) in &file_chunks {
-                if progress.cancel.load(Ordering::Relaxed) {
-                    break;
+                // Stop if a newer embedding task has superseded this one
+                if progress.generation.load(Ordering::SeqCst) != my_gen {
+                    tracing::info!("Embedding task gen={} superseded, stopping.", my_gen);
+                    progress.active.store(false, Ordering::Relaxed);
+                    return;
                 }
 
                 for (chunk_idx, chunk) in chunks.iter().enumerate() {
@@ -225,6 +227,8 @@ impl KairoServer {
                                     }
                                     Err(e) => {
                                         tracing::warn!("Embedding batch failed: {}", e);
+                                        // Keep batch_entries in sync with cleared batch_texts
+                                        batch_entries.clear();
                                     }
                                 }
                             }
@@ -237,8 +241,8 @@ impl KairoServer {
                 }
             }
 
-            // Flush remaining
-            if !batch_texts.is_empty() && !progress.cancel.load(Ordering::Relaxed) {
+            // Flush remaining (only if still the current generation)
+            if !batch_texts.is_empty() && progress.generation.load(Ordering::SeqCst) == my_gen {
                 let remaining = batch_texts.len();
                 if let Ok(mut emb_guard) = embedder.lock() {
                     if let EmbedderState::Ready(ref mut emb) = &mut *emb_guard {
@@ -658,11 +662,14 @@ pub async fn serve_stdio_with_root(root: PathBuf) -> Result<()> {
 
     let mut server = KairoServer::new(root.clone());
 
-    // Start file watcher
+    // Start file watcher — bind re_embed callback to server.spawn_embedding so changed
+    // files are automatically re-embedded without the watcher knowing about the embedder.
+    let server_for_watcher = server.clone();
     let watcher = FileWatcher::new(
         root.clone(),
         server.index.clone(),
         server.graph.clone(),
+        Arc::new(move |paths| server_for_watcher.spawn_embedding(paths)),
     );
     server.watcher_state = Some(WatcherState {
         active: watcher.active.clone(),
@@ -671,22 +678,43 @@ pub async fn serve_stdio_with_root(root: PathBuf) -> Result<()> {
     });
     watcher.start();
 
-    // Try to load embedding model in background
-    let emb_clone = server.embedder.clone();
-    tokio::task::spawn_blocking(move || {
-        match embedder::try_load_embedder() {
-            Ok(state) => {
-                if let Ok(mut guard) = emb_clone.lock() {
-                    let is_ready = matches!(&state, EmbedderState::Ready(_));
-                    *guard = state;
-                    if is_ready {
-                        tracing::info!("Embedding model loaded successfully.");
-                    }
-                }
+    // Load embedding model and auto-embed, structured as a proper async task to avoid
+    // nested spawn_blocking (spawn_blocking → spawn_embedding → spawn_blocking).
+    let server_for_embed = server.clone();
+    tokio::spawn(async move {
+        // Phase 1: Load model (blocking IO) — await so spawn_embedding runs in async context
+        let load_result = tokio::task::spawn_blocking(embedder::try_load_embedder).await;
+        let state = match load_result {
+            Ok(Ok(s)) => s,
+            Ok(Err(e)) => { tracing::warn!("Failed to load embedding model: {}", e); return; }
+            Err(e) => { tracing::warn!("Embedding model load task panicked: {}", e); return; }
+        };
+
+        let is_ready = matches!(&state, EmbedderState::Ready(_));
+        if let Ok(mut guard) = server_for_embed.embedder.lock() {
+            *guard = state;
+        }
+        if !is_ready { return; }
+        tracing::info!("Embedding model loaded successfully.");
+
+        // Phase 2: Initialize index + check if auto-embed needed (blocking IO)
+        let server2 = server_for_embed.clone();
+        let paths = tokio::task::spawn_blocking(move || {
+            if let Err(e) = server2.ensure_index() {
+                tracing::warn!("Auto-embed: index init failed: {}", e);
+                return vec![];
             }
-            Err(e) => {
-                tracing::warn!("Failed to load embedding model: {}", e);
+            let idx_guard = server2.index.lock().unwrap_or_else(|e| e.into_inner());
+            match idx_guard.as_ref() {
+                Some(idx) if idx.vector_count() == 0 => idx.file_hashes_keys(),
+                _ => vec![],
             }
+        }).await.unwrap_or_default();
+
+        // Phase 3: Trigger embedding from async context (safe: spawn_embedding → spawn_blocking)
+        if !paths.is_empty() {
+            tracing::info!("Auto-embedding {} files on startup...", paths.len());
+            server_for_embed.spawn_embedding(paths);
         }
     });
 

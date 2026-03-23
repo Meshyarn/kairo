@@ -16,6 +16,10 @@ pub struct FileWatcher {
     root: PathBuf,
     index: Arc<Mutex<Option<SearchIndex>>>,
     graph: Arc<Mutex<ProjectGraph>>,
+    /// Called with paths of files that need re-embedding after a change.
+    /// Allows the MCP layer to trigger background embedding without the watcher
+    /// needing to know about the embedder directly.
+    re_embed: Arc<dyn Fn(Vec<String>) + Send + Sync>,
     /// Epoch millis of last successful index update
     pub last_update: Arc<AtomicU64>,
     /// Number of pending changes not yet processed
@@ -29,11 +33,13 @@ impl FileWatcher {
         root: PathBuf,
         index: Arc<Mutex<Option<SearchIndex>>>,
         graph: Arc<Mutex<ProjectGraph>>,
+        re_embed: Arc<dyn Fn(Vec<String>) + Send + Sync>,
     ) -> Self {
         Self {
             root,
             index,
             graph,
+            re_embed,
             last_update: Arc::new(AtomicU64::new(0)),
             pending_count: Arc::new(AtomicU64::new(0)),
             active: Arc::new(AtomicBool::new(false)),
@@ -46,12 +52,13 @@ impl FileWatcher {
         let root = self.root.clone();
         let index = self.index.clone();
         let graph = self.graph.clone();
+        let re_embed = self.re_embed.clone();
         let last_update = self.last_update.clone();
         let pending_count = self.pending_count.clone();
         let active = self.active.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = run_watcher(root, index, graph, last_update, pending_count, active).await {
+            if let Err(e) = run_watcher(root, index, graph, re_embed, last_update, pending_count, active).await {
                 tracing::error!("File watcher stopped: {}", e);
             }
         });
@@ -62,6 +69,7 @@ async fn run_watcher(
     root: PathBuf,
     index: Arc<Mutex<Option<SearchIndex>>>,
     graph: Arc<Mutex<ProjectGraph>>,
+    re_embed: Arc<dyn Fn(Vec<String>) + Send + Sync>,
     last_update: Arc<AtomicU64>,
     pending_count: Arc<AtomicU64>,
     active: Arc<AtomicBool>,
@@ -131,7 +139,7 @@ async fn run_watcher(
                 let batch: Vec<PathBuf> = pending.drain().collect();
                 pending_count.store(0, Ordering::Relaxed);
 
-                process_batch(&root, &batch, &index, &graph).await;
+                process_batch(&root, &batch, &index, &graph, &re_embed).await;
 
                 let now = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
@@ -156,6 +164,7 @@ async fn process_batch(
     paths: &[PathBuf],
     index: &Arc<Mutex<Option<SearchIndex>>>,
     graph: &Arc<Mutex<ProjectGraph>>,
+    re_embed: &Arc<dyn Fn(Vec<String>) + Send + Sync>,
 ) {
     let mut updated_files: Vec<SourceFile> = Vec::new();
     let mut deleted_paths: Vec<String> = Vec::new();
@@ -182,7 +191,8 @@ async fn process_batch(
         return;
     }
 
-    // Update search index
+    // Update search index; collect paths that actually changed content for re-embedding
+    let mut re_embed_paths: Vec<String> = Vec::new();
     if let Ok(mut idx_guard) = index.lock() {
         if let Some(ref mut idx) = *idx_guard {
             for path in &deleted_paths {
@@ -191,8 +201,10 @@ async fn process_batch(
                 }
             }
             for file in &updated_files {
-                if let Err(e) = idx.update_file(file) {
-                    tracing::warn!("Watcher: failed to update {} in index: {}", file.relative_path, e);
+                match idx.update_file(file) {
+                    Ok(true) => re_embed_paths.push(file.relative_path.clone()),
+                    Ok(false) => {} // content unchanged, skip
+                    Err(e) => tracing::warn!("Watcher: failed to update {} in index: {}", file.relative_path, e),
                 }
             }
         }
@@ -216,6 +228,12 @@ async fn process_batch(
         if let Err(e) = graph_guard.save(root) {
             tracing::warn!("Watcher: failed to save graph: {}", e);
         }
+    }
+
+    // Re-embed files whose content actually changed
+    if !re_embed_paths.is_empty() {
+        tracing::info!("Watcher: re-embedding {} changed file(s)", re_embed_paths.len());
+        re_embed(re_embed_paths);
     }
 
     tracing::info!(
