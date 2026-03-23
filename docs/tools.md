@@ -13,8 +13,8 @@ Hybrid semantic search over your codebase. Combines BM25 full-text and vector si
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `query` | string | required | Natural language or keyword query |
-| `scope` | string | `"all"` | Filter: `"code"`, `"docs"`, or `"all"` |
-| `limit` | number | `10` | Max results (1–50) |
+| `scope` | string | `"code"` | Filter: `"code"`, `"docs"`, or `"all"` |
+| `limit` | number | `10` | Max results |
 
 ### Examples
 
@@ -37,67 +37,63 @@ kairo_search(query: "configuration options", scope: "docs", limit: 5)
 
 Grep is better for exact string matches, symbol lookups, or when you know the precise identifier.
 
-### Result format
+### Search quality features
 
-```json
-{
-  "results": [
-    {
-      "file": "src/search/indexer.rs",
-      "score": 0.92,
-      "lines": "45-78",
-      "snippet": "..."
-    }
-  ],
-  "query": "retry logic",
-  "total": 7
-}
-```
+- **Scope-aware snippets** — results expand to enclosing function/struct boundaries
+- **Filename boosting** — files whose name matches the query rank higher (2x for basename, 1.3x for directory)
+- **Freshness indicator** — if the file watcher has pending changes, results include a note
 
 ---
 
 ## `kairo_status`
 
-Check index health or trigger a full rebuild.
+Check index health, trigger rebuilds, or download the embedding model.
 
 ### Parameters
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `action` | string | `"status"` | `"status"` or `"reindex"` |
+| `action` | string | `"check"` | `"check"`, `"reindex"`, or `"download-model"` |
 
-### Examples
+### Actions
+
+#### `check` (default)
 
 ```
-# Check status
 kairo_status()
+```
 
-# Rebuild index
+Shows document count, segments, vectors, graph size, embedding model state, file watcher state, and project root.
+
+#### `reindex`
+
+```
 kairo_status(action: "reindex")
 ```
 
-### Status output
+Full BM25 rebuild (synchronous) + dependency graph update + background vector embedding for changed files.
+
+#### `download-model`
 
 ```
-Kairo v2.0.0-alpha.1 — indexed
-Files: 231 | Chunks: 1847
-Graph: 13 nodes, 17 edges
-Embedding: ready (bge-small-en-v1.5, 384-dim)
+kairo_status(action: "download-model")
 ```
+
+Downloads bge-small-en-v1.5 (~32MB) from HuggingFace Hub to `~/.kairo/models/`. Run `reindex` after to build vector embeddings.
 
 ---
 
 ## `kairo_graph`
 
-Query the project dependency graph. Use when you need to understand which files import what, detect circular dependencies, or trace the impact path between two files.
+Query the project dependency graph. Understand module dependencies, detect circular imports, trace impact paths.
 
 ### Parameters
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `operation` | string | yes | `"deps"`, `"dependents"`, `"cycles"`, `"path"` |
-| `file` | string | for `deps`, `dependents`, `path` | Relative file path |
-| `target` | string | for `path` | Destination file for path tracing |
+| `operation` | string | yes | `"deps"`, `"dependents"`, `"cycles"`, `"path"`, `"impact"` |
+| `file` | string | for all except `cycles` | Relative file path |
+| `target` | string | for `path` only | Destination file for path tracing |
 
 ### Operations
 
@@ -107,27 +103,10 @@ Query the project dependency graph. Use when you need to understand which files 
 kairo_graph(operation: "deps", file: "src/mcp/mod.rs")
 ```
 
-```
-src/mcp/mod.rs imports:
-  src/common/fs.rs
-  src/graph/store.rs
-  src/search/indexer.rs
-  src/search/embedder.rs
-  (+ 2 more)
-```
-
 #### `dependents` — who imports this file?
 
 ```
 kairo_graph(operation: "dependents", file: "src/common/fs.rs")
-```
-
-```
-src/common/fs.rs is imported by:
-  src/mcp/mod.rs
-  src/search/indexer.rs
-  src/search/embedder.rs
-  src/graph/store.rs
 ```
 
 #### `cycles` — detect circular dependencies
@@ -136,7 +115,7 @@ src/common/fs.rs is imported by:
 kairo_graph(operation: "cycles")
 ```
 
-Returns all circular dependency chains, or "No cycles detected."
+Returns all circular dependency chains, or "No circular dependencies detected."
 
 #### `path` — shortest import path between two files
 
@@ -144,17 +123,22 @@ Returns all circular dependency chains, or "No cycles detected."
 kairo_graph(operation: "path", file: "src/main.rs", target: "src/common/fs.rs")
 ```
 
+#### `impact` — transitive impact analysis
+
 ```
-src/main.rs → src/mcp/mod.rs → src/common/fs.rs
+kairo_graph(operation: "impact", file: "src/common/fs.rs")
 ```
+
+Shows all files affected by changes, grouped by depth (direct vs indirect). Uses BFS through reverse dependency edges with a max depth of 10.
 
 ### Language support
 
 | Language | Extensions | Import patterns |
 |----------|------------|-----------------|
-| Rust | `.rs` | `use crate::`, `use super::` |
-| TypeScript/JavaScript | `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs` | `import from`, `require()` |
-| Python | `.py` | `import`, `from ... import` |
+| Rust | `.rs` | `use crate::`, `use super::`, `use self::` |
+| TypeScript/JavaScript | `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs` | `import from`, `require()`, `import()`, `export from` |
+| Python | `.py` | `import`, `from ... import` (relative + absolute) |
 | Go | `.go` | `import "..."`, multi-import blocks |
+| PHP | `.php` | `use Namespace\Class`, `require`, `include` |
 
 External dependencies (npm packages, crates.io, PyPI) are excluded — only intra-project edges are tracked.
