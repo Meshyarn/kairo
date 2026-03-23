@@ -7,6 +7,16 @@ use crate::common::fs::SourceFile;
 use crate::graph::imports;
 use crate::graph::resolver;
 
+/// Result of transitive impact analysis
+#[derive(Debug)]
+pub struct ImpactResult {
+    pub file: String,
+    /// Each element is a depth layer: layers[0] = direct dependents, layers[1] = depth 2, etc.
+    pub layers: Vec<Vec<String>>,
+    pub total: usize,
+    pub direct: usize,
+}
+
 /// Dependency graph for a project
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ProjectGraph {
@@ -219,6 +229,50 @@ impl ProjectGraph {
         None
     }
 
+    /// Transitive impact analysis: BFS through reverse_edges to find all
+    /// files affected by a change to the given file, grouped by depth.
+    pub fn impact(&self, file: &str) -> ImpactResult {
+        let mut layers: Vec<Vec<String>> = Vec::new();
+        let mut visited: HashSet<&str> = HashSet::new();
+        visited.insert(file);
+
+        let mut frontier: Vec<&str> = vec![file];
+        let max_depth = 10;
+
+        for _ in 0..max_depth {
+            let mut next_layer: Vec<String> = Vec::new();
+            let mut next_frontier: Vec<&str> = Vec::new();
+
+            for &node in &frontier {
+                if let Some(rev) = self.reverse_edges.get(node) {
+                    for dep in rev {
+                        if visited.insert(dep.as_str()) {
+                            next_layer.push(dep.clone());
+                            next_frontier.push(dep.as_str());
+                        }
+                    }
+                }
+            }
+
+            if next_layer.is_empty() {
+                break;
+            }
+            next_layer.sort();
+            layers.push(next_layer);
+            frontier = next_frontier;
+        }
+
+        let direct = layers.first().map(|l| l.len()).unwrap_or(0);
+        let total: usize = layers.iter().map(|l| l.len()).sum();
+
+        ImpactResult {
+            file: file.to_string(),
+            layers,
+            total,
+            direct,
+        }
+    }
+
     /// Total number of edges in the graph
     pub fn edge_count(&self) -> usize {
         self.edges.values().map(|s| s.len()).sum()
@@ -363,5 +417,46 @@ mod tests {
             ])
         );
         assert_eq!(graph.path_between("c.rs", "a.rs"), None);
+    }
+
+    #[test]
+    fn test_impact_analysis() {
+        // Graph: main → mcp → indexer → fs, main → fs, mcp → fs
+        let files = vec![
+            make_file(
+                "src/main.rs",
+                "use crate::mcp;\nuse crate::common::fs;",
+                "rs",
+            ),
+            make_file(
+                "src/mcp.rs",
+                "use crate::search::indexer;\nuse crate::common::fs;",
+                "rs",
+            ),
+            make_file("src/search/indexer.rs", "use crate::common::fs;", "rs"),
+            make_file("src/common/fs.rs", "use std::path::Path;", "rs"),
+        ];
+
+        let mut graph = ProjectGraph::default();
+        graph.update(&files);
+
+        // Impact of changing fs.rs
+        let result = graph.impact("src/common/fs.rs");
+        assert_eq!(result.direct, 3); // main, mcp, indexer all import fs directly
+        assert_eq!(result.total, 3); // no further propagation needed
+        assert_eq!(result.layers.len(), 1); // all at depth 1
+
+        // Impact of changing indexer.rs
+        let result = graph.impact("src/search/indexer.rs");
+        assert_eq!(result.direct, 1); // only mcp imports indexer
+        assert!(result.layers[0].contains(&"src/mcp.rs".to_string()));
+        // depth 2: main imports mcp
+        assert_eq!(result.total, 2); // mcp + main
+        assert_eq!(result.layers.len(), 2);
+
+        // Impact of changing main.rs — nothing imports main
+        let result = graph.impact("src/main.rs");
+        assert_eq!(result.total, 0);
+        assert!(result.layers.is_empty());
     }
 }

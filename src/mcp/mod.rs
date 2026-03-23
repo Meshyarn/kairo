@@ -501,7 +501,7 @@ impl KairoServer {
 
     #[tool(
         name = "kairo_graph",
-        description = "Query the project dependency graph. Shows import relationships between files. Use 'deps' to see what a file imports, 'dependents' to see who imports it, 'cycles' to find circular dependencies, 'path' to find how two files are connected."
+        description = "Query the project dependency graph. Shows import relationships between files. Use 'deps' to see what a file imports, 'dependents' to see who imports it, 'cycles' to find circular dependencies, 'path' to find how two files are connected, 'impact' to find all files transitively affected by a change."
     )]
     fn graph(&self, Parameters(params): Parameters<GraphParams>) -> Result<String, String> {
         self.ensure_index()?;
@@ -573,8 +573,31 @@ impl KairoServer {
                     )),
                 }
             }
+            "impact" => {
+                let file = params.file.as_deref()
+                    .ok_or("'file' parameter required for 'impact' operation")?;
+                let result = graph.impact(file);
+                if result.total == 0 {
+                    Ok(format!("No files are affected by changes to `{}`.", file))
+                } else {
+                    let mut out = format!("Impact analysis for `{}`:\n\n", file);
+                    for (i, layer) in result.layers.iter().enumerate() {
+                        let label = if i == 0 { "direct" } else { "indirect" };
+                        out.push_str(&format!("Depth {} ({}):\n", i + 1, label));
+                        for dep in layer {
+                            out.push_str(&format!("  ← `{}`\n", dep));
+                        }
+                        out.push('\n');
+                    }
+                    out.push_str(&format!(
+                        "Total: {} files affected ({} direct, {} indirect)",
+                        result.total, result.direct, result.total - result.direct
+                    ));
+                    Ok(out)
+                }
+            }
             other => Err(format!(
-                "Unknown operation '{}'. Use: deps, dependents, cycles, path",
+                "Unknown operation '{}'. Use: deps, dependents, cycles, path, impact",
                 other
             )),
         }
