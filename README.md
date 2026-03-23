@@ -5,40 +5,38 @@ Semantic code intelligence for AI agents — an MCP server powered by Tantivy.
 Kairo fills the gaps that AI coding agents (Claude Code, Copilot, etc.) can't cover natively:
 
 - **Concept search** — find code by meaning, not just keywords
+- **Dependency graph** — understand module dependencies, detect cycles, trace impact paths
 - **Impact analysis** — predict what breaks when you change something *(coming soon)*
-- **Project graphs** — understand module dependencies at a glance *(coming soon)*
 
 ## Quick Start
 
 ```bash
-# Build
 cargo build --release
-
-# The binary is at target/release/kairo
+# Binary: target/release/kairo
 ```
 
 ### Claude Code
 
-Add to your MCP config (`.claude/settings.json`):
+`.claude/settings.json`:
 
 ```json
 {
   "mcpServers": {
     "kairo": {
-      "command": "/path/to/kairo",
-      "args": []
+      "command": "/absolute/path/to/kairo",
+      "args": ["/path/to/your/project"]
     }
   }
 }
 ```
 
-Kairo automatically indexes your project on first use. No configuration needed.
+Kairo indexes your project on first use. No further configuration needed.
 
 ## Tools
 
 ### `kairo_search`
 
-Find code by concept, not just keywords. Use when Grep misses results.
+Hybrid semantic search (BM25 + vector, fused with RRF). Use when Grep misses results.
 
 ```
 kairo_search(query: "retry logic with backoff")
@@ -46,31 +44,39 @@ kairo_search(query: "authentication middleware", scope: "code")
 kairo_search(query: "API rate limiting", limit: 5)
 ```
 
-**When to use instead of Grep:**
-- Searching for a concept: "error handling", "database connection pooling"
-- Looking for code you can't name exactly
-- Finding related implementations across different naming conventions
+### `kairo_graph`
+
+Query the project dependency graph.
+
+```
+kairo_graph(operation: "deps", file: "src/mcp/mod.rs")
+kairo_graph(operation: "dependents", file: "src/common/fs.rs")
+kairo_graph(operation: "cycles")
+kairo_graph(operation: "path", file: "src/main.rs", target: "src/common/fs.rs")
+```
 
 ### `kairo_status`
 
-Check index health or trigger reindexing.
+Check index health or trigger a full rebuild.
 
 ```
-kairo_status()                    # check status
-kairo_status(action: "reindex")   # rebuild index
+kairo_status()
+kairo_status(action: "reindex")
 ```
+
+## Docs
+
+- [Getting Started](docs/getting-started.md)
+- [Tools Reference](docs/tools.md)
+- [Architecture](docs/architecture.md)
 
 ## Architecture
 
-Full Rust. Single binary. No runtime dependencies.
+Single Rust binary (~26MB). No runtime dependencies.
 
-- **Search engine:** Tantivy (BM25F full-text index)
-- **MCP protocol:** rmcp SDK (JSON-RPC over stdio)
-- **File walking:** `ignore` crate (respects .gitignore)
-
-## v1 Archive
-
-The original TypeScript + Rust hybrid implementation (v1) is preserved in `.archive/v1/` along with 91 Architecture Decision Records in `docs/adr/`. These document the journey from a full orchestration server to this focused intelligence tool.
+- **Search:** Tantivy BM25F + bge-small-en-v1.5 vectors, RRF fusion
+- **Graph:** regex-based import extraction, adjacency list, DFS/BFS algorithms
+- **Protocol:** rmcp 0.16, JSON-RPC 2.0 over stdio
 
 ## License
 

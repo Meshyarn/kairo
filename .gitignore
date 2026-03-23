@@ -2,6 +2,9 @@
 .vscode
 .idea
 
+# Claude Code workspace
+.claude
+
 # Kairo runtime artifacts
 .kairo
 
