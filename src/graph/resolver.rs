@@ -10,7 +10,7 @@ pub fn resolve_import(
     known_files: &HashSet<String>,
 ) -> Option<String> {
     match extension {
-        "rs" => resolve_rust(specifier, known_files),
+        "rs" => resolve_rust(specifier, source_file, known_files),
         "ts" | "tsx" | "js" | "jsx" | "mjs" => resolve_js_ts(specifier, source_file, known_files),
         "py" => resolve_python(specifier, source_file, known_files),
         "go" => resolve_go(specifier, known_files),
@@ -20,37 +20,84 @@ pub fn resolve_import(
 
 // --- Rust ---
 
-fn resolve_rust(specifier: &str, known_files: &HashSet<String>) -> Option<String> {
-    // Only resolve crate-internal imports
-    let path_part = if let Some(rest) = specifier.strip_prefix("crate::") {
-        rest
+fn resolve_rust(specifier: &str, source_file: &str, known_files: &HashSet<String>) -> Option<String> {
+    if let Some(rest) = specifier.strip_prefix("crate::") {
+        resolve_rust_module_path(rest, "src", known_files)
     } else if specifier.starts_with("super::") || specifier.starts_with("self::") {
-        // TODO: resolve relative to source file
-        return None;
+        resolve_rust_relative(specifier, source_file, known_files)
     } else {
         // External crate
-        return None;
-    };
+        None
+    }
+}
 
-    // Strip the final item if it's a type/function (not a module)
-    // e.g. "common::fs::walk_directory" → try "common::fs" first
+/// Resolve `self::` and `super::` relative imports.
+///
+/// Rust module hierarchy:
+/// - `src/search/indexer.rs` = module `crate::search::indexer`
+///   - `super::` → `crate::search` → dir `src/search/`
+///   - `super::super::` → `crate` → dir `src/`
+/// - `src/search/mod.rs` = module `crate::search`
+///   - `super::` → `crate` → dir `src/`
+fn resolve_rust_relative(
+    specifier: &str,
+    source_file: &str,
+    known_files: &HashSet<String>,
+) -> Option<String> {
+    let source_dir = Path::new(source_file).parent()?;
+    let filename = Path::new(source_file).file_name()?.to_str()?;
+    // mod.rs/main.rs/lib.rs represent their directory as a module.
+    // Regular files are submodules of their directory.
+    let is_module_file = matches!(filename, "mod.rs" | "main.rs" | "lib.rs");
+
+    if let Some(rest) = specifier.strip_prefix("self::") {
+        // self:: refers to the current module's directory
+        let base = source_dir.to_string_lossy();
+        resolve_rust_module_path(rest, &base, known_files)
+    } else {
+        // super:: — navigate up the module tree
+        let mut remaining = specifier;
+        let mut base = source_dir.to_path_buf();
+
+        if !is_module_file {
+            // For regular files (e.g. indexer.rs), first super:: goes to parent module
+            // which is the directory the file is in — no directory change needed
+            remaining = remaining.strip_prefix("super::")?;
+        }
+
+        // Each remaining super:: goes up one directory
+        while let Some(rest) = remaining.strip_prefix("super::") {
+            base = base.parent()?.to_path_buf();
+            remaining = rest;
+        }
+
+        let base_str = base.to_string_lossy();
+        resolve_rust_module_path(remaining, &base_str, known_files)
+    }
+}
+
+/// Resolve a `::` separated module path relative to a base directory
+fn resolve_rust_module_path(
+    path_part: &str,
+    base_dir: &str,
+    known_files: &HashSet<String>,
+) -> Option<String> {
     let module_path = path_part.split("::").collect::<Vec<_>>();
 
-    // Try progressively shorter paths
+    // Try progressively shorter paths (last segments may be types/functions)
     for len in (1..=module_path.len()).rev() {
         let segments = &module_path[..len];
-        // Strip any glob/group suffix from last segment
         let last = segments.last().unwrap();
         if last.starts_with('{') || *last == "*" {
             continue;
         }
 
-        let file_path = format!("src/{}.rs", segments.join("/"));
+        let file_path = format!("{}/{}.rs", base_dir, segments.join("/"));
         if known_files.contains(&file_path) {
             return Some(file_path);
         }
 
-        let mod_path = format!("src/{}/mod.rs", segments.join("/"));
+        let mod_path = format!("{}/{}/mod.rs", base_dir, segments.join("/"));
         if known_files.contains(&mod_path) {
             return Some(mod_path);
         }
@@ -268,6 +315,66 @@ mod tests {
         let known = files(&["src/app.ts"]);
         assert_eq!(resolve_import("react", "src/app.ts", "ts", &known), None);
         assert_eq!(resolve_import("lodash/merge", "src/app.ts", "ts", &known), None);
+    }
+
+    #[test]
+    fn test_rust_self_import() {
+        let known = files(&["src/search/query.rs", "src/search/mod.rs"]);
+        assert_eq!(
+            resolve_import("self::query", "src/search/mod.rs", "rs", &known),
+            Some("src/search/query.rs".to_string())
+        );
+        assert_eq!(
+            resolve_import("self::query::SearchResult", "src/search/mod.rs", "rs", &known),
+            Some("src/search/query.rs".to_string())
+        );
+    }
+
+    #[test]
+    fn test_rust_super_import() {
+        let known = files(&["src/common/fs.rs", "src/search/query.rs", "src/search/indexer.rs"]);
+        // super:: from indexer.rs (regular file) → parent module = search dir
+        // super::query from indexer.rs → crate::search::query → src/search/query.rs
+        assert_eq!(
+            resolve_import("super::query", "src/search/indexer.rs", "rs", &known),
+            Some("src/search/query.rs".to_string())
+        );
+        // super:: from mod.rs → parent module = src/
+        // super::common::fs from src/search/mod.rs → crate::common::fs → src/common/fs.rs
+        assert_eq!(
+            resolve_import("super::common::fs", "src/search/mod.rs", "rs", &known),
+            Some("src/common/fs.rs".to_string())
+        );
+    }
+
+    #[test]
+    fn test_rust_super_from_root() {
+        let known = files(&["src/main.rs"]);
+        // super:: from main.rs (module file at crate root) — no parent
+        assert_eq!(
+            resolve_import("super::something", "src/main.rs", "rs", &known),
+            None
+        );
+    }
+
+    #[test]
+    fn test_rust_chained_super() {
+        let known = files(&["src/common/fs.rs", "src/search/deep/nested.rs"]);
+        // nested.rs (regular file): first super:: → src/search/deep/, second → src/search/, third → src/
+        // But the specifier is super::super::common::fs:
+        // 1st super:: (free for regular file) → src/search/deep/
+        // 2nd super:: → src/search/
+        // Then common::fs → src/search/common/fs.rs — doesn't exist
+        // Need 3 supers to reach src/: super::super::super::common::fs
+        assert_eq!(
+            resolve_import("super::super::super::common::fs", "src/search/deep/nested.rs", "rs", &known),
+            Some("src/common/fs.rs".to_string())
+        );
+        // With only 2 supers, reaches src/search/ — no common/fs.rs there
+        assert_eq!(
+            resolve_import("super::super::common::fs", "src/search/deep/nested.rs", "rs", &known),
+            None
+        );
     }
 
     #[test]
