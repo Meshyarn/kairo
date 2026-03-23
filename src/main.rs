@@ -4,6 +4,38 @@ mod mcp;
 mod search;
 mod watcher;
 
+// glibc 2.38+ compatibility stubs for systems with older glibc (e.g. Debian 12 / glibc 2.36).
+// ort.pyke.io distributes libonnxruntime.a built with GCC 14 which emits __isoc23_strtol* calls;
+// these are functionally identical to their non-C23 counterparts.
+#[cfg(target_os = "linux")]
+mod glibc_compat {
+    use std::ffi::{c_char, c_int, c_long, c_longlong, c_ulong, c_ulonglong};
+
+    extern "C" {
+        fn strtol(s: *const c_char, e: *mut *mut c_char, b: c_int) -> c_long;
+        fn strtoll(s: *const c_char, e: *mut *mut c_char, b: c_int) -> c_longlong;
+        fn strtoul(s: *const c_char, e: *mut *mut c_char, b: c_int) -> c_ulong;
+        fn strtoull(s: *const c_char, e: *mut *mut c_char, b: c_int) -> c_ulonglong;
+    }
+
+    #[no_mangle]
+    pub unsafe extern "C" fn __isoc23_strtol(s: *const c_char, e: *mut *mut c_char, b: c_int) -> c_long {
+        strtol(s, e, b)
+    }
+    #[no_mangle]
+    pub unsafe extern "C" fn __isoc23_strtoll(s: *const c_char, e: *mut *mut c_char, b: c_int) -> c_longlong {
+        strtoll(s, e, b)
+    }
+    #[no_mangle]
+    pub unsafe extern "C" fn __isoc23_strtoul(s: *const c_char, e: *mut *mut c_char, b: c_int) -> c_ulong {
+        strtoul(s, e, b)
+    }
+    #[no_mangle]
+    pub unsafe extern "C" fn __isoc23_strtoull(s: *const c_char, e: *mut *mut c_char, b: c_int) -> c_ulonglong {
+        strtoull(s, e, b)
+    }
+}
+
 use anyhow::Result;
 use tracing_subscriber::EnvFilter;
 
