@@ -1,7 +1,5 @@
 use anyhow::Result;
 use ignore::WalkBuilder;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 /// Known code file extensions
@@ -31,11 +29,18 @@ pub struct SourceFile {
     pub content_hash: u64,
 }
 
-/// Compute a fast hash of file content for change detection
+/// Compute a stable hash of file content for change detection.
+/// Uses FNV-1a which is deterministic across Rust versions and platforms,
+/// unlike `DefaultHasher` which is not guaranteed to be stable.
 pub fn hash_content(content: &str) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    content.hash(&mut hasher);
-    hasher.finish()
+    const FNV_OFFSET: u64 = 14695981039346656037;
+    const FNV_PRIME: u64 = 1099511628211;
+    let mut hash = FNV_OFFSET;
+    for byte in content.bytes() {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
 }
 
 /// Walk a directory respecting .gitignore and return indexable files
