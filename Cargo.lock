@@ -1184,6 +1184,7 @@ dependencies = [
  "ignore",
  "notify",
  "ort",
+ "regex",
  "rmcp",
  "serde",
  "serde_json",

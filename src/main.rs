@@ -1,4 +1,5 @@
 mod common;
+mod graph;
 mod mcp;
 mod search;
 
