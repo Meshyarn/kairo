@@ -23,7 +23,7 @@ struct SearchParams {
     query: String,
 
     /// Search scope (default: code)
-    #[schemars(description = "Search scope: 'code', 'docs', or 'all'")]
+    #[schemars(description = "Search scope: 'code' (default), 'docs', or 'all'")]
     scope: Option<String>,
 
     /// Max results (default: 10)
@@ -43,7 +43,7 @@ struct StatusParams {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct GraphParams {
     /// Operation to perform
-    #[schemars(description = "Operation: 'deps' (what does a file import?), 'dependents' (who imports this file?), 'cycles' (find circular deps), 'path' (shortest dependency path between two files)")]
+    #[schemars(description = "Operation: 'deps' (what does a file import?), 'dependents' (who imports this file?), 'cycles' (find circular deps), 'path' (shortest dependency path between two files), 'impact' (all files transitively affected by a change)")]
     operation: String,
 
     /// Relative file path (required for deps, dependents, path)
@@ -307,8 +307,12 @@ impl KairoServer {
         let scope = params.scope.as_deref().unwrap_or("code");
         let limit = params.limit.unwrap_or(10);
 
-        // Try to get embedder for hybrid search (non-blocking — skip if busy embedding)
+        // Try to get embedder for hybrid search (non-blocking — skip if busy embedding).
+        // Capture availability BEFORE moving embedder_opt into search(), so we can report
+        // the actual mode used for this specific query (not just "do vectors exist?").
         let mut emb_guard = self.embedder.try_lock().ok();
+        let embedder_available = emb_guard.as_ref()
+            .map_or(false, |g| matches!(**g, EmbedderState::Ready(_)));
         let embedder_opt = emb_guard.as_mut().and_then(|g| match &mut **g {
             EmbedderState::Ready(e) => Some(e),
             _ => None,
@@ -319,23 +323,44 @@ impl KairoServer {
             .map_err(|e| e.to_string())?;
 
         if results.is_empty() {
+            if index.is_empty() {
+                return Ok(
+                    "No results: the search index is empty. \
+                     Run kairo_status action=reindex to build it."
+                        .to_string(),
+                );
+            }
             return Ok(
-                "No results found. Try broader terms or check if the index is up to date."
+                "No results found for this query. Try broader terms or different keywords."
                     .to_string(),
             );
         }
 
-        let has_vectors = index.vector_count() > 0;
-        let mode = if has_vectors { "hybrid (BM25 + vector)" } else { "BM25 only" };
+        // Report mode based on what actually happened this query, not just whether vectors exist.
+        let mode = match (embedder_available, index.vector_count() > 0) {
+            (true, true)  => "hybrid (BM25 + vector)",
+            (false, true) => "BM25 only (embedder busy — retry for hybrid)",
+            _             => "BM25 only",
+        };
 
         let mut output = format!("_Search mode: {}_\n\n", mode);
         for (i, result) in results.iter().enumerate() {
             output.push_str(&format!(
-                "### {} (score: {:.2})\n`{}`\n```\n{}\n```\n\n",
+                "### {} (score: {:.4})\n`{}`\n```\n{}\n```\n\n",
                 i + 1,
                 result.score,
                 result.path,
                 result.snippet,
+            ));
+        }
+
+        // Score range: helps agent judge result quality (RRF max ≈ 0.0328)
+        if results.len() > 1 {
+            let top = results[0].score;
+            let bot = results.last().unwrap().score;
+            output.push_str(&format!(
+                "_Score range: {:.4} (best) … {:.4} (#{}). RRF max ≈ 0.0328_\n",
+                top, bot, results.len()
             ));
         }
 
@@ -492,7 +517,7 @@ impl KairoServer {
                     let vec_count = index.vector_count();
 
                     let graph_guard = self.graph.lock().unwrap_or_else(|e| e.into_inner());
-                    let graph_nodes = graph_guard.node_count();
+                    let graph_files = graph_guard.file_hashes.len();
                     let graph_edges = graph_guard.edge_count();
                     drop(graph_guard);
 
@@ -509,18 +534,31 @@ impl KairoServer {
                         None => "not configured".to_string(),
                     };
 
+                    // Single readiness verdict so agents don't have to reason across 7 fields
+                    let readiness = if doc_count == 0 {
+                        "NOT READY — index empty, run kairo_status action=reindex"
+                    } else if self.embedding_progress.active.load(Ordering::Relaxed) {
+                        "WARMING UP — embedding in progress, BM25 search available"
+                    } else if model_status.starts_with("loaded") {
+                        "READY — hybrid search available"
+                    } else {
+                        "READY — BM25 only (run action=download-model for hybrid)"
+                    };
+
                     Ok(format!(
                         "Kairo Index Status:\n\
+                         - Readiness: {}\n\
                          - Documents: {}\n\
                          - Segments: {}\n\
                          - Vectors: {}\n\
-                         - Graph: {} nodes, {} edges\n\
+                         - Graph: {} files tracked, {} dependency edges\n\
                          - Embedding model: {}\n\
                          - Embedding task: {}\n\
                          - File watcher: {}\n\
                          - Root: {}",
+                        readiness,
                         doc_count, segment_count, vec_count,
-                        graph_nodes, graph_edges,
+                        graph_files, graph_edges,
                         model_status, embedding_status, watcher_status,
                         self.root.display()
                     ))
@@ -549,9 +587,20 @@ impl KairoServer {
             "deps" => {
                 let file = params.file.as_deref()
                     .ok_or("'file' parameter required for 'deps' operation")?;
+                if !graph.file_hashes.contains_key(file) {
+                    return Err(format!(
+                        "`{}` is not in the dependency graph. Verify the path is correct \
+                         and the index is up to date (kairo_status action=reindex).",
+                        file
+                    ));
+                }
                 let deps = graph.deps(file);
                 if deps.is_empty() {
-                    Ok(format!("`{}` has no internal dependencies.", file))
+                    Ok(format!(
+                        "`{}` has no internal dependencies. \
+                         (file is indexed; it imports nothing from this project)",
+                        file
+                    ))
                 } else {
                     let mut out = format!("Dependencies of `{}`:\n", file);
                     for dep in &deps {
@@ -564,9 +613,20 @@ impl KairoServer {
             "dependents" => {
                 let file = params.file.as_deref()
                     .ok_or("'file' parameter required for 'dependents' operation")?;
+                if !graph.file_hashes.contains_key(file) {
+                    return Err(format!(
+                        "`{}` is not in the dependency graph. Verify the path is correct \
+                         and the index is up to date (kairo_status action=reindex).",
+                        file
+                    ));
+                }
                 let deps = graph.dependents(file);
                 if deps.is_empty() {
-                    Ok(format!("No files depend on `{}`.", file))
+                    Ok(format!(
+                        "No files depend on `{}`. \
+                         (file is indexed; nothing in this project imports it)",
+                        file
+                    ))
                 } else {
                     let mut out = format!("Dependents of `{}`:\n", file);
                     for dep in &deps {
@@ -596,6 +656,16 @@ impl KairoServer {
                     .ok_or("'file' parameter required for 'path' operation")?;
                 let to = params.target.as_deref()
                     .ok_or("'target' parameter required for 'path' operation")?;
+                // Check both endpoints exist before running BFS
+                for f in [from, to] {
+                    if !graph.file_hashes.contains_key(f) {
+                        return Err(format!(
+                            "`{}` is not in the dependency graph. Verify the path is correct \
+                             and the index is up to date (kairo_status action=reindex).",
+                            f
+                        ));
+                    }
+                }
                 match graph.path_between(from, to) {
                     Some(path) => {
                         let chain: Vec<String> = path.iter().map(|s| format!("`{}`", s)).collect();
@@ -606,7 +676,8 @@ impl KairoServer {
                         ))
                     }
                     None => Ok(format!(
-                        "No dependency path from `{}` to `{}`.",
+                        "No dependency path from `{}` to `{}`. \
+                         (both files are indexed; they are not connected)",
                         from, to
                     )),
                 }
@@ -614,9 +685,20 @@ impl KairoServer {
             "impact" => {
                 let file = params.file.as_deref()
                     .ok_or("'file' parameter required for 'impact' operation")?;
+                if !graph.file_hashes.contains_key(file) {
+                    return Err(format!(
+                        "`{}` is not in the dependency graph. Verify the path is correct \
+                         and the index is up to date (kairo_status action=reindex).",
+                        file
+                    ));
+                }
                 let result = graph.impact(file);
                 if result.total == 0 {
-                    Ok(format!("No files are affected by changes to `{}`.", file))
+                    Ok(format!(
+                        "No files are affected by changes to `{}`. \
+                         (file is indexed; nothing imports it)",
+                        file
+                    ))
                 } else {
                     let mut out = format!("Impact analysis for `{}`:\n\n", file);
                     for (i, layer) in result.layers.iter().enumerate() {
