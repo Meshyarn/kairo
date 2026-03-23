@@ -670,36 +670,77 @@ enum QueryIntent {
 
 fn detect_intent(query: &str) -> QueryIntent {
     if query.contains('/') || query.contains('\\') {
-        QueryIntent::Path
-    } else if query.contains("::") || query.contains('.') || query.chars().any(|c| c.is_uppercase())
-    {
-        QueryIntent::Symbol
-    } else {
-        QueryIntent::General
+        return QueryIntent::Path;
     }
-}
-
-fn extract_symbols(content: &str) -> String {
-    let mut symbols = Vec::new();
-    let mut current = String::new();
-
-    for ch in content.chars() {
-        if ch.is_alphanumeric() || ch == '_' {
-            current.push(ch);
-        } else {
-            if current.len() >= 3 {
-                symbols.push(current.clone());
-            }
-            current.clear();
+    // Qualified path separator (Rust, C++)
+    if query.contains("::") {
+        return QueryIntent::Symbol;
+    }
+    // Single-word query: check if it looks like a code identifier
+    if !query.contains(' ') {
+        let w = query;
+        // dotted.access (e.g. std.io) — but not a sentence ending with punctuation
+        if w.contains('.') && !w.ends_with('.') {
+            return QueryIntent::Symbol;
+        }
+        // snake_case or CamelCase
+        if w.contains('_') || w.chars().any(|c| c.is_uppercase()) {
+            return QueryIntent::Symbol;
         }
     }
-    if current.len() >= 3 {
-        symbols.push(current);
+    QueryIntent::General
+}
+
+/// Extract only definition-site identifiers (function names, struct names, class names, etc.)
+/// by matching against known block-starter prefixes.  This is intentionally narrow: we only
+/// want the `symbols` field to contain things a user might search by name, not every English
+/// word that happens to appear in the file.
+fn extract_symbols(content: &str) -> String {
+    let mut symbols = Vec::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+        for starter in BLOCK_STARTERS {
+            if trimmed.starts_with(starter) {
+                let after = trimmed[starter.len()..].trim_start();
+                // Skip generic type parameters: impl<T: Foo> → skip to after '>'
+                let rest = skip_generics(after);
+                let ident: String = rest
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect();
+                if ident.len() >= 2 {
+                    symbols.push(ident);
+                }
+                break;
+            }
+        }
     }
 
     symbols.sort();
     symbols.dedup();
     symbols.join(" ")
+}
+
+/// Skip a balanced `<...>` generic block at the start of `s`, return the rest trimmed.
+fn skip_generics(s: &str) -> &str {
+    if !s.starts_with('<') {
+        return s;
+    }
+    let mut depth = 0usize;
+    for (i, c) in s.char_indices() {
+        match c {
+            '<' => depth += 1,
+            '>' => {
+                depth -= 1;
+                if depth == 0 {
+                    return s[i + 1..].trim_start();
+                }
+            }
+            _ => {}
+        }
+    }
+    s // unbalanced — return original to avoid losing content
 }
 
 fn read_chunk_snippet(root: &Path, rel_path: &str, offset: u32, len: u32) -> String {
@@ -796,6 +837,10 @@ mod tests {
     fn test_detect_intent_general() {
         assert!(matches!(detect_intent("find code that handles authentication"), QueryIntent::General));
         assert!(matches!(detect_intent("error handling"), QueryIntent::General));
+        // Multi-word queries should not be mis-classified as Symbol just because of capitalization
+        assert!(matches!(detect_intent("How does BM25 work"), QueryIntent::General));
+        assert!(matches!(detect_intent("What is the RRF fusion algorithm"), QueryIntent::General));
+        assert!(matches!(detect_intent("error handling in std.io module"), QueryIntent::General));
     }
 
     #[test]
@@ -803,8 +848,30 @@ mod tests {
         let content = "fn hello_world() { let x = 42; }";
         let symbols = extract_symbols(content);
         assert!(symbols.contains("hello_world"));
-        // "fn" is only 2 chars, filtered out
-        assert!(!symbols.contains(" fn "));
+        // Only definition-site identifiers — "fn" keyword itself should not appear
+        assert!(!symbols.contains("fn"));
+    }
+
+    #[test]
+    fn test_extract_symbols_definition_context_only() {
+        let content = "pub struct VecEntry {\n    path: String,\n    value: u32,\n}\npub fn search_index() {}";
+        let symbols = extract_symbols(content);
+        // Definition identifiers ARE extracted
+        assert!(symbols.contains("VecEntry"));
+        assert!(symbols.contains("search_index"));
+        // Field names / local variables are NOT extracted (not definition-site starters)
+        assert!(!symbols.contains("value"));
+    }
+
+    #[test]
+    fn test_extract_symbols_skips_generics() {
+        // "impl Foo<T>" — starter "impl " matches, then take_while stops at '<'
+        let content = "impl ProjectGraph<T> {}\npub fn search<T>() {}";
+        let symbols = extract_symbols(content);
+        assert!(symbols.contains("ProjectGraph"));
+        assert!(symbols.contains("search"));
+        // Generic param T should not appear as a standalone symbol
+        assert!(!symbols.split_whitespace().any(|s| s == "T"));
     }
 
     #[test]
