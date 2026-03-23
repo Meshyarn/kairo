@@ -31,12 +31,15 @@ impl std::fmt::Debug for Embedder {
 
 impl Embedder {
     pub fn load(model_dir: &Path) -> Result<Self> {
-        let model_path = model_dir.join("model.onnx");
+        // Accept either model.onnx or model_quantized.onnx
+        let model_path = if model_dir.join("model.onnx").exists() {
+            model_dir.join("model.onnx")
+        } else if model_dir.join("model_quantized.onnx").exists() {
+            model_dir.join("model_quantized.onnx")
+        } else {
+            anyhow::bail!("No ONNX model found in {}", model_dir.display());
+        };
         let tokenizer_path = model_dir.join("tokenizer.json");
-
-        if !model_path.exists() {
-            anyhow::bail!("model.onnx not found in {}", model_dir.display());
-        }
         if !tokenizer_path.exists() {
             anyhow::bail!("tokenizer.json not found in {}", model_dir.display());
         }
@@ -179,25 +182,63 @@ impl Embedder {
 }
 
 pub fn try_load_embedder() -> Result<EmbedderState> {
-    let model_dir = default_model_dir()?;
-    let model_path = model_dir.join("model.onnx");
-    let tokenizer_path = model_dir.join("tokenizer.json");
+    // Try bundled model first (next to binary), then user-local cache
+    let model_dir = find_model_dir()?;
 
-    if !model_path.exists() || !tokenizer_path.exists() {
-        tracing::info!(
-            "Embedding model not found at {}. Running in BM25-only mode.",
-            model_dir.display()
-        );
-        return Ok(EmbedderState::Unavailable);
-    }
-
-    match Embedder::load(&model_dir) {
-        Ok(embedder) => Ok(EmbedderState::Ready(embedder)),
-        Err(e) => {
-            tracing::warn!("Failed to load embedding model: {}. Falling back to BM25-only.", e);
+    match model_dir {
+        Some(dir) => match Embedder::load(&dir) {
+            Ok(embedder) => Ok(EmbedderState::Ready(embedder)),
+            Err(e) => {
+                tracing::warn!("Failed to load embedding model: {}. Falling back to BM25-only.", e);
+                Ok(EmbedderState::Unavailable)
+            }
+        },
+        None => {
+            tracing::info!("Embedding model not found. Running in BM25-only mode. Use `kairo_status action=download-model` to enable hybrid search.");
             Ok(EmbedderState::Unavailable)
         }
     }
+}
+
+/// Search for model files in multiple locations
+fn find_model_dir() -> Result<Option<PathBuf>> {
+    let model_subdir = "bge-small-en-v1.5";
+
+    // 1. Bundled: models/ next to the binary
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            let bundled = exe_dir.join("models").join(model_subdir);
+            if has_model_files(&bundled) {
+                tracing::info!("Using bundled model at {}", bundled.display());
+                return Ok(Some(bundled));
+            }
+            // Also check one level up (for cargo run from target/release/)
+            if let Some(parent) = exe_dir.parent() {
+                if let Some(grandparent) = parent.parent() {
+                    let bundled = grandparent.join("models").join(model_subdir);
+                    if has_model_files(&bundled) {
+                        tracing::info!("Using bundled model at {}", bundled.display());
+                        return Ok(Some(bundled));
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. User-local: ~/.kairo/models/
+    let user_dir = default_model_dir()?;
+    if has_model_files(&user_dir) {
+        return Ok(Some(user_dir));
+    }
+
+    Ok(None)
+}
+
+fn has_model_files(dir: &Path) -> bool {
+    // Accept either model.onnx or model_quantized.onnx
+    let has_model = dir.join("model.onnx").exists() || dir.join("model_quantized.onnx").exists();
+    let has_tokenizer = dir.join("tokenizer.json").exists();
+    has_model && has_tokenizer
 }
 
 /// Download bge-small-en-v1.5 int8 quantized model from HuggingFace
