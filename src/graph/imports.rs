@@ -45,12 +45,40 @@ fn rust_use_re() -> &'static Regex {
 
 fn extract_rust(content: &str) -> Vec<RawImport> {
     let re = rust_use_re();
-    re.captures_iter(content)
-        .map(|cap| RawImport {
-            specifier: cap[1].to_string(),
-            kind: ImportKind::Use,
-        })
-        .collect()
+    let mut imports = Vec::new();
+
+    for cap in re.captures_iter(content) {
+        let specifier = cap[1].to_string();
+
+        // Expand grouped imports: `crate::foo::{a, b as c, self}` →
+        // individual specifiers `crate::foo::a`, `crate::foo::b`, `crate::foo`
+        if let Some(brace_pos) = specifier.find("::{") {
+            let prefix = &specifier[..brace_pos];
+            let inner = specifier[brace_pos + 3..].trim_end_matches('}');
+            for item in inner.split(',') {
+                // Strip `as alias` and surrounding whitespace
+                let item = item
+                    .trim()
+                    .splitn(2, " as ")
+                    .next()
+                    .unwrap_or("")
+                    .trim();
+                // `self` in braces refers to the module/file itself
+                let resolved = if item == "self" {
+                    prefix.to_string()
+                } else if item.is_empty() || item == "*" {
+                    continue;
+                } else {
+                    format!("{}::{}", prefix, item)
+                };
+                imports.push(RawImport { specifier: resolved, kind: ImportKind::Use });
+            }
+        } else {
+            imports.push(RawImport { specifier, kind: ImportKind::Use });
+        }
+    }
+
+    imports
 }
 
 // --- TypeScript / JavaScript ---
@@ -277,12 +305,34 @@ use anyhow::{Context, Result};
 use super::query::SearchResult;
 "#;
         let imports = extract_imports(code, "rs");
-        assert_eq!(imports.len(), 5);
-        assert_eq!(imports[0].specifier, "crate::common::fs");
-        assert_eq!(imports[1].specifier, "crate::search::indexer::SearchIndex");
-        assert_eq!(imports[2].specifier, "std::collections::HashMap");
-        assert_eq!(imports[3].specifier, "anyhow::{Context, Result}");
-        assert_eq!(imports[4].specifier, "super::query::SearchResult");
+        let specs: Vec<&str> = imports.iter().map(|i| i.specifier.as_str()).collect();
+        // anyhow::{Context, Result} expands to two specifiers
+        assert_eq!(imports.len(), 6);
+        assert!(specs.contains(&"crate::common::fs"));
+        assert!(specs.contains(&"crate::search::indexer::SearchIndex"));
+        assert!(specs.contains(&"std::collections::HashMap"));
+        assert!(specs.contains(&"anyhow::Context"));
+        assert!(specs.contains(&"anyhow::Result"));
+        assert!(specs.contains(&"super::query::SearchResult"));
+    }
+
+    #[test]
+    fn test_rust_grouped_import_expansion() {
+        // Grouped imports are expanded into individual specifiers
+        let code = "use crate::search::embedder::{self, EmbedderState};\n\
+                    use crate::search::{indexer, chunker};\n\
+                    use std::sync::{Arc, Mutex as Lock};";
+        let imports = extract_imports(code, "rs");
+        let specs: Vec<&str> = imports.iter().map(|i| i.specifier.as_str()).collect();
+        // {self, EmbedderState} → embedder + embedder::EmbedderState
+        assert!(specs.contains(&"crate::search::embedder"));
+        assert!(specs.contains(&"crate::search::embedder::EmbedderState"));
+        // {indexer, chunker} → two specifiers
+        assert!(specs.contains(&"crate::search::indexer"));
+        assert!(specs.contains(&"crate::search::chunker"));
+        // alias `as Lock` is stripped
+        assert!(specs.contains(&"std::sync::Mutex"));
+        assert!(!specs.iter().any(|s| s.contains("as Lock")));
     }
 
     #[test]

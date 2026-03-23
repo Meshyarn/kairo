@@ -317,6 +317,41 @@ impl ProjectGraph {
         true
     }
 
+    /// Update multiple files in one pass, rebuilding reverse edges only once at the end.
+    /// More efficient than calling update_single() in a loop for batch watcher events.
+    /// Returns true if any file actually changed.
+    pub fn update_batch(&mut self, files: &[SourceFile], known_files: &HashSet<String>) -> bool {
+        let mut changed = false;
+        for file in files {
+            if let Some(&old_hash) = self.file_hashes.get(&file.relative_path) {
+                if old_hash == file.content_hash {
+                    continue;
+                }
+            }
+            let raw_imports = imports::extract_imports(&file.content, &file.extension);
+            let mut resolved: HashSet<String> = HashSet::new();
+            for imp in &raw_imports {
+                if let Some(target) = resolver::resolve_import(
+                    &imp.specifier,
+                    &file.relative_path,
+                    &file.extension,
+                    known_files,
+                ) {
+                    if target != file.relative_path {
+                        resolved.insert(target);
+                    }
+                }
+            }
+            self.edges.insert(file.relative_path.clone(), resolved);
+            self.file_hashes.insert(file.relative_path.clone(), file.content_hash);
+            changed = true;
+        }
+        if changed {
+            self.rebuild_reverse();
+        }
+        changed
+    }
+
     /// Total number of edges in the graph
     pub fn edge_count(&self) -> usize {
         self.edges.values().map(|s| s.len()).sum()

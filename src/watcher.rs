@@ -221,9 +221,7 @@ async fn process_batch(
         for path in &deleted_paths {
             graph_guard.remove_file(path);
         }
-        for file in &updated_files {
-            graph_guard.update_single(file, &known_files);
-        }
+        graph_guard.update_batch(&updated_files, &known_files);
 
         if let Err(e) = graph_guard.save(root) {
             tracing::warn!("Watcher: failed to save graph: {}", e);
