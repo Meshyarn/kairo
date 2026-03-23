@@ -503,4 +503,79 @@ mod tests {
         assert_eq!(result.total, 0);
         assert!(result.layers.is_empty());
     }
+
+    #[test]
+    fn test_remove_file() {
+        let files = vec![
+            make_file("src/main.rs", "use crate::common::fs;", "rs"),
+            make_file("src/common/fs.rs", "use std::path::Path;", "rs"),
+        ];
+        let mut graph = ProjectGraph::default();
+        graph.update(&files);
+
+        assert_eq!(graph.deps("src/main.rs"), vec!["src/common/fs.rs"]);
+        assert_eq!(graph.dependents("src/common/fs.rs"), vec!["src/main.rs"]);
+
+        graph.remove_file("src/common/fs.rs");
+
+        // Forward edge should be cleaned
+        assert!(graph.deps("src/main.rs").is_empty() ||
+                !graph.deps("src/main.rs").contains(&"src/common/fs.rs".to_string()));
+        // Reverse edge should be cleaned
+        assert!(graph.dependents("src/common/fs.rs").is_empty());
+        // Hash should be removed
+        assert!(!graph.file_hashes.contains_key("src/common/fs.rs"));
+    }
+
+    #[test]
+    fn test_update_single() {
+        let files = vec![
+            make_file("src/main.rs", "use crate::common::fs;", "rs"),
+            make_file("src/common/fs.rs", "use std::path::Path;", "rs"),
+        ];
+        let mut graph = ProjectGraph::default();
+        graph.update(&files);
+
+        let known: std::collections::HashSet<String> = vec![
+            "src/main.rs".to_string(),
+            "src/common/fs.rs".to_string(),
+            "src/search/indexer.rs".to_string(),
+        ].into_iter().collect();
+
+        // Update main.rs to import a new file
+        let updated = make_file(
+            "src/main.rs",
+            "use crate::common::fs;\nuse crate::search::indexer;",
+            "rs",
+        );
+        let changed = graph.update_single(&updated, &known);
+        assert!(changed);
+        assert_eq!(
+            graph.deps("src/main.rs"),
+            vec!["src/common/fs.rs", "src/search/indexer.rs"]
+        );
+
+        // Re-update with same content — should not change
+        let changed = graph.update_single(&updated, &known);
+        assert!(!changed);
+    }
+
+    #[test]
+    fn test_incremental_update_deletes() {
+        let files = vec![
+            make_file("src/a.rs", "use crate::b;", "rs"),
+            make_file("src/b.rs", "pub fn x() {}", "rs"),
+        ];
+        let mut graph = ProjectGraph::default();
+        graph.update(&files);
+        assert_eq!(graph.node_count(), 2);
+
+        // Update with only a.rs — b.rs should be deleted
+        let files_after = vec![
+            make_file("src/a.rs", "pub fn y() {}", "rs"),
+        ];
+        graph.update(&files_after);
+        assert!(graph.deps("src/a.rs").is_empty());
+        assert!(!graph.file_hashes.contains_key("src/b.rs"));
+    }
 }

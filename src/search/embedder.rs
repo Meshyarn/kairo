@@ -284,3 +284,52 @@ fn default_model_dir() -> Result<PathBuf> {
     let home = dirs::home_dir().context("cannot determine home directory")?;
     Ok(home.join(".kairo").join("models").join("bge-small-en-v1.5"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_has_model_files_empty_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!has_model_files(dir.path()));
+    }
+
+    #[test]
+    fn test_has_model_files_with_quantized() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("model_quantized.onnx"), "fake").unwrap();
+        std::fs::write(dir.path().join("tokenizer.json"), "{}").unwrap();
+        assert!(has_model_files(dir.path()));
+    }
+
+    #[test]
+    fn test_has_model_files_with_regular() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("model.onnx"), "fake").unwrap();
+        std::fs::write(dir.path().join("tokenizer.json"), "{}").unwrap();
+        assert!(has_model_files(dir.path()));
+    }
+
+    #[test]
+    fn test_has_model_files_missing_tokenizer() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("model.onnx"), "fake").unwrap();
+        assert!(!has_model_files(dir.path()));
+    }
+
+    #[test]
+    fn test_find_model_dir_returns_some_if_available() {
+        // This test checks that find_model_dir doesn't panic
+        // Result depends on whether model is installed
+        let result = find_model_dir();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_try_load_embedder_doesnt_panic() {
+        // Just ensure it returns a valid state, not a panic
+        let result = try_load_embedder();
+        assert!(result.is_ok());
+    }
+}

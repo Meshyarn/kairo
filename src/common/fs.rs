@@ -155,3 +155,82 @@ pub fn should_skip_path(relative_path: &str) -> bool {
         .split('/')
         .any(|component| SKIP_DIRS.contains(&component))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs as stdfs;
+
+    #[test]
+    fn test_should_skip_path() {
+        assert!(should_skip_path("node_modules/react/index.js"));
+        assert!(should_skip_path("src/.git/config"));
+        assert!(should_skip_path("project/target/release/binary"));
+        assert!(should_skip_path(".kairo/index/data"));
+        assert!(!should_skip_path("src/main.rs"));
+        assert!(!should_skip_path("lib/utils.ts"));
+    }
+
+    #[test]
+    fn test_hash_content_deterministic() {
+        let h1 = hash_content("hello world");
+        let h2 = hash_content("hello world");
+        let h3 = hash_content("hello world!");
+        assert_eq!(h1, h2);
+        assert_ne!(h1, h3);
+    }
+
+    #[test]
+    fn test_read_source_file_valid() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("test.rs");
+        stdfs::write(&file_path, "fn main() {}").unwrap();
+
+        let result = read_source_file(dir.path(), "test.rs");
+        assert!(result.is_some());
+        let sf = result.unwrap();
+        assert_eq!(sf.relative_path, "test.rs");
+        assert_eq!(sf.extension, "rs");
+        assert!(sf.is_code);
+        assert_eq!(sf.content, "fn main() {}");
+    }
+
+    #[test]
+    fn test_read_source_file_unknown_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        stdfs::write(dir.path().join("data.bin"), "binary stuff").unwrap();
+
+        assert!(read_source_file(dir.path(), "data.bin").is_none());
+    }
+
+    #[test]
+    fn test_read_source_file_nonexistent() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(read_source_file(dir.path(), "nope.rs").is_none());
+    }
+
+    #[test]
+    fn test_read_source_file_markdown_is_docs() {
+        let dir = tempfile::tempdir().unwrap();
+        stdfs::write(dir.path().join("README.md"), "# Hello").unwrap();
+
+        let result = read_source_file(dir.path(), "README.md").unwrap();
+        assert!(!result.is_code);
+        assert_eq!(result.extension, "md");
+    }
+
+    #[test]
+    fn test_walk_directory_finds_rust_files() {
+        let dir = tempfile::tempdir().unwrap();
+        stdfs::create_dir_all(dir.path().join("src")).unwrap();
+        stdfs::write(dir.path().join("src/main.rs"), "fn main() {}").unwrap();
+        stdfs::write(dir.path().join("src/lib.rs"), "pub mod foo;").unwrap();
+        stdfs::write(dir.path().join("data.bin"), "not a source file").unwrap();
+
+        let files = walk_directory(dir.path()).unwrap();
+        let paths: Vec<&str> = files.iter().map(|f| f.relative_path.as_str()).collect();
+        assert!(paths.contains(&"src/main.rs"));
+        assert!(paths.contains(&"src/lib.rs"));
+        assert!(!paths.iter().any(|p| p.contains("data.bin")));
+    }
+}

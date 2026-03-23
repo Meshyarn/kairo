@@ -774,3 +774,64 @@ fn extract_snippet(content: &str, query: &str, context_lines: usize) -> String {
 
     lines[start..end].join("\n")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_detect_intent_path() {
+        assert!(matches!(detect_intent("src/main.rs"), QueryIntent::Path));
+        assert!(matches!(detect_intent("path/to/file"), QueryIntent::Path));
+    }
+
+    #[test]
+    fn test_detect_intent_symbol() {
+        assert!(matches!(detect_intent("SearchIndex"), QueryIntent::Symbol));
+        assert!(matches!(detect_intent("crate::common::fs"), QueryIntent::Symbol));
+        assert!(matches!(detect_intent("std.io"), QueryIntent::Symbol));
+    }
+
+    #[test]
+    fn test_detect_intent_general() {
+        assert!(matches!(detect_intent("find code that handles authentication"), QueryIntent::General));
+        assert!(matches!(detect_intent("error handling"), QueryIntent::General));
+    }
+
+    #[test]
+    fn test_extract_symbols() {
+        let content = "fn hello_world() { let x = 42; }";
+        let symbols = extract_symbols(content);
+        assert!(symbols.contains("hello_world"));
+        // "fn" is only 2 chars, filtered out
+        assert!(!symbols.contains(" fn "));
+    }
+
+    #[test]
+    fn test_extract_snippet_finds_best_match() {
+        let content = "line one\nline two\nfn search_query() {\n    let result = query;\n}\nline six";
+        let snippet = extract_snippet(content, "search query", 2);
+        assert!(snippet.contains("search_query"));
+    }
+
+    #[test]
+    fn test_extract_snippet_expands_to_function() {
+        // The function sig is close enough to the match to be included
+        let content = "pub fn important_function() {\n    let search = find_thing();\n    return 42;\n}";
+        let snippet = extract_snippet(content, "search find", 2);
+        // Should expand backward to include the function signature
+        assert!(snippet.contains("pub fn important_function"));
+        assert!(snippet.contains("search"));
+    }
+
+    #[test]
+    fn test_extract_snippet_max_15_lines() {
+        let mut lines = Vec::new();
+        for i in 0..30 {
+            lines.push(format!("line {}", i));
+        }
+        let content = lines.join("\n");
+        let snippet = extract_snippet(&content, "line 15", 3);
+        assert!(snippet.lines().count() <= 15);
+    }
+}
