@@ -43,11 +43,97 @@ fn rust_use_re() -> &'static Regex {
     })
 }
 
+/// Blank out the contents of string literals and comments in Rust source,
+/// preserving newlines. Prevents false-positive import detection from test
+/// fixtures and doc strings that happen to contain `use` statements.
+fn blank_rust_strings_and_comments(src: &str) -> Vec<u8> {
+    let mut out = src.as_bytes().to_vec();
+    let n = out.len();
+    let mut i = 0;
+
+    while i < n {
+        // Raw string literal: r#*"..."#*
+        if out[i] == b'r' {
+            let j0 = i + 1;
+            let mut j = j0;
+            while j < n && out[j] == b'#' { j += 1; }
+            let hashes = j - j0;
+            if j < n && out[j] == b'"' {
+                let content_start = j + 1;
+                // Find the matching close: "#^hashes
+                let mut k = content_start;
+                let found = loop {
+                    if k >= n { break None; }
+                    if out[k] == b'"' {
+                        let close_end = k + 1 + hashes;
+                        if close_end <= n && out[k + 1..close_end].iter().all(|&b| b == b'#') {
+                            break Some((k, close_end));
+                        }
+                    }
+                    k += 1;
+                };
+                if let Some((close_q, close_end)) = found {
+                    // Blank content between the delimiters, preserving newlines
+                    for b in &mut out[content_start..close_q] {
+                        if *b != b'\n' { *b = b' '; }
+                    }
+                    i = close_end;
+                    continue;
+                }
+            }
+        }
+
+        // Regular string literal: "..."
+        if out[i] == b'"' {
+            let mut j = i + 1;
+            while j < n {
+                match out[j] {
+                    b'\\' => j += 2, // skip escape sequence
+                    b'"'  => { j += 1; break; }
+                    b'\n' => j += 1,
+                    _     => { out[j] = b' '; j += 1; }
+                }
+            }
+            i = j;
+            continue;
+        }
+
+        // Line comment: // ...
+        if out[i] == b'/' && i + 1 < n && out[i + 1] == b'/' {
+            let mut j = i + 2;
+            while j < n && out[j] != b'\n' { out[j] = b' '; j += 1; }
+            i = j;
+            continue;
+        }
+
+        // Block comment: /* ... */
+        if out[i] == b'/' && i + 1 < n && out[i + 1] == b'*' {
+            let mut j = i + 2;
+            while j + 1 < n {
+                if out[j] == b'*' && out[j + 1] == b'/' { j += 2; break; }
+                if out[j] != b'\n' { out[j] = b' '; }
+                j += 1;
+            }
+            i = j;
+            continue;
+        }
+
+        i += 1;
+    }
+
+    out
+}
+
 fn extract_rust(content: &str) -> Vec<RawImport> {
     let re = rust_use_re();
     let mut imports = Vec::new();
 
-    for cap in re.captures_iter(content) {
+    // Strip string/comment contents so test fixtures and doc strings that
+    // happen to contain `use` statements don't create false graph edges.
+    let stripped_bytes = blank_rust_strings_and_comments(content);
+    let stripped = String::from_utf8_lossy(&stripped_bytes);
+
+    for cap in re.captures_iter(stripped.as_ref()) {
         let specifier = cap[1].to_string();
 
         // Expand grouped imports: `crate::foo::{a, b as c, self}` →
@@ -333,6 +419,49 @@ use super::query::SearchResult;
         // alias `as Lock` is stripped
         assert!(specs.contains(&"std::sync::Mutex"));
         assert!(!specs.iter().any(|s| s.contains("as Lock")));
+    }
+
+    #[test]
+    fn test_rust_no_false_positives_from_string_literals() {
+        // String literals containing `use` statements must NOT produce imports.
+        // This guards against test fixtures and doc strings poisoning the graph.
+
+        // Case 1: raw string r#"..."# — the main offender in our own test files
+        let raw_str_code = concat!(
+            "use crate::real::module;\n",
+            "fn test() {\n",
+            "    let code = r#\"\\nuse crate::fake_in_raw;\\n\"#;\n",
+            "}\n",
+        );
+        let imports = extract_imports(raw_str_code, "rs");
+        let specs: Vec<&str> = imports.iter().map(|i| i.specifier.as_str()).collect();
+        assert!(specs.contains(&"crate::real::module"), "real import missing: {:?}", specs);
+        // The raw string is handled by concat! escaping — test the actual stripping directly:
+
+        // Case 2: verify blank_rust_strings_and_comments blanks raw string content
+        let src = "use crate::real;\nlet s = r#\"\nuse crate::fake;\n\"#;\n";
+        let blanked = blank_rust_strings_and_comments(src);
+        let blanked_str = String::from_utf8_lossy(&blanked);
+        let imports2 = {
+            let re = rust_use_re();
+            let mut v = Vec::new();
+            for cap in re.captures_iter(blanked_str.as_ref()) {
+                v.push(cap[1].to_string());
+            }
+            v
+        };
+        assert!(imports2.contains(&"crate::real".to_string()), "real import missing");
+        assert!(!imports2.iter().any(|s| s.contains("fake")), "raw string leaked: {:?}", imports2);
+
+        // Case 3: line and block comments
+        let src2 = "use crate::real;\n// use crate::from_comment;\n/* use crate::block; */\n";
+        let blanked2 = blank_rust_strings_and_comments(src2);
+        let blanked_str2 = String::from_utf8_lossy(&blanked2);
+        let re = rust_use_re();
+        let comment_imports: Vec<_> = re.captures_iter(blanked_str2.as_ref())
+            .map(|c| c[1].to_string()).collect();
+        assert!(!comment_imports.iter().any(|s| s.contains("comment")), "comment leaked: {:?}", comment_imports);
+        assert!(!comment_imports.iter().any(|s| s.contains("block")), "block comment leaked: {:?}", comment_imports);
     }
 
     #[test]
