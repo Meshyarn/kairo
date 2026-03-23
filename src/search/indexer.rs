@@ -542,6 +542,10 @@ impl SearchIndex {
             .search(&final_query, &TopDocs::with_limit(limit))
             .context("Search failed")?;
 
+        // Collect query words for filename boosting
+        let query_lower = query_str.to_lowercase();
+        let query_words: Vec<&str> = query_lower.split_whitespace().collect();
+
         let mut results = Vec::new();
         for (score, doc_address) in top_docs {
             let doc: TantivyDocument = searcher
@@ -562,12 +566,35 @@ impl SearchIndex {
 
             let snippet = extract_snippet(&content, query_str, 5);
 
+            // Filename/path boosting
+            let basename = std::path::Path::new(&path)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            let path_lower = path.to_lowercase();
+
+            let mut boosted_score = score;
+            for word in &query_words {
+                if basename == *word || basename.contains(word) {
+                    boosted_score *= 2.0;
+                    break;
+                }
+                if path_lower.split('/').any(|seg| seg == *word) {
+                    boosted_score *= 1.3;
+                    break;
+                }
+            }
+
             results.push(SearchResult {
                 path,
-                score,
+                score: boosted_score,
                 snippet,
             });
         }
+
+        // Re-sort by boosted score
+        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
 
         Ok(results)
     }
@@ -585,6 +612,77 @@ impl SearchIndex {
     /// Number of vectors in the store
     pub fn vector_count(&self) -> usize {
         self.vec_store.as_ref().map_or(0, |v| v.len())
+    }
+
+    /// Remove a single file from the index (for watcher delete events)
+    pub fn remove_file(&mut self, relative_path: &str) -> Result<()> {
+        let mut writer: IndexWriter = self
+            .index
+            .writer(50_000_000)
+            .context("Failed to create index writer")?;
+
+        writer.delete_term(tantivy::Term::from_field_text(self.schema.path, relative_path));
+        writer.commit().context("Failed to commit deletion")?;
+        self.reader.reload()?;
+
+        self.file_hashes.remove(relative_path);
+        save_hashes(&self.root, &self.file_hashes);
+
+        // Remove from vector store
+        if let Some(ref mut vs) = self.vec_store {
+            vs.remove_path(relative_path);
+        }
+
+        Ok(())
+    }
+
+    /// Incrementally update a single file in the index (for watcher modify/create events)
+    pub fn update_file(&mut self, file: &SourceFile) -> Result<bool> {
+        // Check if content changed
+        if let Some(&old_hash) = self.file_hashes.get(&file.relative_path) {
+            if old_hash == file.content_hash {
+                return Ok(false); // unchanged
+            }
+        }
+
+        let mut writer: IndexWriter = self
+            .index
+            .writer(50_000_000)
+            .context("Failed to create index writer")?;
+
+        // Delete old doc if exists
+        writer.delete_term(tantivy::Term::from_field_text(self.schema.path, &file.relative_path));
+
+        // Add new doc
+        let kind = if file.is_code { "code" } else { "docs" };
+        let basename = file
+            .path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+        let symbols = extract_symbols(&file.content);
+
+        writer.add_document(doc!(
+            self.schema.path => file.relative_path.as_str(),
+            self.schema.basename => basename,
+            self.schema.content => file.content.as_str(),
+            self.schema.symbols => symbols.as_str(),
+            self.schema.kind => kind,
+            self.schema.extension => file.extension.as_str(),
+        ))?;
+
+        writer.commit().context("Failed to commit update")?;
+        self.reader.reload()?;
+
+        self.file_hashes.insert(file.relative_path.clone(), file.content_hash);
+        save_hashes(&self.root, &self.file_hashes);
+
+        // Remove old vectors (watcher will re-embed later)
+        if let Some(ref mut vs) = self.vec_store {
+            vs.remove_path(&file.relative_path);
+        }
+
+        Ok(true)
     }
 
     /// Get index statistics
@@ -733,6 +831,18 @@ fn read_chunk_snippet(root: &Path, rel_path: &str, offset: u32, len: u32) -> Str
     }
 }
 
+/// Block-start patterns for scope-aware snippet extraction
+const BLOCK_STARTERS: &[&str] = &[
+    "fn ", "pub fn ", "pub(crate) fn ", "async fn ", "pub async fn ",
+    "struct ", "pub struct ", "enum ", "pub enum ",
+    "impl ", "trait ", "pub trait ",
+    "class ", "export class ", "export default class ",
+    "function ", "export function ", "export default function ", "async function ",
+    "const ", "let ", "export const ", "export let ",
+    "def ", "async def ",
+    "func ", // Go
+];
+
 fn extract_snippet(content: &str, query: &str, context_lines: usize) -> String {
     let query_lower = query.to_lowercase();
     let query_words: Vec<&str> = query_lower.split_whitespace().collect();
@@ -753,8 +863,25 @@ fn extract_snippet(content: &str, query: &str, context_lines: usize) -> String {
         }
     }
 
-    let start = best_line.saturating_sub(context_lines);
-    let end = (best_line + context_lines + 1).min(lines.len());
+    // Try to expand to enclosing block boundary
+    let mut start = best_line.saturating_sub(context_lines);
+
+    // Look backward for a block-starting line
+    for i in (0..best_line).rev() {
+        let trimmed = lines[i].trim_start();
+        if BLOCK_STARTERS.iter().any(|s| trimmed.starts_with(s)) {
+            start = i;
+            break;
+        }
+        // Don't look back more than 10 lines from best_line
+        if best_line - i > 10 {
+            break;
+        }
+    }
+
+    // Cap snippet at 15 lines
+    let max_lines = 15;
+    let end = (start + max_lines).min(lines.len());
 
     lines[start..end].join("\n")
 }

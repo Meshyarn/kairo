@@ -6,13 +6,14 @@ use rmcp::{
     transport::io::stdio,
 };
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::common::fs;
 use crate::graph::ProjectGraph;
 use crate::search::embedder::{self, EmbedderState};
 use crate::search::SearchIndex;
+use crate::watcher::FileWatcher;
 
 /// Input parameters for kairo_search
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -78,6 +79,14 @@ impl EmbeddingProgress {
     }
 }
 
+/// Watcher state visible to status reporting
+#[derive(Debug, Clone)]
+struct WatcherState {
+    active: Arc<AtomicBool>,
+    last_update: Arc<AtomicU64>,
+    pending_count: Arc<AtomicU64>,
+}
+
 /// MCP Server for Kairo
 #[derive(Debug, Clone)]
 pub struct KairoServer {
@@ -86,6 +95,7 @@ pub struct KairoServer {
     graph: Arc<Mutex<ProjectGraph>>,
     root: PathBuf,
     embedding_progress: EmbeddingProgress,
+    watcher_state: Option<WatcherState>,
 }
 
 impl KairoServer {
@@ -97,6 +107,7 @@ impl KairoServer {
             graph: Arc::new(Mutex::new(graph)),
             root,
             embedding_progress: EmbeddingProgress::new(),
+            watcher_state: None,
         }
     }
 
@@ -324,6 +335,14 @@ impl KairoServer {
             ));
         }
 
+        // Freshness indicator
+        if let Some(ref ws) = self.watcher_state {
+            let pending = ws.pending_count.load(Ordering::Relaxed);
+            if pending > 0 {
+                output.push_str("_Indexing recent changes..._\n");
+            }
+        }
+
         Ok(output)
     }
 
@@ -473,6 +492,19 @@ impl KairoServer {
                     let graph_edges = graph_guard.edge_count();
                     drop(graph_guard);
 
+                    let watcher_status = match &self.watcher_state {
+                        Some(ws) if ws.active.load(Ordering::Relaxed) => {
+                            let pending = ws.pending_count.load(Ordering::Relaxed);
+                            if pending > 0 {
+                                format!("active ({} pending)", pending)
+                            } else {
+                                "active".to_string()
+                            }
+                        }
+                        Some(_) => "inactive".to_string(),
+                        None => "not configured".to_string(),
+                    };
+
                     Ok(format!(
                         "Kairo Index Status:\n\
                          - Documents: {}\n\
@@ -481,10 +513,12 @@ impl KairoServer {
                          - Graph: {} nodes, {} edges\n\
                          - Embedding model: {}\n\
                          - Embedding task: {}\n\
+                         - File watcher: {}\n\
                          - Root: {}",
                         doc_count, segment_count, vec_count,
                         graph_nodes, graph_edges,
-                        model_status, embedding_status, self.root.display()
+                        model_status, embedding_status, watcher_status,
+                        self.root.display()
                     ))
                 } else {
                     Ok(format!(
@@ -622,7 +656,20 @@ impl ServerHandler for KairoServer {
 pub async fn serve_stdio_with_root(root: PathBuf) -> Result<()> {
     tracing::info!("Starting Kairo MCP server for {}", root.display());
 
-    let server = KairoServer::new(root);
+    let mut server = KairoServer::new(root.clone());
+
+    // Start file watcher
+    let watcher = FileWatcher::new(
+        root.clone(),
+        server.index.clone(),
+        server.graph.clone(),
+    );
+    server.watcher_state = Some(WatcherState {
+        active: watcher.active.clone(),
+        last_update: watcher.last_update.clone(),
+        pending_count: watcher.pending_count.clone(),
+    });
+    watcher.start();
 
     // Try to load embedding model in background
     let emb_clone = server.embedder.clone();
