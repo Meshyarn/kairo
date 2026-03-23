@@ -179,10 +179,6 @@ impl VecStore {
         }
     }
 
-    /// Get all unique paths in the store
-    pub fn paths(&self) -> std::collections::HashSet<String> {
-        self.entries.iter().map(|e| e.path.clone()).collect()
-    }
 }
 
 /// L2 norm of a vector

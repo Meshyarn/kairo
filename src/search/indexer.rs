@@ -1,19 +1,16 @@
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
 use tantivy::collector::TopDocs;
 use tantivy::query::{BooleanQuery, Occur, QueryParser};
 use tantivy::schema::*;
 use tantivy::{doc, Index, IndexReader, IndexWriter, ReloadPolicy, TantivyDocument};
 
-use crate::common::fs::{self, SourceFile};
-use crate::search::chunker;
+use crate::common::fs::SourceFile;
 use crate::search::embedder::{Embedder, EMBED_DIM};
 use crate::search::query::SearchResult;
 use crate::search::tokenizer;
-use crate::search::vecstore::{VecEntry, VecStore};
+use crate::search::vecstore::VecStore;
 
 /// The core search index backed by Tantivy + optional vector store
 pub struct SearchIndex {
@@ -96,13 +93,6 @@ impl SearchIndex {
             vec_store,
             file_hashes,
         })
-    }
-
-    /// Incremental BM25 index build. Fast — only processes changed files.
-    /// Returns which files need embedding.
-    pub fn build_index(&mut self) -> Result<BuildResult> {
-        let files = fs::walk_directory(&self.root)?;
-        self.build_index_from(&files)
     }
 
     /// Incremental BM25 index build from pre-walked files.
@@ -282,107 +272,6 @@ impl SearchIndex {
         })
     }
 
-    /// Build vector embeddings for specified paths.
-    /// This is the slow operation — designed to run in a background thread.
-    pub fn build_embeddings(
-        &mut self,
-        embedder: &mut Embedder,
-        paths: &[String],
-        progress: &Arc<AtomicUsize>,
-        cancel: &Arc<AtomicBool>,
-    ) -> Result<usize> {
-        if paths.is_empty() {
-            return Ok(0);
-        }
-
-        let vec_dir = self.root.join(".kairo").join("vectors");
-
-        // Get or create vec_store
-        let vec_store = self.vec_store.get_or_insert_with(|| VecStore::new(vec_dir.clone(), EMBED_DIM));
-
-        // Remove old vectors for paths we're about to re-embed
-        for path in paths {
-            vec_store.remove_path(path);
-        }
-
-        // Read files and chunk them
-        let mut file_chunks: Vec<(String, Vec<chunker::Chunk>)> = Vec::new();
-        for path in paths {
-            let full_path = self.root.join(path);
-            if let Ok(content) = std::fs::read_to_string(&full_path) {
-                let chunks = chunker::chunk_file(&content);
-                if !chunks.is_empty() {
-                    file_chunks.push((path.clone(), chunks));
-                }
-            }
-        }
-
-        let total_chunks: usize = file_chunks.iter().map(|(_, c)| c.len()).sum();
-        tracing::info!("Embedding {} chunks from {} files...", total_chunks, file_chunks.len());
-
-        let batch_size = 8;
-        let mut batch_texts: Vec<String> = Vec::new();
-        let mut batch_entries: Vec<VecEntry> = Vec::new();
-        let mut embedded = 0usize;
-
-        for (path, chunks) in &file_chunks {
-            if cancel.load(Ordering::Relaxed) {
-                tracing::info!("Embedding cancelled at {}/{}", embedded, total_chunks);
-                break;
-            }
-
-            for (chunk_idx, chunk) in chunks.iter().enumerate() {
-                batch_texts.push(chunk.text.clone());
-                batch_entries.push(VecEntry {
-                    path: path.clone(),
-                    chunk_idx: chunk_idx as u32,
-                    snippet_offset: chunk.offset,
-                    snippet_len: chunk.len,
-                });
-
-                if batch_texts.len() >= batch_size {
-                    let text_refs: Vec<&str> = batch_texts.iter().map(|s| s.as_str()).collect();
-                    match embedder.embed_batch(&text_refs) {
-                        Ok(vectors) => {
-                            for (vec, entry) in vectors.into_iter().zip(batch_entries.drain(..)) {
-                                vec_store.push(vec, entry);
-                            }
-                            embedded += batch_size;
-                            progress.store(embedded, Ordering::Relaxed);
-                        }
-                        Err(e) => {
-                            tracing::warn!("Embedding batch failed: {}. Skipping.", e);
-                        }
-                    }
-                    batch_texts.clear();
-                }
-            }
-        }
-
-        // Flush remaining batch
-        if !batch_texts.is_empty() && !cancel.load(Ordering::Relaxed) {
-            let remaining = batch_texts.len();
-            let text_refs: Vec<&str> = batch_texts.iter().map(|s| s.as_str()).collect();
-            match embedder.embed_batch(&text_refs) {
-                Ok(vectors) => {
-                    for (vec, entry) in vectors.into_iter().zip(batch_entries.drain(..)) {
-                        vec_store.push(vec, entry);
-                    }
-                    embedded += remaining;
-                    progress.store(embedded, Ordering::Relaxed);
-                }
-                Err(e) => {
-                    tracing::warn!("Embedding final batch failed: {}", e);
-                }
-            }
-        }
-
-        tracing::info!("Embedding complete: {} vectors total", vec_store.len());
-        vec_store.save().context("Failed to save vector store")?;
-
-        Ok(embedded)
-    }
-
     /// Check if the index has any documents
     pub fn is_empty(&self) -> bool {
         let searcher = self.reader.searcher();
@@ -464,8 +353,8 @@ impl SearchIndex {
         for (rank, (path, (_, snippet))) in vec_ranked.iter().enumerate() {
             let rrf_score = 1.0 / (RRF_K + rank as f32 + 1.0);
             let entry = rrf_scores
-                .entry(path.to_string())
-                .or_insert((0.0, snippet.clone()));
+                .entry((*path).clone())
+                .or_insert((0.0f32, snippet.clone()));
             entry.0 += rrf_score;
             if !bm25_results.iter().any(|r| &r.path == *path) {
                 entry.1 = snippet.clone();

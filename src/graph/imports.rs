@@ -6,17 +6,19 @@ use std::sync::OnceLock;
 pub struct RawImport {
     /// The import specifier (e.g. "react", "./utils", "crate::common::fs")
     pub specifier: String,
-    /// What kind of import statement
+    /// What kind of import statement (used for diagnostics/filtering)
+    #[allow(dead_code)]
     pub kind: ImportKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(dead_code)]
 pub enum ImportKind {
-    /// Rust `use`, Go `import`
+    /// Rust `use`, Go `import`, PHP `use`
     Use,
     /// JS/TS `import ... from`, Python `from ... import`
     From,
-    /// JS `require(...)`
+    /// JS `require(...)`, PHP `require/include`
     Require,
 }
 
@@ -27,6 +29,7 @@ pub fn extract_imports(content: &str, extension: &str) -> Vec<RawImport> {
         "ts" | "tsx" | "js" | "jsx" | "mjs" => extract_js_ts(content),
         "py" => extract_python(content),
         "go" => extract_go(content),
+        "php" => extract_php(content),
         _ => Vec::new(),
     }
 }
@@ -55,7 +58,8 @@ fn extract_rust(content: &str) -> Vec<RawImport> {
 fn js_import_from_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(r#"(?m)^\s*import\s+.*?\s+from\s+["']([^"']+)["']"#).unwrap()
+        // Handles multi-line imports: import {\n  foo,\n  bar\n} from 'x'
+        Regex::new(r#"(?ms)^\s*import\s+.*?from\s+["']([^"']+)["']"#).unwrap()
     })
 }
 
@@ -80,39 +84,51 @@ fn js_export_from_re() -> &'static Regex {
     })
 }
 
+fn js_dynamic_import_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        // import('./foo') or import("./foo")
+        Regex::new(r#"import\s*\(\s*["']([^"']+)["']\s*\)"#).unwrap()
+    })
+}
+
 fn extract_js_ts(content: &str) -> Vec<RawImport> {
     let mut imports = Vec::new();
+    let mut seen = std::collections::HashSet::new();
 
     for cap in js_import_from_re().captures_iter(content) {
-        imports.push(RawImport {
-            specifier: cap[1].to_string(),
-            kind: ImportKind::From,
-        });
+        let spec = cap[1].to_string();
+        if seen.insert(spec.clone()) {
+            imports.push(RawImport { specifier: spec, kind: ImportKind::From });
+        }
     }
 
     for cap in js_import_side_effect_re().captures_iter(content) {
-        // Skip if already captured by import_from_re (side-effect imports have no bindings)
-        let spec = &cap[1];
-        if !imports.iter().any(|i| i.specifier == spec) {
-            imports.push(RawImport {
-                specifier: spec.to_string(),
-                kind: ImportKind::From,
-            });
+        let spec = cap[1].to_string();
+        if seen.insert(spec.clone()) {
+            imports.push(RawImport { specifier: spec, kind: ImportKind::From });
         }
     }
 
     for cap in js_require_re().captures_iter(content) {
-        imports.push(RawImport {
-            specifier: cap[1].to_string(),
-            kind: ImportKind::Require,
-        });
+        let spec = cap[1].to_string();
+        if seen.insert(spec.clone()) {
+            imports.push(RawImport { specifier: spec, kind: ImportKind::Require });
+        }
     }
 
     for cap in js_export_from_re().captures_iter(content) {
-        imports.push(RawImport {
-            specifier: cap[1].to_string(),
-            kind: ImportKind::From,
-        });
+        let spec = cap[1].to_string();
+        if seen.insert(spec.clone()) {
+            imports.push(RawImport { specifier: spec, kind: ImportKind::From });
+        }
+    }
+
+    for cap in js_dynamic_import_re().captures_iter(content) {
+        let spec = cap[1].to_string();
+        if seen.insert(spec.clone()) {
+            imports.push(RawImport { specifier: spec, kind: ImportKind::Require });
+        }
     }
 
     imports
@@ -208,6 +224,45 @@ fn extract_go(content: &str) -> Vec<RawImport> {
     imports
 }
 
+// --- PHP ---
+
+fn php_use_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        // use App\Models\User; / use App\Models\User as U;
+        Regex::new(r#"(?m)^\s*use\s+([\w\\]+)"#).unwrap()
+    })
+}
+
+fn php_require_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        // require 'file.php'; require_once "file.php"; include 'file.php'; include_once "file.php";
+        Regex::new(r#"(?m)(?:require|require_once|include|include_once)\s*[\(]?\s*["']([^"']+)["']"#).unwrap()
+    })
+}
+
+fn extract_php(content: &str) -> Vec<RawImport> {
+    let mut imports = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for cap in php_use_re().captures_iter(content) {
+        let spec = cap[1].to_string();
+        if seen.insert(spec.clone()) {
+            imports.push(RawImport { specifier: spec, kind: ImportKind::Use });
+        }
+    }
+
+    for cap in php_require_re().captures_iter(content) {
+        let spec = cap[1].to_string();
+        if seen.insert(spec.clone()) {
+            imports.push(RawImport { specifier: spec, kind: ImportKind::Require });
+        }
+    }
+
+    imports
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,6 +320,48 @@ from . import local
         assert!(specs.contains(&"pathlib"));
         assert!(specs.contains(&"..utils"));
         assert!(specs.contains(&"."));
+    }
+
+    #[test]
+    fn test_js_dynamic_import() {
+        let code = r#"
+const lazy = import('./lazy-module');
+const other = await import("../utils/helper");
+"#;
+        let imports = extract_imports(code, "js");
+        let specs: Vec<&str> = imports.iter().map(|i| i.specifier.as_str()).collect();
+        assert!(specs.contains(&"./lazy-module"));
+        assert!(specs.contains(&"../utils/helper"));
+    }
+
+    #[test]
+    fn test_js_multiline_import() {
+        let code = "import {\n  foo,\n  bar,\n  baz\n} from './utils';";
+        let imports = extract_imports(code, "ts");
+        assert_eq!(imports.len(), 1);
+        assert_eq!(imports[0].specifier, "./utils");
+    }
+
+    #[test]
+    fn test_php_imports() {
+        let code = r#"<?php
+namespace App\Controllers;
+
+use App\Models\User;
+use App\Services\AuthService as Auth;
+use Illuminate\Http\Request;
+
+require_once 'vendor/autoload.php';
+include './helpers.php';
+require(__DIR__ . '/config.php');
+"#;
+        let imports = extract_imports(code, "php");
+        let specs: Vec<&str> = imports.iter().map(|i| i.specifier.as_str()).collect();
+        assert!(specs.contains(&r"App\Models\User"));
+        assert!(specs.contains(&r"App\Services\AuthService"));
+        assert!(specs.contains(&r"Illuminate\Http\Request"));
+        assert!(specs.contains(&"vendor/autoload.php"));
+        assert!(specs.contains(&"./helpers.php"));
     }
 
     #[test]

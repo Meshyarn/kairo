@@ -81,6 +81,7 @@ impl EmbeddingProgress {
 
 /// Watcher state visible to status reporting
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct WatcherState {
     active: Arc<AtomicBool>,
     last_update: Arc<AtomicU64>,
@@ -170,8 +171,7 @@ impl KairoServer {
 
         tokio::task::spawn_blocking(move || {
             use crate::search::chunker;
-            use crate::search::vecstore::{VecEntry, VecStore};
-            use crate::search::embedder::EMBED_DIM;
+            use crate::search::vecstore::VecEntry;
 
             // Phase 1: Read files + chunk (NO locks needed)
             let mut file_chunks: Vec<(String, Vec<chunker::Chunk>)> = Vec::new();

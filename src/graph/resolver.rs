@@ -14,6 +14,7 @@ pub fn resolve_import(
         "ts" | "tsx" | "js" | "jsx" | "mjs" => resolve_js_ts(specifier, source_file, known_files),
         "py" => resolve_python(specifier, source_file, known_files),
         "go" => resolve_go(specifier, known_files),
+        "php" => resolve_php(specifier, source_file, known_files),
         _ => None,
     }
 }
@@ -250,6 +251,56 @@ fn resolve_go(specifier: &str, known_files: &HashSet<String>) -> Option<String> 
     None
 }
 
+// --- PHP ---
+
+fn resolve_php(
+    specifier: &str,
+    source_file: &str,
+    known_files: &HashSet<String>,
+) -> Option<String> {
+    // File-path imports: require/include with relative or absolute paths
+    if specifier.ends_with(".php") {
+        if specifier.starts_with('.') {
+            // Relative path
+            let source_dir = Path::new(source_file).parent()?;
+            let base = format!("{}/{}", source_dir.display(), specifier);
+            let normalized = normalize_path(&base);
+            if known_files.contains(&normalized) {
+                return Some(normalized);
+            }
+        } else {
+            // Direct path
+            if known_files.contains(specifier) {
+                return Some(specifier.to_string());
+            }
+        }
+        return None;
+    }
+
+    // PSR-4 namespace: App\Models\User → app/Models/User.php or src/Models/User.php
+    let path_part = specifier.replace('\\', "/");
+    let segments: Vec<&str> = path_part.split('/').collect();
+
+    // Try with and without common root prefixes
+    let prefixes = ["", "src/", "app/", "lib/"];
+    for prefix in &prefixes {
+        // Try full path
+        let candidate = format!("{}{}.php", prefix, segments.join("/"));
+        if known_files.contains(&candidate) {
+            return Some(candidate);
+        }
+        // Try skipping first segment (namespace root like "App")
+        if segments.len() > 1 {
+            let candidate = format!("{}{}.php", prefix, segments[1..].join("/"));
+            if known_files.contains(&candidate) {
+                return Some(candidate);
+            }
+        }
+    }
+
+    None
+}
+
 /// Normalize a path by resolving `.` and `..` segments
 fn normalize_path(path: &str) -> String {
     let mut parts: Vec<&str> = Vec::new();
@@ -374,6 +425,28 @@ mod tests {
         assert_eq!(
             resolve_import("super::super::common::fs", "src/search/deep/nested.rs", "rs", &known),
             None
+        );
+    }
+
+    #[test]
+    fn test_php_namespace_import() {
+        let known = files(&["src/Models/User.php", "src/Services/Auth.php"]);
+        assert_eq!(
+            resolve_import(r"App\Models\User", "src/Controllers/HomeController.php", "php", &known),
+            Some("src/Models/User.php".to_string())
+        );
+    }
+
+    #[test]
+    fn test_php_file_import() {
+        let known = files(&["vendor/autoload.php", "helpers.php"]);
+        assert_eq!(
+            resolve_import("vendor/autoload.php", "index.php", "php", &known),
+            Some("vendor/autoload.php".to_string())
+        );
+        assert_eq!(
+            resolve_import("./helpers.php", "src/app.php", "php", &known),
+            None // ./helpers.php from src/ = src/helpers.php which doesn't exist
         );
     }
 

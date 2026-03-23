@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 /// Known code file extensions
 pub const CODE_EXTENSIONS: &[&str] = &[
-    "rs", "ts", "tsx", "js", "jsx", "py", "go", "java", "c", "cpp", "h", "hpp",
+    "rs", "ts", "tsx", "js", "jsx", "mjs", "py", "go", "java", "c", "cpp", "h", "hpp",
     "rb", "php", "swift", "kt", "scala", "zig", "lua", "sh", "bash", "zsh",
     "css", "scss", "html", "vue", "svelte", "sql", "proto", "toml", "yaml", "yml",
     "json", "xml", "md", "txt", "rst", "org",

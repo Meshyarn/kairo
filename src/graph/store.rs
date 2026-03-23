@@ -10,7 +10,6 @@ use crate::graph::resolver;
 /// Result of transitive impact analysis
 #[derive(Debug)]
 pub struct ImpactResult {
-    pub file: String,
     /// Each element is a depth layer: layers[0] = direct dependents, layers[1] = depth 2, etc.
     pub layers: Vec<Vec<String>>,
     pub total: usize,
@@ -266,7 +265,6 @@ impl ProjectGraph {
         let total: usize = layers.iter().map(|l| l.len()).sum();
 
         ImpactResult {
-            file: file.to_string(),
             layers,
             total,
             direct,
