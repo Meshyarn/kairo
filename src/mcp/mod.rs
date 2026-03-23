@@ -9,6 +9,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use crate::common::fs;
+use crate::graph::ProjectGraph;
 use crate::search::embedder::{self, EmbedderState};
 use crate::search::SearchIndex;
 
@@ -34,6 +36,22 @@ struct StatusParams {
     /// Action to perform
     #[schemars(description = "check: view status, reindex: rebuild index (BM25 instant + embeddings in background), download-model: download BGE-M3 embedding model (default: check)")]
     action: Option<String>,
+}
+
+/// Input parameters for kairo_graph
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct GraphParams {
+    /// Operation to perform
+    #[schemars(description = "Operation: 'deps' (what does a file import?), 'dependents' (who imports this file?), 'cycles' (find circular deps), 'path' (shortest dependency path between two files)")]
+    operation: String,
+
+    /// Relative file path (required for deps, dependents, path)
+    #[schemars(description = "Relative file path, e.g. 'src/main.rs'")]
+    file: Option<String>,
+
+    /// Target file for 'path' operation
+    #[schemars(description = "Target file for 'path' operation")]
+    target: Option<String>,
 }
 
 /// Embedding progress tracker
@@ -65,15 +83,18 @@ impl EmbeddingProgress {
 pub struct KairoServer {
     index: Arc<Mutex<Option<SearchIndex>>>,
     embedder: Arc<Mutex<EmbedderState>>,
+    graph: Arc<Mutex<ProjectGraph>>,
     root: PathBuf,
     embedding_progress: EmbeddingProgress,
 }
 
 impl KairoServer {
     pub fn new(root: PathBuf) -> Self {
+        let graph = ProjectGraph::load(&root);
         Self {
             index: Arc::new(Mutex::new(None)),
             embedder: Arc::new(Mutex::new(EmbedderState::Unavailable)),
+            graph: Arc::new(Mutex::new(graph)),
             root,
             embedding_progress: EmbeddingProgress::new(),
         }
@@ -84,10 +105,33 @@ impl KairoServer {
         if guard.is_none() {
             let mut idx = SearchIndex::open(&self.root).map_err(|e| e.to_string())?;
             if idx.is_empty() {
-                idx.build_index().map_err(|e| e.to_string())?;
+                let files = fs::walk_directory(&self.root).map_err(|e| e.to_string())?;
+                idx.build_index_from(&files).map_err(|e| e.to_string())?;
+
+                let mut graph = self.graph.lock().unwrap_or_else(|e| e.into_inner());
+                let changed = graph.update(&files);
+                if changed > 0 {
+                    let _ = graph.save(&self.root);
+                }
             }
             *guard = Some(idx);
         }
+
+        // Ensure graph is populated even if index already existed
+        {
+            let graph = self.graph.lock().unwrap_or_else(|e| e.into_inner());
+            if graph.edge_count() == 0 && graph.file_hashes.is_empty() {
+                drop(graph);
+                let files = fs::walk_directory(&self.root).map_err(|e| e.to_string())?;
+                let mut graph = self.graph.lock().unwrap_or_else(|e| e.into_inner());
+                let changed = graph.update(&files);
+                if changed > 0 {
+                    let _ = graph.save(&self.root);
+                    tracing::info!("Graph built: {} files parsed", changed);
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -331,17 +375,30 @@ impl KairoServer {
                 }
             }
             "reindex" => {
+                // Walk files once, share with both index and graph
+                let files = fs::walk_directory(&self.root).map_err(|e| e.to_string())?;
+
                 // Phase 1: BM25 indexing (fast, synchronous)
                 let mut guard = self.index.lock().unwrap_or_else(|e| e.into_inner());
 
                 let result = if let Some(index) = guard.as_mut() {
-                    index.build_index().map_err(|e| e.to_string())?
+                    index.build_index_from(&files).map_err(|e| e.to_string())?
                 } else {
                     let mut idx = SearchIndex::open(&self.root).map_err(|e| e.to_string())?;
-                    let result = idx.build_index().map_err(|e| e.to_string())?;
+                    let result = idx.build_index_from(&files).map_err(|e| e.to_string())?;
                     *guard = Some(idx);
                     result
                 };
+
+                // Phase 1b: Graph update (fast, synchronous)
+                {
+                    let mut graph = self.graph.lock().unwrap_or_else(|e| e.into_inner());
+                    let graph_changed = graph.update(&files);
+                    if graph_changed > 0 {
+                        let _ = graph.save(&self.root);
+                        tracing::info!("Graph updated: {} files re-parsed", graph_changed);
+                    }
+                }
 
                 let vec_count = guard.as_ref().map_or(0, |i| i.vector_count());
 
@@ -410,16 +467,24 @@ impl KairoServer {
                 if let Some(index) = guard.as_ref() {
                     let (doc_count, segment_count) = index.stats();
                     let vec_count = index.vector_count();
+
+                    let graph_guard = self.graph.lock().unwrap_or_else(|e| e.into_inner());
+                    let graph_nodes = graph_guard.node_count();
+                    let graph_edges = graph_guard.edge_count();
+                    drop(graph_guard);
+
                     Ok(format!(
                         "Kairo Index Status:\n\
                          - Documents: {}\n\
                          - Segments: {}\n\
                          - Vectors: {}\n\
+                         - Graph: {} nodes, {} edges\n\
                          - Embedding model: {}\n\
                          - Embedding task: {}\n\
                          - Root: {}",
-                        doc_count, segment_count, vec_count, model_status,
-                        embedding_status, self.root.display()
+                        doc_count, segment_count, vec_count,
+                        graph_nodes, graph_edges,
+                        model_status, embedding_status, self.root.display()
                     ))
                 } else {
                     Ok(format!(
@@ -431,6 +496,87 @@ impl KairoServer {
                     ))
                 }
             }
+        }
+    }
+
+    #[tool(
+        name = "kairo_graph",
+        description = "Query the project dependency graph. Shows import relationships between files. Use 'deps' to see what a file imports, 'dependents' to see who imports it, 'cycles' to find circular dependencies, 'path' to find how two files are connected."
+    )]
+    fn graph(&self, Parameters(params): Parameters<GraphParams>) -> Result<String, String> {
+        self.ensure_index()?;
+        let graph = self.graph.lock().unwrap_or_else(|e| e.into_inner());
+
+        match params.operation.as_str() {
+            "deps" => {
+                let file = params.file.as_deref()
+                    .ok_or("'file' parameter required for 'deps' operation")?;
+                let deps = graph.deps(file);
+                if deps.is_empty() {
+                    Ok(format!("`{}` has no internal dependencies.", file))
+                } else {
+                    let mut out = format!("Dependencies of `{}`:\n", file);
+                    for dep in &deps {
+                        out.push_str(&format!("  → `{}`\n", dep));
+                    }
+                    out.push_str(&format!("\n({} internal dependencies)", deps.len()));
+                    Ok(out)
+                }
+            }
+            "dependents" => {
+                let file = params.file.as_deref()
+                    .ok_or("'file' parameter required for 'dependents' operation")?;
+                let deps = graph.dependents(file);
+                if deps.is_empty() {
+                    Ok(format!("No files depend on `{}`.", file))
+                } else {
+                    let mut out = format!("Dependents of `{}`:\n", file);
+                    for dep in &deps {
+                        out.push_str(&format!("  ← `{}`\n", dep));
+                    }
+                    out.push_str(&format!("\n({} files depend on this)", deps.len()));
+                    Ok(out)
+                }
+            }
+            "cycles" => {
+                let cycles = graph.cycles();
+                if cycles.is_empty() {
+                    Ok("No circular dependencies detected.".to_string())
+                } else {
+                    let mut out = format!("{} circular dependency chain(s) found:\n\n", cycles.len());
+                    for (i, cycle) in cycles.iter().enumerate() {
+                        out.push_str(&format!("Cycle {}:\n  ", i + 1));
+                        let chain: Vec<String> = cycle.iter().map(|s| format!("`{}`", s)).collect();
+                        out.push_str(&chain.join(" → "));
+                        out.push_str(&format!(" → `{}`\n", cycle[0])); // close the loop
+                    }
+                    Ok(out)
+                }
+            }
+            "path" => {
+                let from = params.file.as_deref()
+                    .ok_or("'file' parameter required for 'path' operation")?;
+                let to = params.target.as_deref()
+                    .ok_or("'target' parameter required for 'path' operation")?;
+                match graph.path_between(from, to) {
+                    Some(path) => {
+                        let chain: Vec<String> = path.iter().map(|s| format!("`{}`", s)).collect();
+                        Ok(format!(
+                            "Dependency path ({} hops):\n  {}",
+                            path.len() - 1,
+                            chain.join(" → ")
+                        ))
+                    }
+                    None => Ok(format!(
+                        "No dependency path from `{}` to `{}`.",
+                        from, to
+                    )),
+                }
+            }
+            other => Err(format!(
+                "Unknown operation '{}'. Use: deps, dependents, cycles, path",
+                other
+            )),
         }
     }
 }

@@ -102,6 +102,11 @@ impl SearchIndex {
     /// Returns which files need embedding.
     pub fn build_index(&mut self) -> Result<BuildResult> {
         let files = fs::walk_directory(&self.root)?;
+        self.build_index_from(&files)
+    }
+
+    /// Incremental BM25 index build from pre-walked files.
+    pub fn build_index_from(&mut self, files: &[SourceFile]) -> Result<BuildResult> {
         let total_files = files.len();
 
         // Build a map of current files
